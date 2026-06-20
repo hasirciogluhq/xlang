@@ -6,6 +6,7 @@
     { "include": "#comments" },
     { "include": "#strings" },
     { "include": "#declarations" },
+    { "include": "#builtins" },
     { "include": "#keywords" },
     { "include": "#types" },
     { "include": "#constants" },
@@ -73,6 +74,18 @@
             "3": { "name": "keyword.other.fn.xlang" },
             "4": { "name": "entity.name.function.xlang" }
           }
+        }
+      ]
+    },
+    "builtins": {
+      "patterns": [
+        {
+          "name": "support.function.runtime.xlang",
+          "match": "\\b(print|fetch|json_get_int|json_get_string|json_get_bool|spawn|wait_all|cpu|add_worker)\\b(?=\\s*\\()"
+        },
+        {
+          "name": "support.function.test.xlang",
+          "match": "\\b(describe|it|expect_eq|expect_ne|expect_str_eq|expect_true|expect_false|test_summary)\\b(?=\\s*\\()"
         }
       ]
     },

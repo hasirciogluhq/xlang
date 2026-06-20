@@ -47,6 +47,7 @@ add_executable(xlank
     src/syscalls.cpp
     src/input.cpp
     src/types.cpp
+    src/test_runner.cpp
     "${EMBEDDED_RUNTIME_CPP}"
 )
 

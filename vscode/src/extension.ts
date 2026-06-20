@@ -1,6 +1,7 @@
 import * as path from "node:path";
 import * as vscode from "vscode";
-import { XlangDiagnostics, runXlank } from "./diagnostics";
+import { registerCompletions } from "./completions";
+import { XlangDiagnostics, resolveXlankPath, runXlank } from "./diagnostics";
 import { formatXlangDocument } from "./formatter";
 
 let diagnostics: XlangDiagnostics | undefined;
@@ -52,6 +53,8 @@ export function activate(context: vscode.ExtensionContext): void {
     })
   );
 
+  registerCompletions(context);
+
   context.subscriptions.push(
     vscode.commands.registerCommand("xlang.formatDocument", async () => {
       const editor = vscode.window.activeTextEditor;
@@ -61,7 +64,9 @@ export function activate(context: vscode.ExtensionContext): void {
       await vscode.commands.executeCommand("editor.action.formatDocument");
     }),
     vscode.commands.registerCommand("xlang.runFile", () => runCurrentFile()),
-    vscode.commands.registerCommand("xlang.buildFile", () => buildCurrentFile())
+    vscode.commands.registerCommand("xlang.buildFile", () => buildCurrentFile()),
+    vscode.commands.registerCommand("xlang.testFile", () => testCurrentFile()),
+    vscode.commands.registerCommand("xlang.testSuite", () => testSuite())
   );
 }
 
@@ -89,8 +94,7 @@ async function runCurrentFile(): Promise<void> {
   });
 
   terminal.show();
-  const xlankPath = (await import("./diagnostics")).resolveXlankPath();
-  const binary = (await xlankPath) ?? "xlank";
+  const binary = (await resolveXlankPath()) ?? "xlank";
   terminal.sendText(`${quote(binary)} run ${quote(filePath)}`);
 }
 
@@ -119,6 +123,67 @@ async function buildCurrentFile(): Promise<void> {
     const message = error instanceof Error ? error.message : String(error);
     vscode.window.showErrorMessage(message);
   }
+}
+
+async function testCurrentFile(): Promise<void> {
+  const editor = vscode.window.activeTextEditor;
+  if (!editor || editor.document.languageId !== "xlang") {
+    vscode.window.showWarningMessage("Open a .xlang file first.");
+    return;
+  }
+
+  if (editor.document.isDirty) {
+    await editor.document.save();
+  }
+
+  const filePath = editor.document.uri.fsPath;
+  const cwd = resolveWorkspaceRoot(filePath);
+  const terminal = vscode.window.createTerminal({
+    name: "xlang test",
+    cwd,
+  });
+
+  terminal.show();
+  const binary = (await resolveXlankPath()) ?? "xlank";
+
+  if (isTestFile(filePath)) {
+    terminal.sendText(`${quote(binary)} run ${quote(filePath)}`);
+    return;
+  }
+
+  const testRoot = resolveTestRoot(cwd);
+  terminal.sendText(`${quote(binary)} test ${quote(testRoot)}`);
+}
+
+async function testSuite(): Promise<void> {
+  const cwd = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath ?? process.cwd();
+  const terminal = vscode.window.createTerminal({
+    name: "xlang test",
+    cwd,
+  });
+
+  terminal.show();
+  const binary = (await resolveXlankPath()) ?? "xlank";
+  const testRoot = resolveTestRoot(cwd);
+  terminal.sendText(`${quote(binary)} test ${quote(testRoot)}`);
+}
+
+function resolveTestRoot(cwd: string): string {
+  const config = vscode.workspace.getConfiguration("xlang");
+  const configured = config.get<string>("testRoot", "test/xlang").trim();
+  if (path.isAbsolute(configured)) {
+    return configured;
+  }
+  return path.join(cwd, configured);
+}
+
+function resolveWorkspaceRoot(filePath: string): string {
+  const folder = vscode.workspace.getWorkspaceFolder(vscode.Uri.file(filePath));
+  return folder?.uri.fsPath ?? path.dirname(filePath);
+}
+
+function isTestFile(filePath: string): boolean {
+  return filePath.endsWith(".test.xlang");
 }
 
 function quote(value: string): string {

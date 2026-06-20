@@ -1,16 +1,15 @@
 {
   "compilerOptions": {
-    "module": "commonjs",
+    "module": "ESNext",
+    "moduleResolution": "bundler",
     "target": "ES2022",
     "lib": ["ES2022"],
-    "outDir": "out",
-    "rootDir": "src",
-    "sourceMap": true,
+    "types": ["bun-types"],
     "strict": true,
     "noImplicitReturns": true,
     "noFallthroughCasesInSwitch": true,
-    "esModuleInterop": true,
-    "skipLibCheck": true
+    "skipLibCheck": true,
+    "noEmit": true
   },
-  "include": ["src"]
+  "include": ["src", "scripts"]
 }

@@ -2,9 +2,10 @@
   "name": "xlang",
   "displayName": "xlang",
   "description": "Syntax highlighting, snippets, diagnostics, and formatting for the xlang programming language",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "publisher": "xlang",
   "license": "MIT",
+  "packageManager": "bun@1.2.0",
   "engines": {
     "vscode": "^1.85.0"
   },
@@ -30,7 +31,8 @@
           "Xlang"
         ],
         "extensions": [
-          ".xlang"
+          ".xlang",
+          ".test.xlang"
         ],
         "configuration": "./language-configuration.json",
         "icon": {
@@ -76,6 +78,11 @@
           "minimum": 2,
           "maximum": 8,
           "description": "Indent size for the xlang formatter."
+        },
+        "xlang.testRoot": {
+          "type": "string",
+          "default": "test/xlang",
+          "description": "Default directory for xlank test (relative to workspace root)."
         }
       }
     },
@@ -90,6 +97,15 @@
         "title": "xlang: Build Current File"
       },
       {
+        "command": "xlang.testFile",
+        "title": "xlang: Test Current File",
+        "icon": "$(beaker)"
+      },
+      {
+        "command": "xlang.testSuite",
+        "title": "xlang: Run Test Suite"
+      },
+      {
         "command": "xlang.formatDocument",
         "title": "xlang: Format Document"
       }
@@ -98,6 +114,11 @@
       "editor/context": [
         {
           "command": "xlang.runFile",
+          "when": "resourceLangId == xlang && resourceFilename !~ /\\.test\\.xlang$/",
+          "group": "navigation"
+        },
+        {
+          "command": "xlang.testFile",
           "when": "resourceLangId == xlang",
           "group": "navigation"
         }
@@ -105,16 +126,13 @@
     }
   },
   "scripts": {
-    "vscode:prepublish": "npm run compile",
-    "compile": "tsc -p ./",
-    "watch": "tsc -watch -p ./",
-    "package": "vsce package --no-dependencies",
-    "lint": "tsc -p ./ --noEmit"
+    "vscode:prepublish": "bun run compile",
+    "compile": "bun run scripts/build.ts",
+    "watch": "bun --watch run scripts/build.ts",
+    "package": "bun run scripts/package.ts"
   },
   "devDependencies": {
-    "@types/node": "^22.10.0",
     "@types/vscode": "^1.85.0",
-    "@vscode/vsce": "^3.2.1",
-    "typescript": "^5.7.2"
+    "bun-types": "^1.2.0"
   }
 }

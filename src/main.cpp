@@ -3,6 +3,7 @@
 #include "xlang/error.h"
 #include "xlang/input.h"
 #include "xlang/module.h"
+#include "xlang/test.h"
 
 #include <CLI/CLI.hpp>
 
@@ -103,6 +104,14 @@ int main(int argc, char** argv) {
     auto* parse = app.add_subcommand("parse", "Parse and summarize a .xlang file");
     parse->add_option("input", parse_input, "xlang source file")->required()->check(CLI::ExistingFile);
 
+    std::filesystem::path test_root = "test/xlang";
+    auto* test_cmd = app.add_subcommand("test", "Run *.test.xlang files (Vitest-style)");
+    test_cmd->add_option("path", test_root, "Test root directory");
+    test_cmd->add_option("--runtime", runtime_override, "Custom runtime .xlang (+ imports)")
+        ->check(CLI::ExistingFile);
+    test_cmd->add_flag("--keep-artifacts", keep_artifacts, "Keep temp build directories");
+    test_cmd->add_option("--clang", clang, "Clang binary path");
+
     CLI11_PARSE(app, argc, argv);
 
     try {
@@ -167,6 +176,18 @@ int main(int argc, char** argv) {
                           << (fn.body.statements.empty() ? " declare" : "") << '\n';
             }
             return 0;
+        }
+
+        if (test_cmd->parsed()) {
+            xlang::TestOptions options;
+            options.root = test_root;
+            options.runtime_override = runtime_override;
+            options.keep_artifacts = keep_artifacts;
+            if (!clang.empty()) {
+                options.clang = clang;
+            }
+            const xlang::TestSuiteResult result = xlang::runTestSuite(options);
+            return result.exit_code;
         }
     } catch (const xlang::XlangError& error) {
         std::cerr << "error: " << error.what() << '\n';

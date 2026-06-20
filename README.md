@@ -100,7 +100,31 @@ Shows an AST summary (debug).
 xlank parse examples/hello.xlang
 ```
 
-## Project layout
+### `xlank test`
+
+Runs Vitest-style tests from `*.test.xlang` files (one process per file).
+
+```bash
+xlank test                    # default: test/xlang/
+xlank test path/to/tests
+```
+
+Test API (runtime `test.xlang`): `describe`, `it`, `expect_eq`, `expect_str_eq`, `expect_true`, `expect_false`, `test_summary`.
+
+```xlang
+fn test_add() {
+    expect_eq(1 + 1, 2)
+    return 0
+}
+
+fn main() {
+    describe("math")
+    it("adds numbers", test_add)
+    return test_summary()   // exit code = failure count
+}
+```
+
+---
 
 ```
 xlang/
@@ -110,9 +134,12 @@ xlang/
 │   ├── runtime.xlang     # print export
 │   ├── scheduler.xlang   # spawn, wait_all, worker pool
 │   ├── net.xlang         # fetch HTTP/HTTPS client
-│   └── json.xlang        # json_get_* parse helpers
+│   ├── json.xlang        # json_get_* parse helpers
+│   └── test.xlang        # describe / it / expect_*
 ├── examples/         # Sample programs
-├── test/             # Module + link tests
+├── test/
+│   ├── main.xlang + lib.xlang   # external link demo
+│   └── xlang/                   # *.test.xlang suite
 ├── cmake/            # Runtime embed script
 └── docs/
     └── LANGUAGE.md   # Language reference

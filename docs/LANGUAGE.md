@@ -581,6 +581,56 @@ Early version; known constraints:
 | `examples/scheduler.xlang` | spawn, wait_all |
 | `examples/fetch.xlang` | fetch HTTP GET |
 | `test/main.xlang` + `test/lib.xlang` | external link |
+| `test/xlang/*.test.xlang` | runtime tests (`xlank test`) |
+
+---
+
+## Testing
+
+Builtin test runner (Vitest-like). Test files must end with **`.test.xlang`** (like `filename.test.ts`).
+
+```bash
+xlank test
+xlank test test/xlang
+```
+
+Each file is compiled and run individually. Output example:
+
+```
+ RUN  test/xlang/json.test.xlang
+
+ ✓ json > reads integer fields
+ ✓ json > reads string fields
+
+ Test Files  1 passed (1)
+      Tests  2 passed (2)
+```
+
+API (`runtime/test.xlang`):
+
+| Function | Description |
+|----------|-------------|
+| `describe(name)` | Group name for following `it` calls |
+| `it(name, fn)` | Run test function (pass fn ref, not call) |
+| `expect_eq(a, b)` | `int32` equality |
+| `expect_str_eq(a, b)` | string equality |
+| `expect_true(v)` / `expect_false(v)` | truthiness |
+| `expect_ne(a, b)` | `int32` inequality |
+| `test_summary()` | Print summary; return failure count (use as `main` exit) |
+
+```xlang
+fn test_user_id() {
+    local body = "{\"userId\": 1}"
+    expect_eq(json_get_int(body, "userId"), 1)
+    return 0
+}
+
+fn main() {
+    describe("json")
+    it("reads userId", test_user_id)
+    return test_summary()
+}
+```
 
 ---
 

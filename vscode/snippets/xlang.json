@@ -110,5 +110,56 @@
     "prefix": "spawn",
     "body": "spawn(${1:worker}(${2:args}))",
     "description": "Spawn a goroutine-like task"
+  },
+  "Fetch": {
+    "prefix": "fetch",
+    "body": "fetch(\"${1:https://example.com}\")",
+    "description": "HTTP GET request"
+  },
+  "Test file main": {
+    "prefix": "testmain",
+    "body": [
+      "fn ${1:test_name}() {",
+      "\t$0",
+      "\treturn 0",
+      "}",
+      "",
+      "fn main() {",
+      "\tdescribe(\"${2:suite}\")",
+      "\tit(\"${3:case}\", ${1:test_name})",
+      "\treturn test_summary()",
+      "}"
+    ],
+    "description": "Vitest-style test file scaffold"
+  },
+  "Describe suite": {
+    "prefix": "describe",
+    "body": "describe(\"${1:suite}\")",
+    "description": "Test suite name"
+  },
+  "It case": {
+    "prefix": "it",
+    "body": "it(\"${1:name}\", ${2:test_fn})",
+    "description": "Register test case"
+  },
+  "Expect equal": {
+    "prefix": "expect",
+    "body": "expect_eq(${1:actual}, ${2:expected})",
+    "description": "Assert int32 equality"
+  },
+  "Expect string equal": {
+    "prefix": "expectstr",
+    "body": "expect_str_eq(${1:actual}, \"${2:expected}\")",
+    "description": "Assert string equality"
+  },
+  "Expect true": {
+    "prefix": "expecttrue",
+    "body": "expect_true(${1:value})",
+    "description": "Assert truthy value"
+  },
+  "Expect false": {
+    "prefix": "expectfalse",
+    "body": "expect_false(${1:value})",
+    "description": "Assert falsy value"
   }
 }

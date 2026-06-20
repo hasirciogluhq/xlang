@@ -1,0 +1,70 @@
+// Vitest/Jest benzeri minimal test runner — mantık tamamen xlang içinde.
+
+current_suite: string = ""
+passed: int32 = 0
+failed: int32 = 0
+current_test_failed: int32 = 0
+
+export fn describe(name: string): int32 {
+    current_suite = name
+    return 0
+}
+
+export fn it(name: string, entry: int64): int32 {
+    current_test_failed = 0
+    invoke0(entry)
+    if current_test_failed != 0 {
+        failed = failed + 1
+        print(" ✗ %s > %s", current_suite, name)
+    } else {
+        passed = passed + 1
+        print(" ✓ %s > %s", current_suite, name)
+    }
+    return 0
+}
+
+export fn expect_eq(actual: int32, expected: int32): int32 {
+    if actual != expected {
+        current_test_failed = 1
+        print("   expected %d, got %d", expected, actual)
+    }
+    return 0
+}
+
+export fn expect_str_eq(actual: string, expected: string): int32 {
+    if str_eq(actual, expected) == 0 {
+        current_test_failed = 1
+        print("   expected `%s`, got `%s`", expected, actual)
+    }
+    return 0
+}
+
+export fn expect_true(value: int32): int32 {
+    if value == 0 {
+        current_test_failed = 1
+        print("   expected true, got false")
+    }
+    return 0
+}
+
+export fn expect_false(value: int32): int32 {
+    if value != 0 {
+        current_test_failed = 1
+        print("   expected false, got true")
+    }
+    return 0
+}
+
+export fn expect_ne(actual: int32, expected: int32): int32 {
+    if actual == expected {
+        current_test_failed = 1
+        print("   expected not %d", expected)
+    }
+    return 0
+}
+
+export fn test_summary(): int32 {
+    print("")
+    print(" @xlang-test passed=%d failed=%d", passed, failed)
+    return failed
+}
