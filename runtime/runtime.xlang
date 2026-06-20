@@ -5,15 +5,15 @@ declare syscall start_thread(entry, arg)
 spawn_queue = 0
 
 fn scheduler_loop(arg) {
-    print(spawn_queue)
+    print_int(spawn_queue)
     return 0
 }
 
-export fn print(n) {
+export fn print_int(n) {
     return print_int(n)
 }
 
-export fn print_str(s) {
+export fn print_str(s: string) {
     return print_cstr(s)
 }
 

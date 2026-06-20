@@ -471,6 +471,12 @@ std::unique_ptr<Expr> Parser::parsePrimary() {
         return Expr::makeString(previous().text, span);
     }
 
+    if (match(TokenKind::LParen)) {
+        auto expr = parseExpr();
+        consume(TokenKind::RParen, "expected ')'");
+        return expr;
+    }
+
     if (match(TokenKind::New)) {
         return parseNewExpr(span);
     }

@@ -43,6 +43,9 @@ private:
     void emitDeclareFunction(const Function& function);
     void emitSyscallLowering();
     void emitStringRuntimeSupport();
+    void preemitStringLiterals(const Program& program);
+    void collectStringLiteralsFromExpr(const Expr& expr);
+    void collectStringLiteralsFromStmt(const Stmt& stmt);
 
     [[nodiscard]] bool isStringType(const Type& type) const;
     [[nodiscard]] std::string emitStringLiteral(const std::string& text);
@@ -93,6 +96,8 @@ private:
     bool needs_heap_{false};
     bool needs_strings_{false};
     std::uint32_t string_literal_counter_{0};
+    std::unordered_map<std::string, std::string> string_literal_globals_;
+    std::unordered_map<std::string, Type> local_types_;
     Type current_return_type_{TypeKind::Int32};
 };
 

@@ -4,6 +4,7 @@
 #include "xlang/syscalls.h"
 
 #include <sstream>
+#include <unordered_map>
 
 namespace xlang {
 
@@ -140,6 +141,7 @@ CodegenResult Codegen::generate(const Program& program, const CodegenOptions& op
     cg.emitStructTypes(program);
     if (cg.needs_strings_) {
         cg.emitStringRuntimeSupport();
+        cg.preemitStringLiterals(program);
     }
     cg.emitGlobals(program);
     cg.emitGlobalInit(program);
@@ -229,9 +231,21 @@ bool Codegen::isStringType(const Type& type) const {
     return type.kind == TypeKind::String;
 }
 
-std::string Codegen::emitStringLiteral(const std::string& text) {
+std::string Codegen::stringLiteralGlobalName(const std::string& text) const {
+    const auto it = string_literal_globals_.find(text);
+    if (it == string_literal_globals_.end()) {
+        throw XlangError("missing string literal global");
+    }
+    return it->second;
+}
+
+void Codegen::ensureStringLiteralGlobal(const std::string& text) {
+    if (string_literal_globals_.find(text) != string_literal_globals_.end()) {
+        return;
+    }
+
     std::string escaped;
-    escaped.reserve(text.size() + 1);
+    escaped.reserve(text.size());
     for (char c : text) {
         switch (c) {
             case '\\': escaped += "\\5C"; break;
@@ -246,11 +260,69 @@ std::string Codegen::emitStringLiteral(const std::string& text) {
     const std::size_t size = text.size() + 1;
     writeln(name + " = private unnamed_addr constant [" + std::to_string(size) + " x i8] c\"" +
             escaped + "\\00\"");
+    string_literal_globals_.emplace(text, name);
+}
 
+std::string Codegen::emitStringLiteral(const std::string& text) {
+    ensureStringLiteralGlobal(text);
+    const std::string name = stringLiteralGlobalName(text);
+    const std::size_t size = text.size() + 1;
     const std::string tmp = freshTmp();
     writeln("  " + tmp + " = getelementptr inbounds [" + std::to_string(size) + " x i8], [" +
             std::to_string(size) + " x i8]* " + name + ", i32 0, i32 0");
     return tmp;
+}
+
+void Codegen::collectStringLiteralsFromExpr(const Expr& expr) {
+    if (expr.kind == Expr::Kind::StringLiteral) {
+        ensureStringLiteralGlobal(expr.name);
+        return;
+    }
+    if (expr.object) {
+        collectStringLiteralsFromExpr(*expr.object);
+    }
+    if (expr.left) {
+        collectStringLiteralsFromExpr(*expr.left);
+    }
+    if (expr.right) {
+        collectStringLiteralsFromExpr(*expr.right);
+    }
+    for (const auto& arg : expr.args) {
+        collectStringLiteralsFromExpr(*arg);
+    }
+    for (const FieldInit& init : expr.field_inits) {
+        if (init.value) {
+            collectStringLiteralsFromExpr(*init.value);
+        }
+    }
+}
+
+void Codegen::collectStringLiteralsFromStmt(const Stmt& stmt) {
+    if (stmt.expr) {
+        collectStringLiteralsFromExpr(*stmt.expr);
+    }
+    if (stmt.return_value) {
+        collectStringLiteralsFromExpr(*stmt.return_value);
+    }
+    if (stmt.target) {
+        collectStringLiteralsFromExpr(*stmt.target);
+    }
+}
+
+void Codegen::preemitStringLiterals(const Program& program) {
+    for (const GlobalVar& global : program.globals) {
+        if (global.init) {
+            collectStringLiteralsFromExpr(*global.init);
+        }
+    }
+    for (const Function& function : program.functions) {
+        for (const Stmt& stmt : function.body.statements) {
+            collectStringLiteralsFromStmt(stmt);
+        }
+    }
+    if (!string_literal_globals_.empty()) {
+        writeln("");
+    }
 }
 
 std::string Codegen::emitIntToString(const std::string& int_value) {

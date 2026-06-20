@@ -86,11 +86,17 @@ void emitWaitAllJobs(std::string& output) {
 void emitSyscallDefinitions(std::string& output, const std::unordered_set<std::string>& syscalls) {
     const bool needs_threads = syscalls.find("start_thread") != syscalls.end() ||
                                syscalls.find("wait_all_jobs") != syscalls.end();
+    const bool needs_printf = syscalls.find("print_int") != syscalls.end() ||
+                              syscalls.find("print_cstr") != syscalls.end() ||
+                              syscalls.find("print_done") != syscalls.end();
+
+    if (needs_printf) {
+        output += "declare i32 @printf(i8*, ...)\n\n";
+    }
 
     if (syscalls.find("print_int") != syscalls.end()) {
         output += "; xlang syscall: print_int\n";
         output += "@__xlang_syscall_fmt = private unnamed_addr constant [4 x i8] c\"%d\\0A\\00\"\n";
-        output += "declare i32 @printf(i8*, ...)\n";
         output += "define weak i32 @print_int(i32 %n) {\n";
         output += "  call i32 (i8*, ...) @printf(i8* getelementptr inbounds "
                   "([4 x i8], [4 x i8]* @__xlang_syscall_fmt, i32 0, i32 0), i32 %n)\n";
@@ -101,7 +107,6 @@ void emitSyscallDefinitions(std::string& output, const std::unordered_set<std::s
     if (syscalls.find("print_cstr") != syscalls.end()) {
         output += "; xlang syscall: print_cstr\n";
         output += "@__xlang_syscall_strfmt = private unnamed_addr constant [4 x i8] c\"%s\\0A\\00\"\n";
-        output += "declare i32 @printf(i8*, ...)\n";
         output += "define weak i32 @print_cstr(i8* %s) {\n";
         output += "  call i32 (i8*, ...) @printf(i8* getelementptr inbounds "
                   "([4 x i8], [4 x i8]* @__xlang_syscall_strfmt, i32 0, i32 0), i8* %s)\n";
@@ -148,7 +153,6 @@ void emitSyscallDefinitions(std::string& output, const std::unordered_set<std::s
     if (syscalls.find("print_done") != syscalls.end()) {
         output += "; xlang syscall: print_done\n";
         output += "@__xlang_done_fmt = private unnamed_addr constant [16 x i8] c\"[job %d] bitti\\0A\\00\"\n";
-        output += "declare i32 @printf(i8*, ...)\n";
         output += "define weak i32 @print_done(i32 %job_id) {\n";
         output += "  call i32 (i8*, ...) @printf(i8* getelementptr inbounds "
                   "([16 x i8], [16 x i8]* @__xlang_done_fmt, i32 0, i32 0), i32 %job_id)\n";
