@@ -5,6 +5,7 @@
 #include <string.h>
 #include <signal.h>
 #include <sys/wait.h>
+#include <sys/time.h>
 #include <time.h>
 #include <unistd.h>
 
@@ -182,13 +183,23 @@ const char* xlang_cwd_get(void) {
 }
 
 const char* xlang_log_timestamp(void) {
-    const time_t now = time(NULL);
-    struct tm* tm_info = localtime(&now);
+    struct timeval tv;
+    if (gettimeofday(&tv, NULL) != 0) {
+        log_timestamp_buffer[0] = '\0';
+        return log_timestamp_buffer;
+    }
+    struct tm* tm_info = localtime(&tv.tv_sec);
     if (tm_info == NULL) {
         log_timestamp_buffer[0] = '\0';
         return log_timestamp_buffer;
     }
-    strftime(log_timestamp_buffer, sizeof(log_timestamp_buffer), "%Y/%m/%d - %H:%M:%S", tm_info);
+    const size_t n = strftime(log_timestamp_buffer, sizeof(log_timestamp_buffer), "%Y/%m/%d - %H:%M:%S", tm_info);
+    if (n == 0) {
+        log_timestamp_buffer[0] = '\0';
+        return log_timestamp_buffer;
+    }
+    const int ms = (int)(tv.tv_usec / 1000);
+    snprintf(log_timestamp_buffer + n, sizeof(log_timestamp_buffer) - n, ".%03d", ms);
     return log_timestamp_buffer;
 }
 
