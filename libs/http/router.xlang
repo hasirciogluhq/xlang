@@ -1,67 +1,86 @@
-// Chi-benzeri HTTP router — import ile kullan:
+// Chi-benzeri HTTP router — tüm state Router instance içinde, global yok.
 //   import router from http/router
 //   local r = router.NewRouter()
 //   r.Get("/ping", handler)
-
-export struct Router {
-    id: int32
-    prefix: string
-}
+//   local m = r.Match("GET", "/ping")
+//   router.URLParam(m, "id")
 
 struct RouteDef {
-    router_id: int32
     method: string
     pattern: string
     handler: int64
 }
 
-struct MountDef {
-    parent_id: int32
-    prefix: string
-    child_id: int32
+struct RouteMatchInfo {
+    matched: int32
+    param_name: string
+    param_value: string
 }
 
-routes: array RouteDef
-mounts: array MountDef
+export struct MatchResult {
+    handler: int64
+    param_name: string
+    param_value: string
+    method: string
+    path: string
+}
 
-next_router_id: int32 = 1
-router_initialized: int32 = 0
+export struct Router {
+    prefix: string
+    routes: array RouteDef
+    last_match: MatchResult
+    resp_status: int32
+    resp_body: string
+    resp_type: string
+}
 
-current_method: string = ""
-current_path: string = ""
-current_param_name: string = ""
-current_param_value: string = ""
-
-resp_status: int32 = 200
-resp_body: string = ""
-resp_type: string = "text/plain"
-
-fn ensure_router(): int32 {
-    if router_initialized == 0 {
-        routes = new array RouteDef
-        mounts = new array MountDef
-        router_initialized = 1
-    }
-    return 0
+export struct DispatchResult {
+    router: Router
+    status: int32
+    body: string
+    type: string
 }
 
 export fn NewRouter(): Router {
-    ensure_router()
-    local id = next_router_id
-    next_router_id = next_router_id + 1
-    return new Router { id = id, prefix = "" }
+    return new Router {
+        prefix = "",
+        routes = new array RouteDef,
+        last_match = empty_match("", ""),
+        resp_status = 200,
+        resp_body = "",
+        resp_type = "text/plain"
+    }
+}
+
+fn empty_match(method: string, path: string): MatchResult {
+    return new MatchResult {
+        handler = 0,
+        param_name = "",
+        param_value = "",
+        method = method,
+        path = path
+    }
+}
+
+fn clone_shell(r: Router): Router {
+    return new Router {
+        prefix = r.prefix,
+        routes = r.routes,
+        last_match = empty_match("", ""),
+        resp_status = 200,
+        resp_body = "",
+        resp_type = "text/plain"
+    }
 }
 
 fn register_route(r: Router, method: string, pattern: string, handler: int64): int32 {
-    ensure_router()
     local full = r.prefix + pattern
     local route: RouteDef = new RouteDef {
-        router_id = r.id,
         method = method,
         pattern = full,
         handler = handler
     }
-    array_push(routes, route)
+    array_push(r.routes, route)
     return 0
 }
 
@@ -94,17 +113,29 @@ export fn Options(r: Router, pattern: string, handler: int64): int32 {
 }
 
 export fn Group(r: Router, prefix: string): Router {
-    return new Router { id = r.id, prefix = r.prefix + prefix }
+    local g = clone_shell(r)
+    g.prefix = r.prefix + prefix
+    return g
+}
+
+fn merge_routes(dest: array RouteDef, prefix: string, src: array RouteDef): int32 {
+    local i = 0
+    local n = array_len(src)
+    while i < n {
+        local route = array_get(src, i)
+        local copy: RouteDef = new RouteDef {
+            method = route.method,
+            pattern = prefix + route.pattern,
+            handler = route.handler
+        }
+        array_push(dest, copy)
+        i = i + 1
+    }
+    return 0
 }
 
 export fn Mount(r: Router, prefix: string, child: Router): int32 {
-    ensure_router()
-    local m: MountDef = new MountDef {
-        parent_id = r.id,
-        prefix = prefix,
-        child_id = child.id
-    }
-    array_push(mounts, m)
+    merge_routes(r.routes, prefix, child.routes)
     return 0
 }
 
@@ -133,138 +164,101 @@ fn path_strip_prefix(path: string, prefix: string): string {
     return rest
 }
 
-fn route_match(pattern: string, path: string): int32 {
+fn route_match(pattern: string, path: string): RouteMatchInfo {
+    local miss = new RouteMatchInfo { matched = 0, param_name = "", param_value = "" }
     if str_eq(pattern, path) != 0 {
-        current_param_name = ""
-        current_param_value = ""
-        return 1
+        miss.matched = 1
+        return miss
     }
     local brace = str_find(pattern, "{")
     if brace == (0 - 1) {
-        return 0
+        return miss
     }
     local close = str_find(pattern, "}")
     if close == (0 - 1) {
-        return 0
+        return miss
     }
     local pfx = str_sub(pattern, 0, brace)
     if path_has_prefix(path, pfx) == 0 {
-        return 0
+        return miss
     }
     local val = path_strip_prefix(path, pfx)
     local name = str_sub(pattern, brace + 1, close - brace - 1)
-    current_param_name = name
-    current_param_value = val
-    return 1
+    return new RouteMatchInfo { matched = 1, param_name = name, param_value = val }
 }
 
-fn find_handler(router_id: int32, method: string, path: string): int64 {
-    ensure_router()
+fn find_match(r: Router, method: string, path: string): MatchResult {
     local i = 0
-    local n = array_len(routes)
+    local n = array_len(r.routes)
     while i < n {
-        local route = array_get(routes, i)
-        if route.router_id == router_id {
-            if str_eq(route.method, method) != 0 {
-                if route_match(route.pattern, path) != 0 {
-                    return route.handler
+        local route = array_get(r.routes, i)
+        if str_eq(route.method, method) != 0 {
+            local rm = route_match(route.pattern, path)
+            if rm.matched != 0 {
+                return new MatchResult {
+                    handler = route.handler,
+                    param_name = rm.param_name,
+                    param_value = rm.param_value,
+                    method = method,
+                    path = path
                 }
             }
         }
         i = i + 1
     }
-    local m = 0
-    local mn = array_len(mounts)
-    while m < mn {
-        local mount = array_get(mounts, m)
-        if mount.parent_id == router_id {
-            if path_has_prefix(path, mount.prefix) != 0 {
-                local sub = path_strip_prefix(path, mount.prefix)
-                local h = find_handler(mount.child_id, method, sub)
-                if h != 0 {
-                    return h
-                }
-            }
-        }
-        m = m + 1
-    }
-    return 0
+    return empty_match(method, path)
 }
 
-export fn Match(r: Router, method: string, path: string): int64 {
-    current_method = method
-    current_path = path
-    return find_handler(r.id, method, path)
+export fn Match(r: Router, method: string, path: string): MatchResult {
+    return find_match(r, method, path)
 }
 
-export fn URLParam(name: string): string {
-    if str_eq(name, current_param_name) != 0 {
-        return current_param_value
+export fn URLParam(m: MatchResult, name: string): string {
+    if str_eq(name, m.param_name) != 0 {
+        return m.param_value
     }
     return ""
 }
 
-export fn Method(): string {
-    return current_method
+export fn WithMatch(r: Router, m: MatchResult): Router {
+    local out = clone_shell(r)
+    out.last_match = m
+    return out
 }
 
-export fn Path(): string {
-    return current_path
+export fn RespondTextR(r: Router, status: int32, body: string): Router {
+    local out = clone_shell(r)
+    out.resp_status = status
+    out.resp_body = body
+    out.resp_type = "text/plain"
+    return out
 }
 
-fn set_response(status: int32, body: string): int32 {
-    resp_status = status
-    resp_body = body
-    return 0
+export fn RespondJsonR(r: Router, status: int32, body: string): Router {
+    local out = clone_shell(r)
+    out.resp_status = status
+    out.resp_body = body
+    out.resp_type = "application/json"
+    return out
 }
 
-export fn Respond(status: int32, body: string): int32 {
-    return set_response(status, body)
-}
-
-export fn RespondText(status: int32, body: string): int32 {
-    resp_type = "text/plain"
-    return set_response(status, body)
-}
-
-export fn RespondJson(status: int32, body: string): int32 {
-    resp_type = "application/json"
-    return set_response(status, body)
-}
-
-fn reset_response(): int32 {
-    resp_status = 200
-    resp_body = ""
-    resp_type = "text/plain"
-    return 0
-}
-
-export fn ResetResponse(): int32 {
-    return reset_response()
-}
-
-export fn ResponseStatus(): int32 {
-    return resp_status
-}
-
-export fn ResponseBody(): string {
-    return resp_body
-}
-
-export fn ResponseType(): string {
-    return resp_type
-}
-
-export fn Dispatch(r: Router, method: string, path: string): int32 {
-    reset_response()
-    current_method = method
-    current_path = path
-    local handler = find_handler(r.id, method, path)
-    if handler == 0 {
-        resp_type = "text/plain"
-        set_response(404, "not found")
-        return 0
+export fn DispatchRequest(r: Router, method: string, path: string): DispatchResult {
+    local m = find_match(r, method, path)
+    local out = WithMatch(r, m)
+    if m.handler == 0 {
+        out = RespondTextR(out, 404, "not found")
+        return new DispatchResult {
+            router = out,
+            status = out.resp_status,
+            body = out.resp_body,
+            type = out.resp_type
+        }
     }
-    invoke0(handler)
-    return 0
+    invoke0(m.handler)
+    return new DispatchResult {
+        router = out,
+        status = out.resp_status,
+        body = out.resp_body,
+        type = out.resp_type
+    }
 }

@@ -102,8 +102,8 @@ fn handle_client(client: int64, r: Router): int32 {
     }
     local method = request_method(raw)
     local path = request_path(raw)
-    Dispatch(r, method, path)
-    local out = build_response(ResponseStatus(), ResponseBody(), ResponseType())
+    local dr = router.DispatchRequest(r, method, path)
+    local out = build_response(dr.status, dr.body, dr.type)
     net_send(client, out)
     return 0
 }

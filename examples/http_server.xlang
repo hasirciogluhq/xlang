@@ -1,18 +1,14 @@
 import http from http
 
 fn handle_root() {
-    http.RespondText(200, "hi")
     return 0
 }
 
 fn handle_ping() {
-    http.RespondText(200, "pong")
     return 0
 }
 
 fn handle_article() {
-    local id = http.URLParam("articleID")
-    http.RespondText(200, "article " + id)
     return 0
 }
 
