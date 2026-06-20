@@ -22,6 +22,7 @@ declare syscall fd_close(fd: int32): int32
 declare syscall fd_read(fd: int32, max: int32): string
 declare syscall fd_write(fd: int32, data: string): int32
 declare syscall fd_dup2(old_fd: int32, new_fd: int32): int32
+declare syscall file_read(path: string): string
 
 declare syscall run_capture(path: string, args: string): int32
 declare syscall capture_stdout(): string

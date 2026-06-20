@@ -1,6 +1,0 @@
-// HTTP paketi — router + server birleşik import için.
-//   import http from http
-//   local r = http.NewRouter()
-
-import http/router
-import http/server

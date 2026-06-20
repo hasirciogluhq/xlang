@@ -60,7 +60,7 @@ std::filesystem::path materializeEmbeddedRuntime(const std::filesystem::path& wo
         }
         out << file.source;
     }
-    return work_dir / \"runtime.xlang\";
+    return work_dir;
 }
 
 }  // namespace xlang

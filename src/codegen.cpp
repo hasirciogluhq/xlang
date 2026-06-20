@@ -453,6 +453,16 @@ CodegenResult Codegen::generate(const Program& program, const CodegenOptions& op
         if (!import.alias.empty()) {
             cg.import_aliases_[import.alias] = import.alias;
         }
+        if (import.is_clause_import) {
+            for (const ImportSpec& spec : import.names) {
+                if (spec.use_prefix && !spec.bound_alias.empty()) {
+                    cg.import_aliases_[spec.bound_alias] = spec.bound_alias;
+                }
+            }
+        }
+    }
+    for (const auto& [alias, target] : program.import_aliases) {
+        cg.import_aliases_[alias] = target;
     }
     cg.needs_heap_ = programUsesHeap(program) || programUsesStrings(program) || programUsesArrays(program);
     cg.needs_strings_ = programUsesStrings(program);

@@ -5,6 +5,7 @@
 #include <cstdint>
 #include <memory>
 #include <string>
+#include <unordered_map>
 #include <utility>
 #include <vector>
 
@@ -49,8 +50,11 @@ struct FunctionSignature {
 };
 
 struct ImportSpec {
+    bool wildcard{false};
+    bool use_prefix{false};
     std::string name;
     std::string alias;
+    std::string bound_alias;
 };
 
 struct ItemModifiers {
@@ -61,6 +65,7 @@ struct ItemModifiers {
 
 struct ImportDecl {
     bool is_from{false};
+    bool is_clause_import{false};
     std::string module;
     std::string alias;
     std::vector<ImportSpec> names;
@@ -207,6 +212,7 @@ struct Function {
 
 struct Program {
     std::vector<ImportDecl> imports;
+    std::unordered_map<std::string, std::string> import_aliases;
     std::vector<StructDecl> structs;
     std::vector<InterfaceDecl> interfaces;
     std::vector<GlobalVar> globals;

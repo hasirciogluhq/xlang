@@ -3,7 +3,32 @@
 namespace xlang {
 
 Program parseSource(const std::string& source) {
-    return Parser(tokenize(source)).parseProgram();
+    return parseSource(source, {});
+}
+
+Program parseSource(const std::string& source, const std::vector<StructDecl>& prelude) {
+    Parser parser(tokenize(source));
+    parser.seedStructs(prelude);
+    return parser.parseProgram();
+}
+
+std::vector<ImportDecl> parseImportDecls(const std::string& source) {
+    return Parser::scanImports(source);
+}
+
+std::vector<ImportDecl> Parser::scanImports(const std::string& source) {
+    Parser parser(tokenize(source));
+    std::vector<ImportDecl> imports;
+    while (!parser.isAtEnd() && (parser.check(TokenKind::Import) || parser.check(TokenKind::From))) {
+        imports.push_back(parser.parseImport());
+    }
+    return imports;
+}
+
+void Parser::seedStructs(const std::vector<StructDecl>& decls) {
+    for (const StructDecl& decl : decls) {
+        registerStruct(decl);
+    }
 }
 
 Parser::Parser(std::vector<Token> tokens) : tokens_(std::move(tokens)) {
@@ -99,25 +124,84 @@ Program Parser::parseProgram() {
     return program;
 }
 
+ImportSpec Parser::parseImportClause() {
+    ImportSpec spec;
+    if (match(TokenKind::Star)) {
+        spec.wildcard = true;
+        consume(TokenKind::As, "expected 'as' after '*'");
+        spec.alias = consume(TokenKind::Ident, "expected namespace alias").text;
+        return spec;
+    }
+    spec.name = consume(TokenKind::Ident, "expected import name").text;
+    if (match(TokenKind::As)) {
+        spec.alias = consume(TokenKind::Ident, "expected alias name").text;
+    }
+    return spec;
+}
+
+ImportDecl Parser::parseImportClausesFrom() {
+    ImportDecl decl;
+    decl.is_clause_import = true;
+    decl.span = currentSpan();
+    decl.names.push_back(parseImportClause());
+    while (match(TokenKind::Comma)) {
+        decl.names.push_back(parseImportClause());
+    }
+    consume(TokenKind::From, "expected 'from'");
+    decl.module = parseModulePath();
+    consumeEndOfStatement();
+    return decl;
+}
+
 ImportDecl Parser::parseImport() {
     ImportDecl decl;
     decl.span = currentSpan();
 
     if (match(TokenKind::Import)) {
-        decl.is_from = false;
-        const std::string first = consume(TokenKind::Ident, "expected module or alias").text;
-        if (match(TokenKind::From)) {
-            decl.alias = first;
+        if (check(TokenKind::Star)) {
+            return parseImportClausesFrom();
+        }
+
+        const std::string first = consume(TokenKind::Ident, "expected module or import name").text;
+        if (match(TokenKind::Comma)) {
+            decl.is_clause_import = true;
+            ImportSpec spec;
+            spec.name = first;
+            decl.names.push_back(std::move(spec));
+            while (true) {
+                decl.names.push_back(parseImportClause());
+                if (!match(TokenKind::Comma)) {
+                    break;
+                }
+            }
+            consume(TokenKind::From, "expected 'from'");
             decl.module = parseModulePath();
-        } else {
-            decl.module = first;
-            while (match(TokenKind::Slash)) {
-                decl.module += "/";
-                decl.module += consume(TokenKind::Ident, "expected module path segment").text;
+            consumeEndOfStatement();
+            return decl;
+        }
+
+        if (match(TokenKind::From)) {
+            decl.module = parseModulePath();
+            if (decl.module.find('/') != std::string::npos || first == decl.module) {
+                decl.alias = first;
+                consumeEndOfStatement();
+                return decl;
             }
-            if (match(TokenKind::As)) {
-                decl.alias = consume(TokenKind::Ident, "expected alias name").text;
-            }
+            decl.is_clause_import = true;
+            ImportSpec spec;
+            spec.name = first;
+            decl.names.push_back(std::move(spec));
+            consumeEndOfStatement();
+            return decl;
+        }
+
+        decl.module = first;
+        while (match(TokenKind::Slash)) {
+            decl.module += "/";
+            decl.module += consume(TokenKind::Ident, "expected module path segment").text;
+        }
+        if (match(TokenKind::As)) {
+            decl.alias = consume(TokenKind::Ident, "expected alias name").text;
         }
         consumeEndOfStatement();
         return decl;

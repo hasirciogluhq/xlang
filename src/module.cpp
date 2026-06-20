@@ -8,6 +8,8 @@
 #include <sstream>
 #include <unordered_set>
 #include <vector>
+#include <algorithm>
+#include <cctype>
 
 namespace xlang {
 
@@ -245,9 +247,28 @@ std::string prefixed(const std::string& alias, const std::string& name) {
     return alias + "_" + name;
 }
 
+[[nodiscard]] bool iequals(const std::string& left, const std::string& right) {
+    if (left.size() != right.size()) {
+        return false;
+    }
+    for (std::size_t i = 0; i < left.size(); ++i) {
+        if (std::tolower(static_cast<unsigned char>(left[i])) !=
+            std::tolower(static_cast<unsigned char>(right[i]))) {
+            return false;
+        }
+    }
+    return true;
+}
+
+[[nodiscard]] bool isDirectoryModule(const std::filesystem::path& path) {
+    std::error_code ec;
+    return std::filesystem::is_directory(path, ec);
+}
+
 Program cloneProgramImpl(const Program& program) {
     Program copy;
     copy.imports = program.imports;
+    copy.import_aliases = program.import_aliases;
     copy.structs = program.structs;
     copy.interfaces = program.interfaces;
     for (const GlobalVar& global : program.globals) {
@@ -265,6 +286,16 @@ Program cloneProgram(const Program& program) {
     return cloneProgramImpl(program);
 }
 
+void registerImportAlias(Program& into, const std::string& alias) {
+    into.import_aliases[alias] = alias;
+}
+
+void mergeImportAliases(Program& into, const Program& from) {
+    for (const auto& [alias, target] : from.import_aliases) {
+        into.import_aliases.emplace(alias, target);
+    }
+}
+
 Program loadProgram(const std::filesystem::path& entry,
                     const std::vector<std::filesystem::path>& search_paths) {
     return ModuleLoader(entry, search_paths).load();
@@ -275,7 +306,48 @@ ModuleLoader::ModuleLoader(std::filesystem::path entry,
     : entry_(std::filesystem::absolute(entry)), search_paths_(std::move(search_paths)) {}
 
 Program ModuleLoader::load() {
+    std::error_code ec;
+    if (std::filesystem::is_directory(entry_, ec)) {
+        return loadPackage(entry_);
+    }
     return loadFile(entry_);
+}
+
+Program ModuleLoader::loadPackage(const std::filesystem::path& dir) {
+    const std::filesystem::path absolute = std::filesystem::absolute(dir);
+    const std::string key = absolute.string();
+
+    if (cache_.find(key) != cache_.end()) {
+        return cloneProgramImpl(cache_.at(key));
+    }
+    if (loading_.find(key) != loading_.end()) {
+        throw XlangError("circular import: " + key);
+    }
+
+    loading_[key] = true;
+
+    Program pkg;
+    std::vector<std::filesystem::path> files;
+    for (const std::filesystem::directory_entry& entry :
+         std::filesystem::directory_iterator(absolute)) {
+        if (!entry.is_regular_file()) {
+            continue;
+        }
+        if (entry.path().extension() != ".xlang") {
+            continue;
+        }
+        files.push_back(entry.path());
+    }
+    std::sort(files.begin(), files.end());
+
+    for (const std::filesystem::path& file : files) {
+        const Program part = loadFile(file);
+        mergeAll(pkg, part);
+    }
+
+    loading_.erase(key);
+    cache_.emplace(key, cloneProgramImpl(pkg));
+    return std::move(pkg);
 }
 
 Program ModuleLoader::loadFile(const std::filesystem::path& path) {
@@ -289,6 +361,10 @@ Program ModuleLoader::loadFile(const std::filesystem::path& path) {
         throw XlangError("circular import: " + key);
     }
 
+    if (isDirectoryModule(absolute)) {
+        return loadPackage(absolute);
+    }
+
     loading_[key] = true;
 
     std::ifstream in(absolute);
@@ -298,16 +374,30 @@ Program ModuleLoader::loadFile(const std::filesystem::path& path) {
 
     std::ostringstream buffer;
     buffer << in.rdbuf();
-    const Program source = parseSource(buffer.str());
+    const std::string source_text = buffer.str();
+
+    const std::vector<ImportDecl> import_decls = parseImportDecls(source_text);
+    std::vector<StructDecl> prelude_structs;
+    std::unordered_set<std::string> seen_structs;
+    for (const ImportDecl& import : import_decls) {
+        collectPreludeStructs(import, absolute.parent_path(), prelude_structs, seen_structs);
+    }
+
+    const Program source = parseSource(source_text, prelude_structs);
 
     Program merged;
     merged.imports = source.imports;
-    for (const ImportDecl& import : source.imports) {
+    for (ImportDecl& import : merged.imports) {
+        if (import.is_clause_import) {
+            mergeFromClauses(merged, import, absolute.parent_path());
+            continue;
+        }
         const std::filesystem::path dep = resolveModule(absolute.parent_path(), import.module);
         const Program dep_program = loadFile(dep);
         if (import.is_from) {
             mergeSelected(merged, dep_program, import);
         } else if (!import.alias.empty()) {
+            registerImportAlias(merged, import.alias);
             mergePrefixed(merged, dep_program, import.alias);
         } else {
             mergeAll(merged, dep_program);
@@ -346,15 +436,26 @@ Program ModuleLoader::loadFile(const std::filesystem::path& path) {
 
 std::filesystem::path ModuleLoader::resolveModule(const std::filesystem::path& from,
                                                   const std::string& name) const {
+    auto tryResolve = [&](const std::filesystem::path& root) -> std::filesystem::path {
+        const std::filesystem::path file = root / (name + ".xlang");
+        if (std::filesystem::exists(file)) {
+            return file;
+        }
+        const std::filesystem::path dir = root / name;
+        std::error_code ec;
+        if (std::filesystem::is_directory(dir, ec)) {
+            return dir;
+        }
+        return {};
+    };
+
     for (const std::filesystem::path& search_root : search_paths_) {
-        const std::filesystem::path candidate = search_root / (name + ".xlang");
-        if (std::filesystem::exists(candidate)) {
+        if (const std::filesystem::path candidate = tryResolve(search_root); !candidate.empty()) {
             return candidate;
         }
     }
 
-    const std::filesystem::path relative = from / (name + ".xlang");
-    if (std::filesystem::exists(relative)) {
+    if (const std::filesystem::path relative = tryResolve(from); !relative.empty()) {
         return relative;
     }
 
@@ -365,9 +466,9 @@ std::filesystem::path ModuleLoader::resolveModule(const std::filesystem::path& f
             const std::size_t end = paths.find(':', start);
             const std::string dir = paths.substr(start, end - start);
             if (!dir.empty()) {
-                const std::filesystem::path candidate =
-                    std::filesystem::path(dir) / (name + ".xlang");
-                if (std::filesystem::exists(candidate)) {
+                if (const std::filesystem::path candidate =
+                        tryResolve(std::filesystem::path(dir));
+                    !candidate.empty()) {
                     return candidate;
                 }
             }
@@ -379,6 +480,56 @@ std::filesystem::path ModuleLoader::resolveModule(const std::filesystem::path& f
     }
 
     throw XlangError("module not found: " + name);
+}
+
+std::optional<std::string> ModuleLoader::findSubmodulePath(const std::string& package,
+                                                           const std::string& name) const {
+    auto scanDir = [&](const std::filesystem::path& pkg_dir) -> std::optional<std::string> {
+        std::error_code ec;
+        if (!std::filesystem::is_directory(pkg_dir, ec)) {
+            return std::nullopt;
+        }
+        for (const std::filesystem::directory_entry& entry :
+             std::filesystem::directory_iterator(pkg_dir)) {
+            if (!entry.is_regular_file()) {
+                continue;
+            }
+            if (entry.path().extension() != ".xlang") {
+                continue;
+            }
+            if (iequals(entry.path().stem().string(), name)) {
+                return package + "/" + entry.path().stem().string();
+            }
+        }
+        return std::nullopt;
+    };
+
+    for (const std::filesystem::path& search_root : search_paths_) {
+        if (const std::optional<std::string> found = scanDir(search_root / package)) {
+            return found;
+        }
+    }
+
+    if (const char* search = std::getenv("XLANG_PATH")) {
+        std::string paths = search;
+        std::size_t start = 0;
+        while (start <= paths.size()) {
+            const std::size_t end = paths.find(':', start);
+            const std::string dir = paths.substr(start, end - start);
+            if (!dir.empty()) {
+                if (const std::optional<std::string> found =
+                        scanDir(std::filesystem::path(dir) / package)) {
+                    return found;
+                }
+            }
+            if (end == std::string::npos) {
+                break;
+            }
+            start = end + 1;
+        }
+    }
+
+    return std::nullopt;
 }
 
 void mergeStructs(Program& into, const Program& from) {
@@ -410,6 +561,7 @@ void mergeStructs(Program& into, const Program& from) {
 
 void ModuleLoader::mergeAll(Program& into, const Program& from) {
     mergeStructs(into, from);
+    mergeImportAliases(into, from);
     for (const GlobalVar& global : from.globals) {
         if (hasGlobal(into, global.name)) {
             continue;
@@ -428,7 +580,9 @@ void ModuleLoader::mergeAll(Program& into, const Program& from) {
 }
 
 void ModuleLoader::mergePrefixed(Program& into, const Program& from, const std::string& alias) {
+    registerImportAlias(into, alias);
     mergeStructs(into, from);
+    mergeImportAliases(into, from);
 
     for (const GlobalVar& global : from.globals) {
         if (isImportableGlobal(global)) {
@@ -467,6 +621,88 @@ void ModuleLoader::mergePrefixed(Program& into, const Program& from, const std::
         Function copy = cloneFunction(function);
         copy.name = prefixed(alias, function.name);
         addFunction(into, std::move(copy));
+    }
+}
+
+void ModuleLoader::collectPreludeStructs(const ImportDecl& import,
+                                         const std::filesystem::path& from_dir,
+                                         std::vector<StructDecl>& out,
+                                         std::unordered_set<std::string>& seen) {
+    auto addStructs = [&](const Program& program) {
+        for (const StructDecl& decl : program.structs) {
+            if (seen.insert(decl.name).second) {
+                out.push_back(decl);
+            }
+        }
+    };
+
+    if (import.is_clause_import) {
+        const std::filesystem::path dep_path = resolveModule(from_dir, import.module);
+        addStructs(loadFile(dep_path));
+        for (const ImportSpec& spec : import.names) {
+            if (spec.wildcard) {
+                continue;
+            }
+            if (const std::optional<std::string> submodule =
+                    findSubmodulePath(import.module, spec.name)) {
+                const std::filesystem::path sub_path = resolveModule(from_dir, *submodule);
+                addStructs(loadFile(sub_path));
+            }
+        }
+        return;
+    }
+
+    const std::filesystem::path dep_path = resolveModule(from_dir, import.module);
+    addStructs(loadFile(dep_path));
+}
+
+void ModuleLoader::mergeFromClauses(Program& into, ImportDecl& import,
+                                    const std::filesystem::path& from_dir) {
+    const std::filesystem::path dep_path = resolveModule(from_dir, import.module);
+    const Program dep_program = loadFile(dep_path);
+
+    for (ImportSpec& spec : import.names) {
+        if (spec.wildcard) {
+            spec.use_prefix = true;
+            spec.bound_alias = spec.alias;
+            registerImportAlias(into, spec.alias);
+            mergePrefixed(into, dep_program, spec.alias);
+            continue;
+        }
+
+        if (const std::optional<std::string> submodule = findSubmodulePath(import.module, spec.name)) {
+            const std::filesystem::path sub_path = resolveModule(from_dir, *submodule);
+            const Program sub_program = loadFile(sub_path);
+            const std::string alias = spec.alias.empty() ? spec.name : spec.alias;
+            spec.use_prefix = true;
+            spec.bound_alias = alias;
+            registerImportAlias(into, alias);
+            mergePrefixed(into, sub_program, alias);
+            continue;
+        }
+
+        const std::string target = spec.alias.empty() ? spec.name : spec.alias;
+        if (const GlobalVar* global = findGlobal(dep_program, spec.name)) {
+            if (!isImportableGlobal(*global)) {
+                throw XlangError("cannot import private symbol `" + spec.name + "` from `" +
+                                 import.module + "`");
+            }
+            GlobalVar copy = cloneGlobal(*global);
+            copy.name = target;
+            addGlobal(into, std::move(copy));
+            continue;
+        }
+        if (const Function* function = findFunction(dep_program, spec.name)) {
+            if (!isImportableFunction(*function)) {
+                throw XlangError("cannot import private symbol `" + spec.name + "` from `" +
+                                 import.module + "`");
+            }
+            Function copy = cloneFunction(*function);
+            copy.name = target;
+            addFunction(into, std::move(copy));
+            continue;
+        }
+        throw XlangError("symbol not found in module `" + import.module + "`: " + spec.name);
     }
 }
 

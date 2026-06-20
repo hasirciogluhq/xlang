@@ -1,34 +1,36 @@
-import http from http
+import * as http from http
+import process from process
 
-fn handle_root() {
+fn on_listen() {
+    print("xlang running at %s://%s:%d", http.ServerProtocol(), http.ServerHostname(), http.ServerPort())
+    return 0
+}
+
+fn handle_index() {
+    local html = file_read("examples/index.html")
+    if str_len(html) == 0 {
+        http.RespondText(404, "examples/index.html not found")
+        return 0
+    }
+    http.RespondHtml(200, html)
+    return 0
+}
+
+fn handle_api_info() {
+    http.RespondJson(200, "{\"name\":\"xlang\",\"runtime\":\"native\",\"ok\":true}")
     return 0
 }
 
 fn handle_ping() {
+    http.RespondText(200, "pong")
     return 0
-}
-
-fn handle_article() {
-    return 0
-}
-
-fn setup_admin() {
-    local admin = http.NewRouter()
-    admin.Get("/", handle_root)
-    return admin
 }
 
 fn main() {
     local r = http.NewRouter()
-    r.Get("/", handle_root)
+    r.Get("/", handle_index)
+    r.Get("/api/info", handle_api_info)
     r.Get("/ping", handle_ping)
-
-    local articles = r.Group("/articles")
-    articles.Get("/{articleID}", handle_article)
-
-    local admin = setup_admin()
-    r.Mount("/admin", admin)
-
-    http.ListenAndServe("127.0.0.1", 8080, r)
+    http.ListenAndServe("127.0.0.1", 8080, r, on_listen)
     return 0
 }

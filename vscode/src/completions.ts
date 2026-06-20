@@ -50,7 +50,11 @@ const HTTP_BUILTINS: Builtin[] = [
   { label: "URLParam", detail: "Route param from last match", insertText: 'URLParam("${1:name}")' },
   { label: "RespondText", detail: "Set text/plain response", insertText: 'RespondText(${1:200}, "${2:ok}")' },
   { label: "RespondJson", detail: "Set application/json response", insertText: 'RespondJson(${1:200}, "${2:{}}")' },
-  { label: "ListenAndServe", detail: "Start HTTP server loop", insertText: 'ListenAndServe("${1:127.0.0.1}", ${2:8080}, ${3:r})' },
+  { label: "RespondHtml", detail: "Set text/html response", insertText: 'RespondHtml(${1:200}, "${2:<html></html>}")' },
+  { label: "ListenAndServe", detail: "Start server; on_listen(server) when ready", insertText: 'ListenAndServe("${1:127.0.0.1}", ${2:8080}, ${3:r}, ${4:on_listen})' },
+  { label: "ServerProtocol", detail: "http — active during listen callback", insertText: "ServerProtocol()" },
+  { label: "ServerHostname", detail: "Listen hostname during callback", insertText: "ServerHostname()" },
+  { label: "ServerPort", detail: "Listen port during callback", insertText: "ServerPort()" },
   { label: "ServeOnce", detail: "Handle single HTTP request", insertText: 'ServeOnce("${1:127.0.0.1}", ${2:8080}, ${3:r})' },
 ];
 
@@ -99,7 +103,7 @@ const TYPES = [
 ];
 
 const MODULES = [
-  { label: "http", detail: "HTTP router + server barrel (libs/http.xlang)" },
+  { label: "http", detail: "HTTP package — router + server (libs/http/)" },
   { label: "http/router", detail: "Chi-like HTTP router (libs/http/router.xlang)" },
   { label: "http/server", detail: "HTTP server + ListenAndServe (libs/http/server.xlang)" },
   { label: "json", detail: "json.parse + field accessors (libs/json.xlang)" },
@@ -120,7 +124,7 @@ const PROCESS_SYSCALLS: Builtin[] = [
   { label: "proc_exit", detail: "Exit current process", insertText: "proc_exit(${1:code})" },
   { label: "proc_kill", detail: "Send signal to process", insertText: "proc_kill(${1:pid}, ${2:signal})" },
   { label: "pipe_create", detail: "Create pipe (read<<32|write)", insertText: "pipe_create()" },
-  { label: "pipe_read_fd", detail: "Read end of pipe handle", insertText: "pipe_read_fd(${1:handle})" },
+  { label: "file_read", detail: "Read entire file as string", insertText: 'file_read("${1:path}")' },
   { label: "pipe_write_fd", detail: "Write end of pipe handle", insertText: "pipe_write_fd(${1:handle})" },
   { label: "fd_close", detail: "Close file descriptor", insertText: "fd_close(${1:fd})" },
   { label: "fd_read", detail: "Read from fd into string", insertText: "fd_read(${1:fd}, ${2:max})" },

@@ -243,7 +243,14 @@ export fn RespondJson(status: int32, body: string): int32 {
     if dispatch_on != 0 {
         dispatch_resp = RespondJsonR(dispatch_resp, status, body)
     }
-return 0
+    return 0
+}
+
+export fn RespondHtml(status: int32, body: string): int32 {
+    if dispatch_on != 0 {
+        dispatch_resp = RespondHtmlR(dispatch_resp, status, body)
+    }
+    return 0
 }
 
 export fn WithMatch(r: Router, m: MatchResult): Router {
@@ -265,6 +272,14 @@ export fn RespondJsonR(r: Router, status: int32, body: string): Router {
     out.resp_status = status
     out.resp_body = body
     out.resp_type = "application/json"
+    return out
+}
+
+export fn RespondHtmlR(r: Router, status: int32, body: string): Router {
+    local out = clone_shell(r)
+    out.resp_status = status
+    out.resp_body = body
+    out.resp_type = "text/html; charset=utf-8"
     return out
 }
 

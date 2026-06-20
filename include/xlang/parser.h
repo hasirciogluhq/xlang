@@ -12,12 +12,16 @@
 namespace xlang {
 
 Program parseSource(const std::string &source);
+Program parseSource(const std::string &source, const std::vector<StructDecl> &prelude);
+std::vector<ImportDecl> parseImportDecls(const std::string &source);
 
 class Parser {
 public:
   explicit Parser(std::vector<Token> tokens);
 
   Program parseProgram();
+  void seedStructs(const std::vector<StructDecl> &decls);
+  [[nodiscard]] static std::vector<ImportDecl> scanImports(const std::string &source);
 
 private:
   [[nodiscard]] const Token &peek() const;
@@ -35,6 +39,8 @@ private:
                          const std::string &kind) const;
 
   ImportDecl parseImport();
+  ImportDecl parseImportClausesFrom();
+  ImportSpec parseImportClause();
   [[nodiscard]] std::string parseModulePath();
   std::vector<ImportSpec> parseImportNames();
   StructDecl parseStruct(const ItemModifiers &modifiers);

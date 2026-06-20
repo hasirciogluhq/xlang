@@ -117,7 +117,7 @@ bool programNeedsProcessLink(const Program& program) {
         "run_capture",   "capture_stdout",  "proc_fork",     "proc_exec",
         "proc_wait",     "proc_exit",       "proc_kill",     "pipe_create",
         "pipe_read_fd",  "pipe_write_fd",   "fd_close",      "fd_read",
-        "fd_write",      "fd_dup2",
+        "fd_write",      "fd_dup2",         "file_read",
     };
     for (const Function& function : program.functions) {
         if (!function.syscall) {
@@ -136,7 +136,12 @@ std::filesystem::path runtimeEntryFromSourceTree() {
     if (std::string(XLANG_RUNTIME_DIR).empty()) {
         return {};
     }
-    return std::filesystem::path(XLANG_RUNTIME_DIR) / "runtime.xlang";
+    const std::filesystem::path runtime_dir = std::filesystem::path(XLANG_RUNTIME_DIR);
+    std::error_code ec;
+    if (std::filesystem::is_directory(runtime_dir, ec)) {
+        return runtime_dir;
+    }
+    return runtime_dir / "runtime.xlang";
 }
 
 Program loadEmbeddedRuntimeProgram(const RuntimeOptions& options) {

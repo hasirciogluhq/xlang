@@ -1,7 +1,3 @@
-import scheduler
-import net
-import errors
-
 export fn print(...) {
     return 0
 }
