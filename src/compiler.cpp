@@ -104,6 +104,14 @@ void copyFile(const std::filesystem::path& from, const std::filesystem::path& to
 #define XLANG_TIME_BRIDGE ""
 #endif
 
+void appendCppStdlibLink(std::ostringstream& cmd) {
+#if defined(__APPLE__)
+    cmd << " -lc++";
+#else
+    cmd << " -lstdc++";
+#endif
+}
+
 void appendLinkFlags(std::ostringstream& cmd, bool needs_pthread, bool needs_ssl, bool needs_server,
                      bool needs_panic, bool needs_process, bool needs_file, bool needs_time) {
     if (needs_pthread) {
@@ -139,7 +147,7 @@ void appendLinkFlags(std::ostringstream& cmd, bool needs_pthread, bool needs_ssl
         if (XLANG_FILE_BRIDGE[0] != '\0') {
             cmd << " \"" << XLANG_FILE_BRIDGE << "\"";
         }
-        cmd << " -lc++";
+        appendCppStdlibLink(cmd);
     }
     if (needs_time) {
         if (XLANG_TIME_BRIDGE[0] != '\0') {
