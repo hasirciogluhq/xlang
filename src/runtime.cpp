@@ -91,7 +91,8 @@ bool programNeedsServerLink(const Program& program) {
         if (!function.syscall) {
             continue;
         }
-        if (function.name == "net_tcp_listen" || function.name == "net_tcp_accept") {
+        if (function.name == "net_tcp_connect" || function.name == "net_tcp_listen" ||
+            function.name == "net_tcp_accept") {
             return true;
         }
     }
@@ -155,7 +156,7 @@ bool programNeedsTimeLink(const Program& program) {
         if (!function.syscall) {
             continue;
         }
-        if (function.name == "time_format") {
+        if (function.name == "time_format" || function.name == "now_ms") {
             return true;
         }
     }

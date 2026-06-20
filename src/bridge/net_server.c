@@ -12,6 +12,36 @@ static int is_any_host(const char* host) {
     return strcmp(host, "0.0.0.0") == 0 || strcmp(host, "*") == 0;
 }
 
+int64_t xlang_net_tcp_connect(const char* host, int32_t port) {
+    char portbuf[16];
+    snprintf(portbuf, sizeof(portbuf), "%d", (int)port);
+
+    struct addrinfo hints;
+    memset(&hints, 0, sizeof(hints));
+    hints.ai_socktype = SOCK_STREAM;
+
+    struct addrinfo* res = NULL;
+    if (getaddrinfo(host, portbuf, &hints, &res) != 0) {
+        return -1;
+    }
+
+    int sock = -1;
+    for (struct addrinfo* it = res; it != NULL; it = it->ai_next) {
+        int candidate = (int)socket(it->ai_family, it->ai_socktype, it->ai_protocol);
+        if (candidate < 0) {
+            continue;
+        }
+        if (connect(candidate, it->ai_addr, (socklen_t)it->ai_addrlen) == 0) {
+            sock = candidate;
+            break;
+        }
+        close(candidate);
+    }
+
+    freeaddrinfo(res);
+    return (int64_t)sock;
+}
+
 int64_t xlang_net_tcp_listen(const char* host, int32_t port) {
     char portbuf[16];
     snprintf(portbuf, sizeof(portbuf), "%d", (int)port);
