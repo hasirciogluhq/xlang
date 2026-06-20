@@ -1,4 +1,4 @@
-import * as test from test
+import expect from test
 import * as file from file
 
 fn scratch_path(): string {
