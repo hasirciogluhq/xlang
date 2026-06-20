@@ -131,7 +131,7 @@ fn log_request(r: Router, ctx: Context, start: int64, finished: int64): int32 {
         return 0
     }
     local ts = log_timestamp()
-    local line = "Router | " + ts + " | " + status_badge(ctx.status) + " | " + latency_text(start, finished) + " | 127.0.0.1 | " + method_badge(ctx.method) + " \"" + ctx.path + "\""
+    local line = "[Router] | " + ts + " | " + status_badge(ctx.status) + " | " + latency_text(start, finished) + " | 127.0.0.1 | " + method_badge(ctx.method) + " \"" + ctx.path + "\""
     print(line)
     return 0
 }
