@@ -1,0 +1,27 @@
+// Low-level process / IO syscalls (Go os/exec + Node child_process benzeri).
+//   import process from process
+//   local pid = process.fork()
+//
+// Tüm semboller syscall declare — C++ process_bridge üzerinden link edilir.
+
+declare syscall env_get(key: string): string
+declare syscall env_set(key: string, value: string): int32
+declare syscall cwd(): string
+declare syscall chdir(path: string): int32
+
+declare syscall proc_fork(): int32
+declare syscall proc_exec(path: string, args: string): int32
+declare syscall proc_wait(pid: int32): int32
+declare syscall proc_exit(code: int32): int32
+declare syscall proc_kill(pid: int32, signal: int32): int32
+
+declare syscall pipe_create(): int64
+declare syscall pipe_read_fd(h: int64): int32
+declare syscall pipe_write_fd(h: int64): int32
+declare syscall fd_close(fd: int32): int32
+declare syscall fd_read(fd: int32, max: int32): string
+declare syscall fd_write(fd: int32, data: string): int32
+declare syscall fd_dup2(old_fd: int32, new_fd: int32): int32
+
+declare syscall run_capture(path: string, args: string): int32
+declare syscall capture_stdout(): string

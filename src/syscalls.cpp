@@ -20,8 +20,12 @@ bool isKnownSyscall(const std::string& name) {
            name == "cond_signal" || name == "cond_broadcast" ||
            name == "panic" || name == "recover" || name == "try_invoke0" ||
            name == "env_get" || name == "run_capture" || name == "capture_stdout" ||
+           name == "env_set" || name == "cwd" || name == "chdir" ||
            name == "proc_fork" || name == "proc_exec" || name == "proc_wait" ||
-           name == "proc_exit" || name == "pipe_create" || name == "fd_close" ||
+           name == "proc_exit" || name == "proc_kill" || name == "pipe_create" ||
+           name == "pipe_read_fd" || name == "pipe_write_fd" ||
+           name == "fd_close" || name == "fd_read" || name == "fd_write" ||
+           name == "fd_dup2" ||
            name == "net_tcp_connect" || name == "net_send" || name == "net_recv" ||
            name == "net_close" || name == "net_tcp_listen" || name == "net_tcp_accept" ||
            name == "net_tls_connect" || name == "net_tls_send" ||
@@ -357,12 +361,21 @@ void emitProcessSupport(std::string& output) {
     output += "declare i32 @xlang_run_capture(i8*, i8*)\n";
     output += "declare i8* @xlang_capture_stdout()\n";
     output += "declare i8* @xlang_env_get(i8*)\n";
+    output += "declare i32 @xlang_env_set(i8*, i8*)\n";
+    output += "declare i8* @xlang_cwd_get()\n";
+    output += "declare i32 @xlang_chdir(i8*)\n";
     output += "declare i32 @xlang_proc_fork()\n";
     output += "declare i32 @xlang_proc_exec(i8*, i8*)\n";
     output += "declare i32 @xlang_proc_wait(i32)\n";
     output += "declare void @xlang_proc_exit(i32)\n";
+    output += "declare i32 @xlang_proc_kill(i32, i32)\n";
     output += "declare i64 @xlang_pipe_create()\n";
-    output += "declare i32 @xlang_fd_close(i32)\n\n";
+    output += "declare i32 @xlang_pipe_read_fd(i64)\n";
+    output += "declare i32 @xlang_pipe_write_fd(i64)\n";
+    output += "declare i32 @xlang_fd_close(i32)\n";
+    output += "declare i8* @xlang_fd_read(i32, i32)\n";
+    output += "declare i32 @xlang_fd_write(i32, i8*)\n";
+    output += "declare i32 @xlang_fd_dup2(i32, i32)\n\n";
 
     output += "define weak i32 @run_capture(i8* %path, i8* %args) {\n";
     output += "  %rc = call i32 @xlang_run_capture(i8* %path, i8* %args)\n";
@@ -377,6 +390,21 @@ void emitProcessSupport(std::string& output) {
     output += "define weak i8* @env_get(i8* %key) {\n";
     output += "  %val = call i8* @xlang_env_get(i8* %key)\n";
     output += "  ret i8* %val\n";
+    output += "}\n\n";
+
+    output += "define weak i32 @env_set(i8* %key, i8* %value) {\n";
+    output += "  %rc = call i32 @xlang_env_set(i8* %key, i8* %value)\n";
+    output += "  ret i32 %rc\n";
+    output += "}\n\n";
+
+    output += "define weak i8* @cwd() {\n";
+    output += "  %path = call i8* @xlang_cwd_get()\n";
+    output += "  ret i8* %path\n";
+    output += "}\n\n";
+
+    output += "define weak i32 @chdir(i8* %path) {\n";
+    output += "  %rc = call i32 @xlang_chdir(i8* %path)\n";
+    output += "  ret i32 %rc\n";
     output += "}\n\n";
 
     output += "define weak i32 @proc_fork() {\n";
@@ -399,13 +427,43 @@ void emitProcessSupport(std::string& output) {
     output += "  ret i32 0\n";
     output += "}\n\n";
 
+    output += "define weak i32 @proc_kill(i32 %pid, i32 %sig) {\n";
+    output += "  %rc = call i32 @xlang_proc_kill(i32 %pid, i32 %sig)\n";
+    output += "  ret i32 %rc\n";
+    output += "}\n\n";
+
     output += "define weak i64 @pipe_create() {\n";
     output += "  %fds = call i64 @xlang_pipe_create()\n";
     output += "  ret i64 %fds\n";
     output += "}\n\n";
 
+    output += "define weak i32 @pipe_read_fd(i64 %h) {\n";
+    output += "  %fd = call i32 @xlang_pipe_read_fd(i64 %h)\n";
+    output += "  ret i32 %fd\n";
+    output += "}\n\n";
+
+    output += "define weak i32 @pipe_write_fd(i64 %h) {\n";
+    output += "  %fd = call i32 @xlang_pipe_write_fd(i64 %h)\n";
+    output += "  ret i32 %fd\n";
+    output += "}\n\n";
+
     output += "define weak i32 @fd_close(i32 %fd) {\n";
     output += "  %rc = call i32 @xlang_fd_close(i32 %fd)\n";
+    output += "  ret i32 %rc\n";
+    output += "}\n\n";
+
+    output += "define weak i8* @fd_read(i32 %fd, i32 %max) {\n";
+    output += "  %buf = call i8* @xlang_fd_read(i32 %fd, i32 %max)\n";
+    output += "  ret i8* %buf\n";
+    output += "}\n\n";
+
+    output += "define weak i32 @fd_write(i32 %fd, i8* %data) {\n";
+    output += "  %n = call i32 @xlang_fd_write(i32 %fd, i8* %data)\n";
+    output += "  ret i32 %n\n";
+    output += "}\n\n";
+
+    output += "define weak i32 @fd_dup2(i32 %old_fd, i32 %new_fd) {\n";
+    output += "  %rc = call i32 @xlang_fd_dup2(i32 %old_fd, i32 %new_fd)\n";
     output += "  ret i32 %rc\n";
     output += "}\n\n";
 }
@@ -570,15 +628,19 @@ bool syscallsNeedPanicLink(const std::unordered_set<std::string>& syscalls) {
 }
 
 bool syscallsNeedProcessLink(const std::unordered_set<std::string>& syscalls) {
-    return syscalls.find("env_get") != syscalls.end() ||
-           syscalls.find("run_capture") != syscalls.end() ||
-           syscalls.find("capture_stdout") != syscalls.end() ||
-           syscalls.find("proc_fork") != syscalls.end() ||
-           syscalls.find("proc_exec") != syscalls.end() ||
-           syscalls.find("proc_wait") != syscalls.end() ||
-           syscalls.find("proc_exit") != syscalls.end() ||
-           syscalls.find("pipe_create") != syscalls.end() ||
-           syscalls.find("fd_close") != syscalls.end();
+    static const char* kProcessSyscalls[] = {
+        "env_get",       "env_set",         "cwd",           "chdir",
+        "run_capture",   "capture_stdout",  "proc_fork",     "proc_exec",
+        "proc_wait",     "proc_exit",       "proc_kill",     "pipe_create",
+        "pipe_read_fd",  "pipe_write_fd",   "fd_close",      "fd_read",
+        "fd_write",      "fd_dup2",
+    };
+    for (const char* name : kProcessSyscalls) {
+        if (syscalls.find(name) != syscalls.end()) {
+            return true;
+        }
+    }
+    return false;
 }
 
 }  // namespace xlang

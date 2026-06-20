@@ -8,7 +8,6 @@
 
 #include <algorithm>
 #include <cstdio>
-#include <cstdlib>
 #include <iostream>
 #include <regex>
 #include <sstream>
@@ -334,21 +333,16 @@ std::vector<std::filesystem::path> materializeModuleSearchPaths(
     return paths;
 }
 
-static std::string joinPaths(const std::vector<std::filesystem::path>& files) {
-    std::ostringstream joined;
-    for (std::size_t i = 0; i < files.size(); ++i) {
-        if (i > 0) {
-            joined << '\n';
-        }
-        joined << files[i].string();
-    }
-    return joined.str();
-}
+struct FileTestResult {
+    int exit_code{1};
+    int tests_passed{0};
+    int tests_failed{0};
+};
 
-int runSingleTestFile(const TestOptions& options, const std::filesystem::path& file) {
+static FileTestResult runSingleTestFile(const TestOptions& options,
+                                        const std::filesystem::path& file) {
     const std::filesystem::path work_dir = makeBuildWorkDir();
-    int file_passed = 0;
-    int file_failed = 0;
+    FileTestResult result;
 
     try {
         const std::vector<std::filesystem::path> module_search_paths =
@@ -388,28 +382,33 @@ int runSingleTestFile(const TestOptions& options, const std::filesystem::path& f
 
         const ParsedSummary summary = parseTestSummary(run.stdout_text);
         if (summary.found) {
-            file_passed = summary.passed;
-            file_failed = summary.failed;
+            result.tests_passed = summary.passed;
+            result.tests_failed = summary.failed;
         } else if (run.exit_code == 0) {
-            file_passed = static_cast<int>(tests.size());
+            result.tests_passed = static_cast<int>(tests.size());
         } else {
-            file_failed = static_cast<int>(tests.size());
+            result.tests_failed = static_cast<int>(tests.size());
         }
 
         if (!options.keep_artifacts) {
             removeTree(work_dir);
         }
 
-        if (run.exit_code != 0 || file_failed > 0) {
-            return 1;
+        result.exit_code = (run.exit_code != 0 || result.tests_failed > 0) ? 1 : 0;
+        if (result.exit_code == 0) {
+            std::cout << "\n ✓ " << file.string() << '\n';
+        } else {
+            std::cout << "\n ✗ " << file.string() << '\n';
         }
-        return 0;
+        return result;
     } catch (const std::exception& error) {
         std::cout << " ✗ " << file.string() << " [error: " << error.what() << "]\n";
         if (!options.keep_artifacts) {
             removeTree(work_dir);
         }
-        return 1;
+        result.exit_code = 1;
+        result.tests_failed = 1;
+        return result;
     }
 }
 
@@ -426,66 +425,39 @@ TestSuiteResult runTestSuite(const TestOptions& options) {
         return suite;
     }
 
-    const std::filesystem::path work_dir = makeBuildWorkDir();
-
-    const char* xlank_bin = std::getenv("XLANG_BIN");
-    std::string xlank_path = xlank_bin != nullptr ? xlank_bin : "xlank";
-    if (const char* self = std::getenv("XLANG_SELF")) {
-        xlank_path = self;
-    }
-
-    setenv("XLANG_BIN", xlank_path.c_str(), 1);
-    setenv("XLANG_TEST_FILES", joinPaths(files).c_str(), 1);
-    setenv("XLANG_TEST_PARALLEL", options.parallel ? "1" : "0", 1);
-
-    try {
-        const std::vector<std::filesystem::path> module_search_paths =
-            materializeModuleSearchPaths(work_dir, false);
-        const std::filesystem::path libs_root = module_search_paths.front();
-        const std::filesystem::path runner_source = libs_root / "test_runner.xlang";
-        if (!std::filesystem::exists(runner_source)) {
-            throw XlangError("test runner not found: libs/test_runner.xlang");
+    for (const std::filesystem::path& file : files) {
+        std::cout << "\n RUN  " << file.string();
+        if (options.parallel) {
+            std::cout << " (parallel)";
         }
+        std::cout << "\n\n";
 
-        const std::filesystem::path runner_exe = work_dir / "test_runner";
+        const FileTestResult file_result = runSingleTestFile(options, file);
+        suite.tests_passed += file_result.tests_passed;
+        suite.tests_failed += file_result.tests_failed;
 
-        CompileOptions compile_options;
-        compile_options.input = runner_source;
-        compile_options.output = runner_exe;
-        compile_options.ir_output = work_dir / "test_runner.ll";
-        compile_options.clang = options.clang;
-        compile_options.keep_ir = options.keep_artifacts;
-        compile_options.build_kind = BuildKind::Exe;
-        compile_options.work_dir = work_dir;
-        compile_options.runtime_override = options.runtime_override;
-
-        const Program runner_program = loadProgram(runner_source, module_search_paths);
-        const CompileResult compiled = compileProgram(runner_program, compile_options);
-        const RunOutput run = executeProgramCapture(compiled.executable);
-
-        if (!run.stdout_text.empty()) {
-            std::cout << run.stdout_text;
-            if (run.stdout_text.back() != '\n') {
-                std::cout << '\n';
-            }
-        }
-
-        suite.exit_code = run.exit_code;
-        if (run.exit_code == 0) {
-            suite.files_passed = suite.files_total;
+        if (file_result.exit_code == 0) {
+            suite.files_passed++;
         } else {
-            suite.files_failed = suite.files_total;
+            suite.files_failed++;
         }
-    } catch (const std::exception& error) {
-        std::cout << " ✗ test runner [error: " << error.what() << "]\n";
-        suite.files_failed = suite.files_total;
-        suite.exit_code = 1;
     }
 
-    if (!options.keep_artifacts) {
-        removeTree(work_dir);
+    std::cout << "\n Test Files  " << suite.files_passed << " passed";
+    if (suite.files_failed > 0) {
+        std::cout << " | " << suite.files_failed << " failed";
     }
+    std::cout << " (" << suite.files_total << ")";
+    if (suite.tests_passed + suite.tests_failed > 0) {
+        std::cout << "\n      Tests  " << suite.tests_passed << " passed";
+        if (suite.tests_failed > 0) {
+            std::cout << " | " << suite.tests_failed << " failed";
+        }
+        std::cout << " (" << (suite.tests_passed + suite.tests_failed) << ")";
+    }
+    std::cout << "\n\n";
 
+    suite.exit_code = suite.files_failed > 0 ? 1 : 0;
     return suite;
 }
 

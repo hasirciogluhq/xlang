@@ -112,16 +112,21 @@ bool programNeedsPanicLink(const Program& program) {
 }
 
 bool programNeedsProcessLink(const Program& program) {
+    static const char* kProcessSyscalls[] = {
+        "env_get",       "env_set",         "cwd",           "chdir",
+        "run_capture",   "capture_stdout",  "proc_fork",     "proc_exec",
+        "proc_wait",     "proc_exit",       "proc_kill",     "pipe_create",
+        "pipe_read_fd",  "pipe_write_fd",   "fd_close",      "fd_read",
+        "fd_write",      "fd_dup2",
+    };
     for (const Function& function : program.functions) {
         if (!function.syscall) {
             continue;
         }
-        if (function.name == "env_get" || function.name == "run_capture" ||
-            function.name == "capture_stdout" || function.name == "proc_fork" ||
-            function.name == "proc_exec" || function.name == "proc_wait" ||
-            function.name == "proc_exit" || function.name == "pipe_create" ||
-            function.name == "fd_close") {
-            return true;
+        for (const char* name : kProcessSyscalls) {
+            if (function.name == name) {
+                return true;
+            }
         }
     }
     return false;

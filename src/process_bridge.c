@@ -2,10 +2,13 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <signal.h>
 #include <sys/wait.h>
 #include <unistd.h>
 
 static __thread char capture_buffer[1024 * 1024];
+static __thread char io_buffer[1024 * 1024];
+static __thread char cwd_buffer[4096];
 static __thread int capture_len;
 
 static void reset_capture(void) {
@@ -159,4 +162,66 @@ const char* xlang_env_get(const char* key) {
     }
     const char* value = getenv(key);
     return value != NULL ? value : "";
+}
+
+int32_t xlang_env_set(const char* key, const char* value) {
+    if (key == NULL || value == NULL) {
+        return 1;
+    }
+    return setenv(key, value, 1);
+}
+
+const char* xlang_cwd_get(void) {
+    if (getcwd(cwd_buffer, sizeof(cwd_buffer)) == NULL) {
+        cwd_buffer[0] = '\0';
+    }
+    return cwd_buffer;
+}
+
+int32_t xlang_chdir(const char* path) {
+    if (path == NULL) {
+        return 1;
+    }
+    return chdir(path);
+}
+
+const char* xlang_fd_read(int32_t fd, int32_t max) {
+    if (max <= 0 || max > (int32_t)sizeof(io_buffer) - 1) {
+        max = (int32_t)sizeof(io_buffer) - 1;
+    }
+    const ssize_t n = read(fd, io_buffer, (size_t)max);
+    if (n <= 0) {
+        io_buffer[0] = '\0';
+        return io_buffer;
+    }
+    io_buffer[n] = '\0';
+    return io_buffer;
+}
+
+int32_t xlang_fd_write(int32_t fd, const char* data) {
+    if (data == NULL) {
+        return 0;
+    }
+    const size_t len = strlen(data);
+    const ssize_t n = write(fd, data, len);
+    if (n < 0) {
+        return -1;
+    }
+    return (int32_t)n;
+}
+
+int32_t xlang_fd_dup2(int32_t old_fd, int32_t new_fd) {
+    return dup2(old_fd, new_fd);
+}
+
+int32_t xlang_proc_kill(int32_t pid, int32_t sig) {
+    return kill((pid_t)pid, sig);
+}
+
+int32_t xlang_pipe_read_fd(int64_t handle) {
+    return (int32_t)(handle >> 32);
+}
+
+int32_t xlang_pipe_write_fd(int64_t handle) {
+    return (int32_t)(handle & 0xffffffff);
 }

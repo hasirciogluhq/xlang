@@ -103,20 +103,29 @@ const MODULES = [
   { label: "http/router", detail: "Chi-like HTTP router (libs/http/router.xlang)" },
   { label: "http/server", detail: "HTTP server + ListenAndServe (libs/http/server.xlang)" },
   { label: "json", detail: "json.parse + field accessors (libs/json.xlang)" },
+  { label: "process", detail: "fork/exec/pipe/fd/env syscalls (libs/process.xlang)" },
   { label: "test", detail: "expect / test_run_* helpers (libs/test.xlang)" },
-  { label: "test_runner", detail: "Internal xlank test driver (libs/test_runner.xlang)" },
 ];
 
 const PROCESS_SYSCALLS: Builtin[] = [
   { label: "env_get", detail: "Read environment variable", insertText: 'env_get("${1:KEY}")' },
+  { label: "env_set", detail: "Set environment variable", insertText: 'env_set("${1:KEY}", "${2:value}")' },
+  { label: "cwd", detail: "Current working directory", insertText: "cwd()" },
+  { label: "chdir", detail: "Change working directory", insertText: 'chdir("${1:/path}")' },
   { label: "run_capture", detail: "Run executable, capture stdout/stderr", insertText: 'run_capture(${1:path}, "${2:args}")' },
   { label: "capture_stdout", detail: "Stdout from last run_capture", insertText: "capture_stdout()" },
-  { label: "proc_fork", detail: "Fork process", insertText: "proc_fork()" },
+  { label: "proc_fork", detail: "Fork process (returns pid)", insertText: "proc_fork()" },
   { label: "proc_exec", detail: "Exec with newline-separated args", insertText: 'proc_exec(${1:path}, "${2:args}")' },
   { label: "proc_wait", detail: "Wait for child pid", insertText: "proc_wait(${1:pid})" },
   { label: "proc_exit", detail: "Exit current process", insertText: "proc_exit(${1:code})" },
+  { label: "proc_kill", detail: "Send signal to process", insertText: "proc_kill(${1:pid}, ${2:signal})" },
   { label: "pipe_create", detail: "Create pipe (read<<32|write)", insertText: "pipe_create()" },
+  { label: "pipe_read_fd", detail: "Read end of pipe handle", insertText: "pipe_read_fd(${1:handle})" },
+  { label: "pipe_write_fd", detail: "Write end of pipe handle", insertText: "pipe_write_fd(${1:handle})" },
   { label: "fd_close", detail: "Close file descriptor", insertText: "fd_close(${1:fd})" },
+  { label: "fd_read", detail: "Read from fd into string", insertText: "fd_read(${1:fd}, ${2:max})" },
+  { label: "fd_write", detail: "Write string to fd", insertText: 'fd_write(${1:fd}, "${2:data}")' },
+  { label: "fd_dup2", detail: "Duplicate fd to target", insertText: "fd_dup2(${1:old_fd}, ${2:new_fd})" },
 ];
 
 const NET_SYSCALLS: Builtin[] = [
