@@ -18,6 +18,7 @@ struct CodegenOptions {
     bool link_runtime{true};
     std::string target_triple;
     std::vector<FunctionSignature> runtime_exports;
+    std::vector<FunctionSignature> runtime_syscalls;
     std::vector<StructDecl> runtime_structs;
 };
 

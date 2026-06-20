@@ -1127,8 +1127,26 @@ std::optional<FunctionSignature> Codegen::resolveFunctionCall(
     if (const std::optional<FunctionSignature> match = findMatchingFunction(name, arg_types, defined)) {
         return match;
     }
+    for (const auto& [alias, _] : import_aliases_) {
+        const std::string prefixed = importPrefixedName(alias, name);
+        if (const std::optional<FunctionSignature> match =
+                findMatchingFunction(prefixed, arg_types, defined)) {
+            return match;
+        }
+    }
     if (const std::optional<FunctionSignature> match =
             findMatchingFunction(name, arg_types, options_.runtime_exports)) {
+        return match;
+    }
+    for (const auto& [alias, _] : import_aliases_) {
+        const std::string prefixed = importPrefixedName(alias, name);
+        if (const std::optional<FunctionSignature> match =
+                findMatchingFunction(prefixed, arg_types, options_.runtime_exports)) {
+            return match;
+        }
+    }
+    if (const std::optional<FunctionSignature> match =
+            findMatchingFunction(name, arg_types, options_.runtime_syscalls)) {
         return match;
     }
     return std::nullopt;
@@ -2208,7 +2226,13 @@ std::pair<Type, std::string> Codegen::emitExpr(
                 if (const Function* definition =
                         findFunctionDefinition(*program_, resolved->name, arg_types);
                     definition != nullptr && definition->syscall) {
+                    syscalls_.insert(resolved->name);
                     return definition->name;
+                }
+                if (findMatchingFunction(resolved->name, paramTypes(resolved->params),
+                                         options_.runtime_syscalls)) {
+                    syscalls_.insert(resolved->name);
+                    return resolved->name;
                 }
                 return mangleFunctionName(resolved->name, paramTypes(resolved->params),
                                         resolved->variadic);

@@ -220,6 +220,7 @@ CompileResult compileXlangProgram(const Program& program, BuildContext& ctx) {
             runtime = loadRuntimeExports(runtime_options);
         }
         cg_options.runtime_exports = runtime.exports;
+        cg_options.runtime_syscalls = runtime.syscalls;
         cg_options.runtime_structs = runtime.structs;
     }
 

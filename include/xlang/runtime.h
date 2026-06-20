@@ -12,6 +12,7 @@ namespace xlang {
 struct RuntimeBundle {
     std::filesystem::path object;
     std::vector<FunctionSignature> exports;
+    std::vector<FunctionSignature> syscalls;
     std::vector<StructDecl> structs;
     bool needs_thread_link{false};
     bool needs_ssl_link{false};

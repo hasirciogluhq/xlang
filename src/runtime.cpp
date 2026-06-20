@@ -40,6 +40,22 @@ std::vector<FunctionSignature> collectExports(const Program& program) {
     return exports;
 }
 
+std::vector<FunctionSignature> collectSyscalls(const Program& program) {
+    std::vector<FunctionSignature> syscalls;
+    for (const Function& function : program.functions) {
+        if (!function.syscall) {
+            continue;
+        }
+        FunctionSignature signature;
+        signature.name = function.name;
+        signature.params = function.params;
+        signature.return_type = function.return_type;
+        signature.variadic = function.variadic;
+        syscalls.push_back(std::move(signature));
+    }
+    return syscalls;
+}
+
 std::vector<StructDecl> collectStructs(const Program& program) {
     return program.structs;
 }
@@ -181,6 +197,7 @@ RuntimeBundle loadRuntimeExports(const RuntimeOptions& options) {
 
     RuntimeBundle bundle;
     bundle.exports = collectExports(program);
+    bundle.syscalls = collectSyscalls(program);
     bundle.structs = collectStructs(program);
     bundle.needs_thread_link = programNeedsThreadLink(program);
     bundle.needs_ssl_link = programNeedsSslLink(program);
@@ -203,6 +220,7 @@ RuntimeBundle ensureRuntime(const RuntimeOptions& options) {
     RuntimeBundle bundle;
     bundle.object = object;
     bundle.exports = collectExports(program);
+    bundle.syscalls = collectSyscalls(program);
     bundle.structs = collectStructs(program);
     bundle.needs_thread_link = programNeedsThreadLink(program);
     bundle.needs_ssl_link = programNeedsSslLink(program);
