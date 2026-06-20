@@ -1,0 +1,38 @@
+# Build
+/build/
+/cmake-build-*/
+compile_commands.json
+
+# Compiled objects & binaries
+*.o
+*.ll
+*.a
+*.so
+*.dylib
+xlank
+hello
+examples/hello
+examples/math
+
+# Runtime build cache
+/runtime/runtime.o
+/runtime/rt.o
+/runtime/*.ll
+
+# macOS
+.DS_Store
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*~
+
+# CMake
+CMakeCache.txt
+CMakeFiles/
+cmake_install.cmake
+Makefile
+
+# Debug
+*.dSYM/
