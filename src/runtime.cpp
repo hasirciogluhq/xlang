@@ -4,6 +4,7 @@
 #include "xlang/compiler.h"
 #include "xlang/error.h"
 #include "xlang/module.h"
+#include "xlang/syscalls.h"
 
 #include <cstdlib>
 #include <fstream>
@@ -58,7 +59,7 @@ void compileObjectFile(const Program& program, const CompileOptions& options,
     cg_options.build_kind = options.build_kind;
     cg_options.link_runtime = false;
 
-    const std::string ir = Codegen::generate(program, cg_options);
+    const CodegenResult generated = Codegen::generate(program, cg_options);
     const std::filesystem::path ir_path =
         object_path.parent_path() / (object_path.stem().string() + ".ll");
 
@@ -67,30 +68,23 @@ void compileObjectFile(const Program& program, const CompileOptions& options,
         if (!out) {
             throw XlangError("failed to write IR: " + ir_path.string());
         }
-        out << ir;
+        out << generated.ir;
     }
 
     std::ostringstream cmd;
     cmd << options.clang << " -c \"" << ir_path.string() << "\" -o \"" << object_path.string() << "\"";
+    if (generated.needs_thread_link) {
+        cmd << " -pthread";
+    }
 
     const int status = runCommand(cmd.str());
     if (status != 0) {
-        throw XlangError("failed to compile object: " + object_path.string());
+        throw XlangError("failed to compile runtime object: " + object_path.string());
     }
 
     if (!options.keep_ir) {
         std::error_code ec;
         std::filesystem::remove(ir_path, ec);
-    }
-}
-
-void compileCObject(const std::string& clang, const std::filesystem::path& source,
-                    const std::filesystem::path& object) {
-    std::ostringstream cmd;
-    cmd << clang << " -c \"" << source.string() << "\" -o \"" << object.string() << "\"";
-    const int status = runCommand(cmd.str());
-    if (status != 0) {
-        throw XlangError("failed to compile runtime C shim: " + source.string());
     }
 }
 
@@ -123,15 +117,10 @@ std::vector<FunctionSignature> loadRuntimeExports(const std::filesystem::path& n
 RuntimeBundle ensureRuntime(const std::string& clang, bool use_cache) {
     const std::filesystem::path runtime_dir = runtimeDirectory(std::filesystem::current_path());
     const std::filesystem::path source = runtime_dir / "runtime.xlang";
-    const std::filesystem::path rt_c = runtime_dir / "rt.c";
-    const std::filesystem::path xlang_object = runtime_dir / "runtime.o";
-    const std::filesystem::path c_object = runtime_dir / "rt.o";
+    const std::filesystem::path object = runtime_dir / "runtime.o";
 
     if (!std::filesystem::exists(source)) {
         throw XlangError("missing runtime source: " + source.string());
-    }
-    if (!std::filesystem::exists(rt_c)) {
-        throw XlangError("missing runtime C shim: " + rt_c.string());
     }
 
     const Program program = loadProgram(source);
@@ -143,18 +132,20 @@ RuntimeBundle ensureRuntime(const std::string& clang, bool use_cache) {
     options.skip_runtime = true;
     options.keep_ir = false;
 
-    if (!use_cache || needsRebuild(source, xlang_object)) {
-        compileObjectFile(program, options, xlang_object);
-    }
-
-    if (!use_cache || needsRebuild(rt_c, c_object)) {
-        compileCObject(clang, rt_c, c_object);
+    if (!use_cache || needsRebuild(source, object)) {
+        compileObjectFile(program, options, object);
     }
 
     RuntimeBundle bundle;
     bundle.source = source;
-    bundle.objects = {xlang_object, c_object};
+    bundle.objects = {object};
     bundle.exports = collectExports(program);
+    for (const Function& function : program.functions) {
+        if (function.syscall && function.name == "start_thread") {
+            bundle.needs_thread_link = true;
+            break;
+        }
+    }
     return bundle;
 }
 

@@ -93,7 +93,7 @@ CompileResult compileProgram(const Program& program, const CompileOptions& optio
         cg_options.runtime_exports = runtime.exports;
     }
 
-    const std::string ir = Codegen::generate(program, cg_options);
+    const CodegenResult generated = Codegen::generate(program, cg_options);
 
     const std::filesystem::path parent =
         options.input.has_parent_path() ? options.input.parent_path() : std::filesystem::path(".");
@@ -107,7 +107,7 @@ CompileResult compileProgram(const Program& program, const CompileOptions& optio
         if (!out) {
             throw XlangError("failed to write IR: " + ir_path.string());
         }
-        out << ir;
+        out << generated.ir;
     }
 
     CompileResult result;
@@ -134,6 +134,9 @@ CompileResult compileProgram(const Program& program, const CompileOptions& optio
         std::ostringstream cmd;
         cmd << options.clang << " -c \"" << ir_path.string() << "\" -o \"" << object_path.string()
             << "\"";
+        if (generated.needs_thread_link) {
+            cmd << " -pthread";
+        }
         const int status = runCommand(cmd.str());
         if (status != 0) {
             throw XlangError("clang failed to compile object file");
@@ -159,6 +162,9 @@ CompileResult compileProgram(const Program& program, const CompileOptions& optio
             }
         }
         cmd << " -o \"" << output.string() << "\"";
+        if (generated.needs_thread_link || runtime.needs_thread_link) {
+            cmd << " -pthread";
+        }
         const int status = runCommand(cmd.str());
         if (status != 0) {
             throw XlangError("clang failed to link executable");

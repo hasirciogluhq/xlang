@@ -1,6 +1,7 @@
 #include "xlang/codegen.h"
 
 #include "xlang/error.h"
+#include "xlang/syscalls.h"
 
 #include <sstream>
 
@@ -8,12 +9,16 @@ namespace xlang {
 
 Codegen::Codegen(CodegenOptions options) : options_(std::move(options)) {}
 
-std::string Codegen::generate(const Program& program, const CodegenOptions& options) {
+CodegenResult Codegen::generate(const Program& program, const CodegenOptions& options) {
     Codegen cg(options);
+    cg.collectSyscalls(program);
     cg.emitPrelude(program);
     cg.emitGlobals(program);
     cg.emitGlobalInit(program);
     for (const Function& function : program.functions) {
+        if (function.syscall) {
+            continue;
+        }
         if (function.external) {
             cg.emitDeclareFunction(function);
         } else if (!function.body.statements.empty()) {
@@ -21,7 +26,28 @@ std::string Codegen::generate(const Program& program, const CodegenOptions& opti
             cg.emitFunction(function);
         }
     }
-    return cg.output_;
+    cg.emitSyscallLowering();
+
+    CodegenResult result;
+    result.ir = std::move(cg.output_);
+    result.syscalls = std::move(cg.syscalls_);
+    result.needs_thread_link = syscallsNeedThreadLink(result.syscalls);
+    return result;
+}
+
+void Codegen::collectSyscalls(const Program& program) {
+    for (const Function& function : program.functions) {
+        if (function.syscall) {
+            syscalls_.insert(function.name);
+        }
+    }
+}
+
+void Codegen::emitSyscallLowering() {
+    if (syscalls_.empty()) {
+        return;
+    }
+    emitSyscallDefinitions(output_, syscalls_);
 }
 
 void Codegen::emitPrelude(const Program& program) {
@@ -241,6 +267,11 @@ std::pair<std::string, std::string> Codegen::emitExpr(
             const std::string tmp = freshTmp();
             writeln("  " + tmp + " = load i32, i32* " + target + ", align 4");
             return {"i32", tmp};
+        }
+        case Expr::Kind::FunctionRef: {
+            const std::string tmp = freshTmp();
+            writeln("  " + tmp + " = ptrtoint i32 (i32)* @" + expr.name + " to i64");
+            return {"i64", tmp};
         }
         case Expr::Kind::Binary: {
             const auto [_, left] = emitExpr(*expr.left, locals);

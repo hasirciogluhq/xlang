@@ -16,8 +16,11 @@ examples/math
 
 # Runtime build cache
 /runtime/runtime.o
-/runtime/rt.o
 /runtime/*.ll
+
+# Legacy C shim (removed)
+/runtime/rt.c
+/runtime/rt.o
 
 # macOS
 .DS_Store

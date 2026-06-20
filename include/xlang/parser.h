@@ -5,6 +5,7 @@
 
 #include <memory>
 #include <string>
+#include <unordered_set>
 
 namespace xlang {
 
@@ -36,6 +37,7 @@ private:
     GlobalVar parseDeclareGlobal(const ItemModifiers& modifiers);
     Function parseFunction(const ItemModifiers& modifiers);
     Function parseDeclareFunction(const ItemModifiers& modifiers);
+    Function parseDeclareSyscall();
     std::vector<std::string> parseParams();
     Block parseBlock();
     Stmt parseStatement();
@@ -46,10 +48,13 @@ private:
     std::vector<std::unique_ptr<Expr>> parseCallArgs();
 
     [[nodiscard]] Span currentSpan() const;
+    [[nodiscard]] bool isFunctionName(const std::string& name) const;
+    void registerFunction(const std::string& name);
     [[nodiscard]] ParseError error(const std::string& message) const;
 
     std::vector<Token> tokens_;
     std::size_t pos_{0};
+    std::unordered_set<std::string> function_names_;
 };
 
 }  // namespace xlang

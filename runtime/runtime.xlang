@@ -1,10 +1,18 @@
-declare external fn __xlang_io_print_int(n)
-declare external fn system(cmd)
+declare syscall print_int(n)
+declare syscall start_thread(entry, arg)
+
+spawn_queue = 0
+
+fn scheduler_loop(arg) {
+    print(spawn_queue)
+    return 0
+}
 
 export fn print(n) {
-    return __xlang_io_print_int(n)
+    return print_int(n)
 }
 
 export fn spawn(cmd) {
-    return system(cmd)
+    spawn_queue = cmd
+    return start_thread(scheduler_loop, cmd)
 }

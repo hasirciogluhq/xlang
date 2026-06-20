@@ -11,7 +11,7 @@ const std::unordered_map<std::string, TokenKind> kKeywords = {
     {"fn", TokenKind::Fn},         {"local", TokenKind::Local},   {"return", TokenKind::Return},
     {"import", TokenKind::Import}, {"from", TokenKind::From},   {"as", TokenKind::As},
     {"export", TokenKind::Export}, {"external", TokenKind::External},
-    {"declare", TokenKind::Declare},
+    {"syscall", TokenKind::Syscall}, {"declare", TokenKind::Declare},
 };
 
 }  // namespace

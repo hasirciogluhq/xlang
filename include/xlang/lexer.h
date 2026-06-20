@@ -18,6 +18,7 @@ enum class TokenKind {
     As,
     Export,
     External,
+    Syscall,
     Declare,
     LParen,
     RParen,

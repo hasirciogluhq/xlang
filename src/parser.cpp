@@ -8,6 +8,11 @@ Program parseSource(const std::string &source) {
 
 Parser::Parser(std::vector<Token> tokens) : tokens_(std::move(tokens)) {
   tokens_.push_back(Token{TokenKind::End, "", 0, 0, 0});
+  for (std::size_t i = 0; i + 1 < tokens_.size(); ++i) {
+    if (tokens_[i].kind == TokenKind::Fn && tokens_[i + 1].kind == TokenKind::Ident) {
+      function_names_.insert(tokens_[i + 1].text);
+    }
+  }
 }
 
 ItemModifiers Parser::parseModifiers() {
@@ -49,6 +54,10 @@ Program Parser::parseProgram() {
 
     if (modifiers.declare) {
       validateModifiers(modifiers, "declare");
+      if (match(TokenKind::Syscall)) {
+        program.functions.push_back(parseDeclareSyscall());
+        continue;
+      }
       if (check(TokenKind::Fn)) {
         program.functions.push_back(parseDeclareFunction(modifiers));
       } else if (check(TokenKind::Ident)) {
@@ -155,6 +164,27 @@ Function Parser::parseFunction(const ItemModifiers &modifiers) {
   function.exported = modifiers.exported;
   function.external = modifiers.external;
   function.span = start;
+  registerFunction(function.name);
+  return function;
+}
+
+Function Parser::parseDeclareSyscall() {
+  const Span start = currentSpan();
+  if (match(TokenKind::Fn)) {
+    // declare syscall fn name(...) — fn opsiyonel
+  }
+  const Token name = consume(TokenKind::Ident, "expected syscall name");
+  consume(TokenKind::LParen, "expected '('");
+  std::vector<std::string> params = parseParams();
+  consume(TokenKind::RParen, "expected ')'");
+  consumeEndOfStatement();
+
+  Function function;
+  function.name = name.text;
+  function.params = std::move(params);
+  function.syscall = true;
+  function.span = start;
+  registerFunction(function.name);
   return function;
 }
 
@@ -172,6 +202,7 @@ Function Parser::parseDeclareFunction(const ItemModifiers &modifiers) {
   function.params = std::move(params);
   function.external = true;
   function.span = start;
+  registerFunction(function.name);
   (void)modifiers;
   return function;
 }
@@ -267,8 +298,8 @@ void Parser::consumeEndOfStatement() {
   if (check(TokenKind::Fn) || check(TokenKind::Local) ||
       check(TokenKind::Return) || check(TokenKind::Import) ||
       check(TokenKind::From) || check(TokenKind::Ident) ||
-      check(TokenKind::Export) || check(TokenKind::External) ||
-      check(TokenKind::Declare)) {
+        check(TokenKind::Export) || check(TokenKind::External) ||
+        check(TokenKind::Syscall) || check(TokenKind::Declare)) {
     return;
   }
   throw error("expected ';' or newline");
@@ -330,6 +361,9 @@ std::unique_ptr<Expr> Parser::parsePrimary() {
       consume(TokenKind::RParen, "expected ')'");
       return Expr::makeCall(name, std::move(args), span);
     }
+    if (isFunctionName(name)) {
+      return Expr::makeFunctionRef(name, span);
+    }
     return Expr::makeVar(name, span);
   }
 
@@ -384,6 +418,14 @@ Span Parser::currentSpan() const {
   span.line = peek().line;
   span.column = peek().column;
   return span;
+}
+
+void Parser::registerFunction(const std::string& name) {
+  function_names_.insert(name);
+}
+
+bool Parser::isFunctionName(const std::string& name) const {
+  return function_names_.find(name) != function_names_.end();
 }
 
 ParseError Parser::error(const std::string &message) const {

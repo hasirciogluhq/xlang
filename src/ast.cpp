@@ -39,4 +39,12 @@ std::unique_ptr<Expr> Expr::makeCall(std::string name, std::vector<std::unique_p
     return expr;
 }
 
+std::unique_ptr<Expr> Expr::makeFunctionRef(std::string name, Span span) {
+    auto expr = std::make_unique<Expr>();
+    expr->kind = Kind::FunctionRef;
+    expr->name = std::move(name);
+    expr->span = span;
+    return expr;
+}
+
 }  // namespace xlang

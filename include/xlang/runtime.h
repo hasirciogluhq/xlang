@@ -12,6 +12,7 @@ struct RuntimeBundle {
     std::filesystem::path source;
     std::vector<std::filesystem::path> objects;
     std::vector<FunctionSignature> exports;
+    bool needs_thread_link{false};
 };
 
 [[nodiscard]] std::filesystem::path findRuntimeSource(const std::filesystem::path& near);

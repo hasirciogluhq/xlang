@@ -17,14 +17,21 @@ struct CodegenOptions {
     std::vector<FunctionSignature> runtime_exports;
 };
 
+struct CodegenResult {
+    std::string ir;
+    std::unordered_set<std::string> syscalls;
+    bool needs_thread_link{false};
+};
+
 class Codegen {
 public:
-    [[nodiscard]] static std::string generate(const Program& program,
-                                              const CodegenOptions& options = {});
+    [[nodiscard]] static CodegenResult generate(const Program& program,
+                                                const CodegenOptions& options = {});
 
 private:
     explicit Codegen(CodegenOptions options);
 
+    void collectSyscalls(const Program& program);
     void emitPrelude(const Program& program);
     void emitRuntimeDeclares(const Program& program);
     void emitGlobals(const Program& program);
@@ -32,6 +39,7 @@ private:
     void emitFunction(const Function& function);
     void emitDeclareFunction(const FunctionSignature& function);
     void emitDeclareFunction(const Function& function);
+    void emitSyscallLowering();
 
     bool emitStatement(const Stmt& stmt, std::unordered_map<std::string, std::string>& locals);
     std::pair<std::string, std::string> emitExpr(const Expr& expr,
@@ -54,6 +62,7 @@ private:
     std::uint32_t tmp_counter_{0};
     std::unordered_set<std::string> globals_;
     std::unordered_set<std::string> defined_functions_;
+    std::unordered_set<std::string> syscalls_;
     bool needs_global_init_{false};
 };
 

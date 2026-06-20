@@ -27,6 +27,8 @@ std::unique_ptr<Expr> cloneExpr(const Expr& expr) {
             }
             return Expr::makeCall(expr.name, std::move(args), expr.span);
         }
+        case Expr::Kind::FunctionRef:
+            return Expr::makeFunctionRef(expr.name, expr.span);
     }
     throw XlangError("invalid expression clone");
 }
@@ -50,6 +52,7 @@ Function cloneFunction(const Function& function) {
     copy.span = function.span;
     copy.exported = function.exported;
     copy.external = function.external;
+    copy.syscall = function.syscall;
     copy.body.span = function.body.span;
     for (const Stmt& stmt : function.body.statements) {
         Stmt copied;

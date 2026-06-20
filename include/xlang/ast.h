@@ -54,7 +54,7 @@ struct GlobalVar {
 };
 
 struct Expr {
-    enum class Kind { IntLiteral, Variable, Binary, Call } kind;
+    enum class Kind { IntLiteral, Variable, Binary, Call, FunctionRef } kind;
 
     Span span{};
     std::int64_t int_value{};
@@ -70,6 +70,7 @@ struct Expr {
                                             std::unique_ptr<Expr> right, Span span);
     static std::unique_ptr<Expr> makeCall(std::string name, std::vector<std::unique_ptr<Expr>> args,
                                           Span span);
+    static std::unique_ptr<Expr> makeFunctionRef(std::string name, Span span);
 };
 
 struct Stmt {
@@ -92,6 +93,7 @@ struct Function {
     Block body;
     bool exported{false};
     bool external{false};
+    bool syscall{false};
     Span span{};
 };
 

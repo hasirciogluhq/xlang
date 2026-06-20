@@ -15,6 +15,7 @@ add_executable(xlank
     src/compiler.cpp
     src/module.cpp
     src/runtime.cpp
+    src/syscalls.cpp
 )
 
 target_include_directories(xlank PRIVATE include)
