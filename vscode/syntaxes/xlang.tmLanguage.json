@@ -121,11 +121,15 @@
         },
         {
           "name": "support.function.http.xlang",
-          "match": "\\b(NewRouter|Get|Post|Put|Delete|Patch|Head|Options|Group|Mount|Match|URLParam|Method|Path|Respond|RespondText|RespondJson|ResetResponse|ResponseStatus|ResponseBody|ResponseType|Dispatch|Listen|Accept|ListenAndServe|ServeOnce)\\b(?=\\s*\\()"
+          "match": "\\b(NewRouter|Get|Post|Put|Delete|Patch|Head|Options|Group|Mount|Match|DispatchRequest|ListenAndServe|ServeOnce|Param|RespondText|RespondJson|RespondHtml|Protocol|Hostname|Port)\\b(?=\\s*\\()"
+        },
+        {
+          "name": "support.function.sync.xlang",
+          "match": "\\b(NewLock|NewRWLock|NewAtomicInt|NewAtomicBool|Lock|Unlock|SetTimeout|TryLock|IsHeld|ReadLock|ReadUnlock|WriteLock|WriteUnlock|SetWriteTimeout|WriteIsHeld|FetchAdd|CompareExchange)\\b(?=\\s*\\()"
         },
         {
           "name": "support.function.compiler.xlang",
-          "match": "\\b(invoke0|invoke|str_len|str_eq|str_byte|str_find|str_sub|str_from_int|array_len|array_push|array_get|array_pop|array_pop_front)\\b(?=\\s*\\()"
+          "match": "\\b(invoke0|invoke1|invoke|str_len|str_eq|str_byte|str_find|str_sub|str_from_int|array_len|array_push|array_get|array_pop|array_pop_front)\\b(?=\\s*\\()"
         },
         {
           "name": "support.function.test.xlang",

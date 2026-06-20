@@ -1,0 +1,51 @@
+---
+description: xlang libs/ API design — no mutable module globals, instance/context methods
+globs: libs/**/*.xlang
+alwaysApply: false
+---
+
+# xlang Library API Rules
+
+Libraries under `libs/` are **not** syscall bridges. They must expose **instance/context APIs**.
+
+## Forbidden in `libs/`
+
+- Mutable module-level state used as implicit context (`req: Request`, `listen: ServerInfo`, `dispatch_on`, …)
+- Free functions that take the instance as first arg when a method exists (`Foo(ctx, …)` call style from outside)
+- Handle-style APIs for library types (`LockAcquire(l, 0)`, `DispatchRequest(r, …)` as module fn)
+
+## Allowed module-level in `libs/`
+
+- `const` / static literals only (if the language supports them)
+- Type/struct definitions
+- Private helpers (`fn register_route(...)`)
+
+## Required patterns
+
+```xlang
+// Factory returns instance
+local r = http.NewRouter()
+
+// Methods on instance
+r.Get("/ping", handle_ping)
+r.DispatchRequest("GET", "/ping")
+r.ListenAndServe("127.0.0.1", 8080, on_listen)
+
+// Per-request/per-callback context passed explicitly to handlers
+fn handle_ping(req: Request) {
+    req.RespondText(200, "pong")
+}
+
+fn on_listen(info: ServerInfo) {
+    print("%s://%s:%d", info.Protocol(), info.Hostname(), info.Port())
+}
+```
+
+## Concurrency
+
+Never store per-request state in module globals — parallel handlers/spawn will race. Create context on the stack/heap inside `DispatchRequest` (or equivalent) and pass it via `invoke1(handler, ctx)`.
+
+## Syscalls vs libraries
+
+- **`declare syscall`** — OS bridge only; handle/int64 fds are OK here and in `runtime/`
+- **`libs/`** — domain API; return structs, use methods, pass context into callbacks

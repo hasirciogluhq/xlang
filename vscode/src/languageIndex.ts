@@ -1,7 +1,7 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 import * as vscode from "vscode";
-import { ATOMIC_INT_METHODS, JSON_METHODS, LOCK_METHODS, REQUEST_METHODS, ROUTER_METHODS, RWLOCK_METHODS, SERVER_METHODS, type CatalogEntry } from "./builtins";
+import { ATOMIC_BOOL_METHODS, ATOMIC_INT_METHODS, JSON_METHODS, LOCK_METHODS, REQUEST_METHODS, ROUTER_METHODS, RWLOCK_METHODS, SERVER_METHODS, SYNC_FACTORIES, type CatalogEntry } from "./builtins";
 import {
   type ImportBinding,
   type ParsedModule,
@@ -79,7 +79,7 @@ export class LanguageIndex {
   }
 
   methodsForType(typeName: string): SymbolDoc[] {
-    return [...ROUTER_METHODS, ...JSON_METHODS, ...LOCK_METHODS, ...RWLOCK_METHODS, ...ATOMIC_INT_METHODS, ...REQUEST_METHODS, ...SERVER_METHODS]
+    return [...ROUTER_METHODS, ...JSON_METHODS, ...LOCK_METHODS, ...RWLOCK_METHODS, ...ATOMIC_INT_METHODS, ...ATOMIC_BOOL_METHODS, ...REQUEST_METHODS, ...SERVER_METHODS]
       .filter((m) => m.receiver === typeName)
       .map(catalogToSymbolDoc);
   }
@@ -110,11 +110,31 @@ export class LanguageIndex {
     }
 
     const localType = this.getDocumentModule(document).locals.get(trimmed);
-    if (localType) {
-      return mergeSymbols(this.methodsForType(localType), this.findMethodsOnType(localType, document));
+    const paramType = localType ?? this.paramTypeForName(document, trimmed);
+    if (paramType) {
+      return mergeSymbols(this.methodsForType(paramType), this.findMethodsOnType(paramType, document));
     }
 
     return [];
+  }
+
+  private paramTypeForName(document: vscode.TextDocument, name: string): string | undefined {
+    for (const sym of this.getDocumentModule(document).symbols) {
+      if (sym.kind !== "function") {
+        continue;
+      }
+      const paramsMatch = /\(([^)]*)\)/.exec(sym.signature);
+      if (!paramsMatch) {
+        continue;
+      }
+      for (const part of paramsMatch[1].split(",")) {
+        const m = /^\s*(\w+)\s*:\s*(\w+)/.exec(part.trim());
+        if (m && m[1] === name) {
+          return m[2];
+        }
+      }
+    }
+    return undefined;
   }
 
   findSymbol(document: vscode.TextDocument, name: string, namespace?: string): SymbolDoc | undefined {

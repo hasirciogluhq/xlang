@@ -323,7 +323,6 @@ A folder under `libs/` is a **package** — no barrel file required:
 
 ```
 libs/http/router.xlang
-libs/http/server.xlang
 ```
 
 ```xlang
@@ -356,8 +355,7 @@ from json import parse                         // selective (legacy)
 |--------|-------------|
 | `json` | `parse`, field accessors |
 | `http` | Router + TCP server package |
-| `http/router` | `NewRouter()`, `r.Get(...)`, `r.DispatchRequest(...)`, handler context `req.RespondText/Json/Html` |
-| `http/server` | `r.ListenAndServe(...)`, listen callback `listen.Protocol/Hostname/Port()` |
+| `http/router` | `NewRouter()`, `r.Get(...)`, `r.DispatchRequest(...) → Request`, `r.ListenAndServe(...)`, handlers `fn(req: Request)` |
 | `test` | Vitest-style `expect` |
 | `process` | fork, pipe, fd, env, `file_read` |
 
@@ -427,6 +425,120 @@ The compiler automatically generates a **thunk** (parameterless `i32()` wrapper)
 - `init_scheduler()` — starts CPU-1 worker threads (min 1)
 
 Syscalls only for: `cpu_count`, `mutex_*`, `cond_*`, `start_thread`.
+
+---
+
+## Concurrency and sync
+
+Mutex, reader-writer lock, and atomic types live in `runtime/sync.xlang`. Logic is pure xlang; only minimal OS/LLVM bridges are used (`mutex_*`, `cond_*`, `atomic_*`, `sleep_ms`).
+
+```xlang
+import sync from sync
+
+struct SharedState {
+    count: AtomicInt
+    guard: Lock
+}
+
+fn main() {
+    local st: SharedState = new SharedState {
+        count = sync.NewAtomicInt(0),
+        guard = sync.NewLock()
+    }
+    st.guard.Lock()
+    st.count.FetchAdd(1)
+    st.guard.Unlock()
+    return 0
+}
+```
+
+### Lock (mutex)
+
+| Method | Description |
+|--------|-------------|
+| `NewLock()` | Create embeddable `Lock` |
+| `l.Lock()` | Block until acquired |
+| `l.Unlock()` | Release; clears timeout |
+| `l.SetTimeout(ms)` | Auto-release after `ms` **while held** (returns 0 if not held) |
+| `l.TryLock()` | Non-blocking acquire |
+| `l.IsHeld()` | Returns `1` while held |
+
+### RWLock
+
+| Method | Description |
+|--------|-------------|
+| `NewRWLock()` | Reader-writer lock |
+| `rw.ReadLock()` / `rw.ReadUnlock()` | Shared read access |
+| `rw.WriteLock()` / `rw.WriteUnlock()` | Exclusive write access |
+| `rw.SetWriteTimeout(ms)` | Auto-release write lock while held |
+| `rw.WriteIsHeld()` | Returns `1` while write held |
+
+### AtomicInt / AtomicBool
+
+| Method | Description |
+|--------|-------------|
+| `NewAtomicInt(n)` / `NewAtomicBool(v)` | Heap atomic cell |
+| `a.Load()` / `a.Store(v)` | Atomic load/store |
+| `a.FetchAdd(delta)` | Fetch-and-add (`AtomicInt`) |
+| `a.CompareExchange(exp, des)` | CAS (`AtomicInt`) |
+
+Syscalls (internal bridge only): `atomic_*`, `mutex_*`, `cond_*`, `sleep_ms`.
+
+See `examples/sync_lock.xlang` for `go` + mutex + atomic counter.
+
+---
+
+## HTTP server (libs/http)
+
+Router + TCP server live in `libs/http/router.xlang`. **No mutable module globals** — each request gets its own `Request` instance passed to the handler.
+
+```xlang
+import * as http from http
+
+fn handle_ping(req: Request) {
+    req.RespondText(200, "pong")
+    return 0
+}
+
+fn on_listen(info: ServerInfo) {
+    print("running at %s://%s:%d", info.Protocol(), info.Hostname(), info.Port())
+    return 0
+}
+
+fn main() {
+    local r = http.NewRouter()
+    local api = r.Group("/api")
+    api.Get("/info", handle_api_info)
+    r.Get("/ping", handle_ping)
+    r.ListenAndServe("127.0.0.1", 8080, on_listen)
+    return 0
+}
+```
+
+### Router methods
+
+| Method | Description |
+|--------|-------------|
+| `NewRouter()` | New router instance |
+| `r.Get(path, handler)` | Register GET route (also Post, Put, Delete, …) |
+| `r.Group(prefix)` | Sub-router sharing routes (prefix chain) |
+| `r.Mount(prefix, child)` | Mount another router tree |
+| `r.DispatchRequest(method, path) → Request` | Match + invoke handler with `Request` |
+| `r.ListenAndServe(host, port, on_listen)` | TCP server loop |
+| `r.ServeOnce(...)` | Single connection then exit |
+
+Handlers must accept `Request`: `fn handler(req: Request)`. Listen callback: `fn on_listen(info: ServerInfo)`.
+
+### Request methods
+
+| Method | Description |
+|--------|-------------|
+| `req.Param(name)` | URL path parameter (`/user/{id}`) |
+| `req.RespondText(status, body)` | Plain-text response |
+| `req.RespondJson(status, body)` | JSON response |
+| `req.RespondHtml(status, body)` | HTML response |
+
+After `DispatchRequest`, read `resp.status`, `resp.body`, `resp.content_type` from the returned `Request`.
 
 ---
 
@@ -557,7 +669,8 @@ Not syscalls; codegen special cases:
 | Name | Description |
 |------|-------------|
 | `print(...)` | Variadic printf (see above) |
-| `invoke0(entry)` | `int64` function pointer → parameterless call |
+| `invoke0(entry)` | `int64` fn ptr → call with no args |
+| `invoke1(entry, ctx)` | `int64` fn ptr → call with one arg (struct pointer, `i32`, …) |
 | `array_len(arr)` | Array length |
 | `array_push(arr, val)` | Append to end |
 | `array_pop_front(arr)` | Take and remove from front |
@@ -567,7 +680,7 @@ Not syscalls; codegen special cases:
 | `str_find(haystack, needle)` | Index of substring, or -1 |
 | `str_sub(s, start, len)` | Substring copy |
 
-`invoke0` is used by the scheduler worker loop to run task entries.
+`invoke0` — scheduler worker loop. `invoke1` — HTTP handlers (`fn(req: Request)`) and listen callbacks (`fn(info: ServerInfo)`).
 
 ---
 
@@ -595,6 +708,8 @@ Early version; known constraints:
 | `examples/math.xlang` | export module |
 | `examples/scheduler.xlang` | spawn, wait_all |
 | `examples/fetch.xlang` | fetch HTTP GET |
+| `examples/http_server.xlang` | HTTP router + ListenAndServe |
+| `examples/sync_lock.xlang` | Lock + AtomicInt + spawn |
 | `test/main.xlang` + `test/lib.xlang` | external link |
 | `test/xlang/*.test.xlang` | runtime tests (`xlank test`) |
 

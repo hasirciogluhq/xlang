@@ -186,13 +186,13 @@
     "body": [
       "import * as http from http",
       "",
-      "fn handle_root() {",
-      "\thttp.req.RespondText(200, \"ok\")",
+      "fn handle_root(req: Request) {",
+      "\treq.RespondText(200, \"ok\")",
       "\treturn 0",
       "}",
       "",
-      "fn on_listen() {",
-      "\tprint(\"running at %s://%s:%d\", http.listen.Protocol(), http.listen.Hostname(), http.listen.Port())",
+      "fn on_listen(info: ServerInfo) {",
+      "\tprint(\"running at %s://%s:%d\", info.Protocol(), info.Hostname(), info.Port())",
       "\treturn 0",
       "}",
       "",
@@ -208,8 +208,8 @@
   "HTTP route handler": {
     "prefix": "handler",
     "body": [
-      "fn ${1:handle}() {",
-      "\thttp.req.RespondText(200, \"${2:ok}\")",
+      "fn ${1:handle}(req: Request) {",
+      "\treq.RespondText(200, \"${2:ok}\")",
       "\treturn 0",
       "}"
     ],

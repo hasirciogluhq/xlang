@@ -1,11 +1,18 @@
 import * as vscode from "vscode";
 import {
+  ATOMIC_BOOL_METHODS,
+  ATOMIC_INT_METHODS,
   COMPILER_BUILTINS,
   EXPECT_CHAIN,
   KEYWORDS,
+  LOCK_METHODS,
   NET_SYSCALLS,
   PROCESS_SYSCALLS,
+  REQUEST_METHODS,
+  ROUTER_METHODS,
   RUNTIME_BUILTINS,
+  RWLOCK_METHODS,
+  SERVER_METHODS,
   TEST_BUILTINS,
   TYPES,
   catalogToHover,
@@ -117,6 +124,13 @@ function findCatalogEntry(name: string): CatalogEntry | undefined {
     ...EXPECT_CHAIN,
     ...PROCESS_SYSCALLS,
     ...NET_SYSCALLS,
+    ...ROUTER_METHODS,
+    ...REQUEST_METHODS,
+    ...SERVER_METHODS,
+    ...LOCK_METHODS,
+    ...RWLOCK_METHODS,
+    ...ATOMIC_INT_METHODS,
+    ...ATOMIC_BOOL_METHODS,
   ];
   return pools.find((e) => e.label === name);
 }

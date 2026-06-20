@@ -12,7 +12,7 @@ Built with **Bun** + TypeScript. Requires the [`xlank`](https://github.com/hasir
 |---------|-------------|
 | **Completion** | Keywords, types, runtime/builtins, local symbols, import aliases |
 | **Import-aware** | `http.NewRouter()` completes from `libs/http/` exports after `import * as http from http` |
-| **Member access** | `r.Get(`, `data.Int(` — methods inferred from struct type (`Router`, `Json`, …) |
+| **Member access** | `r.Get(`, `req.RespondText(`, `data.Int(` — methods on `Router`, `Request`, `Json`, … |
 | **Module picker** | Typing `import` suggests workspace modules (`http`, `json`, `http/router`, …) with export preview |
 | **Hover** | Markdown docs on builtins, exported functions, structs, and imported symbols |
 | **Go to definition** | Jump to the `.xlang` file where an imported symbol is defined |
@@ -96,8 +96,13 @@ Or install from the marketplace when published.
 ```xlang
 import * as http from http
 
-fn on_listen() {
-    print("running at %s://%s:%d", http.listen.Protocol(), http.listen.Hostname(), http.listen.Port())
+fn handle_ping(req: Request) {
+    req.RespondText(200, "pong")
+    return 0
+}
+
+fn on_listen(info: ServerInfo) {
+    print("running at %s://%s:%d", info.Protocol(), info.Hostname(), info.Port())
     return 0
 }
 
@@ -109,7 +114,7 @@ fn main() {
 }
 ```
 
-Hover `http.ListenAndServe` or `r.Get` for signatures. Completion after `http.` lists router + server exports.
+Hover `r.ListenAndServe` or `req.RespondText` for signatures. Completion after `req.` lists Request methods; after `r.` lists Router methods.
 
 ## License
 

@@ -2,10 +2,12 @@ import * as vscode from "vscode";
 import {
   COMPILER_BUILTINS,
   EXPECT_CHAIN,
+  HTTP_TYPES,
   KEYWORDS,
   NET_SYSCALLS,
   PROCESS_SYSCALLS,
   RUNTIME_BUILTINS,
+  SYNC_FACTORIES,
   TEST_BUILTINS,
   TYPES,
   catalogToCompletion,
@@ -84,6 +86,17 @@ export function registerCompletions(context: vscode.ExtensionContext): void {
             item.documentation = new vscode.MarkdownString(`Import alias → \`${binding.modulePath}\``);
             item.sortText = `5_${binding.alias}`;
             items.push(item);
+
+            if (binding.modulePath === "sync" || binding.alias === "sync") {
+              for (const entry of SYNC_FACTORIES) {
+                items.push(catalogToCompletion(entry, "5"));
+              }
+            }
+            if (binding.modulePath === "http" || binding.modulePath.startsWith("http/")) {
+              for (const entry of HTTP_TYPES) {
+                items.push(catalogToCompletion(entry, "5"));
+              }
+            }
           }
 
           if (/expect\s*\([^)]*\)\s*\.\s*[\w]*$/.test(linePrefix) || /\.(to\w*)?$/.test(linePrefix)) {

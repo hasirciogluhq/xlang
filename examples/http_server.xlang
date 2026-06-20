@@ -1,28 +1,28 @@
 import * as http from http
 import process from process
 
-fn on_listen() {
-    print("xlang running at %s://%s:%d", http.listen.Protocol(), http.listen.Hostname(), http.listen.Port())
+fn on_listen(info: ServerInfo) {
+    print("xlang running at %s://%s:%d", info.Protocol(), info.Hostname(), info.Port())
     return 0
 }
 
-fn handle_index() {
+fn handle_index(req: Request) {
     local html = file_read("examples/index.html")
     if str_len(html) == 0 {
-        http.req.RespondText(404, "examples/index.html not found")
+        req.RespondText(404, "examples/index.html not found")
         return 0
     }
-    http.req.RespondHtml(200, html)
+    req.RespondHtml(200, html)
     return 0
 }
 
-fn handle_api_info() {
-    http.req.RespondJson(200, "{\"name\":\"xlang\",\"runtime\":\"native\",\"ok\":true}")
+fn handle_api_info(req: Request) {
+    req.RespondJson(200, "{\"name\":\"xlang\",\"runtime\":\"native\",\"ok\":true}")
     return 0
 }
 
-fn handle_ping() {
-    http.req.RespondText(200, "pong")
+fn handle_ping(req: Request) {
+    req.RespondText(200, "pong")
     return 0
 }
 

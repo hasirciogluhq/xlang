@@ -26,7 +26,7 @@
 | Memory | `new` / `delete`, struct fields, heap |
 | Control flow | `if` / `else`, `while` |
 | Strings | Concat (`+`), `printf`-style formatted `print` |
-| Concurrency | Go-routine-like `spawn` / `wait_all` (scheduler in xlang) |
+| Concurrency | `spawn` / `wait_all`, `sync` module (Lock, RWLock, AtomicInt) |
 | Linking | Link external `.o` files |
 
 Full language reference: **[docs/LANGUAGE.md](docs/LANGUAGE.md)**  
@@ -72,7 +72,7 @@ IntelliSense, hover documentation, import-aware completions, diagnostics, and ru
 
 ```bash
 cd vscode && bun install && bun run compile && bun run package
-code --install-extension xlang-0.6.0.vsix
+code --install-extension xlang-1.0.0.vsix
 ```
 
 See [vscode/README.md](vscode/README.md) for details.
@@ -131,12 +131,13 @@ import router from http/router
 fn TestPingRoute() {
     local r = router.NewRouter()
     r.Get("/ping", handle_ping)
-    r.DispatchRequest("GET", "/ping")
+    local resp = r.DispatchRequest("GET", "/ping")
+    expect(resp.status).toEqual(200)
     return 0
 }
 
-fn handle_ping() {
-    router.req.RespondText(200, "pong")
+fn handle_ping(req: Request) {
+    req.RespondText(200, "pong")
     expect(1).toEqual(1)
     return 0
 }
@@ -150,7 +151,7 @@ xlang/
 ├── include/xlang/    # C++ headers
 ├── runtime/          # Embedded runtime package (print, scheduler, net, errors)
 ├── libs/             # Importable libraries (json, http/, test, process)
-│   └── http/         # Router + server package
+│   └── http/         # Router + TCP server (router.xlang)
 ├── examples/         # Sample programs
 ├── test/xlang/       # *.test.xlang suite
 ├── vscode/           # VS Code extension (IntelliSense, hover, diagnostics)
@@ -175,11 +176,12 @@ User programs are linked with the **runtime** by default (`runtime/` package):
 - **`print(...)`** — variadic formatted output
 - **`fetch(url)`** — HTTP/HTTPS GET (`runtime/net.xlang`)
 - **`spawn` / `wait_all` / `cpu` / `add_worker`** — scheduler (`runtime/scheduler.xlang`)
+- **`sync`** — `Lock`, `RWLock`, `AtomicInt` with method API (`l.Lock()`, `a.FetchAdd()`)
 
 Importable **libs** (embedded at compile time):
 
 - **`json`** — parse + typed field access
-- **`http`** — router + TCP server (`ListenAndServe` with listen callback)
+- **`http`** — router + TCP server (`r.ListenAndServe`, handlers `fn(req: Request)`)
 - **`test`** — Vitest-style `expect`
 - **`process`** — fork, pipe, fd, env, `file_read`
 

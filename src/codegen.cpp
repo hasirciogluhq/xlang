@@ -2101,6 +2101,18 @@ std::pair<Type, std::string> Codegen::emitExpr(
                 return {Type{TypeKind::Int32}, tmp};
             }
 
+            if (expr.name == "invoke1" && expr.args.size() == 2) {
+                const auto [_, entry] = emitExpr(*expr.args[0], locals);
+                const auto [arg_ty, arg_val] = emitExpr(*expr.args[1], locals);
+                const std::string fn = freshTmp();
+                writeln("  " + fn + " = inttoptr i64 " + entry + " to i32 (" +
+                        llvmTypeName(arg_ty) + ")*");
+                const std::string tmp = freshTmp();
+                writeln("  " + tmp + " = call i32 " + fn + "(" + llvmTypeName(arg_ty) + " " +
+                        arg_val + ")");
+                return {Type{TypeKind::Int32}, tmp};
+            }
+
             if (expr.name == "invoke" && expr.args.size() == 2) {
                 const auto [_, entry] = emitExpr(*expr.args[0], locals);
                 const auto [__, arg] = emitExpr(*expr.args[1], locals);
