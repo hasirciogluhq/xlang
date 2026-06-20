@@ -200,8 +200,9 @@ export const ATOMIC_BOOL_METHODS: CatalogEntry[] = [
 ];
 
 export const KNOWN_MODULES: CatalogEntry[] = [
-  { label: "http", detail: "module", documentation: "HTTP router + TCP server (`libs/http/router.xlang`)." },
-  { label: "http/router", detail: "module", documentation: "Router, Context, ListenAndServe — Gin-style instance methods." },
+  { label: "http", detail: "module", documentation: "HTTP package: `http/router` + `http/server` (Context, ListenAndServe)." },
+  { label: "http/router", detail: "module", documentation: "Router, Context, middleware — Gin-style routing." },
+  { label: "http/server", detail: "module", documentation: "TCP server: ListenAndServe, ServeOnce, ServerInfo." },
   { label: "json", detail: "module", documentation: "JSON parse + typed field accessors (`data.Int(key)`)." },
   { label: "test", detail: "module", documentation: "Vitest-style `expect` API and test runner hooks." },
   { label: "process", detail: "module", documentation: "Process, pipe, fd, env syscalls." },
