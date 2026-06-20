@@ -668,10 +668,71 @@ void ModuleLoader::collectPreludeStructs(const ImportDecl& import,
     addStructs(loadFile(dep_path));
 }
 
+void mergeSelectiveImportSupport(Program& into, const Program& dep) {
+    mergeStructs(into, dep);
+
+    for (const GlobalVar& global : dep.globals) {
+        if (isImportableGlobal(global)) {
+            continue;
+        }
+        if (hasGlobal(into, global.name)) {
+            continue;
+        }
+        addGlobal(into, cloneGlobal(global));
+    }
+
+    for (const Function& function : dep.functions) {
+        if (function.syscall) {
+            continue;
+        }
+        if (isImportableFunction(function)) {
+            if (hasFunctionOverload(into, function)) {
+                continue;
+            }
+            addFunction(into, cloneFunction(function));
+            continue;
+        }
+        if (function.body.statements.empty() && !function.external) {
+            continue;
+        }
+        if (hasFunctionOverload(into, function)) {
+            continue;
+        }
+        addFunction(into, cloneFunction(function));
+    }
+}
+
+[[nodiscard]] bool hasExportedFunctionNamed(const Program& program, const std::string& name) {
+    for (const Function& function : program.functions) {
+        if (function.name != name) {
+            continue;
+        }
+        if (isImportableFunction(function) || function.syscall) {
+            return true;
+        }
+    }
+    return false;
+}
+
 void ModuleLoader::mergeFromClauses(Program& into, ImportDecl& import,
                                     const std::filesystem::path& from_dir) {
     const std::filesystem::path dep_path = resolveModule(from_dir, import.module);
     const Program dep_program = loadFile(dep_path);
+
+    bool needs_selective_support = false;
+    for (const ImportSpec& spec : import.names) {
+        if (spec.wildcard) {
+            continue;
+        }
+        if (findSubmodulePath(import.module, spec.name)) {
+            continue;
+        }
+        needs_selective_support = true;
+        break;
+    }
+    if (needs_selective_support) {
+        mergeSelectiveImportSupport(into, dep_program);
+    }
 
     for (ImportSpec& spec : import.names) {
         if (spec.wildcard) {
@@ -709,11 +770,22 @@ void ModuleLoader::mergeFromClauses(Program& into, ImportDecl& import,
                 throw XlangError("cannot import private symbol `" + spec.name + "` from `" +
                                  import.module + "`");
             }
-            Function copy = cloneFunction(*function);
-            copy.name = target;
-            copy.syscall = function->syscall;
-            copy.external = function->external;
-            addFunction(into, std::move(copy));
+            if (target != spec.name) {
+                Function copy = cloneFunction(*function);
+                copy.name = target;
+                copy.syscall = function->syscall;
+                copy.external = function->external;
+                if (!hasFunctionOverload(into, copy)) {
+                    addFunction(into, std::move(copy));
+                }
+            } else if (function->syscall && !hasFunctionOverload(into, *function)) {
+                Function copy = cloneFunction(*function);
+                copy.syscall = function->syscall;
+                copy.external = function->external;
+                addFunction(into, std::move(copy));
+            } else if (!hasExportedFunctionNamed(dep_program, spec.name) && !function->syscall) {
+                throw XlangError("symbol not found in module `" + import.module + "`: " + spec.name);
+            }
             continue;
         }
         throw XlangError("symbol not found in module `" + import.module + "`: " + spec.name);
