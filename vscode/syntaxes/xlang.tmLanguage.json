@@ -32,7 +32,7 @@
           "patterns": [
             {
               "name": "constant.character.escape.xlang",
-              "match": "\\\\([\"\\\\nrt]|.)"
+              "match": "\\\\([\"\\\\nrt e]|.)"
             }
           ]
         }
@@ -117,7 +117,7 @@
       "patterns": [
         {
           "name": "support.function.runtime.xlang",
-          "match": "\\b(print|fetch|spawn|wait_all|cpu|add_worker|parse)\\b(?=\\s*\\()"
+          "match": "\\b(print|fetch|spawn|wait_all|cpu|add_worker|parse|Now|FromMs|UnixMs|Format|ElapsedMs|ElapsedText|ReadAll|Write|Append|Exists|Size|Open|OpenRead|OpenWrite|OpenAppend|Close|Read|WriteStream|IsOpen|newError|tryRun)\\b(?=\\s*\\()"
         },
         {
           "name": "support.function.http.xlang",

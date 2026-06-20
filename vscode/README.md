@@ -12,7 +12,7 @@ Built with **Bun** + TypeScript. Requires the [`xlank`](https://github.com/hasir
 |---------|-------------|
 | **Completion** | Keywords, types, global runtime (`print`, `fetch`, `ReadAll`, `NewLock`, …), compiler builtins, local symbols |
 | **Import-aware** | `http.NewRouter()`, `json.parse()` — completes from `libs/` after import |
-| **Global runtime** | `print`, `spawn`, `fetch`, `ReadAll`, `NewLock`, `Lock()`, … — no import required |
+| **Global runtime** | `print`, `spawn`, `fetch`, `Now`, `Format`, `ReadAll`, `NewLock`, … — no import required |
 | **Member access** | `r.Get(`, `ctx.JSON(`, `lock.Lock(`, `a.FetchAdd(` — methods on known receiver types |
 | **Module picker** | Typing `import` suggests workspace modules (`http`, `json`, `http/router`, …) with export preview |
 | **Selective import** | Snippets for `import expect from test`, `import router from http/router` |
@@ -110,7 +110,6 @@ fn handle_ping(ctx: Context) {
 }
 
 fn on_listen(info: ServerInfo) {
-    print("running at %s://%s:%d", info.Protocol(), info.Hostname(), info.Port())
     return 0
 }
 
@@ -123,7 +122,7 @@ fn main() {
 }
 ```
 
-Hover `ReadAll` or `ctx.JSON` for signatures. Runtime symbols (`print`, `fetch`, `ReadAll`, sync, file I/O) need no import.
+Hover `ReadAll`, `Now`, or `ctx.JSON` for signatures. Runtime symbols (`print`, `fetch`, `Now`, `Format`, file I/O, sync) need no import.
 
 ## License
 

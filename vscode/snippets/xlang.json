@@ -253,5 +253,14 @@
       "}"
     ],
     "description": "Test file with expect import"
+  },
+  "Time now and elapsed": {
+    "prefix": "timenow",
+    "body": [
+      "local started = Now()",
+      "${0:// ...}",
+      "print(\"took %s\", ElapsedText(started, Now()))"
+    ],
+    "description": "Now() + ElapsedText (global time API)"
   }
 }
