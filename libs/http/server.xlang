@@ -1,9 +1,11 @@
-// HTTP server — router + listen callback (Elysia listen benzeri).
+// HTTP server — Router instance üzerinden dinle.
 //   import * as http from http
-//   http.ListenAndServe("127.0.0.1", 8080, r, on_listen)
+//   local r = http.NewRouter()
+//   r.Get("/ping", handle_ping)
+//   r.ListenAndServe("127.0.0.1", 8080, on_listen)
 //
 //   fn on_listen() {
-//       print("running at %s://%s:%d", http.ServerProtocol(), http.ServerHostname(), http.ServerPort())
+//       print("running at %s://%s:%d", listen.Protocol(), listen.Hostname(), listen.Port())
 //   }
 
 import router from http/router
@@ -20,40 +22,28 @@ export struct ServerInfo {
     port: int32
 }
 
-// Yalnızca ListenAndServe listen callback penceresinde aktif
-listen_info: ServerInfo
-listen_on: int32 = 0
+// Aktif listen callback bilgisi (syscall köprüsü).
+listen: ServerInfo
 
-export fn ServerProtocol(): string {
-    if listen_on != 0 {
-        return listen_info.protocol
-    }
-    return ""
+export fn Protocol(s: ServerInfo): string {
+    return s.protocol
 }
 
-export fn ServerHostname(): string {
-    if listen_on != 0 {
-        return listen_info.hostname
-    }
-    return ""
+export fn Hostname(s: ServerInfo): string {
+    return s.hostname
 }
 
-export fn ServerPort(): int32 {
-    if listen_on != 0 {
-        return listen_info.port
-    }
-    return 0
+export fn Port(s: ServerInfo): int32 {
+    return s.port
 }
 
 fn fire_listen_callback(host: string, port: int32, on_listen: int64): int32 {
-    listen_info = new ServerInfo {
+    listen = new ServerInfo {
         protocol = "http",
         hostname = host,
         port = port
     }
-    listen_on = 1
     invoke0(on_listen)
-    listen_on = 0
     return 0
 }
 
@@ -149,21 +139,13 @@ fn handle_client(client: int64, r: Router): int32 {
     }
     local method = request_method(raw)
     local path = request_path(raw)
-    local dr = router.DispatchRequest(r, method, path)
-    local out = build_response(dr.status, dr.body, dr.type)
+    r.DispatchRequest(method, path)
+    local out = build_response(router.req.status, router.req.body, router.req.content_type)
     net_send(client, out)
     return 0
 }
 
-export fn Listen(host: string, port: int32): int64 {
-    return net_tcp_listen(host, port)
-}
-
-export fn Accept(listen_fd: int64): int64 {
-    return net_tcp_accept(listen_fd)
-}
-
-export fn ListenAndServe(host: string, port: int32, r: Router, on_listen: int64): int32 {
+export fn ListenAndServe(r: Router, host: string, port: int32, on_listen: int64): int32 {
     local listen_fd = net_tcp_listen(host, port)
     if listen_fd < 0 {
         print("listen failed on %s:%d", host, port)
@@ -180,7 +162,7 @@ export fn ListenAndServe(host: string, port: int32, r: Router, on_listen: int64)
     return 0
 }
 
-export fn ServeOnce(host: string, port: int32, r: Router, on_listen: int64): int32 {
+export fn ServeOnce(r: Router, host: string, port: int32, on_listen: int64): int32 {
     local listen_fd = net_tcp_listen(host, port)
     if listen_fd < 0 {
         return 1

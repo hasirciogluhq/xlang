@@ -468,7 +468,12 @@ Stmt Parser::parseStatement() {
 
     if (match(TokenKind::Local)) {
         const Token name = consume(TokenKind::Ident, "expected variable name");
-        Type type = parseOptionalTypeAfterName(defaultType());
+        Type type = defaultType();
+        bool explicit_type = false;
+        if (match(TokenKind::Colon)) {
+            type = parseType();
+            explicit_type = true;
+        }
         consume(TokenKind::Eq, "expected '='");
         auto value = parseExpr();
         consumeEndOfStatement();
@@ -478,6 +483,7 @@ Stmt Parser::parseStatement() {
         stmt.span = span;
         stmt.name = name.text;
         stmt.type = type;
+        stmt.explicit_type = explicit_type;
         stmt.expr = std::move(value);
         return stmt;
     }

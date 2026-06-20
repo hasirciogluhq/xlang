@@ -131,12 +131,12 @@ import router from http/router
 fn TestPingRoute() {
     local r = router.NewRouter()
     r.Get("/ping", handle_ping)
-    router.DispatchRequest(r, "GET", "/ping")
+    r.DispatchRequest("GET", "/ping")
     return 0
 }
 
 fn handle_ping() {
-    router.RespondText(200, "pong")
+    router.req.RespondText(200, "pong")
     expect(1).toEqual(1)
     return 0
 }

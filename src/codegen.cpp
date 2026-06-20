@@ -1568,8 +1568,17 @@ bool Codegen::emitStatement(const Stmt& stmt, std::unordered_map<std::string, st
     switch (stmt.kind) {
         case Stmt::Kind::Local: {
             const auto [ty, val] = emitExpr(*stmt.expr, locals);
-            allocLocal(stmt.name, ty, locals);
-            storeValue(ty, val, localPtr(stmt.name), locals);
+            Type local_type = stmt.explicit_type ? stmt.type : ty;
+            std::string stored_val = val;
+            if (local_type.kind == TypeKind::Int32 && ty.kind == TypeKind::Int64) {
+                stored_val = freshTmp();
+                writeln("  " + stored_val + " = trunc i64 " + val + " to i32");
+            } else if (local_type.kind == TypeKind::Int64 && ty.kind == TypeKind::Int32) {
+                stored_val = freshTmp();
+                writeln("  " + stored_val + " = sext i32 " + val + " to i64");
+            }
+            allocLocal(stmt.name, local_type, locals);
+            storeValue(local_type, stored_val, localPtr(stmt.name), locals);
             return false;
         }
         case Stmt::Kind::Assign: {
@@ -2291,6 +2300,10 @@ std::pair<Type, std::string> Codegen::emitExpr(
                     definition != nullptr && definition->syscall) {
                     syscalls_.insert(resolved->name);
                     return definition->name;
+                }
+                if (isKnownSyscall(resolved->name)) {
+                    syscalls_.insert(resolved->name);
+                    return resolved->name;
                 }
                 if (findMatchingFunction(resolved->name, paramTypes(resolved->params),
                                          options_.runtime_syscalls)) {

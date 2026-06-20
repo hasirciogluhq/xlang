@@ -97,14 +97,14 @@ Or install from the marketplace when published.
 import * as http from http
 
 fn on_listen() {
-    print("running at %s://%s:%d", http.ServerProtocol(), http.ServerHostname(), http.ServerPort())
+    print("running at %s://%s:%d", http.listen.Protocol(), http.listen.Hostname(), http.listen.Port())
     return 0
 }
 
 fn main() {
     local r = http.NewRouter()
     r.Get("/ping", handle_ping)
-    http.ListenAndServe("127.0.0.1", 8080, r, on_listen)
+    r.ListenAndServe("127.0.0.1", 8080, on_listen)
     return 0
 }
 ```

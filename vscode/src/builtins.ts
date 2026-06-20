@@ -125,16 +125,56 @@ export const ROUTER_METHODS: CatalogEntry[] = [
   { label: "Post", detail: "Post(path, handler)", documentation: "Register POST route.", insertText: 'Post("${1:/path}", ${2:handler})', receiver: "Router" },
   { label: "Put", detail: "Put(path, handler)", documentation: "Register PUT route.", insertText: 'Put("${1:/path}", ${2:handler})', receiver: "Router" },
   { label: "Delete", detail: "Delete(path, handler)", documentation: "Register DELETE route.", insertText: 'Delete("${1:/path}", ${2:handler})', receiver: "Router" },
-  { label: "Group", detail: "Group(prefix) → Router", documentation: "Create a route group with path prefix.", insertText: 'Group("${1:/prefix}")', receiver: "Router" },
+  { label: "Group", detail: "Group(prefix) → Router", documentation: "Route group — shares parent routes with prefix.", insertText: 'Group("${1:/prefix}")', receiver: "Router" },
   { label: "Mount", detail: "Mount(prefix, child)", documentation: "Mount a sub-router.", insertText: 'Mount("${1:/prefix}", ${2:child})', receiver: "Router" },
+  { label: "Match", detail: "Match(method, path) → MatchResult", documentation: "Match route without dispatching.", insertText: 'Match("${1:GET}", "${2:/path}")', receiver: "Router" },
+  { label: "DispatchRequest", detail: "DispatchRequest(method, path)", documentation: "Match and invoke handler; response on `req`.", insertText: 'DispatchRequest("${1:GET}", "${2:/path}")', receiver: "Router" },
+  { label: "ListenAndServe", detail: "ListenAndServe(host, port, on_listen)", documentation: "Start TCP server with this router.", insertText: 'ListenAndServe("${1:127.0.0.1}", ${2:8080}, ${3:on_listen})', receiver: "Router" },
+];
+
+export const REQUEST_METHODS: CatalogEntry[] = [
+  { label: "Param", detail: "Param(name) → string", documentation: "URL path parameter from active request.", insertText: 'Param("${1:id}")', receiver: "Request" },
+  { label: "RespondText", detail: "RespondText(status, body)", documentation: "Plain-text HTTP response.", insertText: 'RespondText(${1:200}, "${2:ok}")', receiver: "Request" },
+  { label: "RespondJson", detail: "RespondJson(status, body)", documentation: "JSON HTTP response.", insertText: 'RespondJson(${1:200}, "${2:{}}")', receiver: "Request" },
+  { label: "RespondHtml", detail: "RespondHtml(status, body)", documentation: "HTML HTTP response.", insertText: 'RespondHtml(${1:200}, "${2:<html></html>}")', receiver: "Request" },
+];
+
+export const SERVER_METHODS: CatalogEntry[] = [
+  { label: "Protocol", detail: "Protocol() → string", documentation: "Listen callback — http/https.", insertText: "Protocol()", receiver: "ServerInfo" },
+  { label: "Hostname", detail: "Hostname() → string", documentation: "Listen callback — bound host.", insertText: "Hostname()", receiver: "ServerInfo" },
+  { label: "Port", detail: "Port() → int32", documentation: "Listen callback — bound port.", insertText: "Port()", receiver: "ServerInfo" },
+];
+
+export const SYNC_FUNCTIONS: CatalogEntry[] = [
+  { label: "NewLock", detail: "NewLock() → Lock", documentation: "Create embeddable mutex lock.", insertText: "NewLock()" },
+  { label: "LockSetTimeout", detail: "LockSetTimeout(l, ms)", documentation: "Default auto-release timeout (ms). 0 = disabled.", insertText: "LockSetTimeout(${1:l}, ${2:0})" },
+  { label: "LockAcquire", detail: "LockAcquire(l, override_ms)", documentation: "Acquire lock. override_ms=0 uses default timeout.", insertText: "LockAcquire(${1:l}, ${2:0})" },
+  { label: "LockRelease", detail: "LockRelease(l)", documentation: "Release lock manually.", insertText: "LockRelease(${1:l})" },
+  { label: "LockTryAcquire", detail: "LockTryAcquire(l)", documentation: "Non-blocking acquire.", insertText: "LockTryAcquire(${1:l})" },
+  { label: "LockIsHeld", detail: "LockIsHeld(l)", documentation: "Returns 1 when held.", insertText: "LockIsHeld(${1:l})" },
+  { label: "NewRWLock", detail: "NewRWLock() → RWLock", documentation: "Reader-writer lock.", insertText: "NewRWLock()" },
+  { label: "RWLockReadAcquire", detail: "RWLockReadAcquire(rw, ms)", documentation: "Acquire shared read lock.", insertText: "RWLockReadAcquire(${1:rw}, ${2:0})" },
+  { label: "RWLockWriteAcquire", detail: "RWLockWriteAcquire(rw, ms)", documentation: "Exclusive write lock with optional timeout.", insertText: "RWLockWriteAcquire(${1:rw}, ${2:0})" },
+  { label: "NewAtomicInt", detail: "NewAtomicInt(n) → AtomicInt", documentation: "Atomic 64-bit integer.", insertText: "NewAtomicInt(${1:0})" },
+  { label: "AtomicLoad", detail: "AtomicLoad(a) → int64", documentation: "Atomic load.", insertText: "AtomicLoad(${1:a})" },
+  { label: "AtomicFetchAdd", detail: "AtomicFetchAdd(a, delta)", documentation: "Atomic fetch-and-add.", insertText: "AtomicFetchAdd(${1:a}, ${2:1})" },
 ];
 
 export const LOCK_METHODS: CatalogEntry[] = [
-  { label: "Lock", detail: "Lock() → int32", documentation: "Acquire mutex (blocks until available).", insertText: "Lock()", receiver: "Lock" },
-  { label: "Unlock", detail: "Unlock() → int32", documentation: "Release mutex and reset timeout to 0.", insertText: "Unlock()", receiver: "Lock" },
-  { label: "SetTimeout", detail: "SetTimeout(ms) → int32", documentation: "Auto-release after ms while held. Only works when locked.", insertText: "SetTimeout(${1:ms})", receiver: "Lock" },
-  { label: "TryLock", detail: "TryLock() → int32", documentation: "Non-blocking acquire attempt.", insertText: "TryLock()", receiver: "Lock" },
-  { label: "IsHeld", detail: "IsHeld() → int32", documentation: "Returns 1 when this lock is held.", insertText: "IsHeld()", receiver: "Lock" },
+
+export const RWLOCK_METHODS: CatalogEntry[] = [
+  { label: "ReadLock", detail: "ReadLock() → int32", documentation: "Acquire read lock.", insertText: "ReadLock()", receiver: "RWLock" },
+  { label: "ReadUnlock", detail: "ReadUnlock() → int32", documentation: "Release read lock.", insertText: "ReadUnlock()", receiver: "RWLock" },
+  { label: "WriteLock", detail: "WriteLock() → int32", documentation: "Acquire write lock.", insertText: "WriteLock()", receiver: "RWLock" },
+  { label: "WriteUnlock", detail: "WriteUnlock() → int32", documentation: "Release write lock.", insertText: "WriteUnlock()", receiver: "RWLock" },
+  { label: "SetWriteTimeout", detail: "SetWriteTimeout(ms) → int32", documentation: "Auto-release write lock after ms while held.", insertText: "SetWriteTimeout(${1:ms})", receiver: "RWLock" },
+  { label: "WriteIsHeld", detail: "WriteIsHeld() → int32", documentation: "Returns 1 when write lock is held.", insertText: "WriteIsHeld()", receiver: "RWLock" },
+];
+
+export const ATOMIC_INT_METHODS: CatalogEntry[] = [
+  { label: "Load", detail: "Load() → int64", documentation: "Atomic load.", insertText: "Load()", receiver: "AtomicInt" },
+  { label: "Store", detail: "Store(val) → int32", documentation: "Atomic store.", insertText: "Store(${1:val})", receiver: "AtomicInt" },
+  { label: "FetchAdd", detail: "FetchAdd(delta) → int64", documentation: "Atomic fetch-and-add.", insertText: "FetchAdd(${1:delta})", receiver: "AtomicInt" },
 ];
 
 export const KNOWN_MODULES: CatalogEntry[] = [
@@ -144,6 +184,7 @@ export const KNOWN_MODULES: CatalogEntry[] = [
   { label: "json", detail: "module", documentation: "JSON parse + typed field accessors." },
   { label: "test", detail: "module", documentation: "Vitest-style `expect` API and test runner hooks." },
   { label: "process", detail: "module", documentation: "Process, pipe, fd, env syscalls." },
+  { label: "sync", detail: "module (runtime)", documentation: "Lock, RWLock, AtomicInt — mutex, reader-writer lock, atomics." },
   { label: "scheduler", detail: "module (runtime)", documentation: "spawn / wait_all worker pool." },
   { label: "net", detail: "module (runtime)", documentation: "fetch HTTP client." },
   { label: "errors", detail: "module (runtime)", documentation: "panic / recover helpers." },

@@ -101,6 +101,21 @@ fn alloc_rw_slot(mu: int64, cv_read: int64, cv_write: int64, writer: int64, writ
     return slot
 }
 
+pending_lock_slot: int32
+pending_lock_ms: int32
+pending_rw_slot: int32
+pending_rw_ms: int32
+
+fn lock_auto_release_global() {
+    lock_auto_release_by_slot(pending_lock_slot, pending_lock_ms)
+    return 0
+}
+
+fn rw_write_auto_release_global() {
+    rw_write_auto_release_by_slot(pending_rw_slot, pending_rw_ms)
+    return 0
+}
+
 fn lock_auto_release_by_slot(slot: int32, timeout_ms: int32) {
     sleep_ms(timeout_ms)
     local gate = array_get(lock_gates, slot)
@@ -146,52 +161,51 @@ export fn NewLock(): Lock {
     }
 }
 
-export fn LockSetTimeout(l: Lock, ms: int32): int32 {
-    atomic_store(l.timeout, ms)
-    return 0
-}
-
-export fn LockAcquire(l: Lock, override_ms: int32): int32 {
+export fn Lock(l: Lock): int32 {
     mutex_lock(l.gate)
     atomic_store(l.held, 1)
-    if override_ms > 0 {
-        spawn(lock_auto_release_by_slot(l.slot, override_ms))
-    } else {
-        local default_ms: int32 = atomic_load(l.timeout)
-        if default_ms > 0 {
-            spawn(lock_auto_release_by_slot(l.slot, default_ms))
-        }
-    }
     return 1
 }
 
-export fn LockRelease(l: Lock): int32 {
+export fn Unlock(l: Lock): int32 {
     if atomic_load(l.held) == 0 {
         return 0
     }
     if atomic_compare_exchange(l.held, 1, 0) == 0 {
         return 0
     }
+    atomic_store(l.timeout, 0)
     mutex_unlock(l.gate)
     return 1
 }
 
-export fn LockIsHeld(l: Lock): int32 {
+export fn SetTimeout(l: Lock, ms: int32): int32 {
+    if atomic_load(l.held) == 0 {
+        return 0
+    }
+    if ms <= 0 {
+        atomic_store(l.timeout, 0)
+        return 0
+    }
+    atomic_store(l.timeout, ms)
+    pending_lock_slot = l.slot
+    pending_lock_ms = ms
+    spawn(lock_auto_release_global())
+    return 1
+}
+
+export fn IsHeld(l: Lock): int32 {
     if atomic_load(l.held) != 0 {
         return 1
     }
     return 0
 }
 
-export fn LockTryAcquire(l: Lock): int32 {
+export fn TryLock(l: Lock): int32 {
     if mutex_trylock(l.gate) == 0 {
         return 0
     }
     atomic_store(l.held, 1)
-    local default_ms: int32 = atomic_load(l.timeout)
-    if default_ms > 0 {
-        spawn(lock_auto_release_by_slot(l.slot, default_ms))
-    }
     return 1
 }
 
@@ -226,17 +240,7 @@ export fn NewRWLock(): RWLock {
     }
 }
 
-export fn RWLockSetReadTimeout(rw: RWLock, ms: int32): int32 {
-    atomic_store(rw.read_timeout, ms)
-    return 0
-}
-
-export fn RWLockSetWriteTimeout(rw: RWLock, ms: int32): int32 {
-    atomic_store(rw.write_timeout, ms)
-    return 0
-}
-
-export fn RWLockReadAcquire(rw: RWLock, override_ms: int32): int32 {
+export fn ReadLock(rw: RWLock): int32 {
     mutex_lock(rw.mu)
     while atomic_load(rw.writer) != 0 {
         cond_wait(rw.cv_read, rw.mu)
@@ -246,7 +250,7 @@ export fn RWLockReadAcquire(rw: RWLock, override_ms: int32): int32 {
     return 1
 }
 
-export fn RWLockReadRelease(rw: RWLock): int32 {
+export fn ReadUnlock(rw: RWLock): int32 {
     mutex_lock(rw.mu)
     local prev = atomic_fetch_add(rw.readers, 0 - 1)
     if prev == 1 {
@@ -256,30 +260,18 @@ export fn RWLockReadRelease(rw: RWLock): int32 {
     return 0
 }
 
-export fn RWLockWriteAcquire(rw: RWLock, override_ms: int32): int32 {
+export fn WriteLock(rw: RWLock): int32 {
     mutex_lock(rw.mu)
     while atomic_load(rw.readers) != 0 || atomic_load(rw.writer) != 0 {
         cond_wait(rw.cv_write, rw.mu)
     }
     atomic_store(rw.writer, 1)
     atomic_store(rw.write_held, 1)
-    local effective = override_ms
-    if effective == 0 {
-        effective = atomic_load(rw.write_timeout)
-    }
     mutex_unlock(rw.mu)
-    if override_ms > 0 {
-        spawn(rw_write_auto_release_by_slot(rw.slot, override_ms))
-    } else {
-        local default_ms: int32 = atomic_load(rw.write_timeout)
-        if default_ms > 0 {
-            spawn(rw_write_auto_release_by_slot(rw.slot, default_ms))
-        }
-    }
     return 1
 }
 
-export fn RWLockWriteRelease(rw: RWLock): int32 {
+export fn WriteUnlock(rw: RWLock): int32 {
     mutex_lock(rw.mu)
     if atomic_load(rw.write_held) == 0 {
         mutex_unlock(rw.mu)
@@ -287,16 +279,32 @@ export fn RWLockWriteRelease(rw: RWLock): int32 {
     }
     atomic_store(rw.write_held, 0)
     atomic_store(rw.writer, 0)
+    atomic_store(rw.write_timeout, 0)
     cond_broadcast(rw.cv_read)
     mutex_unlock(rw.mu)
     return 1
 }
 
-export fn RWLockWriteIsHeld(rw: RWLock): int32 {
+export fn WriteIsHeld(rw: RWLock): int32 {
     if atomic_load(rw.write_held) != 0 {
         return 1
     }
     return 0
+}
+
+export fn SetWriteTimeout(rw: RWLock, ms: int32): int32 {
+    if atomic_load(rw.write_held) == 0 {
+        return 0
+    }
+    if ms <= 0 {
+        atomic_store(rw.write_timeout, 0)
+        return 0
+    }
+    atomic_store(rw.write_timeout, ms)
+    pending_rw_slot = rw.slot
+    pending_rw_ms = ms
+    spawn(rw_write_auto_release_global())
+    return 1
 }
 
 export fn NewAtomicInt(initial: int64): AtomicInt {
@@ -305,19 +313,19 @@ export fn NewAtomicInt(initial: int64): AtomicInt {
     return new AtomicInt { cell = cell }
 }
 
-export fn AtomicLoad(a: AtomicInt): int64 {
+export fn Load(a: AtomicInt): int64 {
     return atomic_load(a.cell)
 }
 
-export fn AtomicStore(a: AtomicInt, val: int64): int32 {
+export fn Store(a: AtomicInt, val: int64): int32 {
     return atomic_store(a.cell, val)
 }
 
-export fn AtomicFetchAdd(a: AtomicInt, delta: int64): int64 {
+export fn FetchAdd(a: AtomicInt, delta: int64): int64 {
     return atomic_fetch_add(a.cell, delta)
 }
 
-export fn AtomicCompareExchange(a: AtomicInt, expected: int64, desired: int64): int32 {
+export fn CompareExchange(a: AtomicInt, expected: int64, desired: int64): int32 {
     return atomic_compare_exchange(a.cell, expected, desired)
 }
 
@@ -331,14 +339,14 @@ export fn NewAtomicBool(initial: int32): AtomicBool {
     return new AtomicBool { cell = cell }
 }
 
-export fn AtomicBoolLoad(a: AtomicBool): int32 {
+export fn Load(a: AtomicBool): int32 {
     if atomic_load(a.cell) != 0 {
         return 1
     }
     return 0
 }
 
-export fn AtomicBoolStore(a: AtomicBool, val: int32): int32 {
+export fn Store(a: AtomicBool, val: int32): int32 {
     if val != 0 {
         return atomic_store(a.cell, 1)
     }

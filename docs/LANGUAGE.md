@@ -356,8 +356,8 @@ from json import parse                         // selective (legacy)
 |--------|-------------|
 | `json` | `parse`, field accessors |
 | `http` | Router + TCP server package |
-| `http/router` | Routes, params, `RespondText/Json/Html` |
-| `http/server` | `ListenAndServe`, listen callback |
+| `http/router` | `NewRouter()`, `r.Get(...)`, `r.DispatchRequest(...)`, handler context `req.RespondText/Json/Html` |
+| `http/server` | `r.ListenAndServe(...)`, listen callback `listen.Protocol/Hostname/Port()` |
 | `test` | Vitest-style `expect` |
 | `process` | fork, pipe, fd, env, `file_read` |
 

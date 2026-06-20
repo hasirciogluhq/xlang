@@ -104,6 +104,7 @@ Stmt cloneStmt(const Stmt& stmt) {
     copied.span = stmt.span;
     copied.name = stmt.name;
     copied.type = stmt.type;
+    copied.explicit_type = stmt.explicit_type;
     copied.field = stmt.field;
     if (stmt.target) {
         copied.target = cloneExpr(*stmt.target);

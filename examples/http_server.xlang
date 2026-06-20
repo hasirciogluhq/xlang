@@ -2,35 +2,36 @@ import * as http from http
 import process from process
 
 fn on_listen() {
-    print("xlang running at %s://%s:%d", http.ServerProtocol(), http.ServerHostname(), http.ServerPort())
+    print("xlang running at %s://%s:%d", http.listen.Protocol(), http.listen.Hostname(), http.listen.Port())
     return 0
 }
 
 fn handle_index() {
     local html = file_read("examples/index.html")
     if str_len(html) == 0 {
-        http.RespondText(404, "examples/index.html not found")
+        http.req.RespondText(404, "examples/index.html not found")
         return 0
     }
-    http.RespondHtml(200, html)
+    http.req.RespondHtml(200, html)
     return 0
 }
 
 fn handle_api_info() {
-    http.RespondJson(200, "{\"name\":\"xlang\",\"runtime\":\"native\",\"ok\":true}")
+    http.req.RespondJson(200, "{\"name\":\"xlang\",\"runtime\":\"native\",\"ok\":true}")
     return 0
 }
 
 fn handle_ping() {
-    http.RespondText(200, "pong")
+    http.req.RespondText(200, "pong")
     return 0
 }
 
 fn main() {
     local r = http.NewRouter()
+    local api = r.Group("/api")
+    api.Get("/info", handle_api_info)
     r.Get("/", handle_index)
-    r.Get("/api/info", handle_api_info)
     r.Get("/ping", handle_ping)
-    http.ListenAndServe("127.0.0.1", 8080, r, on_listen)
+    r.ListenAndServe("127.0.0.1", 8080, on_listen)
     return 0
 }

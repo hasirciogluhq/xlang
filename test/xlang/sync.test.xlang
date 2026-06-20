@@ -3,8 +3,8 @@ import sync from sync
 
 fn TestAtomicFetchAdd() {
     local a = sync.NewAtomicInt(10)
-    sync.AtomicFetchAdd(a, 5)
-    expect(sync.AtomicLoad(a)).toEqual(15)
+    a.FetchAdd(5)
+    expect(a.Load()).toEqual(15)
     return 0
 }
 
@@ -29,10 +29,10 @@ fn TestLockSetTimeoutOnlyWhileHeld() {
 
 fn TestRWLockReadWrite() {
     local rw = sync.NewRWLock()
-    sync.RWLockWriteAcquire(rw, 0)
-    sync.RWLockWriteRelease(rw)
-    sync.RWLockReadAcquire(rw, 0)
-    sync.RWLockReadRelease(rw)
+    rw.WriteLock()
+    rw.WriteUnlock()
+    rw.ReadLock()
+    rw.ReadUnlock()
     expect(1).toEqual(1)
     return 0
 }

@@ -182,6 +182,7 @@ struct Stmt {
     Span span{};
     std::string name;
     Type type{TypeKind::Int32};
+    bool explicit_type{false};
     std::unique_ptr<Expr> target;
     std::unique_ptr<Expr> index_target;
     std::string field;
