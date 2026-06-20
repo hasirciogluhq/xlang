@@ -29,11 +29,12 @@ function formatLines(lines: string[], tabSize: number): string {
       continue;
     }
 
-    if (startsWithClosing(trimmed, inString)) {
-      indent = Math.max(0, indent - 1);
+    let level = indent;
+    if (!inString && trimmed.startsWith("}")) {
+      level = Math.max(0, indent - 1);
     }
 
-    output.push(`${indentUnit.repeat(indent)}${trimmed}`);
+    output.push(`${indentUnit.repeat(level)}${trimmed}`);
 
     const delta = braceDelta(trimmed);
     indent = Math.max(0, indent + delta);
@@ -44,13 +45,6 @@ function formatLines(lines: string[], tabSize: number): string {
     text += "\n";
   }
   return text;
-}
-
-function startsWithClosing(line: string, inString: boolean): boolean {
-  if (inString) {
-    return false;
-  }
-  return line.startsWith("}") || line.startsWith(")");
 }
 
 function braceDelta(line: string): number {

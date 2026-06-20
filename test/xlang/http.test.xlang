@@ -4,16 +4,16 @@ import router from http/router
 fn TestPingRoute() {
     local r = router.NewRouter()
     r.Get("/ping", handle_ping)
-    local resp = r.DispatchRequest("GET", "/ping")
-    expect(resp.status).toEqual(200)
+    local ctx = r.DispatchRequest("GET", "/ping")
+    expect(ctx.status).toEqual(200)
     return 0
 }
 
 fn TestUserParamRoute() {
     local r = router.NewRouter()
     r.Get("/user/{id}", handle_user)
-    local resp = r.DispatchRequest("GET", "/user/42")
-    expect(resp.status).toEqual(200)
+    local ctx = r.DispatchRequest("GET", "/user/42")
+    expect(ctx.status).toEqual(200)
     return 0
 }
 
@@ -21,19 +21,39 @@ fn TestGroupRoute() {
     local r = router.NewRouter()
     local api = r.Group("/api")
     api.Get("/ping", handle_ping)
-    local resp = r.DispatchRequest("GET", "/api/ping")
-    expect(resp.status).toEqual(200)
+    local ctx = r.DispatchRequest("GET", "/api/ping")
+    expect(ctx.status).toEqual(200)
     return 0
 }
 
-fn handle_ping(req: Request) {
-    req.RespondText(200, "pong")
+fn TestContextBindRef() {
+    local r = router.NewRouter()
+    r.Use(inject_name)
+    r.Get("/hello", handle_hello)
+    local ctx = r.DispatchRequest("GET", "/hello")
+    expect(ctx.status).toEqual(200)
+    return 0
+}
+
+fn inject_name(ctx: Context) {
+    ctx.Put("greeting", "hi")
+    return 0
+}
+
+fn handle_ping(ctx: Context) {
+    ctx.String(200, "pong")
     expect(1).toEqual(1)
     return 0
 }
 
-fn handle_user(req: Request) {
-    expect(req.Param("id")).toEqual("42")
-    req.RespondText(200, "ok")
+fn handle_user(ctx: Context) {
+    expect(ctx.Param("id")).toEqual("42")
+    ctx.String(200, "ok")
+    return 0
+}
+
+fn handle_hello(ctx: Context) {
+    expect(ctx.Get("greeting")).toEqual("hi")
+    ctx.String(200, "ok")
     return 0
 }

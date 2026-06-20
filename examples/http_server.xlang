@@ -1,37 +1,55 @@
 import * as http from http
-import process from process
+
+struct User {
+    name: string
+}
 
 fn on_listen(info: ServerInfo) {
     print("xlang running at %s://%s:%d", info.Protocol(), info.Hostname(), info.Port())
     return 0
 }
 
-fn handle_index(req: Request) {
+fn auth_middleware(ctx: Context) {
+    local user = new User { name = "admin" }
+    ctx.Bind("auth.user", ref(user))
+    return 0
+}
+
+fn handle_index(ctx: Context) {
     local html = file_read("examples/index.html")
     if str_len(html) == 0 {
-        req.RespondText(404, "examples/index.html not found")
+        ctx.String(404, "examples/index.html not found")
         return 0
     }
-    req.RespondHtml(200, html)
+    ctx.HTML(200, html)
     return 0
 }
 
-fn handle_api_info(req: Request) {
-    req.RespondJson(200, "{\"name\":\"xlang\",\"runtime\":\"native\",\"ok\":true}")
+fn handle_api_info(ctx: Context) {
+    ctx.JSON(200, "{\"name\":\"xlang\",\"runtime\":\"native\",\"ok\":true}")
     return 0
 }
 
-fn handle_ping(req: Request) {
-    req.RespondText(200, "pong")
+fn handle_ping(ctx: Context) {
+    ctx.String(200, "pong")
+    return 0
+}
+
+fn handle_me(ctx: Context) {
+    local handle = ctx.Ref("auth.user")
+    local user = handle as User
+    ctx.JSON(200, "{\"name\":\"" + user.name + "\"}")
     return 0
 }
 
 fn main() {
     local r = http.NewRouter()
+    r.Use(auth_middleware)
     local api = r.Group("/api")
     api.Get("/info", handle_api_info)
     r.Get("/", handle_index)
     r.Get("/ping", handle_ping)
+    r.Get("/me", handle_me)
     r.ListenAndServe("127.0.0.1", 8080, on_listen)
     return 0
 }

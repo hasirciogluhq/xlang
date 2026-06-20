@@ -186,8 +186,8 @@
     "body": [
       "import * as http from http",
       "",
-      "fn handle_root(req: Request) {",
-      "\treq.RespondText(200, \"ok\")",
+      "fn handle_root(ctx: Context) {",
+      "\tctx.String(200, \"ok\")",
       "\treturn 0",
       "}",
       "",
@@ -208,12 +208,12 @@
   "HTTP route handler": {
     "prefix": "handler",
     "body": [
-      "fn ${1:handle}(req: Request) {",
-      "\treq.RespondText(200, \"${2:ok}\")",
+      "fn ${1:handle}(ctx: Context) {",
+      "\tctx.String(200, \"${2:ok}\")",
       "\treturn 0",
       "}"
     ],
-    "description": "HTTP handler with RespondText"
+    "description": "HTTP handler with ctx.String/JSON/HTML"
   },
   "JSON parse": {
     "prefix": "jsonparse",

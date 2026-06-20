@@ -131,13 +131,13 @@ import router from http/router
 fn TestPingRoute() {
     local r = router.NewRouter()
     r.Get("/ping", handle_ping)
-    local resp = r.DispatchRequest("GET", "/ping")
-    expect(resp.status).toEqual(200)
+    local ctx = r.DispatchRequest("GET", "/ping")
+    expect(ctx.status).toEqual(200)
     return 0
 }
 
-fn handle_ping(req: Request) {
-    req.RespondText(200, "pong")
+fn handle_ping(ctx: Context) {
+    ctx.String(200, "pong")
     expect(1).toEqual(1)
     return 0
 }
@@ -181,7 +181,7 @@ User programs are linked with the **runtime** by default (`runtime/` package):
 Importable **libs** (embedded at compile time):
 
 - **`json`** — parse + typed field access
-- **`http`** — router + TCP server (`r.ListenAndServe`, handlers `fn(req: Request)`)
+- **`http`** — Gin-style router (`Context`, `r.Use`, `ctx.JSON`, `r.ListenAndServe`)
 - **`test`** — Vitest-style `expect`
 - **`process`** — fork, pipe, fd, env, `file_read`
 

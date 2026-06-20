@@ -73,7 +73,8 @@ export const RUNTIME_BUILTINS: CatalogEntry[] = [
 
 export const COMPILER_BUILTINS: CatalogEntry[] = [
   { label: "invoke0", detail: "invoke0(fn: int64) → int32", documentation: "Call a function pointer with no arguments.", insertText: "invoke0(${1:entry})" },
-  { label: "invoke1", detail: "invoke1(fn: int64, ctx) → int32", documentation: "Call a function pointer with one argument (struct pointer, i32, …). Used by HTTP handlers and listen callbacks.", insertText: "invoke1(${1:entry}, ${2:ctx})" },
+  { label: "invoke1", detail: "invoke1(fn: int64, ctx) → int32", documentation: "Call fn ptr with one arg (Context, ServerInfo, …).", insertText: "invoke1(${1:entry}, ${2:ctx})" },
+  { label: "ref", detail: "ref(obj) → int64", documentation: "Struct pointer as int64 for ctx.Bind stash.", insertText: "ref(${1:obj})" },
   { label: "invoke", detail: "invoke(fn: int64, arg: int32) → int32", documentation: "Call a function pointer with one i32 argument.", insertText: "invoke(${1:entry}, ${2:arg})" },
   { label: "str_len", detail: "str_len(s: string) → int32", documentation: "Byte length of a string.", insertText: "str_len(${1:s})" },
   { label: "str_eq", detail: "str_eq(a, b) → int32", documentation: "Returns `1` when strings are equal.", insertText: "str_eq(${1:a}, ${2:b})" },
@@ -127,26 +128,33 @@ export const ROUTER_METHODS: CatalogEntry[] = [
   { label: "Post", detail: "Post(path, handler)", documentation: "Register POST route.", insertText: 'Post("${1:/path}", ${2:handler})', receiver: "Router" },
   { label: "Put", detail: "Put(path, handler)", documentation: "Register PUT route.", insertText: 'Put("${1:/path}", ${2:handler})', receiver: "Router" },
   { label: "Delete", detail: "Delete(path, handler)", documentation: "Register DELETE route.", insertText: 'Delete("${1:/path}", ${2:handler})', receiver: "Router" },
-  { label: "Group", detail: "Group(prefix) → Router", documentation: "Route group — shares parent routes with prefix.", insertText: 'Group("${1:/prefix}")', receiver: "Router" },
+  { label: "Group", detail: "Group(prefix) → Router", documentation: "Route group — shares routes + middleware.", insertText: 'Group("${1:/prefix}")', receiver: "Router" },
   { label: "Mount", detail: "Mount(prefix, child)", documentation: "Mount a sub-router.", insertText: 'Mount("${1:/prefix}", ${2:child})', receiver: "Router" },
+  { label: "Use", detail: "Use(middleware)", documentation: "Register middleware fn(ctx: Context).", insertText: "Use(${1:middleware})", receiver: "Router" },
   { label: "Match", detail: "Match(method, path) → MatchResult", documentation: "Match route without dispatching.", insertText: 'Match("${1:GET}", "${2:/path}")', receiver: "Router" },
-  { label: "DispatchRequest", detail: "DispatchRequest(method, path) → Request", documentation: "Match route, invoke handler with Request, return filled response.", insertText: 'DispatchRequest("${1:GET}", "${2:/path}")', receiver: "Router" },
+  { label: "DispatchRequest", detail: "DispatchRequest(method, path) → Context", documentation: "Run middleware + handler; return Context with response.", insertText: 'DispatchRequest("${1:GET}", "${2:/path}")', receiver: "Router" },
   { label: "ListenAndServe", detail: "ListenAndServe(host, port, on_listen)", documentation: "TCP server — callback receives ServerInfo.", insertText: 'ListenAndServe("${1:127.0.0.1}", ${2:8080}, ${3:on_listen})', receiver: "Router" },
   { label: "ServeOnce", detail: "ServeOnce(host, port, on_listen)", documentation: "Accept one connection then exit.", insertText: 'ServeOnce("${1:127.0.0.1}", ${2:8080}, ${3:on_listen})', receiver: "Router" },
 ];
 
 export const HTTP_TYPES: CatalogEntry[] = [
-  { label: "Router", detail: "type", documentation: "HTTP router instance — routes, dispatch, ListenAndServe.", kind: vscode.CompletionItemKind.Struct },
-  { label: "Request", detail: "type", documentation: "Per-request context passed to handlers: Param, RespondText/Json/Html.", kind: vscode.CompletionItemKind.Struct },
-  { label: "ServerInfo", detail: "type", documentation: "Listen callback context: Protocol, Hostname, Port.", kind: vscode.CompletionItemKind.Struct },
+  { label: "Router", detail: "type", documentation: "HTTP router — routes, middleware, ListenAndServe.", kind: vscode.CompletionItemKind.Struct },
+  { label: "Context", detail: "type", documentation: "Per-request context — Param, String/JSON/HTML, Put/Get, Bind/Ref.", kind: vscode.CompletionItemKind.Struct },
+  { label: "ServerInfo", detail: "type", documentation: "Listen callback context.", kind: vscode.CompletionItemKind.Struct },
   { label: "MatchResult", detail: "type", documentation: "Route match result from Router.Match.", kind: vscode.CompletionItemKind.Struct },
 ];
 
-export const REQUEST_METHODS: CatalogEntry[] = [
-  { label: "Param", detail: "Param(name) → string", documentation: "URL path parameter for this request.", insertText: 'Param("${1:id}")', receiver: "Request" },
-  { label: "RespondText", detail: "RespondText(status, body)", documentation: "Plain-text HTTP response.", insertText: 'RespondText(${1:200}, "${2:ok}")', receiver: "Request" },
-  { label: "RespondJson", detail: "RespondJson(status, body)", documentation: "JSON HTTP response.", insertText: 'RespondJson(${1:200}, "${2:{}}")', receiver: "Request" },
-  { label: "RespondHtml", detail: "RespondHtml(status, body)", documentation: "HTML HTTP response.", insertText: 'RespondHtml(${1:200}, "${2:<html></html>}")', receiver: "Request" },
+export const CONTEXT_METHODS: CatalogEntry[] = [
+  { label: "Param", detail: "Param(name) → string", documentation: "URL path parameter.", insertText: 'Param("${1:id}")', receiver: "Context" },
+  { label: "Method", detail: "Method() → string", documentation: "HTTP method (GET, POST, …).", insertText: "Method()", receiver: "Context" },
+  { label: "Path", detail: "Path() → string", documentation: "Request path.", insertText: "Path()", receiver: "Context" },
+  { label: "String", detail: "String(status, body)", documentation: "Plain-text response (Gin-style).", insertText: 'String(${1:200}, "${2:ok}")', receiver: "Context" },
+  { label: "JSON", detail: "JSON(status, body)", documentation: "JSON response body.", insertText: 'JSON(${1:200}, "${2:{}}")', receiver: "Context" },
+  { label: "HTML", detail: "HTML(status, body)", documentation: "HTML response body.", insertText: 'HTML(${1:200}, "${2:<html></html>}")', receiver: "Context" },
+  { label: "Put", detail: "Put(key, val)", documentation: "Stash string value (middleware → handler).", insertText: 'Put("${1:key}", "${2:val}")', receiver: "Context" },
+  { label: "Get", detail: "Get(key) → string", documentation: "Read stashed string value.", insertText: 'Get("${1:key}")', receiver: "Context" },
+  { label: "Bind", detail: "Bind(key, handle)", documentation: "Attach struct ref (`ref(obj)`) for handler.", insertText: 'Bind("${1:key}", ${2:ref(obj)})', receiver: "Context" },
+  { label: "Ref", detail: "Ref(key) → int64", documentation: "Load struct handle; cast with `handle as Type`.", insertText: 'Ref("${1:key}")', receiver: "Context" },
 ];
 
 export const SERVER_METHODS: CatalogEntry[] = [
@@ -193,7 +201,7 @@ export const ATOMIC_BOOL_METHODS: CatalogEntry[] = [
 
 export const KNOWN_MODULES: CatalogEntry[] = [
   { label: "http", detail: "module", documentation: "HTTP router + TCP server (`libs/http/router.xlang`)." },
-  { label: "http/router", detail: "module", documentation: "Router, Request, ListenAndServe — instance methods only." },
+  { label: "http/router", detail: "module", documentation: "Router, Context, ListenAndServe — Gin-style instance methods." },
   { label: "json", detail: "module", documentation: "JSON parse + typed field accessors (`data.Int(key)`)." },
   { label: "test", detail: "module", documentation: "Vitest-style `expect` API and test runner hooks." },
   { label: "process", detail: "module", documentation: "Process, pipe, fd, env syscalls." },

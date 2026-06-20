@@ -1,15 +1,12 @@
-// Chi-benzeri HTTP router + TCP server — instance tabanlı, global request state yok.
+// Minimal Gin-style HTTP router — handlers receive Context (request + response + stash).
 //   import * as http from http
 //   local r = http.NewRouter()
-//   r.Get("/ping", handle_ping)
+//   r.Use(auth_middleware)
+//   r.Get("/me", handle_me)
 //   r.ListenAndServe("127.0.0.1", 8080, on_listen)
 //
-//   fn handle_ping(req: Request) {
-//       req.RespondText(200, "pong")
-//   }
-//
-//   fn on_listen(info: ServerInfo) {
-//       print("running at %s://%s:%d", info.Protocol(), info.Hostname(), info.Port())
+//   fn handle_ping(ctx: Context) {
+//       ctx.String(200, "pong")
 //   }
 
 declare syscall net_tcp_listen(host: string, port: int32): int64
@@ -38,14 +35,19 @@ export struct MatchResult {
     path: string
 }
 
-export struct Request {
-    param_name: string
-    param_value: string
+export struct Context {
     method: string
     path: string
+    param_name: string
+    param_value: string
     status: int32
     body: string
     content_type: string
+    written: int32
+    keys: array string
+    vals: array string
+    refs: array string
+    handles: array int64
 }
 
 export struct ServerInfo {
@@ -57,43 +59,39 @@ export struct ServerInfo {
 export struct Router {
     prefix: string
     routes: array RouteDef
+    middleware: array int64
 }
 
 export fn NewRouter(): Router {
     return new Router {
         prefix = "",
-        routes = new array RouteDef
+        routes = new array RouteDef,
+        middleware = new array int64
     }
 }
 
-fn empty_request(method: string, path: string): Request {
-    return new Request {
-        param_name = "",
-        param_value = "",
+fn new_context(method: string, path: string, param_name: string, param_value: string): Context {
+    return new Context {
         method = method,
         path = path,
+        param_name = param_name,
+        param_value = param_value,
         status = 200,
         body = "",
-        content_type = "text/plain"
-    }
-}
-
-fn request_from_match(m: MatchResult): Request {
-    return new Request {
-        param_name = m.param_name,
-        param_value = m.param_value,
-        method = m.method,
-        path = m.path,
-        status = 200,
-        body = "",
-        content_type = "text/plain"
+        content_type = "text/plain",
+        written = 0,
+        keys = new array string,
+        vals = new array string,
+        refs = new array string,
+        handles = new array int64
     }
 }
 
 fn clone_group(r: Router, prefix: string): Router {
     return new Router {
         prefix = r.prefix + prefix,
-        routes = r.routes
+        routes = r.routes,
+        middleware = r.middleware
     }
 }
 
@@ -105,6 +103,11 @@ fn register_route(r: Router, method: string, pattern: string, handler: int64): i
         handler = handler
     }
     array_push(r.routes, route)
+    return 0
+}
+
+export fn Use(r: Router, middleware: int64): int32 {
+    array_push(r.middleware, middleware)
     return 0
 }
 
@@ -241,46 +244,104 @@ export fn Match(r: Router, method: string, path: string): MatchResult {
     return find_match(r, method, path)
 }
 
-export fn Param(req: Request, name: string): string {
-    if str_eq(name, req.param_name) != 0 {
-        return req.param_value
+fn write_response(ctx: Context, status: int32, body: string, content_type: string): int32 {
+    ctx.status = status
+    ctx.body = body
+    ctx.content_type = content_type
+    ctx.written = 1
+    return 0
+}
+
+export fn Method(ctx: Context): string {
+    return ctx.method
+}
+
+export fn Path(ctx: Context): string {
+    return ctx.path
+}
+
+export fn Param(ctx: Context, name: string): string {
+    if str_eq(name, ctx.param_name) != 0 {
+        return ctx.param_value
     }
     return ""
 }
 
-export fn RespondText(req: Request, status: int32, body: string): int32 {
-    req.status = status
-    req.body = body
-    req.content_type = "text/plain"
+export fn String(ctx: Context, status: int32, body: string): int32 {
+    return write_response(ctx, status, body, "text/plain")
+}
+
+export fn JSON(ctx: Context, status: int32, body: string): int32 {
+    return write_response(ctx, status, body, "application/json")
+}
+
+export fn HTML(ctx: Context, status: int32, body: string): int32 {
+    return write_response(ctx, status, body, "text/html; charset=utf-8")
+}
+
+export fn Put(ctx: Context, key: string, val: string): int32 {
+    array_push(ctx.keys, key)
+    array_push(ctx.vals, val)
     return 0
 }
 
-export fn RespondJson(req: Request, status: int32, body: string): int32 {
-    req.status = status
-    req.body = body
-    req.content_type = "application/json"
+export fn Get(ctx: Context, key: string): string {
+    local i = 0
+    local n = array_len(ctx.keys)
+    while i < n {
+        local k = array_get(ctx.keys, i)
+        if str_eq(k, key) != 0 {
+            return array_get(ctx.vals, i)
+        }
+        i = i + 1
+    }
+    return ""
+}
+
+export fn Bind(ctx: Context, key: string, handle: int64): int32 {
+    array_push(ctx.refs, key)
+    array_push(ctx.handles, handle)
     return 0
 }
 
-export fn RespondHtml(req: Request, status: int32, body: string): int32 {
-    req.status = status
-    req.body = body
-    req.content_type = "text/html; charset=utf-8"
+export fn Ref(ctx: Context, key: string): int64 {
+    local i = 0
+    local n = array_len(ctx.refs)
+    while i < n {
+        local k = array_get(ctx.refs, i)
+        if str_eq(k, key) != 0 {
+            return array_get(ctx.handles, i)
+        }
+        i = i + 1
+    }
     return 0
 }
 
-export fn DispatchRequest(r: Router, method: string, path: string): Request {
+fn run_middlewares(r: Router, ctx: Context): int32 {
+    local i = 0
+    local n = array_len(r.middleware)
+    while i < n {
+        local mw = array_get(r.middleware, i)
+        invoke1(mw, ctx)
+        i = i + 1
+    }
+    return 0
+}
+
+export fn DispatchRequest(r: Router, method: string, path: string): Context {
     local m = find_match(r, method, path)
     if m.handler == 0 {
-        local miss = empty_request(method, path)
-        miss.status = 404
-        miss.body = "not found"
-        miss.content_type = "text/plain"
+        local miss = new_context(method, path, "", "")
+        miss.String(404, "not found")
         return miss
     }
-    local req = request_from_match(m)
-    invoke1(m.handler, req)
-    return req
+    local ctx = new_context(m.method, m.path, m.param_name, m.param_value)
+    run_middlewares(r, ctx)
+    invoke1(m.handler, ctx)
+    if ctx.written == 0 {
+        ctx.String(200, "")
+    }
+    return ctx
 }
 
 export fn Protocol(info: ServerInfo): string {
@@ -387,8 +448,8 @@ fn handle_client(client: int64, r: Router): int32 {
     }
     local method = request_method(raw)
     local path = request_path(raw)
-    local resp = r.DispatchRequest(method, path)
-    local out = build_response(resp.status, resp.body, resp.content_type)
+    local ctx = r.DispatchRequest(method, path)
+    local out = build_response(ctx.status, ctx.body, ctx.content_type)
     net_send(client, out)
     return 0
 }

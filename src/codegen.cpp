@@ -1928,6 +1928,12 @@ std::pair<Type, std::string> Codegen::emitExpr(
                 writeln("  " + casted + " = bitcast i8* " + val + " to " + llvmTypeName(target));
                 return {target, casted};
             }
+            if (from_ty.kind == TypeKind::Int64 && target.kind == TypeKind::Struct) {
+                const std::string ptr = freshTmp();
+                writeln("  " + ptr + " = inttoptr i64 " + val + " to " +
+                        structTypeName(target.struct_name) + "*");
+                return loadValue(target, ptr, locals);
+            }
             throw XlangError("unsupported cast from `" + typeToString(from_ty) + "` to `" +
                              typeToString(target) + "`");
         }
@@ -2099,6 +2105,17 @@ std::pair<Type, std::string> Codegen::emitExpr(
                 const std::string tmp = freshTmp();
                 writeln("  " + tmp + " = call i32 " + fn + "()");
                 return {Type{TypeKind::Int32}, tmp};
+            }
+
+            if (expr.name == "ref" && expr.args.size() == 1) {
+                const auto [ty, val] = emitExpr(*expr.args[0], locals);
+                if (ty.kind != TypeKind::Struct) {
+                    throw XlangError("ref requires struct value");
+                }
+                const std::string tmp = freshTmp();
+                writeln("  " + tmp + " = ptrtoint " + structTypeName(ty.struct_name) + " " +
+                        val + " to i64");
+                return {Type{TypeKind::Int64}, tmp};
             }
 
             if (expr.name == "invoke1" && expr.args.size() == 2) {

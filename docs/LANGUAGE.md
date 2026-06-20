@@ -355,7 +355,7 @@ from json import parse                         // selective (legacy)
 |--------|-------------|
 | `json` | `parse`, field accessors |
 | `http` | Router + TCP server package |
-| `http/router` | `NewRouter()`, `r.Get(...)`, `r.DispatchRequest(...) → Request`, `r.ListenAndServe(...)`, handlers `fn(req: Request)` |
+| `http/router` | Gin-style `Context`, `r.Use`, `ctx.String/JSON/HTML`, `ctx.Put/Get`, `ctx.Bind/Ref` |
 | `test` | Vitest-style `expect` |
 | `process` | fork, pipe, fd, env, `file_read` |
 
@@ -490,55 +490,58 @@ See `examples/sync_lock.xlang` for `go` + mutex + atomic counter.
 
 ## HTTP server (libs/http)
 
-Router + TCP server live in `libs/http/router.xlang`. **No mutable module globals** — each request gets its own `Request` instance passed to the handler.
+Gin-inspired minimal router. Handlers receive **`Context`** (request + response + per-request stash). No module globals.
 
 ```xlang
 import * as http from http
 
-fn handle_ping(req: Request) {
-    req.RespondText(200, "pong")
+fn auth(ctx: Context) {
+    local user = new User { name = "admin" }
+    ctx.Bind("auth.user", ref(user))
     return 0
 }
 
-fn on_listen(info: ServerInfo) {
-    print("running at %s://%s:%d", info.Protocol(), info.Hostname(), info.Port())
+fn handle_me(ctx: Context) {
+    local user = ctx.Ref("auth.user") as User
+    ctx.JSON(200, "{\"name\":\"" + user.name + "\"}")
     return 0
 }
 
 fn main() {
     local r = http.NewRouter()
-    local api = r.Group("/api")
-    api.Get("/info", handle_api_info)
-    r.Get("/ping", handle_ping)
+    r.Use(auth)
+    r.Get("/me", handle_me)
     r.ListenAndServe("127.0.0.1", 8080, on_listen)
     return 0
 }
 ```
 
-### Router methods
+### Router
 
 | Method | Description |
 |--------|-------------|
-| `NewRouter()` | New router instance |
-| `r.Get(path, handler)` | Register GET route (also Post, Put, Delete, …) |
-| `r.Group(prefix)` | Sub-router sharing routes (prefix chain) |
-| `r.Mount(prefix, child)` | Mount another router tree |
-| `r.DispatchRequest(method, path) → Request` | Match + invoke handler with `Request` |
-| `r.ListenAndServe(host, port, on_listen)` | TCP server loop |
-| `r.ServeOnce(...)` | Single connection then exit |
+| `NewRouter()` | New router |
+| `r.Use(mw)` | Middleware `fn(ctx: Context)` — runs before each handler |
+| `r.Get/Post/...` | Register routes |
+| `r.Group(prefix)` | Shared prefix + middleware chain |
+| `r.DispatchRequest(method, path) → Context` | Test/dispatch |
+| `r.ListenAndServe(host, port, on_listen)` | TCP server |
 
-Handlers must accept `Request`: `fn handler(req: Request)`. Listen callback: `fn on_listen(info: ServerInfo)`.
-
-### Request methods
+### Context (handler)
 
 | Method | Description |
 |--------|-------------|
-| `req.Param(name)` | URL path parameter (`/user/{id}`) |
-| `req.RespondText(status, body)` | Plain-text response |
-| `req.RespondJson(status, body)` | JSON response |
-| `req.RespondHtml(status, body)` | HTML response |
+| `ctx.Param(name)` | Path param |
+| `ctx.Method()` / `ctx.Path()` | Request info |
+| `ctx.String(status, body)` | Plain text response |
+| `ctx.JSON(status, body)` | JSON response |
+| `ctx.HTML(status, body)` | HTML response |
+| `ctx.Put(key, val)` | Stash string (middleware → handler) |
+| `ctx.Get(key)` | Read stashed string |
+| `ctx.Bind(key, ref(obj))` | Attach struct handle |
+| `ctx.Ref(key) as Type` | Load struct from stash |
 
-After `DispatchRequest`, read `resp.status`, `resp.body`, `resp.content_type` from the returned `Request`.
+Compiler: `ref(obj)` → int64, `handle as User` loads struct from handle.
 
 ---
 
@@ -670,7 +673,8 @@ Not syscalls; codegen special cases:
 |------|-------------|
 | `print(...)` | Variadic printf (see above) |
 | `invoke0(entry)` | `int64` fn ptr → call with no args |
-| `invoke1(entry, ctx)` | `int64` fn ptr → call with one arg (struct pointer, `i32`, …) |
+| `ref(obj)` | Struct pointer as `int64` (context stash) |
+| `invoke1(entry, ctx)` | `int64` fn ptr → call with one arg (`Context`, `ServerInfo`, …) |
 | `array_len(arr)` | Array length |
 | `array_push(arr, val)` | Append to end |
 | `array_pop_front(arr)` | Take and remove from front |
@@ -680,7 +684,7 @@ Not syscalls; codegen special cases:
 | `str_find(haystack, needle)` | Index of substring, or -1 |
 | `str_sub(s, start, len)` | Substring copy |
 
-`invoke0` — scheduler worker loop. `invoke1` — HTTP handlers (`fn(req: Request)`) and listen callbacks (`fn(info: ServerInfo)`).
+`invoke0` — scheduler worker loop. `invoke1` — HTTP handlers (`fn(ctx: Context)`) and listen callbacks (`fn(info: ServerInfo)`). `ref(obj)` + `handle as Type` for context struct stash.
 
 ---
 

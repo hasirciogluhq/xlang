@@ -12,7 +12,7 @@ Built with **Bun** + TypeScript. Requires the [`xlank`](https://github.com/hasir
 |---------|-------------|
 | **Completion** | Keywords, types, runtime/builtins, local symbols, import aliases |
 | **Import-aware** | `http.NewRouter()` completes from `libs/http/` exports after `import * as http from http` |
-| **Member access** | `r.Get(`, `req.RespondText(`, `data.Int(` — methods on `Router`, `Request`, `Json`, … |
+| **Member access** | `r.Get(`, `ctx.JSON(`, `data.Int(` — methods on `Router`, `Context`, `Json`, … |
 | **Module picker** | Typing `import` suggests workspace modules (`http`, `json`, `http/router`, …) with export preview |
 | **Hover** | Markdown docs on builtins, exported functions, structs, and imported symbols |
 | **Go to definition** | Jump to the `.xlang` file where an imported symbol is defined |
@@ -96,8 +96,8 @@ Or install from the marketplace when published.
 ```xlang
 import * as http from http
 
-fn handle_ping(req: Request) {
-    req.RespondText(200, "pong")
+fn handle_ping(ctx: Context) {
+    ctx.String(200, "pong")
     return 0
 }
 
@@ -114,7 +114,7 @@ fn main() {
 }
 ```
 
-Hover `r.ListenAndServe` or `req.RespondText` for signatures. Completion after `req.` lists Request methods; after `r.` lists Router methods.
+Hover `ctx.JSON` or `r.Use` for signatures. Completion after `ctx.` lists Context methods.
 
 ## License
 
