@@ -7,6 +7,7 @@
     { "include": "#strings" },
     { "include": "#declarations" },
     { "include": "#builtins" },
+    { "include": "#method-calls" },
     { "include": "#keywords" },
     { "include": "#types" },
     { "include": "#constants" },
@@ -58,16 +59,35 @@
           }
         },
         {
-          "name": "meta.import.xlang",
-          "match": "\\b(import|from)\\s+([A-Za-z_][A-Za-z0-9_]*)",
+          "name": "meta.import.alias-from.xlang",
+          "match": "\\b(import)\\s+([A-Za-z_][A-Za-z0-9_]*)\\s+(from)\\s+([A-Za-z_][A-Za-z0-9_/]*)",
+          "captures": {
+            "1": { "name": "keyword.control.import.xlang" },
+            "2": { "name": "variable.other.alias.xlang" },
+            "3": { "name": "keyword.control.import.xlang" },
+            "4": { "name": "entity.name.namespace.xlang" }
+          }
+        },
+        {
+          "name": "meta.import.module.xlang",
+          "match": "\\b(import)\\s+([A-Za-z_][A-Za-z0-9_/]*)",
           "captures": {
             "1": { "name": "keyword.control.import.xlang" },
             "2": { "name": "entity.name.namespace.xlang" }
           }
         },
         {
+          "name": "meta.import.from.xlang",
+          "match": "\\b(from)\\s+([A-Za-z_][A-Za-z0-9_/]*)\\s+(import)",
+          "captures": {
+            "1": { "name": "keyword.control.import.xlang" },
+            "2": { "name": "entity.name.namespace.xlang" },
+            "3": { "name": "keyword.control.import.xlang" }
+          }
+        },
+        {
           "name": "meta.declare.xlang",
-          "match": "\\b(declare)\\s+(syscall|external)\\s+(fn)\\s+([A-Za-z_][A-Za-z0-9_]*)",
+          "match": "\\b(declare)\\s+(syscall|external)\\s+(fn)?\\s*([A-Za-z_][A-Za-z0-9_]*)",
           "captures": {
             "1": { "name": "keyword.other.declare.xlang" },
             "2": { "name": "keyword.other.syscall.xlang" },
@@ -81,11 +101,34 @@
       "patterns": [
         {
           "name": "support.function.runtime.xlang",
-          "match": "\\b(print|fetch|json_get_int|json_get_string|json_get_bool|spawn|wait_all|cpu|add_worker)\\b(?=\\s*\\()"
+          "match": "\\b(print|fetch|spawn|wait_all|cpu|add_worker)\\b(?=\\s*\\()"
+        },
+        {
+          "name": "support.function.json.xlang",
+          "match": "\\b(json_get_int|json_get_string|json_get_bool|json_has_key|json_is_null|json_get_field|json_unescape|json_parse_string_at|json_find_key)\\b(?=\\s*\\()"
+        },
+        {
+          "name": "support.function.http.xlang",
+          "match": "\\b(NewRouter|Get|Post|Put|Delete|Patch|Head|Options|Group|Mount|Match|URLParam|Method|Path|Respond|RespondText|RespondJson|ResetResponse|ResponseStatus|ResponseBody|ResponseType|Dispatch|Listen|Accept|ListenAndServe|ServeOnce)\\b(?=\\s*\\()"
+        },
+        {
+          "name": "support.function.compiler.xlang",
+          "match": "\\b(invoke0|invoke|str_len|str_eq|str_byte|str_find|str_sub|str_from_int|array_len|array_push|array_get|array_pop|array_pop_front)\\b(?=\\s*\\()"
         },
         {
           "name": "support.function.test.xlang",
           "match": "\\b(describe|it|expect_eq|expect_ne|expect_str_eq|expect_true|expect_false|test_summary)\\b(?=\\s*\\()"
+        }
+      ]
+    },
+    "method-calls": {
+      "patterns": [
+        {
+          "name": "meta.method-call.xlang",
+          "match": "\\.([A-Za-z_][A-Za-z0-9_]*)\\s*(?=\\()",
+          "captures": {
+            "1": { "name": "entity.name.function.member.xlang" }
+          }
         }
       ]
     },

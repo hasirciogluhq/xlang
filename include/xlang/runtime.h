@@ -15,6 +15,7 @@ struct RuntimeBundle {
     std::vector<StructDecl> structs;
     bool needs_thread_link{false};
     bool needs_ssl_link{false};
+    bool needs_server_link{false};
 };
 
 struct RuntimeOptions {

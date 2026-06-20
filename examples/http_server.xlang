@@ -1,0 +1,38 @@
+import http from http
+
+fn handle_root() {
+    http.RespondText(200, "hi")
+    return 0
+}
+
+fn handle_ping() {
+    http.RespondText(200, "pong")
+    return 0
+}
+
+fn handle_article() {
+    local id = http.URLParam("articleID")
+    http.RespondText(200, "article " + id)
+    return 0
+}
+
+fn setup_admin() {
+    local admin = http.NewRouter()
+    admin.Get("/", handle_root)
+    return admin
+}
+
+fn main() {
+    local r = http.NewRouter()
+    r.Get("/", handle_root)
+    r.Get("/ping", handle_ping)
+
+    local articles = r.Group("/articles")
+    articles.Get("/{articleID}", handle_article)
+
+    local admin = setup_admin()
+    r.Mount("/admin", admin)
+
+    http.ListenAndServe("127.0.0.1", 8080, r)
+    return 0
+}

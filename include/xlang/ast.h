@@ -104,6 +104,7 @@ struct Expr {
         Call,
         FunctionRef,
         FieldAccess,
+        MethodCall,
         New,
         NewArray,
         Index,
@@ -136,6 +137,8 @@ struct Expr {
     static std::unique_ptr<Expr> makeFunctionRef(std::string name, Span span);
     static std::unique_ptr<Expr> makeFieldAccess(std::unique_ptr<Expr> object, std::string field,
                                                  Span span);
+    static std::unique_ptr<Expr> makeMethodCall(std::unique_ptr<Expr> object, std::string method,
+                                               std::vector<std::unique_ptr<Expr>> args, Span span);
     static std::unique_ptr<Expr> makeNew(std::string struct_name,
                                          std::vector<FieldInit> field_inits, Span span);
     static std::unique_ptr<Expr> makeNewArray(Type element_type, Span span);

@@ -25,6 +25,7 @@ struct CodegenResult {
     std::unordered_set<std::string> syscalls;
     bool needs_thread_link{false};
     bool needs_ssl_link{false};
+    bool needs_server_link{false};
 };
 
 class Codegen {
@@ -102,6 +103,12 @@ private:
 
     void writeln(const std::string& line);
 
+    [[nodiscard]] std::optional<FunctionSignature> resolveMethodCall(
+        const std::string& name, const Type& receiver_type,
+        const std::vector<Type>& arg_types) const;
+    [[nodiscard]] std::string importPrefixedName(const std::string& alias,
+                                                 const std::string& method) const;
+
     CodegenOptions options_;
     const Program* program_{nullptr};
     std::string output_;
@@ -122,6 +129,7 @@ private:
     std::uint32_t label_counter_{0};
     std::unordered_map<std::string, std::string> string_literal_globals_;
     std::unordered_map<std::string, Type> local_types_;
+    std::unordered_map<std::string, std::string> import_aliases_;
     Type current_return_type_{TypeKind::Int32};
 };
 

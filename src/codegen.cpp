@@ -43,16 +43,52 @@ bool paramTypesMatch(const std::vector<Type>& expected, const std::vector<Type>&
     return true;
 }
 
-std::optional<FunctionSignature> findMatchingFunction(
+bool paramTypesMatchWithWidening(const std::vector<Type>& expected,
+                                 const std::vector<Type>& actual, bool variadic) {
+    if (variadic) {
+        if (actual.size() < expected.size()) {
+            return false;
+        }
+        for (std::size_t i = 0; i < expected.size(); ++i) {
+            if (typesEqual(expected[i], actual[i])) {
+                continue;
+            }
+            if (expected[i].kind == TypeKind::Int64 && actual[i].kind == TypeKind::Int32) {
+                continue;
+            }
+            return false;
+        }
+        return true;
+    }
+    if (expected.size() != actual.size()) {
+        return false;
+    }
+    for (std::size_t i = 0; i < expected.size(); ++i) {
+        if (typesEqual(expected[i], actual[i])) {
+            continue;
+        }
+        if (expected[i].kind == TypeKind::Int64 && actual[i].kind == TypeKind::Int32) {
+            continue;
+        }
+        return false;
+    }
+    return true;
+}
+
+std::optional<FunctionSignature> findMatchingFunctionImpl(
     const std::string& name, const std::vector<Type>& arg_types,
-    const std::vector<FunctionSignature>& candidates) {
+    const std::vector<FunctionSignature>& candidates, bool allow_widening) {
     const FunctionSignature* match = nullptr;
     for (const FunctionSignature& candidate : candidates) {
         if (candidate.name != name) {
             continue;
         }
         const std::vector<Type> expected = paramTypes(candidate.params);
-        if (!paramTypesMatch(expected, arg_types, candidate.variadic)) {
+        const bool matches = allow_widening ? paramTypesMatchWithWidening(expected, arg_types,
+                                                                        candidate.variadic)
+                                          : paramTypesMatch(expected, arg_types,
+                                                            candidate.variadic);
+        if (!matches) {
             continue;
         }
         if (match != nullptr) {
@@ -64,6 +100,16 @@ std::optional<FunctionSignature> findMatchingFunction(
         return std::nullopt;
     }
     return *match;
+}
+
+std::optional<FunctionSignature> findMatchingFunction(
+    const std::string& name, const std::vector<Type>& arg_types,
+    const std::vector<FunctionSignature>& candidates) {
+    if (const std::optional<FunctionSignature> exact =
+            findMatchingFunctionImpl(name, arg_types, candidates, false)) {
+        return exact;
+    }
+    return findMatchingFunctionImpl(name, arg_types, candidates, true);
 }
 
 std::vector<FunctionSignature> collectDefinedFunctions(const Program& program) {
@@ -205,6 +251,9 @@ bool exprUsesHeap(const Expr& expr) {
         return true;
     }
     if (expr.kind == Expr::Kind::FieldAccess && expr.object) {
+        return exprUsesHeap(*expr.object);
+    }
+    if (expr.kind == Expr::Kind::MethodCall && expr.object) {
         return exprUsesHeap(*expr.object);
     }
     if (expr.left && exprUsesHeap(*expr.left)) {
@@ -349,6 +398,11 @@ Codegen::Codegen(CodegenOptions options) : options_(std::move(options)) {}
 CodegenResult Codegen::generate(const Program& program, const CodegenOptions& options) {
     Codegen cg(options);
     cg.program_ = &program;
+    for (const ImportDecl& import : program.imports) {
+        if (!import.alias.empty()) {
+            cg.import_aliases_[import.alias] = import.alias;
+        }
+    }
     cg.needs_heap_ = programUsesHeap(program) || programUsesStrings(program) || programUsesArrays(program);
     cg.needs_strings_ = programUsesStrings(program);
     cg.needs_arrays_ = programUsesArrays(program);
@@ -385,6 +439,7 @@ CodegenResult Codegen::generate(const Program& program, const CodegenOptions& op
     result.syscalls = std::move(cg.syscalls_);
     result.needs_thread_link = syscallsNeedThreadLink(result.syscalls);
     result.needs_ssl_link = syscallsNeedSslLink(result.syscalls);
+    result.needs_server_link = syscallsNeedServerLink(result.syscalls);
     return result;
 }
 
@@ -756,6 +811,38 @@ void Codegen::emitArrayRuntimeSupport() {
     writeln("  ret i8* %buf");
     writeln("}");
     writeln("");
+    writeln("define internal i8* @__xlang_array_get_raw(%array.hdr* %arr, i64 %index, i64 %elem_size) {");
+    writeln("  %len_ptr = getelementptr %array.hdr, %array.hdr* %arr, i32 0, i32 1");
+    writeln("  %head_ptr = getelementptr %array.hdr, %array.hdr* %arr, i32 0, i32 3");
+    writeln("  %data_ptr = getelementptr %array.hdr, %array.hdr* %arr, i32 0, i32 0");
+    writeln("  %len = load i64, i64* %len_ptr");
+    writeln("  %head = load i64, i64* %head_ptr");
+    writeln("  %data = load i8*, i8** %data_ptr");
+    writeln("  %pos = add i64 %head, %index");
+    writeln("  %offset = mul i64 %pos, %elem_size");
+    writeln("  %slot = getelementptr i8, i8* %data, i64 %offset");
+    writeln("  %buf = call i8* @malloc(i64 %elem_size)");
+    writeln("  call i8* @memcpy(i8* %buf, i8* %slot, i64 %elem_size)");
+    writeln("  ret i8* %buf");
+    writeln("}");
+    writeln("");
+    writeln("define internal i8* @__xlang_array_pop_raw(%array.hdr* %arr, i64 %elem_size) {");
+    writeln("  %len_ptr = getelementptr %array.hdr, %array.hdr* %arr, i32 0, i32 1");
+    writeln("  %head_ptr = getelementptr %array.hdr, %array.hdr* %arr, i32 0, i32 3");
+    writeln("  %data_ptr = getelementptr %array.hdr, %array.hdr* %arr, i32 0, i32 0");
+    writeln("  %len = load i64, i64* %len_ptr");
+    writeln("  %last = sub i64 %len, 1");
+    writeln("  %head = load i64, i64* %head_ptr");
+    writeln("  %data = load i8*, i8** %data_ptr");
+    writeln("  %pos = add i64 %head, %last");
+    writeln("  %offset = mul i64 %pos, %elem_size");
+    writeln("  %slot = getelementptr i8, i8* %data, i64 %offset");
+    writeln("  %buf = call i8* @malloc(i64 %elem_size)");
+    writeln("  call i8* @memcpy(i8* %buf, i8* %slot, i64 %elem_size)");
+    writeln("  store i64 %last, i64* %len_ptr");
+    writeln("  ret i8* %buf");
+    writeln("}");
+    writeln("");
 }
 
 std::string Codegen::freshLabel() {
@@ -1011,6 +1098,52 @@ std::optional<FunctionSignature> Codegen::resolveFunctionCall(
         return match;
     }
     return std::nullopt;
+}
+
+std::optional<FunctionSignature> Codegen::resolveMethodCall(
+    const std::string& name, const Type& receiver_type,
+    const std::vector<Type>& arg_types) const {
+    std::vector<Type> full_args;
+    full_args.push_back(receiver_type);
+    full_args.insert(full_args.end(), arg_types.begin(), arg_types.end());
+    if (const std::optional<FunctionSignature> exact = resolveFunctionCall(name, full_args)) {
+        return exact;
+    }
+
+    const std::string suffix = "_" + name;
+    const FunctionSignature* match = nullptr;
+    const std::vector<FunctionSignature> defined = collectDefinedFunctions(*program_);
+    for (const FunctionSignature& candidate : defined) {
+        if (candidate.params.empty()) {
+            continue;
+        }
+        if (!typesEqual(candidate.params[0].type, receiver_type)) {
+            continue;
+        }
+        if (candidate.name.size() < suffix.size()) {
+            continue;
+        }
+        if (candidate.name.substr(candidate.name.size() - suffix.size()) != suffix) {
+            continue;
+        }
+        std::vector<Type> expected = paramTypes(candidate.params);
+        if (!paramTypesMatchWithWidening(expected, full_args, candidate.variadic)) {
+            continue;
+        }
+        if (match != nullptr) {
+            throw XlangError("ambiguous method call `" + name + "`");
+        }
+        match = &candidate;
+    }
+    if (match == nullptr) {
+        return std::nullopt;
+    }
+    return *match;
+}
+
+std::string Codegen::importPrefixedName(const std::string& alias,
+                                        const std::string& method) const {
+    return alias + "_" + method;
 }
 
 const StructDecl* Codegen::findStruct(const std::string& name) const {
@@ -1442,7 +1575,19 @@ bool Codegen::emitStatement(const Stmt& stmt, std::unordered_map<std::string, st
         }
         case Stmt::Kind::Return: {
             if (stmt.return_value) {
-                const auto [ty, val] = emitExpr(*stmt.return_value, locals);
+                auto [ty, val] = emitExpr(*stmt.return_value, locals);
+                if (ty.kind == TypeKind::Int32 && current_return_type_.kind == TypeKind::Int64) {
+                    const std::string widened = freshTmp();
+                    writeln("  " + widened + " = sext i32 " + val + " to i64");
+                    val = widened;
+                    ty = current_return_type_;
+                } else if (ty.kind == TypeKind::Int64 &&
+                           current_return_type_.kind == TypeKind::Int32) {
+                    const std::string narrowed = freshTmp();
+                    writeln("  " + narrowed + " = trunc i64 " + val + " to i32");
+                    val = narrowed;
+                    ty = current_return_type_;
+                }
                 writeln("  ret " + llvmTypeName(ty) + " " + val);
             } else if (current_return_type_.kind == TypeKind::Void) {
                 writeln("  ret void");
@@ -1521,6 +1666,77 @@ std::pair<Type, std::string> Codegen::emitExpr(
                     structTypeName(decl->name) + " " + obj_val + ", i32 0, i32 " +
                     std::to_string(index));
             return loadValue(field_type, gep, locals);
+        }
+        case Expr::Kind::MethodCall: {
+            std::vector<Type> arg_types;
+            std::vector<std::string> arg_values;
+            for (const std::unique_ptr<Expr>& arg_expr : expr.args) {
+                const auto [ty, val] = emitExpr(*arg_expr, locals);
+                arg_types.push_back(ty);
+                arg_values.push_back(val);
+            }
+
+            if (expr.object->kind == Expr::Kind::Variable &&
+                import_aliases_.find(expr.object->name) != import_aliases_.end()) {
+                const std::string alias = import_aliases_.at(expr.object->name);
+                const std::string fn_name = importPrefixedName(alias, expr.name);
+                const std::optional<FunctionSignature> resolved =
+                    resolveFunctionCall(fn_name, arg_types);
+                if (!resolved) {
+                    throw XlangError("unknown import call `" + alias + "." + expr.name + "`");
+                }
+                const std::string llvm_name = mangleFunctionName(resolved->name,
+                                                                  paramTypes(resolved->params),
+                                                                  resolved->variadic);
+                std::ostringstream args;
+                for (std::size_t i = 0; i < arg_values.size(); ++i) {
+                    if (i > 0) {
+                        args << ", ";
+                    }
+                    Type arg_ty = arg_types[i];
+                    std::string val = arg_values[i];
+                    const Type param_ty = resolved->params[i].type;
+                    if (arg_ty.kind == TypeKind::Int32 && param_ty.kind == TypeKind::Int64) {
+                        const std::string widened = freshTmp();
+                        writeln("  " + widened + " = sext i32 " + val + " to i64");
+                        val = widened;
+                    }
+                    args << llvmTypeName(param_ty) << " " << val;
+                }
+                const std::string tmp = freshTmp();
+                writeln("  " + tmp + " = call " + llvmTypeName(resolved->return_type) + " @" +
+                        llvm_name + "(" + args.str() + ")");
+                return {resolved->return_type, tmp};
+            }
+
+            const auto [recv_ty, recv_val] = emitExpr(*expr.object, locals);
+            const std::optional<FunctionSignature> resolved =
+                resolveMethodCall(expr.name, recv_ty, arg_types);
+            if (!resolved) {
+                throw XlangError("no matching method `" + expr.name + "` for `" +
+                                 typeToString(recv_ty) + "`");
+            }
+
+            std::ostringstream args;
+            args << llvmTypeName(resolved->params[0].type) << " " << recv_val;
+            for (std::size_t i = 0; i < arg_values.size(); ++i) {
+                args << ", ";
+                Type arg_ty = arg_types[i];
+                std::string val = arg_values[i];
+                const Type param_ty = resolved->params[i + 1].type;
+                if (arg_ty.kind == TypeKind::Int32 && param_ty.kind == TypeKind::Int64) {
+                    const std::string widened = freshTmp();
+                    writeln("  " + widened + " = sext i32 " + val + " to i64");
+                    val = widened;
+                }
+                args << llvmTypeName(param_ty) << " " << val;
+            }
+            const std::string llvm_name =
+                mangleFunctionName(resolved->name, paramTypes(resolved->params), resolved->variadic);
+            const std::string tmp = freshTmp();
+            writeln("  " + tmp + " = call " + llvmTypeName(resolved->return_type) + " @" +
+                    llvm_name + "(" + args.str() + ")");
+            return {resolved->return_type, tmp};
         }
         case Expr::Kind::New: {
             const StructDecl* decl = findStruct(expr.name);
@@ -1693,14 +1909,13 @@ std::pair<Type, std::string> Codegen::emitExpr(
             }
 
             std::vector<Type> arg_types;
-            std::ostringstream args;
-            for (std::size_t i = 0; i < expr.args.size(); ++i) {
-                if (i > 0) {
-                    args << ", ";
-                }
-                const auto [ty, val] = emitExpr(*expr.args[i], locals);
+            std::vector<std::string> arg_values;
+            arg_types.reserve(expr.args.size());
+            arg_values.reserve(expr.args.size());
+            for (const std::unique_ptr<Expr>& arg_expr : expr.args) {
+                const auto [ty, val] = emitExpr(*arg_expr, locals);
                 arg_types.push_back(ty);
-                args << llvmTypeName(ty) << " " << val;
+                arg_values.push_back(val);
             }
 
             if (expr.name == "invoke0" && expr.args.size() == 1) {
@@ -1830,6 +2045,55 @@ std::pair<Type, std::string> Codegen::emitExpr(
                 return loadValue(elem, typed, locals);
             }
 
+            if (expr.name == "array_get" && expr.args.size() == 2) {
+                const auto [arr_ty, arr] = emitExpr(*expr.args[0], locals);
+                const auto [_, idx] = emitExpr(*expr.args[1], locals);
+                const Type elem = arr_ty.arrayElementType();
+                const std::size_t sz = elementSizeBytes(elem);
+                const std::string idx64 = freshTmp();
+                writeln("  " + idx64 + " = sext i32 " + idx + " to i64");
+                const std::string raw = freshTmp();
+                writeln("  " + raw + " = call i8* @__xlang_array_get_raw(%array.hdr* " + arr +
+                        ", i64 " + idx64 + ", i64 " + std::to_string(sz) + ")");
+                if (elem.kind == TypeKind::Struct) {
+                    const std::string typed = freshTmp();
+                    writeln("  " + typed + " = bitcast i8* " + raw + " to " +
+                            structTypeName(elem.struct_name));
+                    return {elem, typed};
+                }
+                const std::string typed = freshTmp();
+                writeln("  " + typed + " = bitcast i8* " + raw + " to " + llvmTypeName(elem) +
+                        "*");
+                return loadValue(elem, typed, locals);
+            }
+
+            if (expr.name == "array_pop" && expr.args.size() == 1) {
+                const auto [arr_ty, arr] = emitExpr(*expr.args[0], locals);
+                const Type elem = arr_ty.arrayElementType();
+                const std::size_t sz = elementSizeBytes(elem);
+                const std::string raw = freshTmp();
+                writeln("  " + raw + " = call i8* @__xlang_array_pop_raw(%array.hdr* " + arr +
+                        ", i64 " + std::to_string(sz) + ")");
+                if (elem.kind == TypeKind::Struct) {
+                    const std::string typed = freshTmp();
+                    writeln("  " + typed + " = bitcast i8* " + raw + " to " +
+                            structTypeName(elem.struct_name));
+                    return {elem, typed};
+                }
+                const std::string typed = freshTmp();
+                writeln("  " + typed + " = bitcast i8* " + raw + " to " + llvmTypeName(elem) +
+                        "*");
+                return loadValue(elem, typed, locals);
+            }
+
+            if (expr.name == "str_from_int" && expr.args.size() == 1) {
+                const auto [ty, val] = emitExpr(*expr.args[0], locals);
+                (void)ty;
+                const std::string tmp = freshTmp();
+                writeln("  " + tmp + " = call i8* @__xlang_int_to_str(i32 " + val + ")");
+                return {Type{TypeKind::String}, tmp};
+            }
+
             const std::optional<FunctionSignature> resolved =
                 resolveFunctionCall(expr.name, arg_types);
             if (!resolved) {
@@ -1854,6 +2118,24 @@ std::pair<Type, std::string> Codegen::emitExpr(
                 return mangleFunctionName(resolved->name, paramTypes(resolved->params),
                                         resolved->variadic);
             }();
+
+            std::ostringstream args;
+            for (std::size_t i = 0; i < arg_values.size(); ++i) {
+                if (i > 0) {
+                    args << ", ";
+                }
+                Type arg_ty = arg_types[i];
+                std::string val = arg_values[i];
+                const Type param_ty = resolved->params[i].type;
+                if (arg_ty.kind == TypeKind::Int32 && param_ty.kind == TypeKind::Int64) {
+                    const std::string widened = freshTmp();
+                    writeln("  " + widened + " = sext i32 " + val + " to i64");
+                    val = widened;
+                    arg_ty = param_ty;
+                }
+                args << llvmTypeName(param_ty) << " " << val;
+            }
+
             const std::string tmp = freshTmp();
             writeln("  " + tmp + " = call " + llvmTypeName(resolved->return_type) + " @" +
                     llvm_name + "(" + args.str() + ")");

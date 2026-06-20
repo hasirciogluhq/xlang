@@ -79,7 +79,17 @@
   "Import module": {
     "prefix": "import",
     "body": "import ${1:module}",
-    "description": "Import a module"
+    "description": "Import and merge module"
+  },
+  "Import with alias": {
+    "prefix": "importfrom",
+    "body": "import ${1:http} from ${2:http}",
+    "description": "import alias from module/path"
+  },
+  "Import as alias": {
+    "prefix": "importas",
+    "body": "import ${1:scheduler} as ${2:s}",
+    "description": "Import module with alias"
   },
   "From import": {
     "prefix": "from",
@@ -161,5 +171,39 @@
     "prefix": "expectfalse",
     "body": "expect_false(${1:value})",
     "description": "Assert falsy value"
+  },
+  "HTTP server": {
+    "prefix": "httpserver",
+    "body": [
+      "import http from http",
+      "",
+      "fn handle_root() {",
+      "\thttp.RespondText(200, \"ok\")",
+      "\treturn 0",
+      "}",
+      "",
+      "fn main() {",
+      "\tlocal r = http.NewRouter()",
+      "\tr.Get(\"/\", handle_root)",
+      "\thttp.ListenAndServe(\"127.0.0.1\", ${1:8080}, r)",
+      "\treturn 0",
+      "}"
+    ],
+    "description": "HTTP server with router"
+  },
+  "HTTP route handler": {
+    "prefix": "handler",
+    "body": [
+      "fn ${1:handle}() {",
+      "\thttp.RespondText(200, \"${2:ok}\")",
+      "\treturn 0",
+      "}"
+    ],
+    "description": "HTTP handler with RespondText"
+  },
+  "JSON get field": {
+    "prefix": "jsonget",
+    "body": "json_get_string(${1:body}, \"${2:key}\")",
+    "description": "Get JSON string field"
   }
 }

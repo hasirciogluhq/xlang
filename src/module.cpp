@@ -7,6 +7,7 @@
 #include <fstream>
 #include <sstream>
 #include <unordered_set>
+#include <vector>
 
 namespace xlang {
 
@@ -40,6 +41,14 @@ std::unique_ptr<Expr> cloneExpr(const Expr& expr) {
             return Expr::makeFunctionRef(expr.name, expr.span);
         case Expr::Kind::FieldAccess:
             return Expr::makeFieldAccess(cloneExpr(*expr.object), expr.name, expr.span);
+        case Expr::Kind::MethodCall: {
+            std::vector<std::unique_ptr<Expr>> args;
+            for (const auto& arg : expr.args) {
+                args.push_back(cloneExpr(*arg));
+            }
+            return Expr::makeMethodCall(cloneExpr(*expr.object), expr.name, std::move(args),
+                                        expr.span);
+        }
         case Expr::Kind::New: {
             std::vector<FieldInit> inits;
             for (const FieldInit& init : expr.field_inits) {
@@ -249,17 +258,17 @@ Program cloneProgram(const Program& program) {
 
 }  // namespace
 
-Program loadProgram(const std::filesystem::path& entry) {
-    return ModuleLoader(entry).load();
+Program loadProgram(const std::filesystem::path& entry,
+                    const std::vector<std::filesystem::path>& search_paths) {
+    return ModuleLoader(entry, search_paths).load();
 }
 
-ModuleLoader::ModuleLoader(std::filesystem::path entry)
-    : entry_(std::filesystem::absolute(entry)) {}
+ModuleLoader::ModuleLoader(std::filesystem::path entry,
+                           std::vector<std::filesystem::path> search_paths)
+    : entry_(std::filesystem::absolute(entry)), search_paths_(std::move(search_paths)) {}
 
 Program ModuleLoader::load() {
-    Program program = loadFile(entry_);
-    program.imports.clear();
-    return program;
+    return loadFile(entry_);
 }
 
 Program ModuleLoader::loadFile(const std::filesystem::path& path) {
@@ -285,6 +294,7 @@ Program ModuleLoader::loadFile(const std::filesystem::path& path) {
     const Program source = parseSource(buffer.str());
 
     Program merged;
+    merged.imports = source.imports;
     for (const ImportDecl& import : source.imports) {
         const std::filesystem::path dep = resolveModule(absolute.parent_path(), import.module);
         const Program dep_program = loadFile(dep);
@@ -323,6 +333,13 @@ std::filesystem::path ModuleLoader::resolveModule(const std::filesystem::path& f
     const std::filesystem::path relative = from / (name + ".xlang");
     if (std::filesystem::exists(relative)) {
         return relative;
+    }
+
+    for (const std::filesystem::path& search_root : search_paths_) {
+        const std::filesystem::path candidate = search_root / (name + ".xlang");
+        if (std::filesystem::exists(candidate)) {
+            return candidate;
+        }
     }
 
     if (const char* search = std::getenv("XLANG_PATH")) {
@@ -378,7 +395,46 @@ void ModuleLoader::mergeAll(Program& into, const Program& from) {
     }
 }
 
+void mergeStructs(Program& into, const Program& from) {
+    for (const StructDecl& decl : from.structs) {
+        bool exists = false;
+        for (const StructDecl& existing : into.structs) {
+            if (existing.name == decl.name) {
+                exists = true;
+                break;
+            }
+        }
+        if (!exists) {
+            into.structs.push_back(decl);
+        }
+    }
+}
+
 void ModuleLoader::mergePrefixed(Program& into, const Program& from, const std::string& alias) {
+    mergeStructs(into, from);
+
+    for (const GlobalVar& global : from.globals) {
+        if (isImportableGlobal(global)) {
+            continue;
+        }
+        if (hasGlobal(into, global.name)) {
+            continue;
+        }
+        addGlobal(into, cloneGlobal(global));
+    }
+    for (const Function& function : from.functions) {
+        if (isImportableFunction(function)) {
+            continue;
+        }
+        if (function.body.statements.empty() && !function.external && !function.syscall) {
+            continue;
+        }
+        if (hasFunctionOverload(into, function)) {
+            continue;
+        }
+        addFunction(into, cloneFunction(function));
+    }
+
     for (const GlobalVar& global : from.globals) {
         if (!isImportableGlobal(global)) {
             continue;
@@ -398,6 +454,7 @@ void ModuleLoader::mergePrefixed(Program& into, const Program& from, const std::
 }
 
 void ModuleLoader::mergeSelected(Program& into, const Program& from, const ImportDecl& import) {
+    mergeStructs(into, from);
     for (const ImportSpec& spec : import.names) {
         const std::string target = spec.alias.empty() ? spec.name : spec.alias;
 

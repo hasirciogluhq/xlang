@@ -141,9 +141,11 @@ export async function resolveXlankPath(): Promise<string | undefined> {
 
   const folders = vscode.workspace.workspaceFolders ?? [];
   for (const folder of folders) {
-    const candidate = path.join(folder.uri.fsPath, "build", "xlank");
-    if (fs.existsSync(candidate)) {
-      return candidate;
+    for (const base of [folder.uri.fsPath, path.join(folder.uri.fsPath, "..")]) {
+      const candidate = path.normalize(path.join(base, "build", "xlank"));
+      if (fs.existsSync(candidate)) {
+        return candidate;
+      }
     }
   }
 
@@ -157,10 +159,16 @@ export function buildEnv(): NodeJS.ProcessEnv {
     return env;
   }
 
-  const roots = folders.map((folder) => folder.uri.fsPath);
+  const paths: string[] = [];
+  for (const folder of folders) {
+    const root = folder.uri.fsPath;
+    paths.push(root);
+    paths.push(path.join(root, "runtime"));
+    paths.push(path.join(root, "..", "runtime"));
+  }
+
   const existing = env.XLANG_PATH?.split(":").filter(Boolean) ?? [];
-  const merged = [...new Set([...roots, ...existing])];
-  env.XLANG_PATH = merged.join(":");
+  env.XLANG_PATH = [...new Set([...paths, ...existing])].join(":");
   return env;
 }
 

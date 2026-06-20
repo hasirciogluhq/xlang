@@ -63,6 +63,14 @@ export fn expect_ne(actual: int32, expected: int32): int32 {
     return 0
 }
 
+export fn expect_ne(actual: int64, expected: int64): int32 {
+    if actual == expected {
+        current_test_failed = 1
+        print("   expected handler mismatch")
+    }
+    return 0
+}
+
 export fn test_summary(): int32 {
     print("")
     print(" @xlang-test passed=%d failed=%d", passed, failed)

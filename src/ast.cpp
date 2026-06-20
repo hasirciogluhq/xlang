@@ -88,6 +88,17 @@ std::unique_ptr<Expr> Expr::makeFieldAccess(std::unique_ptr<Expr> object, std::s
     return expr;
 }
 
+std::unique_ptr<Expr> Expr::makeMethodCall(std::unique_ptr<Expr> object, std::string method,
+                                           std::vector<std::unique_ptr<Expr>> args, Span span) {
+    auto expr = std::make_unique<Expr>();
+    expr->kind = Kind::MethodCall;
+    expr->object = std::move(object);
+    expr->name = std::move(method);
+    expr->args = std::move(args);
+    expr->span = span;
+    return expr;
+}
+
 std::unique_ptr<Expr> Expr::makeNew(std::string struct_name, std::vector<FieldInit> field_inits,
                                     Span span) {
     auto expr = std::make_unique<Expr>();

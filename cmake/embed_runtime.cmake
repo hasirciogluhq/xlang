@@ -2,17 +2,18 @@ if(NOT DEFINED RUNTIME_DIR OR NOT DEFINED OUTPUT_FILE)
     message(FATAL_ERROR "embed_runtime.cmake: RUNTIME_DIR and OUTPUT_FILE required")
 endif()
 
-file(GLOB RUNTIME_FILES "${RUNTIME_DIR}/*.xlang")
+file(GLOB_RECURSE RUNTIME_FILES "${RUNTIME_DIR}/*.xlang")
 list(SORT RUNTIME_FILES)
 
 set(EMBED_BODY "")
 set(ARRAY_INIT "")
 foreach(RUNTIME_FILE ${RUNTIME_FILES})
-    get_filename_component(RUNTIME_NAME "${RUNTIME_FILE}" NAME)
-    string(REPLACE "." "_" RUNTIME_SYMBOL "${RUNTIME_NAME}")
+    file(RELATIVE_PATH RUNTIME_REL "${RUNTIME_DIR}" "${RUNTIME_FILE}")
+    string(REPLACE "." "_" RUNTIME_SYMBOL "${RUNTIME_REL}")
+    string(REPLACE "/" "_" RUNTIME_SYMBOL "${RUNTIME_SYMBOL}")
     file(READ "${RUNTIME_FILE}" CONTENT)
     string(APPEND EMBED_BODY "constexpr const char kEmbeddedRuntime_${RUNTIME_SYMBOL}[] = R\"XLANG_RT(${CONTENT})XLANG_RT\";\n\n")
-    string(APPEND ARRAY_INIT "    {\"${RUNTIME_NAME}\", kEmbeddedRuntime_${RUNTIME_SYMBOL}},\n")
+    string(APPEND ARRAY_INIT "    {\"${RUNTIME_REL}\", kEmbeddedRuntime_${RUNTIME_SYMBOL}},\n")
 endforeach()
 
 file(READ "${RUNTIME_DIR}/runtime.xlang" MAIN_CONTENT)
@@ -52,6 +53,7 @@ std::filesystem::path materializeEmbeddedRuntime(const std::filesystem::path& wo
     for (std::size_t i = 0; i < embeddedRuntimeFileCount(); ++i) {
         const EmbeddedRuntimeFile& file = kEmbeddedRuntimeFiles[i];
         const std::filesystem::path path = work_dir / file.name;
+        std::filesystem::create_directories(path.parent_path(), ec);
         std::ofstream out(path);
         if (!out) {
             throw std::runtime_error(\"failed to write embedded runtime file: \" + path.string());

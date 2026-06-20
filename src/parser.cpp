@@ -100,9 +100,19 @@ ImportDecl Parser::parseImport() {
 
     if (match(TokenKind::Import)) {
         decl.is_from = false;
-        decl.module = consume(TokenKind::Ident, "expected module name").text;
-        if (match(TokenKind::As)) {
-            decl.alias = consume(TokenKind::Ident, "expected alias name").text;
+        const std::string first = consume(TokenKind::Ident, "expected module or alias").text;
+        if (match(TokenKind::From)) {
+            decl.alias = first;
+            decl.module = parseModulePath();
+        } else {
+            decl.module = first;
+            while (match(TokenKind::Slash)) {
+                decl.module += "/";
+                decl.module += consume(TokenKind::Ident, "expected module path segment").text;
+            }
+            if (match(TokenKind::As)) {
+                decl.alias = consume(TokenKind::Ident, "expected alias name").text;
+            }
         }
         consumeEndOfStatement();
         return decl;
@@ -110,11 +120,20 @@ ImportDecl Parser::parseImport() {
 
     consume(TokenKind::From, "expected 'from'");
     decl.is_from = true;
-    decl.module = consume(TokenKind::Ident, "expected module name").text;
+    decl.module = parseModulePath();
     consume(TokenKind::Import, "expected 'import'");
     decl.names = parseImportNames();
     consumeEndOfStatement();
     return decl;
+}
+
+std::string Parser::parseModulePath() {
+    std::string path = consume(TokenKind::Ident, "expected module name").text;
+    while (match(TokenKind::Slash)) {
+        path += "/";
+        path += consume(TokenKind::Ident, "expected module path segment").text;
+    }
+    return path;
 }
 
 std::vector<ImportSpec> Parser::parseImportNames() {
@@ -561,6 +580,11 @@ std::unique_ptr<Expr> Parser::parsePostfix(std::unique_ptr<Expr> expr) {
         if (match(TokenKind::Dot)) {
             const std::string field = consume(TokenKind::Ident, "expected field name").text;
             const Span span = expr->span;
+            if (match(TokenKind::LParen)) {
+                auto args = parseCallArgs();
+                consume(TokenKind::RParen, "expected ')'");
+                return Expr::makeMethodCall(std::move(expr), field, std::move(args), span);
+            }
             expr = Expr::makeFieldAccess(std::move(expr), field, span);
             continue;
         }

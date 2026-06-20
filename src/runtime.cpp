@@ -69,6 +69,18 @@ bool programNeedsSslLink(const Program& program) {
     return false;
 }
 
+bool programNeedsServerLink(const Program& program) {
+    for (const Function& function : program.functions) {
+        if (!function.syscall) {
+            continue;
+        }
+        if (function.name == "net_tcp_listen" || function.name == "net_tcp_accept") {
+            return true;
+        }
+    }
+    return false;
+}
+
 std::filesystem::path runtimeEntryFromSourceTree() {
     if (std::string(XLANG_RUNTIME_DIR).empty()) {
         return {};
@@ -140,6 +152,7 @@ RuntimeBundle loadRuntimeExports(const RuntimeOptions& options) {
     bundle.structs = collectStructs(program);
     bundle.needs_thread_link = programNeedsThreadLink(program);
     bundle.needs_ssl_link = programNeedsSslLink(program);
+    bundle.needs_server_link = programNeedsServerLink(program);
     return bundle;
 }
 
@@ -159,6 +172,7 @@ RuntimeBundle ensureRuntime(const RuntimeOptions& options) {
     bundle.structs = collectStructs(program);
     bundle.needs_thread_link = programNeedsThreadLink(program);
     bundle.needs_ssl_link = programNeedsSslLink(program);
+    bundle.needs_server_link = programNeedsServerLink(program);
     return bundle;
 }
 

@@ -15,7 +15,7 @@ FetchContent_Declare(
 FetchContent_MakeAvailable(CLI11)
 
 set(EMBEDDED_RUNTIME_CPP "${CMAKE_CURRENT_BINARY_DIR}/embedded_runtime.cpp")
-file(GLOB RUNTIME_XLANG_FILES "${CMAKE_CURRENT_SOURCE_DIR}/runtime/*.xlang")
+file(GLOB_RECURSE RUNTIME_XLANG_FILES "${CMAKE_CURRENT_SOURCE_DIR}/runtime/*.xlang")
 add_custom_command(
     OUTPUT "${EMBEDDED_RUNTIME_CPP}"
     COMMAND ${CMAKE_COMMAND}
@@ -30,6 +30,8 @@ add_custom_command(
 add_custom_target(embedded_runtime DEPENDS "${EMBEDDED_RUNTIME_CPP}")
 
 find_package(OpenSSL REQUIRED)
+
+add_library(xlang_net_server STATIC src/net_server.c)
 
 add_library(xlang_tls_bridge STATIC src/tls_bridge.c)
 target_include_directories(xlang_tls_bridge PRIVATE ${OPENSSL_INCLUDE_DIR})
@@ -59,8 +61,9 @@ target_compile_definitions(xlank PRIVATE
     "XLANG_TLS_BRIDGE=\"$<TARGET_FILE:xlang_tls_bridge>\""
     "XLANG_OPENSSL_SSL=\"${OPENSSL_SSL_LIBRARY}\""
     "XLANG_OPENSSL_CRYPTO=\"${OPENSSL_CRYPTO_LIBRARY}\""
+    "XLANG_NET_SERVER=\"$<TARGET_FILE:xlang_net_server>\""
 )
 target_link_libraries(xlank PRIVATE CLI11::CLI11)
-add_dependencies(xlank xlang_tls_bridge)
+add_dependencies(xlank xlang_tls_bridge xlang_net_server)
 
 install(TARGETS xlank RUNTIME DESTINATION bin)

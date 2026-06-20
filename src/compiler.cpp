@@ -1,6 +1,7 @@
 #include "xlang/compiler.h"
 
 #include "xlang/codegen.h"
+#include "xlang/embedded_runtime.h"
 #include "xlang/error.h"
 #include "xlang/input.h"
 #include "xlang/module.h"
@@ -13,6 +14,10 @@
 #include <sstream>
 #include <sys/wait.h>
 #include <unistd.h>
+
+#ifndef XLANG_RUNTIME_DIR
+#define XLANG_RUNTIME_DIR ""
+#endif
 
 namespace xlang {
 
@@ -79,8 +84,11 @@ void copyFile(const std::filesystem::path& from, const std::filesystem::path& to
 #ifndef XLANG_OPENSSL_CRYPTO
 #define XLANG_OPENSSL_CRYPTO ""
 #endif
+#ifndef XLANG_NET_SERVER
+#define XLANG_NET_SERVER ""
+#endif
 
-void appendLinkFlags(std::ostringstream& cmd, bool needs_pthread, bool needs_ssl) {
+void appendLinkFlags(std::ostringstream& cmd, bool needs_pthread, bool needs_ssl, bool needs_server) {
     if (needs_pthread) {
         cmd << " -pthread";
     }
@@ -95,13 +103,18 @@ void appendLinkFlags(std::ostringstream& cmd, bool needs_pthread, bool needs_ssl
             cmd << " \"" << XLANG_OPENSSL_CRYPTO << "\"";
         }
     }
+    if (needs_server) {
+        if (XLANG_NET_SERVER[0] != '\0') {
+            cmd << " \"" << XLANG_NET_SERVER << "\"";
+        }
+    }
 }
 
 void compileLlvmIrToObject(const std::string& clang, const std::filesystem::path& ir_path,
                            const std::filesystem::path& object_path, bool needs_pthread) {
     std::ostringstream cmd;
     cmd << clang << " -c \"" << ir_path.string() << "\" -o \"" << object_path.string() << "\"";
-    appendLinkFlags(cmd, needs_pthread, false);
+    appendLinkFlags(cmd, needs_pthread, false, false);
     const int status = runCommand(cmd.str());
     if (status != 0) {
         throw XlangError("clang failed to compile LLVM IR");
@@ -109,7 +122,8 @@ void compileLlvmIrToObject(const std::string& clang, const std::filesystem::path
 }
 
 void linkObjects(const std::string& clang, const std::vector<std::filesystem::path>& objects,
-                 const std::filesystem::path& output, bool needs_pthread, bool needs_ssl) {
+                 const std::filesystem::path& output, bool needs_pthread, bool needs_ssl,
+                 bool needs_server) {
     ensureParentDir(output);
 
     std::ostringstream cmd;
@@ -118,7 +132,7 @@ void linkObjects(const std::string& clang, const std::vector<std::filesystem::pa
         cmd << " \"" << object.string() << "\"";
     }
     cmd << " -o \"" << output.string() << "\"";
-    appendLinkFlags(cmd, needs_pthread, needs_ssl);
+    appendLinkFlags(cmd, needs_pthread, needs_ssl, needs_server);
 
     const int status = runCommand(cmd.str());
     if (status != 0) {
@@ -234,7 +248,8 @@ CompileResult compileXlangProgram(const Program& program, BuildContext& ctx) {
     }
     linkObjects(ctx.options.clang, link_inputs, output,
                 generated.needs_thread_link || runtime.needs_thread_link,
-                generated.needs_ssl_link || runtime.needs_ssl_link);
+                generated.needs_ssl_link || runtime.needs_ssl_link,
+                generated.needs_server_link || runtime.needs_server_link);
 
     if (!ctx.options.keep_ir) {
         std::error_code ec;
@@ -283,7 +298,7 @@ CompileResult compileObjectInput(BuildContext& ctx) {
         link_inputs.push_back(runtime.object);
     }
     linkObjects(ctx.options.clang, link_inputs, output, runtime.needs_thread_link,
-                runtime.needs_ssl_link);
+                runtime.needs_ssl_link, runtime.needs_server_link);
     result.executable = output;
     return result;
 }
@@ -335,7 +350,7 @@ CompileResult compileLlvmIrInput(BuildContext& ctx) {
         link_inputs.push_back(runtime.object);
     }
     linkObjects(ctx.options.clang, link_inputs, output, runtime.needs_thread_link,
-                runtime.needs_ssl_link);
+                runtime.needs_ssl_link, runtime.needs_server_link);
     result.executable = output;
     return result;
 }
@@ -399,7 +414,18 @@ CompileResult compileFile(const CompileOptions& options) {
         CompileResult result;
         switch (ctx.input_kind) {
             case InputKind::Xlang: {
-                const Program program = loadProgram(ctx.options.input);
+                std::vector<std::filesystem::path> module_search_paths;
+                if (!ctx.options.skip_runtime) {
+                    const std::filesystem::path embedded_dir =
+                        ctx.work_dir / "embedded-runtime";
+                    materializeEmbeddedRuntime(embedded_dir);
+                    module_search_paths.push_back(embedded_dir);
+                }
+                if (XLANG_RUNTIME_DIR[0] != '\0') {
+                    module_search_paths.emplace_back(XLANG_RUNTIME_DIR);
+                }
+                const Program program =
+                    loadProgram(ctx.options.input, module_search_paths);
                 result = compileXlangProgram(program, ctx);
                 break;
             }

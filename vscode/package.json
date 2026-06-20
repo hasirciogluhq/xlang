@@ -2,7 +2,7 @@
   "name": "xlang",
   "displayName": "xlang",
   "description": "Syntax highlighting, snippets, diagnostics, and formatting for the xlang programming language",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "publisher": "xlang",
   "license": "MIT",
   "packageManager": "bun@1.2.0",

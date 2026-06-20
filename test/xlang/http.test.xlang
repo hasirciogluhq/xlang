@@ -1,0 +1,59 @@
+import router from http/router
+
+fn test_exact_route() {
+    local r = router.NewRouter()
+    r.Get("/ping", handler_ping)
+    local h = r.Match("GET", "/ping")
+    expect_ne(h, 0)
+    return 0
+}
+
+fn test_param_route() {
+    local r = router.NewRouter()
+    r.Get("/user/{id}", handler_user)
+    local h = r.Match("GET", "/user/42")
+    expect_ne(h, 0)
+    expect_str_eq(router.URLParam("id"), "42")
+    return 0
+}
+
+fn test_group_route() {
+    local r = router.NewRouter()
+    local users = r.Group("/users")
+    users.Get("/{id}", handler_user)
+    local h = r.Match("GET", "/users/99")
+    expect_ne(h, 0)
+    expect_str_eq(router.URLParam("id"), "99")
+    return 0
+}
+
+fn test_mount_route() {
+    local main = router.NewRouter()
+    local api = router.NewRouter()
+    api.Get("/status", handler_status)
+    main.Mount("/api", api)
+    local h = main.Match("GET", "/api/status")
+    expect_ne(h, 0)
+    return 0
+}
+
+fn handler_ping() {
+    return 0
+}
+
+fn handler_user() {
+    return 0
+}
+
+fn handler_status() {
+    return 0
+}
+
+fn main() {
+    describe("http router")
+    it("matches exact routes", test_exact_route)
+    it("matches param routes", test_param_route)
+    it("matches group routes", test_group_route)
+    it("matches mounted routers", test_mount_route)
+    return test_summary()
+}

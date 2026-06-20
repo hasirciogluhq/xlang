@@ -35,6 +35,7 @@ private:
                          const std::string &kind) const;
 
   ImportDecl parseImport();
+  [[nodiscard]] std::string parseModulePath();
   std::vector<ImportSpec> parseImportNames();
   StructDecl parseStruct(const ItemModifiers &modifiers);
   GlobalVar parseGlobalVar(const ItemModifiers &modifiers);

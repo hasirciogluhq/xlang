@@ -5,12 +5,14 @@
 #include <filesystem>
 #include <string>
 #include <unordered_map>
+#include <vector>
 
 namespace xlang {
 
 class ModuleLoader {
 public:
-    explicit ModuleLoader(std::filesystem::path entry);
+    explicit ModuleLoader(std::filesystem::path entry,
+                           std::vector<std::filesystem::path> search_paths = {});
 
     [[nodiscard]] Program load();
 
@@ -23,10 +25,12 @@ private:
     void mergeSelected(Program& into, const Program& from, const ImportDecl& import);
 
     std::filesystem::path entry_;
+    std::vector<std::filesystem::path> search_paths_;
     std::unordered_map<std::string, Program> cache_;
     std::unordered_map<std::string, bool> loading_;
 };
 
-Program loadProgram(const std::filesystem::path& entry);
+Program loadProgram(const std::filesystem::path& entry,
+                    const std::vector<std::filesystem::path>& search_paths = {});
 
 }  // namespace xlang

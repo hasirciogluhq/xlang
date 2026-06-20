@@ -1,3 +1,8 @@
+import { rmSync, mkdirSync } from "node:fs";
+
+rmSync("./out", { recursive: true, force: true });
+mkdirSync("./out", { recursive: true });
+
 const result = await Bun.build({
   entrypoints: ["./src/extension.ts"],
   outdir: "./out",

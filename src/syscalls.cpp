@@ -19,7 +19,8 @@ bool isKnownSyscall(const std::string& name) {
            name == "mutex_unlock" || name == "cond_init" || name == "cond_wait" ||
            name == "cond_signal" || name == "cond_broadcast" ||
            name == "net_tcp_connect" || name == "net_send" || name == "net_recv" ||
-           name == "net_close" || name == "net_tls_connect" || name == "net_tls_send" ||
+           name == "net_close" || name == "net_tcp_listen" || name == "net_tcp_accept" ||
+           name == "net_tls_connect" || name == "net_tls_send" ||
            name == "net_tls_recv" || name == "net_tls_close";
 }
 
@@ -279,6 +280,22 @@ void emitNetSupport(std::string& output) {
     output += "}\n\n";
 }
 
+void emitNetServerSupport(std::string& output) {
+    output += "; xlang OS bridge syscalls (TCP server listen/accept)\n";
+    output += "declare i64 @xlang_net_tcp_listen(i8*, i32)\n";
+    output += "declare i64 @xlang_net_tcp_accept(i64)\n\n";
+
+    output += "define weak i64 @net_tcp_listen(i8* %host, i32 %port) {\n";
+    output += "  %fd = call i64 @xlang_net_tcp_listen(i8* %host, i32 %port)\n";
+    output += "  ret i64 %fd\n";
+    output += "}\n\n";
+
+    output += "define weak i64 @net_tcp_accept(i64 %listen_fd) {\n";
+    output += "  %fd = call i64 @xlang_net_tcp_accept(i64 %listen_fd)\n";
+    output += "  ret i64 %fd\n";
+    output += "}\n\n";
+}
+
 void emitTlsSupport(std::string& output) {
     output += "; xlang OS bridge syscalls (TLS via OpenSSL)\n";
     output += "declare i64 @xlang_tls_connect(i8*, i32)\n";
@@ -392,9 +409,17 @@ void emitSyscallDefinitions(std::string& output, const std::unordered_set<std::s
     const bool needs_net = syscalls.find("net_tcp_connect") != syscalls.end() ||
                            syscalls.find("net_send") != syscalls.end() ||
                            syscalls.find("net_recv") != syscalls.end() ||
-                           syscalls.find("net_close") != syscalls.end();
+                           syscalls.find("net_close") != syscalls.end() ||
+                           syscalls.find("net_tcp_listen") != syscalls.end() ||
+                           syscalls.find("net_tcp_accept") != syscalls.end();
     if (needs_net) {
         emitNetSupport(output);
+    }
+
+    const bool needs_server = syscalls.find("net_tcp_listen") != syscalls.end() ||
+                              syscalls.find("net_tcp_accept") != syscalls.end();
+    if (needs_server) {
+        emitNetServerSupport(output);
     }
 
     const bool needs_tls = syscalls.find("net_tls_connect") != syscalls.end() ||
@@ -424,6 +449,11 @@ bool syscallsNeedSslLink(const std::unordered_set<std::string>& syscalls) {
            syscalls.find("net_tls_send") != syscalls.end() ||
            syscalls.find("net_tls_recv") != syscalls.end() ||
            syscalls.find("net_tls_close") != syscalls.end();
+}
+
+bool syscallsNeedServerLink(const std::unordered_set<std::string>& syscalls) {
+    return syscalls.find("net_tcp_listen") != syscalls.end() ||
+           syscalls.find("net_tcp_accept") != syscalls.end();
 }
 
 }  // namespace xlang

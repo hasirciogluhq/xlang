@@ -6,10 +6,10 @@ Build toolchain uses **Bun** (no npm/node required for development).
 
 ## Features
 
-- TextMate grammar for keywords, types, strings, structs, runtime & test builtins
-- Snippets (`main`, `fn`, `struct`, `testmain`, `describe`, `it`, `expect_*`, …)
-- Completions for keywords, types, runtime (`fetch`, `json_get_*`, `spawn`) and test API
-- Diagnostics via `xlank parse` (requires built compiler)
+- TextMate grammar: imports (`import http from http`), HTTP/JSON/runtime/test/compiler builtins, method calls
+- Snippets: `main`, `httpserver`, `importfrom`, `testmain`, `describe`, `it`, `expect_*`, …
+- Completions: keywords, types, modules (`http`, `http/router`, `net`, `json`), runtime & syscall APIs
+- Diagnostics via `xlank parse` — auto-adds `runtime/` to `XLANG_PATH`
 - Document formatter (brace-based indent)
 - Commands:
   - **xlang: Run Current File** — `xlank run`
@@ -29,62 +29,52 @@ Build toolchain uses **Bun** (no npm/node required for development).
 cd vscode
 bun install
 bun run compile
-```
-
-If you previously ran `npm install`, remove old artifacts first:
-
-```bash
-rm -rf node_modules package-lock.json
-bun install
+bun run package
+code --install-extension xlang-0.3.0.vsix
 ```
 
 ## Development
 
-1. Open the `vscode/` folder in VS Code / Cursor
-2. Press `F5` → Extension Development Host opens
-3. Open any `.xlang` or `.test.xlang` file in the new window
-
-Watch mode (rebuild on save):
+1. Open the `vscode/` folder (or repo root) in VS Code / Cursor
+2. Press `F5` → Extension Development Host
+3. Open any `.xlang` or `.test.xlang` file
 
 ```bash
-bun run watch
-```
-
-## Package (.vsix)
-
-```bash
-bun run package
-code --install-extension xlang-0.2.0.vsix
+bun run watch    # rebuild on save
+bun run package  # produce .vsix
 ```
 
 ## Settings
 
 | Setting | Default | Description |
 |---------|---------|-------------|
-| `xlang.xlankPath` | `""` | Path to `xlank`. Empty = `build/xlank` in workspace, then PATH |
+| `xlang.xlankPath` | `""` | Path to `xlank`. Empty = `build/xlank` in workspace (or parent), then PATH |
 | `xlang.enableDiagnostics` | `true` | Show parse errors from `xlank parse` |
 | `xlang.diagnosticsOnType` | `false` | Re-check while typing |
 | `xlang.formatter.tabSize` | `4` | Indent size for formatter |
 | `xlang.testRoot` | `test/xlang` | Directory passed to `xlank test` |
+
+## Supported APIs (completions / highlighting)
+
+| Area | Examples |
+|------|----------|
+| Runtime | `print`, `fetch`, `spawn`, `wait_all`, `cpu` |
+| JSON | `json_get_int/string/bool`, `json_has_key`, `json_is_null` |
+| HTTP | `NewRouter`, `Get`, `Group`, `Mount`, `URLParam`, `ListenAndServe`, `RespondText` |
+| Compiler | `str_len`, `str_eq`, `str_find`, `array_push`, `invoke0` |
+| Test | `describe`, `it`, `expect_eq`, `expect_str_eq`, `test_summary` |
 
 ## Project layout
 
 ```
 vscode/
 ├── package.json
-├── bunfig.toml
-├── scripts/
-│   ├── build.ts
-│   └── package.ts
-├── language-configuration.json
+├── scripts/build.ts
 ├── syntaxes/xlang.tmLanguage.json
 ├── snippets/xlang.json
-├── src/
-│   ├── extension.ts
-│   ├── completions.ts
-│   ├── diagnostics.ts
-│   └── formatter.ts
-└── icons/
+└── src/
+    ├── extension.ts
+    ├── completions.ts
+    ├── diagnostics.ts
+    └── formatter.ts
 ```
-
-> **Note:** The extension runs inside VS Code's extension host (Node-compatible). Bun is only used to build and package the extension.
