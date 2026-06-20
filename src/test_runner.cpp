@@ -2,11 +2,13 @@
 
 #include "xlang/compiler.h"
 #include "xlang/embedded_runtime.h"
+#include "xlang/embedded_libs.h"
 #include "xlang/error.h"
 #include "xlang/module.h"
 
 #include <algorithm>
 #include <cstdio>
+#include <cstdlib>
 #include <iostream>
 #include <regex>
 #include <sstream>
@@ -16,6 +18,9 @@
 
 #ifndef XLANG_RUNTIME_DIR
 #define XLANG_RUNTIME_DIR ""
+#endif
+#ifndef XLANG_LIBS_DIR
+#define XLANG_LIBS_DIR ""
 #endif
 
 namespace xlang {
@@ -318,21 +323,93 @@ Program withTestHarness(const Program& program, const std::vector<std::string>& 
 
 std::vector<std::filesystem::path> materializeModuleSearchPaths(
     const std::filesystem::path& work_dir, bool skip_runtime) {
+    (void)skip_runtime;
     std::vector<std::filesystem::path> paths;
-    if (!skip_runtime) {
-        const std::filesystem::path embedded_dir = work_dir / "embedded-runtime";
-        (void)materializeEmbeddedRuntime(embedded_dir);
-        paths.push_back(embedded_dir);
-    }
-    if (XLANG_RUNTIME_DIR[0] != '\0') {
-        paths.emplace_back(XLANG_RUNTIME_DIR);
+    const std::filesystem::path embedded_libs = work_dir / "embedded-libs";
+    (void)materializeEmbeddedLibs(embedded_libs);
+    paths.push_back(embedded_libs);
+    if (XLANG_LIBS_DIR[0] != '\0') {
+        paths.emplace_back(XLANG_LIBS_DIR);
     }
     return paths;
 }
 
-void rejectTestFileForBuildRun(const std::filesystem::path& path) {
-    if (isTestFileName(path)) {
-        throw XlangError("test files cannot be built or run; use `xlank test`");
+static std::string joinPaths(const std::vector<std::filesystem::path>& files) {
+    std::ostringstream joined;
+    for (std::size_t i = 0; i < files.size(); ++i) {
+        if (i > 0) {
+            joined << '\n';
+        }
+        joined << files[i].string();
+    }
+    return joined.str();
+}
+
+int runSingleTestFile(const TestOptions& options, const std::filesystem::path& file) {
+    const std::filesystem::path work_dir = makeBuildWorkDir();
+    int file_passed = 0;
+    int file_failed = 0;
+
+    try {
+        const std::vector<std::filesystem::path> module_search_paths =
+            materializeModuleSearchPaths(work_dir, false);
+        const Program loaded = loadProgram(file, module_search_paths);
+        ensureNoMain(loaded, file);
+
+        const std::vector<std::string> tests = collectTestFunctions(loaded);
+        if (tests.empty()) {
+            throw XlangError("no `Test*` functions found in `" + file.string() + "`");
+        }
+
+        const std::filesystem::path executable = work_dir / "test";
+
+        CompileOptions compile_options;
+        compile_options.input = file;
+        compile_options.output = executable;
+        compile_options.ir_output = work_dir / "test.ll";
+        compile_options.clang = options.clang;
+        compile_options.keep_ir = options.keep_artifacts;
+        compile_options.build_kind = BuildKind::Exe;
+        compile_options.work_dir = work_dir;
+        compile_options.runtime_override = options.runtime_override;
+
+        const Program program =
+            withTestHarness(loaded, tests, options.parallel, file.string());
+        const CompileResult compiled = compileProgram(program, compile_options);
+        const RunOutput run = executeProgramCapture(compiled.executable);
+
+        const std::string display_output = formatTestOutput(run.stdout_text);
+        if (!display_output.empty()) {
+            std::cout << display_output;
+            if (display_output.back() != '\n') {
+                std::cout << '\n';
+            }
+        }
+
+        const ParsedSummary summary = parseTestSummary(run.stdout_text);
+        if (summary.found) {
+            file_passed = summary.passed;
+            file_failed = summary.failed;
+        } else if (run.exit_code == 0) {
+            file_passed = static_cast<int>(tests.size());
+        } else {
+            file_failed = static_cast<int>(tests.size());
+        }
+
+        if (!options.keep_artifacts) {
+            removeTree(work_dir);
+        }
+
+        if (run.exit_code != 0 || file_failed > 0) {
+            return 1;
+        }
+        return 0;
+    } catch (const std::exception& error) {
+        std::cout << " ✗ " << file.string() << " [error: " << error.what() << "]\n";
+        if (!options.keep_artifacts) {
+            removeTree(work_dir);
+        }
+        return 1;
     }
 }
 
@@ -349,99 +426,73 @@ TestSuiteResult runTestSuite(const TestOptions& options) {
         return suite;
     }
 
-    for (const std::filesystem::path& file : files) {
-        std::cout << "\n RUN  " << file.string();
-        if (options.parallel) {
-            std::cout << " (parallel)";
-        }
-        std::cout << "\n\n";
+    const std::filesystem::path work_dir = makeBuildWorkDir();
 
-        const std::filesystem::path work_dir = makeBuildWorkDir();
-        int file_passed = 0;
-        int file_failed = 0;
-
-        try {
-            const std::vector<std::filesystem::path> module_search_paths =
-                materializeModuleSearchPaths(work_dir, false);
-            const Program loaded = loadProgram(file, module_search_paths);
-            ensureNoMain(loaded, file);
-
-            const std::vector<std::string> tests = collectTestFunctions(loaded);
-            if (tests.empty()) {
-                throw XlangError("no `Test*` functions found in `" + file.string() + "`");
-            }
-
-            const std::filesystem::path executable = work_dir / "test";
-
-            CompileOptions compile_options;
-            compile_options.input = file;
-            compile_options.output = executable;
-            compile_options.ir_output = work_dir / "test.ll";
-            compile_options.clang = options.clang;
-            compile_options.keep_ir = options.keep_artifacts;
-            compile_options.build_kind = BuildKind::Exe;
-            compile_options.work_dir = work_dir;
-            compile_options.runtime_override = options.runtime_override;
-
-            const Program program =
-                withTestHarness(loaded, tests, options.parallel, file.string());
-            const CompileResult compiled = compileProgram(program, compile_options);
-            const RunOutput run = executeProgramCapture(compiled.executable);
-
-            const std::string display_output = formatTestOutput(run.stdout_text);
-            if (!display_output.empty()) {
-                std::cout << display_output;
-                if (display_output.back() != '\n') {
-                    std::cout << '\n';
-                }
-            }
-
-            const ParsedSummary summary = parseTestSummary(run.stdout_text);
-            if (summary.found) {
-                file_passed = summary.passed;
-                file_failed = summary.failed;
-                suite.tests_passed += summary.passed;
-                suite.tests_failed += summary.failed;
-            } else if (run.exit_code == 0) {
-                file_passed = static_cast<int>(tests.size());
-                suite.tests_passed += file_passed;
-            } else {
-                file_failed = static_cast<int>(tests.size());
-                suite.tests_failed += file_failed;
-            }
-
-            if (run.exit_code == 0 && file_failed == 0) {
-                suite.files_passed += 1;
-                std::cout << "\n ✓ " << file.string() << " (" << file_passed << " tests)\n";
-            } else {
-                suite.files_failed += 1;
-                std::cout << "\n ✗ " << file.string() << " (" << file_failed << " failed, "
-                          << file_passed << " passed)\n";
-            }
-        } catch (const std::exception& error) {
-            suite.files_failed += 1;
-            std::cout << " ✗ " << file.string() << " [error: " << error.what() << "]\n";
-        }
-
-        if (!options.keep_artifacts) {
-            removeTree(work_dir);
-        }
+    const char* xlank_bin = std::getenv("XLANG_BIN");
+    std::string xlank_path = xlank_bin != nullptr ? xlank_bin : "xlank";
+    if (const char* self = std::getenv("XLANG_SELF")) {
+        xlank_path = self;
     }
 
-    std::cout << "\n Test Files  " << suite.files_passed << " passed";
-    if (suite.files_failed > 0) {
-        std::cout << " | " << suite.files_failed << " failed";
-    }
-    std::cout << " (" << suite.files_total << ")\n";
+    setenv("XLANG_BIN", xlank_path.c_str(), 1);
+    setenv("XLANG_TEST_FILES", joinPaths(files).c_str(), 1);
+    setenv("XLANG_TEST_PARALLEL", options.parallel ? "1" : "0", 1);
 
-    std::cout << "      Tests  " << suite.tests_passed << " passed";
-    if (suite.tests_failed > 0) {
-        std::cout << " | " << suite.tests_failed << " failed";
-    }
-    std::cout << " (" << (suite.tests_passed + suite.tests_failed) << ")\n\n";
+    try {
+        const std::vector<std::filesystem::path> module_search_paths =
+            materializeModuleSearchPaths(work_dir, false);
+        const std::filesystem::path libs_root = module_search_paths.front();
+        const std::filesystem::path runner_source = libs_root / "test_runner.xlang";
+        if (!std::filesystem::exists(runner_source)) {
+            throw XlangError("test runner not found: libs/test_runner.xlang");
+        }
 
-    suite.exit_code = (suite.files_failed > 0 || suite.tests_failed > 0) ? 1 : 0;
+        const std::filesystem::path runner_exe = work_dir / "test_runner";
+
+        CompileOptions compile_options;
+        compile_options.input = runner_source;
+        compile_options.output = runner_exe;
+        compile_options.ir_output = work_dir / "test_runner.ll";
+        compile_options.clang = options.clang;
+        compile_options.keep_ir = options.keep_artifacts;
+        compile_options.build_kind = BuildKind::Exe;
+        compile_options.work_dir = work_dir;
+        compile_options.runtime_override = options.runtime_override;
+
+        const Program runner_program = loadProgram(runner_source, module_search_paths);
+        const CompileResult compiled = compileProgram(runner_program, compile_options);
+        const RunOutput run = executeProgramCapture(compiled.executable);
+
+        if (!run.stdout_text.empty()) {
+            std::cout << run.stdout_text;
+            if (run.stdout_text.back() != '\n') {
+                std::cout << '\n';
+            }
+        }
+
+        suite.exit_code = run.exit_code;
+        if (run.exit_code == 0) {
+            suite.files_passed = suite.files_total;
+        } else {
+            suite.files_failed = suite.files_total;
+        }
+    } catch (const std::exception& error) {
+        std::cout << " ✗ test runner [error: " << error.what() << "]\n";
+        suite.files_failed = suite.files_total;
+        suite.exit_code = 1;
+    }
+
+    if (!options.keep_artifacts) {
+        removeTree(work_dir);
+    }
+
     return suite;
+}
+
+void rejectTestFileForBuildRun(const std::filesystem::path& path) {
+    if (isTestFileName(path)) {
+        throw XlangError("test files cannot be built or run; use `xlank test`");
+    }
 }
 
 }  // namespace xlang

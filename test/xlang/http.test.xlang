@@ -1,4 +1,5 @@
-import http from http/router
+import test from test
+import router from http/router
 
 fn TestExactRoute() {
     local r = router.NewRouter()

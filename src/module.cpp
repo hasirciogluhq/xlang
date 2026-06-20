@@ -346,16 +346,16 @@ Program ModuleLoader::loadFile(const std::filesystem::path& path) {
 
 std::filesystem::path ModuleLoader::resolveModule(const std::filesystem::path& from,
                                                   const std::string& name) const {
-    const std::filesystem::path relative = from / (name + ".xlang");
-    if (std::filesystem::exists(relative)) {
-        return relative;
-    }
-
     for (const std::filesystem::path& search_root : search_paths_) {
         const std::filesystem::path candidate = search_root / (name + ".xlang");
         if (std::filesystem::exists(candidate)) {
             return candidate;
         }
+    }
+
+    const std::filesystem::path relative = from / (name + ".xlang");
+    if (std::filesystem::exists(relative)) {
+        return relative;
     }
 
     if (const char* search = std::getenv("XLANG_PATH")) {

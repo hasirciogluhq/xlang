@@ -19,6 +19,9 @@ bool isKnownSyscall(const std::string& name) {
            name == "mutex_unlock" || name == "cond_init" || name == "cond_wait" ||
            name == "cond_signal" || name == "cond_broadcast" ||
            name == "panic" || name == "recover" || name == "try_invoke0" ||
+           name == "env_get" || name == "run_capture" || name == "capture_stdout" ||
+           name == "proc_fork" || name == "proc_exec" || name == "proc_wait" ||
+           name == "proc_exit" || name == "pipe_create" || name == "fd_close" ||
            name == "net_tcp_connect" || name == "net_send" || name == "net_recv" ||
            name == "net_close" || name == "net_tcp_listen" || name == "net_tcp_accept" ||
            name == "net_tls_connect" || name == "net_tls_send" ||
@@ -349,6 +352,64 @@ void emitPanicSupport(std::string& output) {
     output += "}\n\n";
 }
 
+void emitProcessSupport(std::string& output) {
+    output += "; xlang process bridge\n";
+    output += "declare i32 @xlang_run_capture(i8*, i8*)\n";
+    output += "declare i8* @xlang_capture_stdout()\n";
+    output += "declare i8* @xlang_env_get(i8*)\n";
+    output += "declare i32 @xlang_proc_fork()\n";
+    output += "declare i32 @xlang_proc_exec(i8*, i8*)\n";
+    output += "declare i32 @xlang_proc_wait(i32)\n";
+    output += "declare void @xlang_proc_exit(i32)\n";
+    output += "declare i64 @xlang_pipe_create()\n";
+    output += "declare i32 @xlang_fd_close(i32)\n\n";
+
+    output += "define weak i32 @run_capture(i8* %path, i8* %args) {\n";
+    output += "  %rc = call i32 @xlang_run_capture(i8* %path, i8* %args)\n";
+    output += "  ret i32 %rc\n";
+    output += "}\n\n";
+
+    output += "define weak i8* @capture_stdout() {\n";
+    output += "  %out = call i8* @xlang_capture_stdout()\n";
+    output += "  ret i8* %out\n";
+    output += "}\n\n";
+
+    output += "define weak i8* @env_get(i8* %key) {\n";
+    output += "  %val = call i8* @xlang_env_get(i8* %key)\n";
+    output += "  ret i8* %val\n";
+    output += "}\n\n";
+
+    output += "define weak i32 @proc_fork() {\n";
+    output += "  %pid = call i32 @xlang_proc_fork()\n";
+    output += "  ret i32 %pid\n";
+    output += "}\n\n";
+
+    output += "define weak i32 @proc_exec(i8* %path, i8* %args) {\n";
+    output += "  %rc = call i32 @xlang_proc_exec(i8* %path, i8* %args)\n";
+    output += "  ret i32 %rc\n";
+    output += "}\n\n";
+
+    output += "define weak i32 @proc_wait(i32 %pid) {\n";
+    output += "  %rc = call i32 @xlang_proc_wait(i32 %pid)\n";
+    output += "  ret i32 %rc\n";
+    output += "}\n\n";
+
+    output += "define weak i32 @proc_exit(i32 %code) {\n";
+    output += "  call void @xlang_proc_exit(i32 %code)\n";
+    output += "  ret i32 0\n";
+    output += "}\n\n";
+
+    output += "define weak i64 @pipe_create() {\n";
+    output += "  %fds = call i64 @xlang_pipe_create()\n";
+    output += "  ret i64 %fds\n";
+    output += "}\n\n";
+
+    output += "define weak i32 @fd_close(i32 %fd) {\n";
+    output += "  %rc = call i32 @xlang_fd_close(i32 %fd)\n";
+    output += "  ret i32 %rc\n";
+    output += "}\n\n";
+}
+
 }  // namespace
 
 // Compiler backend: xlang `declare syscall` primitiflerini LLVM IR'ye indirger.
@@ -462,6 +523,20 @@ void emitSyscallDefinitions(std::string& output, const std::unordered_set<std::s
         emitPanicSupport(output);
     }
 
+    const bool needs_process =
+        syscalls.find("env_get") != syscalls.end() ||
+        syscalls.find("run_capture") != syscalls.end() ||
+        syscalls.find("capture_stdout") != syscalls.end() ||
+        syscalls.find("proc_fork") != syscalls.end() ||
+        syscalls.find("proc_exec") != syscalls.end() ||
+        syscalls.find("proc_wait") != syscalls.end() ||
+        syscalls.find("proc_exit") != syscalls.end() ||
+        syscalls.find("pipe_create") != syscalls.end() ||
+        syscalls.find("fd_close") != syscalls.end();
+    if (needs_process) {
+        emitProcessSupport(output);
+    }
+
     for (const std::string& name : syscalls) {
         if (!isKnownSyscall(name)) {
             throw XlangError("unknown xlang syscall: " + name);
@@ -492,6 +567,18 @@ bool syscallsNeedPanicLink(const std::unordered_set<std::string>& syscalls) {
     return syscalls.find("panic") != syscalls.end() ||
            syscalls.find("recover") != syscalls.end() ||
            syscalls.find("try_invoke0") != syscalls.end();
+}
+
+bool syscallsNeedProcessLink(const std::unordered_set<std::string>& syscalls) {
+    return syscalls.find("env_get") != syscalls.end() ||
+           syscalls.find("run_capture") != syscalls.end() ||
+           syscalls.find("capture_stdout") != syscalls.end() ||
+           syscalls.find("proc_fork") != syscalls.end() ||
+           syscalls.find("proc_exec") != syscalls.end() ||
+           syscalls.find("proc_wait") != syscalls.end() ||
+           syscalls.find("proc_exit") != syscalls.end() ||
+           syscalls.find("pipe_create") != syscalls.end() ||
+           syscalls.find("fd_close") != syscalls.end();
 }
 
 }  // namespace xlang

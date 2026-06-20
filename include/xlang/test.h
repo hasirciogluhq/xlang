@@ -27,6 +27,7 @@ struct TestSuiteResult {
 };
 
 [[nodiscard]] TestSuiteResult runTestSuite(const TestOptions& options);
+[[nodiscard]] int runSingleTestFile(const TestOptions& options, const std::filesystem::path& file);
 [[nodiscard]] bool isTestFileName(const std::filesystem::path& path);
 [[nodiscard]] bool isTestFunctionName(const std::string& name);
 [[nodiscard]] std::vector<std::string> collectTestFunctions(const Program& program);

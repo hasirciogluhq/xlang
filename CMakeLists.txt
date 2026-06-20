@@ -29,11 +29,26 @@ add_custom_command(
 )
 add_custom_target(embedded_runtime DEPENDS "${EMBEDDED_RUNTIME_CPP}")
 
+set(EMBEDDED_LIBS_CPP "${CMAKE_CURRENT_BINARY_DIR}/embedded_libs.cpp")
+file(GLOB_RECURSE LIBS_XLANG_FILES "${CMAKE_CURRENT_SOURCE_DIR}/libs/*.xlang")
+add_custom_command(
+    OUTPUT "${EMBEDDED_LIBS_CPP}"
+    COMMAND ${CMAKE_COMMAND}
+        -DLIBS_DIR=${CMAKE_CURRENT_SOURCE_DIR}/libs
+        -DOUTPUT_FILE=${EMBEDDED_LIBS_CPP}
+        -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/embed_libs.cmake
+    DEPENDS
+        ${LIBS_XLANG_FILES}
+        ${CMAKE_CURRENT_SOURCE_DIR}/cmake/embed_libs.cmake
+    VERBATIM
+)
+add_custom_target(embedded_libs DEPENDS "${EMBEDDED_LIBS_CPP}")
+
 find_package(OpenSSL REQUIRED)
 
 add_library(xlang_net_server STATIC src/net_server.c)
-
 add_library(xlang_panic_bridge STATIC src/panic_bridge.c)
+add_library(xlang_process_bridge STATIC src/process_bridge.c)
 
 add_library(xlang_tls_bridge STATIC src/tls_bridge.c)
 target_include_directories(xlang_tls_bridge PRIVATE ${OPENSSL_INCLUDE_DIR})
@@ -53,20 +68,23 @@ add_executable(xlank
     src/types.cpp
     src/test_runner.cpp
     "${EMBEDDED_RUNTIME_CPP}"
+    "${EMBEDDED_LIBS_CPP}"
 )
 
-add_dependencies(xlank embedded_runtime)
+add_dependencies(xlank embedded_runtime embedded_libs)
 
 target_include_directories(xlank PRIVATE include)
 target_compile_definitions(xlank PRIVATE
     "XLANG_RUNTIME_DIR=\"${CMAKE_CURRENT_SOURCE_DIR}/runtime\""
+    "XLANG_LIBS_DIR=\"${CMAKE_CURRENT_SOURCE_DIR}/libs\""
     "XLANG_TLS_BRIDGE=\"$<TARGET_FILE:xlang_tls_bridge>\""
     "XLANG_OPENSSL_SSL=\"${OPENSSL_SSL_LIBRARY}\""
     "XLANG_OPENSSL_CRYPTO=\"${OPENSSL_CRYPTO_LIBRARY}\""
     "XLANG_NET_SERVER=\"$<TARGET_FILE:xlang_net_server>\""
     "XLANG_PANIC_BRIDGE=\"$<TARGET_FILE:xlang_panic_bridge>\""
+    "XLANG_PROCESS_BRIDGE=\"$<TARGET_FILE:xlang_process_bridge>\""
 )
 target_link_libraries(xlank PRIVATE CLI11::CLI11)
-add_dependencies(xlank xlang_tls_bridge xlang_net_server xlang_panic_bridge)
+add_dependencies(xlank xlang_tls_bridge xlang_net_server xlang_panic_bridge xlang_process_bridge)
 
 install(TARGETS xlank RUNTIME DESTINATION bin)

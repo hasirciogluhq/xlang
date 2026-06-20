@@ -1,3 +1,5 @@
+import test from test
+
 fn TestStrLen() {
     expect(str_len("hello")).toEqual(5)
     expect(str_len("")).toEqual(0)

@@ -99,14 +99,24 @@ const TYPES = [
 ];
 
 const MODULES = [
-  { label: "http", detail: "HTTP router + server (runtime/http.xlang)" },
-  { label: "http/router", detail: "Chi-like HTTP router" },
-  { label: "http/server", detail: "HTTP server + ListenAndServe" },
-  { label: "json", detail: "json.parse + field accessors" },
-  { label: "net", detail: "fetch HTTP/HTTPS client" },
-  { label: "scheduler", detail: "spawn / wait_all worker pool" },
-  { label: "test", detail: "expect / test_run_* helpers" },
-  { label: "errors", detail: "Error interface + panic/recover" },
+  { label: "http", detail: "HTTP router + server barrel (libs/http.xlang)" },
+  { label: "http/router", detail: "Chi-like HTTP router (libs/http/router.xlang)" },
+  { label: "http/server", detail: "HTTP server + ListenAndServe (libs/http/server.xlang)" },
+  { label: "json", detail: "json.parse + field accessors (libs/json.xlang)" },
+  { label: "test", detail: "expect / test_run_* helpers (libs/test.xlang)" },
+  { label: "test_runner", detail: "Internal xlank test driver (libs/test_runner.xlang)" },
+];
+
+const PROCESS_SYSCALLS: Builtin[] = [
+  { label: "env_get", detail: "Read environment variable", insertText: 'env_get("${1:KEY}")' },
+  { label: "run_capture", detail: "Run executable, capture stdout/stderr", insertText: 'run_capture(${1:path}, "${2:args}")' },
+  { label: "capture_stdout", detail: "Stdout from last run_capture", insertText: "capture_stdout()" },
+  { label: "proc_fork", detail: "Fork process", insertText: "proc_fork()" },
+  { label: "proc_exec", detail: "Exec with newline-separated args", insertText: 'proc_exec(${1:path}, "${2:args}")' },
+  { label: "proc_wait", detail: "Wait for child pid", insertText: "proc_wait(${1:pid})" },
+  { label: "proc_exit", detail: "Exit current process", insertText: "proc_exit(${1:code})" },
+  { label: "pipe_create", detail: "Create pipe (read<<32|write)", insertText: "pipe_create()" },
+  { label: "fd_close", detail: "Close file descriptor", insertText: "fd_close(${1:fd})" },
 ];
 
 const NET_SYSCALLS: Builtin[] = [
@@ -173,7 +183,7 @@ export function registerCompletions(context: vscode.ExtensionContext): void {
         }
 
         if (/^\s*declare\s+syscall\s+\w*\s*$/.test(linePrefix.trimEnd())) {
-          for (const sc of NET_SYSCALLS) {
+          for (const sc of [...NET_SYSCALLS, ...PROCESS_SYSCALLS]) {
             items.push(makeBuiltin(sc, "4"));
           }
         }

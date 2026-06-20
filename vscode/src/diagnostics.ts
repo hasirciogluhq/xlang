@@ -221,10 +221,15 @@ function collectModuleSearchPaths(filePath?: string): string[] {
     addDir(path.join(base, "runtime"));
   };
 
+  const addLibs = (base: string) => {
+    addDir(path.join(base, "libs"));
+  };
+
   if (filePath) {
     let dir = path.dirname(filePath);
     for (let i = 0; i < 12; i += 1) {
       addRuntime(dir);
+      addLibs(dir);
       addDir(dir);
       const parent = path.dirname(dir);
       if (parent === dir) {
@@ -237,7 +242,9 @@ function collectModuleSearchPaths(filePath?: string): string[] {
   for (const folder of vscode.workspace.workspaceFolders ?? []) {
     const root = folder.uri.fsPath;
     addRuntime(root);
+    addLibs(root);
     addRuntime(path.join(root, ".."));
+    addLibs(path.join(root, ".."));
     addDir(root);
     addDir(path.join(root, ".."));
   }

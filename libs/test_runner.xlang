@@ -1,0 +1,147 @@
+// xlank test driver — tüm orchestration xlang içinde.
+// C++ yalnızca bu programı compile+run eder; dosya listesi env ile gelir.
+
+declare syscall env_get(key: string): string
+declare syscall run_capture(path: string, args: string): int32
+declare syscall capture_stdout(): string
+
+files_total: int32 = 0
+files_passed: int32 = 0
+files_failed: int32 = 0
+tests_passed: int32 = 0
+tests_failed: int32 = 0
+
+fn str_line(a: string, b: string): string {
+    return str_cat(str_cat(a, "\n"), b)
+}
+
+fn parse_summary(output: string): int32 {
+    if str_find(output, "@xlang-test passed=") < 0 {
+        return 0
+    }
+    return 1
+}
+
+fn print_filtered(output: string) {
+    local i = 0
+    local len = str_len(output)
+    local line_start = 0
+    while i <= len {
+        local at_end = 0
+        if i == len {
+            at_end = 1
+        }
+        local is_nl = 0
+        if at_end == 0 {
+            if str_byte(output, i) == 10 {
+                is_nl = 1
+            }
+        }
+        if is_nl != 0 || at_end != 0 {
+            local line_len = i - line_start
+            if line_len > 0 {
+                local line = str_sub(output, line_start, line_len)
+                if str_find(line, "@xlang-test") < 0 {
+                    print("%s", line)
+                }
+            }
+            line_start = i + 1
+        }
+        i = i + 1
+    }
+    return 0
+}
+
+fn count_marker(output: string, passed: int32, failed: int32): int32 {
+    if str_find(output, "@xlang-test passed=") < 0 {
+        return 1
+    }
+    return 0
+}
+
+fn run_one_file(xlank: string, file: string, parallel: int32): int32 {
+    local args = str_line("__test_one", file)
+    if parallel != 0 {
+        args = str_line(args, "--parallel")
+    }
+    local rc = run_capture(xlank, args)
+    local output = capture_stdout()
+    print_filtered(output)
+    if rc == 0 {
+        return 0
+    }
+    return 1
+}
+
+fn next_line(text: string, start: int32): int32 {
+    local len = str_len(text)
+    local i = start
+    while i < len {
+        if str_byte(text, i) == 10 {
+            return i
+        }
+        i = i + 1
+    }
+    return len
+}
+
+fn line_at(text: string, start: int32, end: int32): string {
+    local len = end - start
+    if len <= 0 {
+        return ""
+    }
+    return str_sub(text, start, len)
+}
+
+fn run_suite(xlank: string, files_blob: string, parallel: int32): int32 {
+    local pos = 0
+    local len = str_len(files_blob)
+    while pos < len {
+        local end = next_line(files_blob, pos)
+        local file = line_at(files_blob, pos, end)
+        if str_len(file) > 0 {
+            files_total = files_total + 1
+            print("\n RUN  %s", file)
+            if parallel != 0 {
+                print(" (parallel)")
+            }
+            print("")
+            local failed = run_one_file(xlank, file, parallel)
+            if failed != 0 {
+                files_failed = files_failed + 1
+                print("\n ✗ %s", file)
+            } else {
+                files_passed = files_passed + 1
+                print("\n ✓ %s", file)
+            }
+        }
+        pos = end + 1
+    }
+
+    print("\n Test Files  %d passed", files_passed)
+    if files_failed > 0 {
+        print(" | %d failed", files_failed)
+    }
+    print(" (%d)", files_total)
+    print("")
+
+    if files_failed > 0 {
+        return 1
+    }
+    return 0
+}
+
+fn main() {
+    local xlank = env_get("XLANG_BIN")
+    local files = env_get("XLANG_TEST_FILES")
+    local parallel = env_get("XLANG_TEST_PARALLEL")
+    local par = 0
+    if str_eq(parallel, "1") != 0 {
+        par = 1
+    }
+    if str_len(xlank) == 0 {
+        print("XLANG_BIN not set")
+        return 1
+    }
+    return run_suite(xlank, files, par)
+}

@@ -12,6 +12,7 @@
 #include <optional>
 #include <string>
 #include <vector>
+#include <cstdlib>
 
 namespace {
 
@@ -116,6 +117,12 @@ int main(int argc, char** argv) {
     test_cmd->add_flag("--keep-artifacts", keep_artifacts, "Keep temp build directories");
     test_cmd->add_option("--clang", clang, "Clang binary path");
 
+    std::filesystem::path one_file;
+    bool one_parallel = false;
+    auto* one_cmd = app.add_subcommand("__test_one", "Internal: run a single test file");
+    one_cmd->add_option("file", one_file, "Test file")->required()->check(CLI::ExistingFile);
+    one_cmd->add_flag("--parallel", one_parallel, "Run Test* functions in parallel");
+
     CLI11_PARSE(app, argc, argv);
 
     try {
@@ -200,6 +207,9 @@ int main(int argc, char** argv) {
         }
 
         if (test_cmd->parsed()) {
+            if (argc > 0 && argv[0] != nullptr) {
+                setenv("XLANG_SELF", std::filesystem::absolute(argv[0]).string().c_str(), 1);
+            }
             xlang::TestOptions options;
             options.root = test_root;
             options.runtime_override = runtime_override;
@@ -210,6 +220,19 @@ int main(int argc, char** argv) {
             }
             const xlang::TestSuiteResult result = xlang::runTestSuite(options);
             return result.exit_code;
+        }
+
+        if (one_cmd->parsed()) {
+            if (argc > 0 && argv[0] != nullptr) {
+                setenv("XLANG_SELF", std::filesystem::absolute(argv[0]).string().c_str(), 1);
+            }
+            xlang::TestOptions options;
+            options.parallel = one_parallel;
+            options.keep_artifacts = keep_artifacts;
+            if (!clang.empty()) {
+                options.clang = clang;
+            }
+            return xlang::runSingleTestFile(options, one_file);
         }
     } catch (const xlang::XlangError& error) {
         std::cerr << "error: " << error.what() << '\n';

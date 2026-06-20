@@ -95,6 +95,22 @@ bool programNeedsPanicLink(const Program& program) {
     return false;
 }
 
+bool programNeedsProcessLink(const Program& program) {
+    for (const Function& function : program.functions) {
+        if (!function.syscall) {
+            continue;
+        }
+        if (function.name == "env_get" || function.name == "run_capture" ||
+            function.name == "capture_stdout" || function.name == "proc_fork" ||
+            function.name == "proc_exec" || function.name == "proc_wait" ||
+            function.name == "proc_exit" || function.name == "pipe_create" ||
+            function.name == "fd_close") {
+            return true;
+        }
+    }
+    return false;
+}
+
 std::filesystem::path runtimeEntryFromSourceTree() {
     if (std::string(XLANG_RUNTIME_DIR).empty()) {
         return {};
@@ -170,6 +186,7 @@ RuntimeBundle loadRuntimeExports(const RuntimeOptions& options) {
     bundle.needs_ssl_link = programNeedsSslLink(program);
     bundle.needs_server_link = programNeedsServerLink(program);
     bundle.needs_panic_link = programNeedsPanicLink(program);
+    bundle.needs_process_link = programNeedsProcessLink(program);
     return bundle;
 }
 
@@ -191,6 +208,7 @@ RuntimeBundle ensureRuntime(const RuntimeOptions& options) {
     bundle.needs_ssl_link = programNeedsSslLink(program);
     bundle.needs_server_link = programNeedsServerLink(program);
     bundle.needs_panic_link = programNeedsPanicLink(program);
+    bundle.needs_process_link = programNeedsProcessLink(program);
     return bundle;
 }
 

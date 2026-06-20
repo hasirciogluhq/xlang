@@ -471,6 +471,7 @@ CodegenResult Codegen::generate(const Program& program, const CodegenOptions& op
     result.needs_ssl_link = syscallsNeedSslLink(result.syscalls);
     result.needs_server_link = syscallsNeedServerLink(result.syscalls);
     result.needs_panic_link = syscallsNeedPanicLink(result.syscalls);
+    result.needs_process_link = syscallsNeedProcessLink(result.syscalls);
     return result;
 }
 
@@ -2049,6 +2050,17 @@ std::pair<Type, std::string> Codegen::emitExpr(
                 const std::string tmp = freshTmp();
                 writeln("  " + tmp + " = call i32 @__xlang_str_eq(i8* " + a + ", i8* " + b + ")");
                 return {Type{TypeKind::Int32}, tmp};
+            }
+
+            if (expr.name == "str_cat" && expr.args.size() == 2) {
+                const auto [a_ty, a] = emitExpr(*expr.args[0], locals);
+                const auto [b_ty, b] = emitExpr(*expr.args[1], locals);
+                if (!isStringType(a_ty) || !isStringType(b_ty)) {
+                    throw XlangError("str_cat requires two strings");
+                }
+                const std::string tmp = freshTmp();
+                writeln("  " + tmp + " = call i8* @__xlang_str_concat(i8* " + a + ", i8* " + b + ")");
+                return {Type{TypeKind::String}, tmp};
             }
 
             if (expr.name == "str_byte" && expr.args.size() == 2) {
