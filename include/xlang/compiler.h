@@ -30,6 +30,7 @@ struct CompileResult {
 
 struct RunOptions {
     std::filesystem::path input;
+    std::vector<std::filesystem::path> link_objects;
     std::string clang{"clang"};
     bool keep_artifacts{false};
     std::optional<std::filesystem::path> runtime_override;

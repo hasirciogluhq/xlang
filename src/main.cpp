@@ -86,9 +86,13 @@ int main(int argc, char** argv) {
     build->add_option("--clang", clang, "Clang binary path");
 
     bool keep_artifacts = false;
-    std::filesystem::path run_input;
+    std::vector<std::filesystem::path> run_inputs;
     auto* run = app.add_subcommand("run", "Compile and run a .xlang program");
-    run->add_option("input", run_input, "xlang source file")->required()->check(CLI::ExistingFile);
+    run->add_option("inputs", run_inputs,
+                    "Primary .xlang source plus optional .o files to link")
+        ->required()
+        ->expected(-1)
+        ->check(CLI::ExistingFile);
     run->add_option("--runtime", runtime_override, "Custom runtime .xlang (+ imports)")
         ->check(CLI::ExistingFile);
     run->add_flag("--skip-runtime", skip_runtime, "Do not link runtime");
@@ -121,12 +125,14 @@ int main(int argc, char** argv) {
         }
 
         if (run->parsed()) {
-            if (xlang::detectInputKind(run_input) != xlang::InputKind::Xlang) {
-                throw xlang::XlangError("run only supports .xlang inputs");
+            const xlang::ResolvedBuildInputs resolved = xlang::resolveBuildInputs(run_inputs);
+            if (resolved.primary_kind != xlang::InputKind::Xlang) {
+                throw xlang::XlangError("run requires a .xlang source as the first input");
             }
 
             xlang::RunOptions options;
-            options.input = run_input;
+            options.input = resolved.primary;
+            options.link_objects = resolved.link_objects;
             options.keep_artifacts = keep_artifacts;
             options.runtime_override = runtime_override;
             if (!clang.empty()) {

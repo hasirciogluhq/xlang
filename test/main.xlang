@@ -1,4 +1,4 @@
-declare external fn zamazokka(arg)
+declare external fn zamazokka(str)
 
 fn main() {
     zamazokka(1978)

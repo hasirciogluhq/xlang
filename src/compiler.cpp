@@ -397,6 +397,7 @@ RunResult runFile(const RunOptions& options) {
 
     CompileOptions compile_options;
     compile_options.input = options.input;
+    compile_options.link_objects = options.link_objects;
     compile_options.output = executable;
     compile_options.ir_output = work_dir / "program.ll";
     compile_options.clang = options.clang;
