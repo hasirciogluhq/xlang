@@ -3,19 +3,20 @@ declare syscall sleep_ms(ms)
 declare syscall random_range(min, max)
 declare syscall print_done(job_id)
 
-fn job_worker(job_id) {
+fn job_worker(job_id, name) {
     local delay_ms = random_range(100, 300)
     sleep_ms(delay_ms)
     print_done(job_id)
+    print("job name was: %s", name)
     return 0
 }
 
 fn main() {
     print("cpu: %d", cpu())
-    spawn(job_worker, 1)
-    spawn(job_worker, 2)
-    spawn(job_worker, 3)
-    spawn(job_worker, 4)
+    spawn(job_worker, 1, "sex")
+    spawn(job_worker, 2, "ask")
+    spawn(job_worker, 3, "ds")
+    spawn(job_worker, 4, "ff")
     wait_all()
     return 0
 }

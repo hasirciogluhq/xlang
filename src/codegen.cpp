@@ -514,15 +514,35 @@ std::string Codegen::freshLabel() {
     return "L" + std::to_string(label_counter_++);
 }
 
-std::size_t Codegen::elementSizeBytes(const Type& type) const {
+std::size_t Codegen::typeSizeBytes(const Type& type) const {
     if (type.kind == TypeKind::Struct) {
         const StructDecl* decl = findStruct(type.struct_name);
         if (decl == nullptr) {
-            throw XlangError("unknown struct for array element");
+            throw XlangError("unknown struct `" + type.struct_name + "`");
         }
         return structSizeBytes(*decl);
     }
-    return llvmTypeAlign(type);
+    switch (type.kind) {
+        case TypeKind::Int32:
+        case TypeKind::Float:
+            return 4;
+        case TypeKind::Int64:
+        case TypeKind::Double:
+        case TypeKind::BigInt:
+        case TypeKind::String:
+        case TypeKind::Pointer:
+        case TypeKind::Array:
+            return 8;
+        case TypeKind::Bool:
+        case TypeKind::Char:
+            return 1;
+        default:
+            return llvmTypeAlign(type);
+    }
+}
+
+std::size_t Codegen::elementSizeBytes(const Type& type) const {
+    return typeSizeBytes(type);
 }
 
 void Codegen::emitBlock(const Block& block, std::unordered_map<std::string, std::string>& locals,
@@ -741,10 +761,17 @@ int Codegen::structFieldIndex(const StructDecl& decl, const std::string& field) 
 
 std::size_t Codegen::structSizeBytes(const StructDecl& decl) const {
     std::size_t size = 0;
+    std::size_t max_align = 1;
     for (const StructField& field : decl.fields) {
-        size += llvmTypeAlign(field.type);
+        const std::size_t align = llvmTypeAlign(field.type);
+        max_align = std::max(max_align, align);
+        size = (size + align - 1) / align * align;
+        size += typeSizeBytes(field.type);
     }
-    return size == 0 ? 1 : size;
+    if (size == 0) {
+        return 1;
+    }
+    return (size + max_align - 1) / max_align * max_align;
 }
 
 void Codegen::emitGlobals(const Program& program) {
@@ -1416,7 +1443,7 @@ std::pair<Type, std::string> Codegen::emitExpr(
                     const std::string typed = freshTmp();
                     writeln("  " + typed + " = bitcast i8* " + raw + " to " +
                             structTypeName(elem.struct_name));
-                    return loadValue(elem, typed, locals);
+                    return {elem, typed};
                 }
                 const std::string typed = freshTmp();
                 writeln("  " + typed + " = bitcast i8* " + raw + " to " + llvmTypeName(elem) +

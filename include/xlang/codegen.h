@@ -79,6 +79,7 @@ private:
     [[nodiscard]] std::string structValueTypeName(const std::string& name) const;
     [[nodiscard]] int structFieldIndex(const StructDecl& decl, const std::string& field) const;
     [[nodiscard]] std::size_t structSizeBytes(const StructDecl& decl) const;
+    [[nodiscard]] std::size_t typeSizeBytes(const Type& type) const;
 
     void allocLocal(const std::string& name, const Type& type,
                     std::unordered_map<std::string, std::string>& locals);
