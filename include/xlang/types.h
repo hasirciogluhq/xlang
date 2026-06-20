@@ -20,6 +20,7 @@ enum class TypeKind {
     String,
     Struct,
     Pointer,
+    Array,
 };
 
 struct Type {
@@ -27,8 +28,11 @@ struct Type {
     std::string struct_name;
     TypeKind pointer_to{TypeKind::Void};
     std::string pointer_struct_name;
+    TypeKind array_element_kind{TypeKind::Int32};
+    std::string array_element_struct;
 
     [[nodiscard]] bool isVoid() const { return kind == TypeKind::Void; }
+    [[nodiscard]] bool isArray() const { return kind == TypeKind::Array; }
     [[nodiscard]] bool isStruct() const { return kind == TypeKind::Struct; }
     [[nodiscard]] bool isPointer() const { return kind == TypeKind::Pointer; }
     [[nodiscard]] bool isInteger() const;
@@ -37,6 +41,8 @@ struct Type {
 
     [[nodiscard]] static Type makeStruct(std::string name);
     [[nodiscard]] static Type makePointer(Type inner);
+    [[nodiscard]] static Type makeArray(Type element);
+    [[nodiscard]] Type arrayElementType() const;
     [[nodiscard]] static Type parse(const std::string& name);
 };
 
@@ -47,6 +53,7 @@ struct Type {
                                              const std::vector<Type>& param_types);
 [[nodiscard]] bool typesEqual(const Type& left, const Type& right);
 [[nodiscard]] std::string llvmTypeName(const Type& type);
+[[nodiscard]] std::string arrayTypeName(const Type& element_type);
 [[nodiscard]] std::size_t llvmTypeAlign(const Type& type);
 
 }  // namespace xlang

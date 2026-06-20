@@ -99,4 +99,22 @@ std::unique_ptr<Expr> Expr::makeNew(std::string struct_name, std::vector<FieldIn
     return expr;
 }
 
+std::unique_ptr<Expr> Expr::makeNewArray(Type element_type, Span span) {
+    auto expr = std::make_unique<Expr>();
+    expr->kind = Kind::NewArray;
+    expr->new_type = std::move(element_type);
+    expr->span = span;
+    return expr;
+}
+
+std::unique_ptr<Expr> Expr::makeIndex(std::unique_ptr<Expr> object, std::unique_ptr<Expr> index,
+                                      Span span) {
+    auto expr = std::make_unique<Expr>();
+    expr->kind = Kind::Index;
+    expr->object = std::move(object);
+    expr->right = std::move(index);
+    expr->span = span;
+    return expr;
+}
+
 }  // namespace xlang

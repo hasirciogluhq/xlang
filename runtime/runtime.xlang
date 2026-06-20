@@ -1,15 +1,9 @@
+import scheduler
+
 declare syscall print_int(n: int32)
 declare syscall print_cstr(s: string)
 declare syscall print_fmt_str(fmt: string, arg: string)
 declare syscall print_fmt_int(fmt: string, arg: int32)
-declare syscall start_thread(entry: int64, arg: int32)
-
-spawn_queue = 0
-
-fn scheduler_loop(arg) {
-    print(spawn_queue)
-    return 0
-}
 
 export fn print(n: int32) {
     return print_int(n)
@@ -25,9 +19,4 @@ export fn print(fmt: string, arg: string) {
 
 export fn print(fmt: string, arg: int32) {
     return print_fmt_int(fmt, arg)
-}
-
-export fn spawn(cmd) {
-    spawn_queue = cmd
-    return start_thread(scheduler_loop, cmd)
 }

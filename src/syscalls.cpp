@@ -2,12 +2,23 @@
 
 #include "xlang/error.h"
 
+#if defined(__linux__)
+constexpr int kScNprocessorsOnln = 84;
+#elif defined(__APPLE__)
+constexpr int kScNprocessorsOnln = 58;
+#else
+constexpr int kScNprocessorsOnln = 58;
+#endif
+
 namespace xlang {
 
 bool isKnownSyscall(const std::string& name) {
     return name == "print_int" || name == "print_cstr" || name == "print_fmt_str" ||
            name == "print_fmt_int" || name == "start_thread" || name == "sleep_ms" ||
-           name == "random_range" || name == "print_done" || name == "wait_all_jobs";
+           name == "random_range" || name == "print_done" || name == "wait_all_jobs" ||
+           name == "cpu_count" || name == "mutex_init" || name == "mutex_lock" ||
+           name == "mutex_unlock" || name == "cond_init" || name == "cond_wait" ||
+           name == "cond_signal" || name == "cond_broadcast";
 }
 
 namespace {
@@ -16,8 +27,6 @@ void emitThreadSupport(std::string& output) {
     output += "; xlang thread pool (pthread backend)\n";
     output += "declare i32 @pthread_create(i64*, i8*, i8* (i8*)*, i8*)\n";
     output += "declare i32 @pthread_join(i64, i8**)\n";
-    output += "declare i8* @malloc(i64)\n";
-    output += "declare void @free(i8*)\n";
     output += "%__xlang_thread_ctx = type { i32 (i32)*, i32 }\n";
     output += "@__xlang_thread_slots = weak global [64 x i64] zeroinitializer\n";
     output += "@__xlang_thread_len = weak global i32 0\n";
@@ -79,13 +88,87 @@ void emitWaitAllJobs(std::string& output) {
     output += "}\n\n";
 }
 
+void emitSyncSupport(std::string& output) {
+    output += "; xlang OS bridge syscalls (cpu + pthread sync)\n";
+    output += "declare i64 @sysconf(i64)\n";
+    output += "declare i32 @pthread_mutex_init(i8*, i8*)\n";
+    output += "declare i32 @pthread_mutex_lock(i8*)\n";
+    output += "declare i32 @pthread_mutex_unlock(i8*)\n";
+    output += "declare i32 @pthread_cond_init(i8*, i8*)\n";
+    output += "declare i32 @pthread_cond_wait(i8*, i8*)\n";
+    output += "declare i32 @pthread_cond_signal(i8*)\n";
+    output += "declare i32 @pthread_cond_broadcast(i8*)\n\n";
+
+    output += "define weak i32 @cpu_count() {\n";
+    output += "  %cpus = call i64 @sysconf(i64 " + std::to_string(kScNprocessorsOnln) + ")\n";
+    output += "  %cpus32 = trunc i64 %cpus to i32\n";
+    output += "  %bad = icmp slt i32 %cpus32, 1\n";
+    output += "  %result = select i1 %bad, i32 1, i32 %cpus32\n";
+    output += "  ret i32 %result\n";
+    output += "}\n\n";
+
+    output += "define weak i64 @mutex_init() {\n";
+    output += "  %m = call i8* @malloc(i64 64)\n";
+    output += "  call i32 @pthread_mutex_init(i8* %m, i8* null)\n";
+    output += "  %h = ptrtoint i8* %m to i64\n";
+    output += "  ret i64 %h\n";
+    output += "}\n\n";
+
+    output += "define weak i32 @mutex_lock(i64 %handle) {\n";
+    output += "  %m = inttoptr i64 %handle to i8*\n";
+    output += "  call i32 @pthread_mutex_lock(i8* %m)\n";
+    output += "  ret i32 0\n";
+    output += "}\n\n";
+
+    output += "define weak i32 @mutex_unlock(i64 %handle) {\n";
+    output += "  %m = inttoptr i64 %handle to i8*\n";
+    output += "  call i32 @pthread_mutex_unlock(i8* %m)\n";
+    output += "  ret i32 0\n";
+    output += "}\n\n";
+
+    output += "define weak i64 @cond_init() {\n";
+    output += "  %c = call i8* @malloc(i64 64)\n";
+    output += "  call i32 @pthread_cond_init(i8* %c, i8* null)\n";
+    output += "  %h = ptrtoint i8* %c to i64\n";
+    output += "  ret i64 %h\n";
+    output += "}\n\n";
+
+    output += "define weak i32 @cond_wait(i64 %cond_handle, i64 %mutex_handle) {\n";
+    output += "  %c = inttoptr i64 %cond_handle to i8*\n";
+    output += "  %m = inttoptr i64 %mutex_handle to i8*\n";
+    output += "  call i32 @pthread_cond_wait(i8* %c, i8* %m)\n";
+    output += "  ret i32 0\n";
+    output += "}\n\n";
+
+    output += "define weak i32 @cond_signal(i64 %cond_handle) {\n";
+    output += "  %c = inttoptr i64 %cond_handle to i8*\n";
+    output += "  call i32 @pthread_cond_signal(i8* %c)\n";
+    output += "  ret i32 0\n";
+    output += "}\n\n";
+
+    output += "define weak i32 @cond_broadcast(i64 %cond_handle) {\n";
+    output += "  %c = inttoptr i64 %cond_handle to i8*\n";
+    output += "  call i32 @pthread_cond_broadcast(i8* %c)\n";
+    output += "  ret i32 0\n";
+    output += "}\n\n";
+}
+
 }  // namespace
 
 // Compiler backend: xlang `declare syscall` primitiflerini LLVM IR'ye indirger.
 // Kullanıcı kodu OS/pthread API görmez — sadece xlang syscall isimlerini kullanır.
 void emitSyscallDefinitions(std::string& output, const std::unordered_set<std::string>& syscalls) {
+    const bool needs_sync = syscalls.find("cpu_count") != syscalls.end() ||
+                            syscalls.find("mutex_init") != syscalls.end() ||
+                            syscalls.find("mutex_lock") != syscalls.end() ||
+                            syscalls.find("mutex_unlock") != syscalls.end() ||
+                            syscalls.find("cond_init") != syscalls.end() ||
+                            syscalls.find("cond_wait") != syscalls.end() ||
+                            syscalls.find("cond_signal") != syscalls.end() ||
+                            syscalls.find("cond_broadcast") != syscalls.end();
     const bool needs_threads = syscalls.find("start_thread") != syscalls.end() ||
-                               syscalls.find("wait_all_jobs") != syscalls.end();
+                               syscalls.find("wait_all_jobs") != syscalls.end() ||
+                               needs_sync;
     const bool needs_printf = syscalls.find("print_int") != syscalls.end() ||
                               syscalls.find("print_cstr") != syscalls.end() ||
                               syscalls.find("print_fmt_str") != syscalls.end() ||
@@ -194,6 +277,10 @@ void emitSyscallDefinitions(std::string& output, const std::unordered_set<std::s
         }
     }
 
+    if (needs_sync) {
+        emitSyncSupport(output);
+    }
+
     for (const std::string& name : syscalls) {
         if (!isKnownSyscall(name)) {
             throw XlangError("unknown xlang syscall: " + name);
@@ -203,7 +290,9 @@ void emitSyscallDefinitions(std::string& output, const std::unordered_set<std::s
 
 bool syscallsNeedThreadLink(const std::unordered_set<std::string>& syscalls) {
     return syscalls.find("start_thread") != syscalls.end() ||
-           syscalls.find("wait_all_jobs") != syscalls.end();
+           syscalls.find("wait_all_jobs") != syscalls.end() ||
+           syscalls.find("mutex_init") != syscalls.end() ||
+           syscalls.find("cond_init") != syscalls.end();
 }
 
 }  // namespace xlang

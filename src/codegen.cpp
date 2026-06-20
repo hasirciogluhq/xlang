@@ -244,16 +244,106 @@ bool programUsesHeap(const Program& program) {
     return false;
 }
 
+bool exprHasArray(const Expr& expr) {
+    if (expr.kind == Expr::Kind::NewArray) {
+        return true;
+    }
+    if (expr.kind == Expr::Kind::Index && expr.object) {
+        return true;
+    }
+    if (expr.object && exprHasArray(*expr.object)) {
+        return true;
+    }
+    if (expr.left && exprHasArray(*expr.left)) {
+        return true;
+    }
+    if (expr.right && exprHasArray(*expr.right)) {
+        return true;
+    }
+    for (const auto& arg : expr.args) {
+        if (exprHasArray(*arg)) {
+            return true;
+        }
+    }
+    return false;
+}
+
+bool stmtHasArray(const Stmt& stmt) {
+    if (stmt.type.isArray()) {
+        return true;
+    }
+    if (stmt.expr && exprHasArray(*stmt.expr)) {
+        return true;
+    }
+    if (stmt.return_value && exprHasArray(*stmt.return_value)) {
+        return true;
+    }
+    if (stmt.target && exprHasArray(*stmt.target)) {
+        return true;
+    }
+    if (stmt.index_target && exprHasArray(*stmt.index_target)) {
+        return true;
+    }
+    if (stmt.condition && exprHasArray(*stmt.condition)) {
+        return true;
+    }
+    if (stmt.then_block) {
+        for (const Stmt& inner : stmt.then_block->statements) {
+            if (stmtHasArray(inner)) {
+                return true;
+            }
+        }
+    }
+    if (stmt.else_block) {
+        for (const Stmt& inner : stmt.else_block->statements) {
+            if (stmtHasArray(inner)) {
+                return true;
+            }
+        }
+    }
+    if (stmt.loop_body) {
+        for (const Stmt& inner : stmt.loop_body->statements) {
+            if (stmtHasArray(inner)) {
+                return true;
+            }
+        }
+    }
+    return false;
+}
+
+bool programUsesArrays(const Program& program) {
+    for (const GlobalVar& global : program.globals) {
+        if (global.type.isArray()) {
+            return true;
+        }
+        if (global.init && exprHasArray(*global.init)) {
+            return true;
+        }
+    }
+    for (const Function& function : program.functions) {
+        for (const Stmt& stmt : function.body.statements) {
+            if (stmtHasArray(stmt)) {
+                return true;
+            }
+        }
+    }
+    return false;
+}
+
 Codegen::Codegen(CodegenOptions options) : options_(std::move(options)) {}
 
 CodegenResult Codegen::generate(const Program& program, const CodegenOptions& options) {
     Codegen cg(options);
     cg.program_ = &program;
-    cg.needs_heap_ = programUsesHeap(program) || programUsesStrings(program);
+    cg.needs_heap_ = programUsesHeap(program) || programUsesStrings(program) || programUsesArrays(program);
     cg.needs_strings_ = programUsesStrings(program);
+    cg.needs_arrays_ = programUsesArrays(program);
     cg.collectSyscalls(program);
     cg.emitPrelude(program);
     cg.emitStructTypes(program);
+    if (cg.needs_arrays_) {
+        cg.emitArrayRuntimeSupport();
+    }
     if (cg.needs_strings_) {
         cg.emitStringRuntimeSupport();
         cg.preemitStringLiterals(program);
@@ -342,6 +432,107 @@ void Codegen::emitStringRuntimeSupport() {
     writeln("  ret i8* %buf");
     writeln("}");
     writeln("");
+}
+
+void Codegen::emitArrayRuntimeSupport() {
+    writeln("%array.hdr = type { i8*, i64, i64, i64 }");
+    writeln("declare i8* @realloc(i8*, i64)");
+    writeln("declare i8* @memcpy(i8*, i8*, i64)");
+    writeln("");
+    writeln("define internal %array.hdr* @__xlang_array_new(i64 %elem_size) {");
+    writeln("  %raw = call i8* @malloc(i64 32)");
+    writeln("  %arr = bitcast i8* %raw to %array.hdr*");
+    writeln("  %cap_bytes = mul i64 %elem_size, 4");
+    writeln("  %data = call i8* @malloc(i64 %cap_bytes)");
+    writeln("  %data_ptr = getelementptr %array.hdr, %array.hdr* %arr, i32 0, i32 0");
+    writeln("  store i8* %data, i8** %data_ptr");
+    writeln("  %len_ptr = getelementptr %array.hdr, %array.hdr* %arr, i32 0, i32 1");
+    writeln("  store i64 0, i64* %len_ptr");
+    writeln("  %cap_ptr = getelementptr %array.hdr, %array.hdr* %arr, i32 0, i32 2");
+    writeln("  store i64 4, i64* %cap_ptr");
+    writeln("  %head_ptr = getelementptr %array.hdr, %array.hdr* %arr, i32 0, i32 3");
+    writeln("  store i64 0, i64* %head_ptr");
+    writeln("  ret %array.hdr* %arr");
+    writeln("}");
+    writeln("");
+    writeln("define internal i64 @__xlang_array_len(%array.hdr* %arr) {");
+    writeln("  %len_ptr = getelementptr %array.hdr, %array.hdr* %arr, i32 0, i32 1");
+    writeln("  %len = load i64, i64* %len_ptr");
+    writeln("  ret i64 %len");
+    writeln("}");
+    writeln("");
+    writeln("define internal void @__xlang_array_push(%array.hdr* %arr, i8* %elem, i64 %elem_size) {");
+    writeln("  %len_ptr = getelementptr %array.hdr, %array.hdr* %arr, i32 0, i32 1");
+    writeln("  %cap_ptr = getelementptr %array.hdr, %array.hdr* %arr, i32 0, i32 2");
+    writeln("  %head_ptr = getelementptr %array.hdr, %array.hdr* %arr, i32 0, i32 3");
+    writeln("  %data_ptr = getelementptr %array.hdr, %array.hdr* %arr, i32 0, i32 0");
+    writeln("  %len = load i64, i64* %len_ptr");
+    writeln("  %cap = load i64, i64* %cap_ptr");
+    writeln("  %head = load i64, i64* %head_ptr");
+    writeln("  %tail = add i64 %head, %len");
+    writeln("  %full = icmp uge i64 %len, %cap");
+    writeln("  br i1 %full, label %grow, label %write");
+    writeln("grow:");
+    writeln("  %new_cap = mul i64 %cap, 2");
+    writeln("  %new_bytes = mul i64 %new_cap, %elem_size");
+    writeln("  %old_data = load i8*, i8** %data_ptr");
+    writeln("  %new_data = call i8* @realloc(i8* %old_data, i64 %new_bytes)");
+    writeln("  store i8* %new_data, i8** %data_ptr");
+    writeln("  store i64 %new_cap, i64* %cap_ptr");
+    writeln("  br label %write");
+    writeln("write:");
+    writeln("  %data = load i8*, i8** %data_ptr");
+    writeln("  %offset = mul i64 %tail, %elem_size");
+    writeln("  %slot = getelementptr i8, i8* %data, i64 %offset");
+    writeln("  call i8* @memcpy(i8* %slot, i8* %elem, i64 %elem_size)");
+    writeln("  %next_len = add i64 %len, 1");
+    writeln("  store i64 %next_len, i64* %len_ptr");
+    writeln("  ret void");
+    writeln("}");
+    writeln("");
+    writeln("define internal i8* @__xlang_array_pop_front(%array.hdr* %arr, i64 %elem_size) {");
+    writeln("  %len_ptr = getelementptr %array.hdr, %array.hdr* %arr, i32 0, i32 1");
+    writeln("  %head_ptr = getelementptr %array.hdr, %array.hdr* %arr, i32 0, i32 3");
+    writeln("  %data_ptr = getelementptr %array.hdr, %array.hdr* %arr, i32 0, i32 0");
+    writeln("  %len = load i64, i64* %len_ptr");
+    writeln("  %head = load i64, i64* %head_ptr");
+    writeln("  %data = load i8*, i8** %data_ptr");
+    writeln("  %offset = mul i64 %head, %elem_size");
+    writeln("  %slot = getelementptr i8, i8* %data, i64 %offset");
+    writeln("  %buf = call i8* @malloc(i64 %elem_size)");
+    writeln("  call i8* @memcpy(i8* %buf, i8* %slot, i64 %elem_size)");
+    writeln("  %next_head = add i64 %head, 1");
+    writeln("  store i64 %next_head, i64* %head_ptr");
+    writeln("  %next_len = sub i64 %len, 1");
+    writeln("  store i64 %next_len, i64* %len_ptr");
+    writeln("  ret i8* %buf");
+    writeln("}");
+    writeln("");
+}
+
+std::string Codegen::freshLabel() {
+    return "L" + std::to_string(label_counter_++);
+}
+
+std::size_t Codegen::elementSizeBytes(const Type& type) const {
+    if (type.kind == TypeKind::Struct) {
+        const StructDecl* decl = findStruct(type.struct_name);
+        if (decl == nullptr) {
+            throw XlangError("unknown struct for array element");
+        }
+        return structSizeBytes(*decl);
+    }
+    return llvmTypeAlign(type);
+}
+
+void Codegen::emitBlock(const Block& block, std::unordered_map<std::string, std::string>& locals,
+                        bool& has_return) {
+    for (const Stmt& stmt : block.statements) {
+        if (emitStatement(stmt, locals)) {
+            has_return = true;
+            return;
+        }
+    }
 }
 
 bool Codegen::isStringType(const Type& type) const {
@@ -569,8 +760,12 @@ void Codegen::emitGlobals(const Program& program) {
 
         const std::string linkage = globalLinkage(global);
         const std::string llvm_ty = llvmTypeName(global.type);
+        if (!global.init && global.type.isArray()) {
+            writeln(globalName(global.name) + " = " + linkage + "global " + llvm_ty + " null");
+            continue;
+        }
         if (global.init && global.init->kind == Expr::Kind::IntLiteral &&
-            global.type.kind == TypeKind::Int32) {
+            (global.type.kind == TypeKind::Int32 || global.type.kind == TypeKind::Int64)) {
             writeln(globalName(global.name) + " = " + linkage + "global " + llvm_ty + " " +
                     std::to_string(global.init->int_value));
         } else if (global.init && global.init->kind == Expr::Kind::FloatLiteral &&
@@ -602,7 +797,8 @@ void Codegen::emitGlobalInit(const Program& program) {
         if (!global.init) {
             continue;
         }
-        if (global.init->kind == Expr::Kind::IntLiteral && global.type.kind == TypeKind::Int32) {
+        if (global.init->kind == Expr::Kind::IntLiteral &&
+            (global.type.kind == TypeKind::Int32 || global.type.kind == TypeKind::Int64)) {
             continue;
         }
         if (global.init->kind == Expr::Kind::FloatLiteral && global.type.isFloating()) {
@@ -628,7 +824,8 @@ void Codegen::emitGlobalInit(const Program& program) {
         if (global.external || !global.init) {
             continue;
         }
-        if (global.init->kind == Expr::Kind::IntLiteral && global.type.kind == TypeKind::Int32) {
+        if (global.init->kind == Expr::Kind::IntLiteral &&
+            (global.type.kind == TypeKind::Int32 || global.type.kind == TypeKind::Int64)) {
             continue;
         }
         if (global.init->kind == Expr::Kind::FloatLiteral && global.type.isFloating()) {
@@ -753,6 +950,8 @@ void Codegen::allocLocal(const std::string& name, const Type& type,
     const std::string llvm_ty = llvmTypeName(type);
     if (type.kind == TypeKind::Struct) {
         writeln("  " + ptr + " = alloca " + structTypeName(type.struct_name) + ", align 8");
+    } else if (type.kind == TypeKind::Array) {
+        writeln("  " + ptr + " = alloca %array.hdr*, align 8");
     } else {
         writeln("  " + ptr + " = alloca " + llvm_ty + ", align " +
                 std::to_string(llvmTypeAlign(type)));
@@ -794,9 +993,8 @@ bool Codegen::emitStatement(const Stmt& stmt, std::unordered_map<std::string, st
     switch (stmt.kind) {
         case Stmt::Kind::Local: {
             const auto [ty, val] = emitExpr(*stmt.expr, locals);
-            allocLocal(stmt.name, stmt.type, locals);
-            storeValue(stmt.type, val, localPtr(stmt.name), locals);
-            (void)ty;
+            allocLocal(stmt.name, ty, locals);
+            storeValue(ty, val, localPtr(stmt.name), locals);
             return false;
         }
         case Stmt::Kind::Assign: {
@@ -823,6 +1021,96 @@ bool Codegen::emitStatement(const Stmt& stmt, std::unordered_map<std::string, st
                     structTypeName(decl->name) + " " + obj_ptr + ", i32 0, i32 " +
                     std::to_string(index));
             storeValue(field_type, val, tmp, locals);
+            return false;
+        }
+        case Stmt::Kind::IndexAssign: {
+            const auto [arr_ty, arr] = emitExpr(*stmt.index_target->object, locals);
+            if (!arr_ty.isArray()) {
+                throw XlangError("index assignment requires array");
+            }
+            const auto [_, idx] = emitExpr(*stmt.index_target->right, locals);
+            const auto [val_ty, val] = emitExpr(*stmt.expr, locals);
+            (void)val_ty;
+            const Type elem = arr_ty.arrayElementType();
+            const std::size_t sz = elementSizeBytes(elem);
+            const std::string idx64 = freshTmp();
+            writeln("  " + idx64 + " = sext i32 " + idx + " to i64");
+            const std::string head_p = freshTmp();
+            writeln("  " + head_p + " = getelementptr %array.hdr, %array.hdr* " + arr +
+                    ", i32 0, i32 3");
+            const std::string head = freshTmp();
+            writeln("  " + head + " = load i64, i64* " + head_p);
+            const std::string pos = freshTmp();
+            writeln("  " + pos + " = add i64 " + head + ", " + idx64);
+            const std::string data_p = freshTmp();
+            writeln("  " + data_p + " = getelementptr %array.hdr, %array.hdr* " + arr +
+                    ", i32 0, i32 0");
+            const std::string data = freshTmp();
+            writeln("  " + data + " = load i8*, i8** " + data_p);
+            const std::string off = freshTmp();
+            writeln("  " + off + " = mul i64 " + pos + ", " + std::to_string(sz));
+            const std::string slot = freshTmp();
+            writeln("  " + slot + " = getelementptr i8, i8* " + data + ", i64 " + off);
+            const std::string casted = freshTmp();
+            if (elem.kind == TypeKind::Struct) {
+                writeln("  " + casted + " = bitcast i8* " + slot + " to " +
+                        structTypeName(elem.struct_name));
+                storeValue(elem, val, casted, locals);
+            } else {
+                writeln("  " + casted + " = bitcast i8* " + slot + " to " +
+                        llvmTypeName(elem) + "*");
+                storeValue(elem, val, casted, locals);
+            }
+            return false;
+        }
+        case Stmt::Kind::If: {
+            const auto [_, cond] = emitExpr(*stmt.condition, locals);
+            const std::string cond_i1 = freshTmp();
+            writeln("  " + cond_i1 + " = icmp ne i8 " + cond + ", 0");
+            const std::string then_label = freshLabel();
+            const std::string else_label = freshLabel();
+            const std::string merge_label = freshLabel();
+            if (stmt.else_block) {
+                writeln("  br i1 " + cond_i1 + ", label %" + then_label + ", label %" +
+                        else_label);
+            } else {
+                writeln("  br i1 " + cond_i1 + ", label %" + then_label + ", label %" +
+                        merge_label);
+            }
+            writeln(then_label + ":");
+            bool branch_return = false;
+            emitBlock(*stmt.then_block, locals, branch_return);
+            if (!branch_return) {
+                writeln("  br label %" + merge_label);
+            }
+            if (stmt.else_block) {
+                writeln(else_label + ":");
+                branch_return = false;
+                emitBlock(*stmt.else_block, locals, branch_return);
+                if (!branch_return) {
+                    writeln("  br label %" + merge_label);
+                }
+            }
+            writeln(merge_label + ":");
+            return false;
+        }
+        case Stmt::Kind::While: {
+            const std::string cond_label = freshLabel();
+            const std::string body_label = freshLabel();
+            const std::string exit_label = freshLabel();
+            writeln("  br label %" + cond_label);
+            writeln(cond_label + ":");
+            const auto [_, cond] = emitExpr(*stmt.condition, locals);
+            const std::string cond_i1 = freshTmp();
+            writeln("  " + cond_i1 + " = icmp ne i8 " + cond + ", 0");
+            writeln("  br i1 " + cond_i1 + ", label %" + body_label + ", label %" + exit_label);
+            writeln(body_label + ":");
+            bool branch_return = false;
+            emitBlock(*stmt.loop_body, locals, branch_return);
+            if (!branch_return) {
+                writeln("  br label %" + cond_label);
+            }
+            writeln(exit_label + ":");
             return false;
         }
         case Stmt::Kind::Return: {
@@ -933,6 +1221,49 @@ std::pair<Type, std::string> Codegen::emitExpr(
 
             return {struct_type, typed};
         }
+        case Expr::Kind::NewArray: {
+            const std::size_t elem_size = elementSizeBytes(expr.new_type);
+            const std::string tmp = freshTmp();
+            writeln("  " + tmp + " = call %array.hdr* @__xlang_array_new(i64 " +
+                    std::to_string(elem_size) + ")");
+            return {Type::makeArray(expr.new_type), tmp};
+        }
+        case Expr::Kind::Index: {
+            const auto [arr_ty, arr] = emitExpr(*expr.object, locals);
+            if (!arr_ty.isArray()) {
+                throw XlangError("index access requires array");
+            }
+            const auto [_, idx] = emitExpr(*expr.right, locals);
+            const Type elem = arr_ty.arrayElementType();
+            const std::size_t sz = elementSizeBytes(elem);
+            const std::string idx64 = freshTmp();
+            writeln("  " + idx64 + " = sext i32 " + idx + " to i64");
+            const std::string head_p = freshTmp();
+            writeln("  " + head_p + " = getelementptr %array.hdr, %array.hdr* " + arr +
+                    ", i32 0, i32 3");
+            const std::string head = freshTmp();
+            writeln("  " + head + " = load i64, i64* " + head_p);
+            const std::string pos = freshTmp();
+            writeln("  " + pos + " = add i64 " + head + ", " + idx64);
+            const std::string data_p = freshTmp();
+            writeln("  " + data_p + " = getelementptr %array.hdr, %array.hdr* " + arr +
+                    ", i32 0, i32 0");
+            const std::string data = freshTmp();
+            writeln("  " + data + " = load i8*, i8** " + data_p);
+            const std::string off = freshTmp();
+            writeln("  " + off + " = mul i64 " + pos + ", " + std::to_string(sz));
+            const std::string slot = freshTmp();
+            writeln("  " + slot + " = getelementptr i8, i8* " + data + ", i64 " + off);
+            if (elem.kind == TypeKind::Struct) {
+                const std::string typed = freshTmp();
+                writeln("  " + typed + " = bitcast i8* " + slot + " to " +
+                        structTypeName(elem.struct_name));
+                return loadValue(elem, typed, locals);
+            }
+            const std::string typed = freshTmp();
+            writeln("  " + typed + " = bitcast i8* " + slot + " to " + llvmTypeName(elem) + "*");
+            return loadValue(elem, typed, locals);
+        }
         case Expr::Kind::Binary: {
             const auto [left_ty, left] = emitExpr(*expr.left, locals);
             const auto [right_ty, right] = emitExpr(*expr.right, locals);
@@ -961,6 +1292,47 @@ std::pair<Type, std::string> Codegen::emitExpr(
                 return {Type{TypeKind::String}, tmp};
             }
 
+            if (expr.bin_op == BinOp::And || expr.bin_op == BinOp::Or) {
+                const std::string left_i1 = freshTmp();
+                const std::string right_i1 = freshTmp();
+                writeln("  " + left_i1 + " = icmp ne i8 " + left + ", 0");
+                writeln("  " + right_i1 + " = icmp ne i8 " + right + ", 0");
+                const std::string tmp_i1 = freshTmp();
+                const std::string op = expr.bin_op == BinOp::And ? "and" : "or";
+                writeln("  " + tmp_i1 + " = " + op + " i1 " + left_i1 + ", " + right_i1);
+                const std::string tmp = freshTmp();
+                writeln("  " + tmp + " = zext i1 " + tmp_i1 + " to i8");
+                return {Type{TypeKind::Bool}, tmp};
+            }
+
+            if (expr.bin_op >= BinOp::Eq && expr.bin_op <= BinOp::Ge) {
+                const std::string tmp_i1 = freshTmp();
+                std::string pred;
+                switch (expr.bin_op) {
+                    case BinOp::Eq: pred = "eq"; break;
+                    case BinOp::Ne: pred = "ne"; break;
+                    case BinOp::Lt: pred = "slt"; break;
+                    case BinOp::Le: pred = "sle"; break;
+                    case BinOp::Gt: pred = "sgt"; break;
+                    case BinOp::Ge: pred = "sge"; break;
+                    default: pred = "eq"; break;
+                }
+                Type cmp_ty = left_ty;
+                if (left_ty.isFloating() || right_ty.isFloating()) {
+                    cmp_ty = Type{TypeKind::Double};
+                }
+                if (cmp_ty.isFloating()) {
+                    writeln("  " + tmp_i1 + " = fcmp o" + pred + " " + llvmTypeName(cmp_ty) +
+                            " " + left + ", " + right);
+                } else {
+                    writeln("  " + tmp_i1 + " = icmp " + pred + " " + llvmTypeName(cmp_ty) +
+                            " " + left + ", " + right);
+                }
+                const std::string tmp = freshTmp();
+                writeln("  " + tmp + " = zext i1 " + tmp_i1 + " to i8");
+                return {Type{TypeKind::Bool}, tmp};
+            }
+
             Type result_ty = left_ty;
             if (left_ty.isFloating() || right_ty.isFloating()) {
                 result_ty = Type{TypeKind::Double};
@@ -972,6 +1344,7 @@ std::pair<Type, std::string> Codegen::emitExpr(
                 case BinOp::Sub: op = left_ty.isFloating() ? "fsub" : "sub"; break;
                 case BinOp::Mul: op = left_ty.isFloating() ? "fmul" : "mul"; break;
                 case BinOp::Div: op = left_ty.isFloating() ? "fdiv" : "sdiv"; break;
+                default: op = "add"; break;
             }
             writeln("  " + tmp + " = " + op + " " + llvmTypeName(result_ty) + " " + left + ", " +
                     right);
@@ -987,6 +1360,68 @@ std::pair<Type, std::string> Codegen::emitExpr(
                 const auto [ty, val] = emitExpr(*expr.args[i], locals);
                 arg_types.push_back(ty);
                 args << llvmTypeName(ty) << " " << val;
+            }
+
+            if (expr.name == "invoke" && expr.args.size() == 2) {
+                const auto [_, entry] = emitExpr(*expr.args[0], locals);
+                const auto [__, arg] = emitExpr(*expr.args[1], locals);
+                const std::string fn = freshTmp();
+                writeln("  " + fn + " = inttoptr i64 " + entry + " to i32 (i32)*");
+                const std::string tmp = freshTmp();
+                writeln("  " + tmp + " = call i32 " + fn + "(i32 " + arg + ")");
+                return {Type{TypeKind::Int32}, tmp};
+            }
+
+            if (expr.name == "array_len" && expr.args.size() == 1) {
+                const auto [arr_ty, arr] = emitExpr(*expr.args[0], locals);
+                (void)arr_ty;
+                const std::string len64 = freshTmp();
+                writeln("  " + len64 + " = call i64 @__xlang_array_len(%array.hdr* " + arr + ")");
+                const std::string tmp = freshTmp();
+                writeln("  " + tmp + " = trunc i64 " + len64 + " to i32");
+                return {Type{TypeKind::Int32}, tmp};
+            }
+
+            if (expr.name == "array_push" && expr.args.size() == 2) {
+                const auto [arr_ty, arr] = emitExpr(*expr.args[0], locals);
+                const auto [val_ty, val] = emitExpr(*expr.args[1], locals);
+                const std::size_t sz = elementSizeBytes(arr_ty.arrayElementType());
+                const std::string raw = freshTmp();
+                if (val_ty.kind == TypeKind::Struct) {
+                    writeln("  " + raw + " = bitcast " + llvmTypeName(val_ty) + " " + val +
+                            " to i8*");
+                } else {
+                    const std::string slot = freshTmp();
+                    writeln("  " + slot + " = alloca " + llvmTypeName(val_ty) + ", align " +
+                            std::to_string(llvmTypeAlign(val_ty)));
+                    storeValue(val_ty, val, slot, locals);
+                    writeln("  " + raw + " = bitcast " + llvmTypeName(val_ty) + "* " + slot +
+                            " to i8*");
+                }
+                writeln("  call void @__xlang_array_push(%array.hdr* " + arr + ", i8* " + raw +
+                        ", i64 " + std::to_string(sz) + ")");
+                const std::string tmp = freshTmp();
+                writeln("  " + tmp + " = add i32 0, 0");
+                return {Type{TypeKind::Int32}, tmp};
+            }
+
+            if (expr.name == "array_pop_front" && expr.args.size() == 1) {
+                const auto [arr_ty, arr] = emitExpr(*expr.args[0], locals);
+                const Type elem = arr_ty.arrayElementType();
+                const std::size_t sz = elementSizeBytes(elem);
+                const std::string raw = freshTmp();
+                writeln("  " + raw + " = call i8* @__xlang_array_pop_front(%array.hdr* " + arr +
+                        ", i64 " + std::to_string(sz) + ")");
+                if (elem.kind == TypeKind::Struct) {
+                    const std::string typed = freshTmp();
+                    writeln("  " + typed + " = bitcast i8* " + raw + " to " +
+                            structTypeName(elem.struct_name));
+                    return loadValue(elem, typed, locals);
+                }
+                const std::string typed = freshTmp();
+                writeln("  " + typed + " = bitcast i8* " + raw + " to " + llvmTypeName(elem) +
+                        "*");
+                return loadValue(elem, typed, locals);
             }
 
             const std::optional<FunctionSignature> resolved =

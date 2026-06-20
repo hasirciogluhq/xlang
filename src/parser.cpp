@@ -78,14 +78,9 @@ Program Parser::parseProgram() {
             continue;
         }
 
-        if (check(TokenKind::Ident) && tokens_[pos_ + 1].kind == TokenKind::Eq) {
-            program.globals.push_back(parseGlobalVar(modifiers));
-            continue;
-        }
-
-        if (check(TokenKind::Ident) && tokens_[pos_ + 1].kind == TokenKind::Colon &&
-            tokens_[pos_ + 2].kind == TokenKind::Ident &&
-            tokens_[pos_ + 3].kind == TokenKind::Eq) {
+        if (check(TokenKind::Ident) &&
+            (tokens_[pos_ + 1].kind == TokenKind::Eq ||
+             tokens_[pos_ + 1].kind == TokenKind::Colon)) {
             program.globals.push_back(parseGlobalVar(modifiers));
             continue;
         }
@@ -164,8 +159,9 @@ GlobalVar Parser::parseGlobalVar(const ItemModifiers& modifiers) {
     global.external = modifiers.external;
     global.name = consume(TokenKind::Ident, "expected variable name").text;
     global.type = parseOptionalTypeAfterName(defaultType());
-    consume(TokenKind::Eq, "expected '='");
-    global.init = parseExpr();
+    if (match(TokenKind::Eq)) {
+        global.init = parseExpr();
+    }
     consumeEndOfStatement();
     return global;
 }
@@ -214,11 +210,16 @@ Function Parser::parseDeclareSyscall() {
     consume(TokenKind::LParen, "expected '('");
     std::vector<TypedName> params = parseParams();
     consume(TokenKind::RParen, "expected ')'");
+    Type return_type = defaultType();
+    if (match(TokenKind::Colon)) {
+        return_type = parseType();
+    }
     consumeEndOfStatement();
 
     Function function;
     function.name = name.text;
     function.params = std::move(params);
+    function.return_type = return_type;
     function.syscall = true;
     function.span = start;
     registerFunction(function.name);
@@ -266,6 +267,10 @@ std::vector<TypedName> Parser::parseParams() {
 Type Parser::parseType() {
     if (match(TokenKind::Star)) {
         return Type::makePointer(parseType());
+    }
+
+    if (match(TokenKind::Array)) {
+        return Type::makeArray(parseType());
     }
 
     const Token name = consume(TokenKind::Ident, "expected type name");
@@ -329,6 +334,35 @@ Stmt Parser::parseStatement() {
         return stmt;
     }
 
+    if (match(TokenKind::If)) {
+        auto condition = parseExpr();
+        auto then_block = std::make_unique<Block>(parseBlock());
+        std::unique_ptr<Block> else_block;
+        if (match(TokenKind::Else)) {
+            else_block = std::make_unique<Block>(parseBlock());
+        }
+
+        Stmt stmt;
+        stmt.kind = Stmt::Kind::If;
+        stmt.span = span;
+        stmt.condition = std::move(condition);
+        stmt.then_block = std::move(then_block);
+        stmt.else_block = std::move(else_block);
+        return stmt;
+    }
+
+    if (match(TokenKind::While)) {
+        auto condition = parseExpr();
+        auto loop_body = std::make_unique<Block>(parseBlock());
+
+        Stmt stmt;
+        stmt.kind = Stmt::Kind::While;
+        stmt.span = span;
+        stmt.condition = std::move(condition);
+        stmt.loop_body = std::move(loop_body);
+        return stmt;
+    }
+
     if (match(TokenKind::Delete)) {
         auto value = parseExpr();
         consumeEndOfStatement();
@@ -353,6 +387,9 @@ Stmt Parser::parseStatement() {
                 stmt.kind = Stmt::Kind::MemberAssign;
                 stmt.target = std::move(target->object);
                 stmt.field = target->name;
+            } else if (target->kind == Expr::Kind::Index) {
+                stmt.kind = Stmt::Kind::IndexAssign;
+                stmt.index_target = std::move(target);
             } else if (target->kind == Expr::Kind::Variable) {
                 stmt.kind = Stmt::Kind::Assign;
                 stmt.name = target->name;
@@ -391,13 +428,77 @@ void Parser::consumeEndOfStatement() {
         check(TokenKind::Import) || check(TokenKind::From) || check(TokenKind::Ident) ||
         check(TokenKind::Export) || check(TokenKind::External) || check(TokenKind::Syscall) ||
         check(TokenKind::Declare) || check(TokenKind::Struct) || check(TokenKind::Delete) ||
-        check(TokenKind::New)) {
+        check(TokenKind::New) || check(TokenKind::If) || check(TokenKind::While)) {
         return;
     }
     throw error("expected ';' or newline");
 }
 
-std::unique_ptr<Expr> Parser::parseExpr() { return parseAdditive(); }
+std::unique_ptr<Expr> Parser::parseExpr() { return parseLogicalOr(); }
+
+std::unique_ptr<Expr> Parser::parseLogicalOr() {
+    auto left = parseLogicalAnd();
+    while (match(TokenKind::OrOr)) {
+        const Span span = left->span;
+        auto right = parseLogicalAnd();
+        left = Expr::makeBinary(BinOp::Or, std::move(left), std::move(right), span);
+    }
+    return left;
+}
+
+std::unique_ptr<Expr> Parser::parseLogicalAnd() {
+    auto left = parseEquality();
+    while (match(TokenKind::AndAnd)) {
+        const Span span = left->span;
+        auto right = parseEquality();
+        left = Expr::makeBinary(BinOp::And, std::move(left), std::move(right), span);
+    }
+    return left;
+}
+
+std::unique_ptr<Expr> Parser::parseEquality() {
+    auto left = parseComparison();
+    while (true) {
+        if (match(TokenKind::EqEq)) {
+            const Span span = left->span;
+            auto right = parseComparison();
+            left = Expr::makeBinary(BinOp::Eq, std::move(left), std::move(right), span);
+        } else if (match(TokenKind::NotEq)) {
+            const Span span = left->span;
+            auto right = parseComparison();
+            left = Expr::makeBinary(BinOp::Ne, std::move(left), std::move(right), span);
+        } else {
+            break;
+        }
+    }
+    return left;
+}
+
+std::unique_ptr<Expr> Parser::parseComparison() {
+    auto left = parseAdditive();
+    while (true) {
+        if (match(TokenKind::Lt)) {
+            const Span span = left->span;
+            auto right = parseAdditive();
+            left = Expr::makeBinary(BinOp::Lt, std::move(left), std::move(right), span);
+        } else if (match(TokenKind::Le)) {
+            const Span span = left->span;
+            auto right = parseAdditive();
+            left = Expr::makeBinary(BinOp::Le, std::move(left), std::move(right), span);
+        } else if (match(TokenKind::Gt)) {
+            const Span span = left->span;
+            auto right = parseAdditive();
+            left = Expr::makeBinary(BinOp::Gt, std::move(left), std::move(right), span);
+        } else if (match(TokenKind::Ge)) {
+            const Span span = left->span;
+            auto right = parseAdditive();
+            left = Expr::makeBinary(BinOp::Ge, std::move(left), std::move(right), span);
+        } else {
+            break;
+        }
+    }
+    return left;
+}
 
 std::unique_ptr<Expr> Parser::parseAdditive() {
     auto left = parseMultiplicative();
@@ -436,10 +537,21 @@ std::unique_ptr<Expr> Parser::parseMultiplicative() {
 }
 
 std::unique_ptr<Expr> Parser::parsePostfix(std::unique_ptr<Expr> expr) {
-    while (match(TokenKind::Dot)) {
-        const std::string field = consume(TokenKind::Ident, "expected field name").text;
-        const Span span = expr->span;
-        expr = Expr::makeFieldAccess(std::move(expr), field, span);
+    while (true) {
+        if (match(TokenKind::Dot)) {
+            const std::string field = consume(TokenKind::Ident, "expected field name").text;
+            const Span span = expr->span;
+            expr = Expr::makeFieldAccess(std::move(expr), field, span);
+            continue;
+        }
+        if (match(TokenKind::LBracket)) {
+            const Span span = expr->span;
+            auto index = parseExpr();
+            consume(TokenKind::RBracket, "expected ']'");
+            expr = Expr::makeIndex(std::move(expr), std::move(index), span);
+            continue;
+        }
+        break;
     }
     return expr;
 }
@@ -498,6 +610,11 @@ std::unique_ptr<Expr> Parser::parsePrimary() {
 }
 
 std::unique_ptr<Expr> Parser::parseNewExpr(const Span& span) {
+    if (match(TokenKind::Array)) {
+        const Type element_type = parseType();
+        return Expr::makeNewArray(element_type, span);
+    }
+
     const std::string struct_name = consume(TokenKind::Ident, "expected struct name").text;
     if (findStruct(struct_name) == nullptr) {
         throw error("unknown struct `" + struct_name + "`");

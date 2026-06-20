@@ -52,6 +52,10 @@ std::unique_ptr<Expr> cloneExpr(const Expr& expr) {
             }
             return Expr::makeNew(expr.name, std::move(inits), expr.span);
         }
+        case Expr::Kind::NewArray:
+            return Expr::makeNewArray(expr.new_type, expr.span);
+        case Expr::Kind::Index:
+            return Expr::makeIndex(cloneExpr(*expr.object), cloneExpr(*expr.right), expr.span);
     }
     throw XlangError("invalid expression clone");
 }
@@ -69,6 +73,52 @@ GlobalVar cloneGlobal(const GlobalVar& global) {
     return copy;
 }
 
+Stmt cloneStmt(const Stmt& stmt);
+Block cloneBlock(const Block& block);
+
+Block cloneBlock(const Block& block) {
+    Block copy;
+    copy.span = block.span;
+    for (const Stmt& inner : block.statements) {
+        copy.statements.push_back(cloneStmt(inner));
+    }
+    return copy;
+}
+
+Stmt cloneStmt(const Stmt& stmt) {
+    Stmt copied;
+    copied.kind = stmt.kind;
+    copied.span = stmt.span;
+    copied.name = stmt.name;
+    copied.type = stmt.type;
+    copied.field = stmt.field;
+    if (stmt.target) {
+        copied.target = cloneExpr(*stmt.target);
+    }
+    if (stmt.expr) {
+        copied.expr = cloneExpr(*stmt.expr);
+    }
+    if (stmt.return_value) {
+        copied.return_value = cloneExpr(*stmt.return_value);
+    }
+    if (stmt.condition) {
+        copied.condition = cloneExpr(*stmt.condition);
+    }
+    if (stmt.index_target) {
+        copied.index_target = cloneExpr(*stmt.index_target);
+    }
+    if (stmt.then_block) {
+        copied.then_block = std::make_unique<Block>(cloneBlock(*stmt.then_block));
+    }
+    if (stmt.else_block) {
+        copied.else_block = std::make_unique<Block>(cloneBlock(*stmt.else_block));
+    }
+    if (stmt.loop_body) {
+        copied.loop_body = std::make_unique<Block>(cloneBlock(*stmt.loop_body));
+    }
+    return copied;
+}
+
 Function cloneFunction(const Function& function) {
     Function copy;
     copy.name = function.name;
@@ -80,22 +130,7 @@ Function cloneFunction(const Function& function) {
     copy.syscall = function.syscall;
     copy.body.span = function.body.span;
     for (const Stmt& stmt : function.body.statements) {
-        Stmt copied;
-        copied.kind = stmt.kind;
-        copied.span = stmt.span;
-        copied.name = stmt.name;
-        copied.type = stmt.type;
-        copied.field = stmt.field;
-        if (stmt.target) {
-            copied.target = cloneExpr(*stmt.target);
-        }
-        if (stmt.expr) {
-            copied.expr = cloneExpr(*stmt.expr);
-        }
-        if (stmt.return_value) {
-            copied.return_value = cloneExpr(*stmt.return_value);
-        }
-        copy.body.statements.push_back(std::move(copied));
+        copy.body.statements.push_back(cloneStmt(stmt));
     }
     return copy;
 }
@@ -313,14 +348,29 @@ std::filesystem::path ModuleLoader::resolveModule(const std::filesystem::path& f
 }
 
 void ModuleLoader::mergeAll(Program& into, const Program& from) {
+    for (const StructDecl& decl : from.structs) {
+        bool exists = false;
+        for (const StructDecl& existing : into.structs) {
+            if (existing.name == decl.name) {
+                exists = true;
+                break;
+            }
+        }
+        if (!exists) {
+            into.structs.push_back(decl);
+        }
+    }
     for (const GlobalVar& global : from.globals) {
-        if (!isImportableGlobal(global)) {
+        if (hasGlobal(into, global.name)) {
             continue;
         }
         addGlobal(into, cloneGlobal(global));
     }
     for (const Function& function : from.functions) {
-        if (!isImportableFunction(function)) {
+        if (function.body.statements.empty() && !function.external && !function.syscall) {
+            continue;
+        }
+        if (hasFunctionOverload(into, function)) {
             continue;
         }
         addFunction(into, cloneFunction(function));

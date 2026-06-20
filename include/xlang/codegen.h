@@ -44,6 +44,7 @@ private:
     void emitDeclareFunction(const Function& function);
     void emitSyscallLowering();
     void emitStringRuntimeSupport();
+    void emitArrayRuntimeSupport();
     void preemitStringLiterals(const Program& program);
     void collectStringLiteralsFromExpr(const Expr& expr);
     void collectStringLiteralsFromStmt(const Stmt& stmt);
@@ -56,6 +57,10 @@ private:
     [[nodiscard]] std::string emitStringConcat(const std::string& left, const std::string& right);
 
     bool emitStatement(const Stmt& stmt, std::unordered_map<std::string, std::string>& locals);
+    void emitBlock(const Block& block, std::unordered_map<std::string, std::string>& locals,
+                   bool& has_return);
+    [[nodiscard]] std::size_t elementSizeBytes(const Type& type) const;
+    [[nodiscard]] std::string freshLabel();
     std::pair<Type, std::string> emitExpr(const Expr& expr,
                                           const std::unordered_map<std::string, std::string>& locals);
 
@@ -99,7 +104,9 @@ private:
     bool needs_global_init_{false};
     bool needs_heap_{false};
     bool needs_strings_{false};
+    bool needs_arrays_{false};
     std::uint32_t string_literal_counter_{0};
+    std::uint32_t label_counter_{0};
     std::unordered_map<std::string, std::string> string_literal_globals_;
     std::unordered_map<std::string, Type> local_types_;
     Type current_return_type_{TypeKind::Int32};

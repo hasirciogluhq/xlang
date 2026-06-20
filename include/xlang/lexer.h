@@ -43,6 +43,20 @@ enum class TokenKind {
     Number,
     FloatNumber,
     String,
+    EqEq,
+    NotEq,
+    Lt,
+    Gt,
+    Le,
+    Ge,
+    AndAnd,
+    OrOr,
+    LBracket,
+    RBracket,
+    If,
+    Else,
+    While,
+    Array,
 };
 
 struct Token {

@@ -1,22 +1,21 @@
-// Paralel job scheduler — her job 10-20 sn arası rastgele bekler, bitince "bitti" yazar.
+// Paralel job scheduler — runtime spawn/wait_all (Go routine benzeri, saf xlang scheduler).
 declare syscall sleep_ms(ms)
 declare syscall random_range(min, max)
 declare syscall print_done(job_id)
-declare syscall start_thread(entry: int64, arg: int32)
-declare syscall wait_all_jobs()
 
 fn job_worker(job_id) {
-    local delay_ms = random_range(10000, 20000)
+    local delay_ms = random_range(100, 300)
     sleep_ms(delay_ms)
     print_done(job_id)
     return 0
 }
 
 fn main() {
-    start_thread(job_worker, 1)
-    start_thread(job_worker, 2)
-    start_thread(job_worker, 3)
-    start_thread(job_worker, 4)
-    wait_all_jobs()
+    print("cpu: %d", cpu())
+    spawn(job_worker, 1)
+    spawn(job_worker, 2)
+    spawn(job_worker, 3)
+    spawn(job_worker, 4)
+    wait_all()
     return 0
 }

@@ -16,6 +16,8 @@ const std::unordered_map<std::string, TokenKind> kKeywords = {
     {"struct", TokenKind::Struct},   {"new", TokenKind::New},
     {"delete", TokenKind::Delete},   {"true", TokenKind::True},
     {"false", TokenKind::False},     {"null", TokenKind::Null},
+    {"if", TokenKind::If},           {"else", TokenKind::Else},
+    {"while", TokenKind::While},     {"array", TokenKind::Array},
 };
 
 }  // namespace
@@ -170,6 +172,8 @@ void Lexer::tokenize() {
             case ')': tokens_.push_back(makeToken(TokenKind::RParen, start_line, start_column)); break;
             case '{': tokens_.push_back(makeToken(TokenKind::LBrace, start_line, start_column)); break;
             case '}': tokens_.push_back(makeToken(TokenKind::RBrace, start_line, start_column)); break;
+            case '[': tokens_.push_back(makeToken(TokenKind::LBracket, start_line, start_column)); break;
+            case ']': tokens_.push_back(makeToken(TokenKind::RBracket, start_line, start_column)); break;
             case ',': tokens_.push_back(makeToken(TokenKind::Comma, start_line, start_column)); break;
             case ';': tokens_.push_back(makeToken(TokenKind::Semicolon, start_line, start_column)); break;
             case ':': tokens_.push_back(makeToken(TokenKind::Colon, start_line, start_column)); break;
@@ -178,7 +182,60 @@ void Lexer::tokenize() {
             case '-': tokens_.push_back(makeToken(TokenKind::Minus, start_line, start_column)); break;
             case '*': tokens_.push_back(makeToken(TokenKind::Star, start_line, start_column)); break;
             case '/': tokens_.push_back(makeToken(TokenKind::Slash, start_line, start_column)); break;
-            case '=': tokens_.push_back(makeToken(TokenKind::Eq, start_line, start_column)); break;
+            case '<':
+                if (peek() == '=') {
+                    advance();
+                    ++column;
+                    tokens_.push_back(makeToken(TokenKind::Le, start_line, start_column));
+                } else {
+                    tokens_.push_back(makeToken(TokenKind::Lt, start_line, start_column));
+                }
+                break;
+            case '>':
+                if (peek() == '=') {
+                    advance();
+                    ++column;
+                    tokens_.push_back(makeToken(TokenKind::Ge, start_line, start_column));
+                } else {
+                    tokens_.push_back(makeToken(TokenKind::Gt, start_line, start_column));
+                }
+                break;
+            case '=':
+                if (peek() == '=') {
+                    advance();
+                    ++column;
+                    tokens_.push_back(makeToken(TokenKind::EqEq, start_line, start_column));
+                } else {
+                    tokens_.push_back(makeToken(TokenKind::Eq, start_line, start_column));
+                }
+                break;
+            case '!':
+                if (peek() == '=') {
+                    advance();
+                    ++column;
+                    tokens_.push_back(makeToken(TokenKind::NotEq, start_line, start_column));
+                } else {
+                    throw LexError(start_line, start_column, "unexpected '!'");
+                }
+                break;
+            case '&':
+                if (peek() == '&') {
+                    advance();
+                    ++column;
+                    tokens_.push_back(makeToken(TokenKind::AndAnd, start_line, start_column));
+                } else {
+                    throw LexError(start_line, start_column, "unexpected '&'");
+                }
+                break;
+            case '|':
+                if (peek() == '|') {
+                    advance();
+                    ++column;
+                    tokens_.push_back(makeToken(TokenKind::OrOr, start_line, start_column));
+                } else {
+                    throw LexError(start_line, start_column, "unexpected '|'");
+                }
+                break;
             default:
                 throw LexError(start_line, start_column,
                                std::string("unexpected character '") + c + "'");

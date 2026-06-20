@@ -38,6 +38,21 @@ Type Type::makePointer(Type inner) {
     return type;
 }
 
+Type Type::makeArray(Type element) {
+    Type type;
+    type.kind = TypeKind::Array;
+    type.array_element_kind = element.kind;
+    type.array_element_struct = element.struct_name;
+    return type;
+}
+
+Type Type::arrayElementType() const {
+    Type element;
+    element.kind = array_element_kind;
+    element.struct_name = array_element_struct;
+    return element;
+}
+
 Type Type::parse(const std::string& name) {
     if (name == "void") {
         return Type{TypeKind::Void};
@@ -101,6 +116,8 @@ std::string typeMangleComponent(const Type& type) {
             inner.struct_name = type.pointer_struct_name;
             return "P" + typeMangleComponent(inner);
         }
+        case TypeKind::Array:
+            return "A" + typeMangleComponent(type.arrayElementType());
     }
     return "unknown";
 }
@@ -123,6 +140,10 @@ bool typesEqual(const Type& left, const Type& right) {
     if (left.kind == TypeKind::Pointer) {
         return left.pointer_to == right.pointer_to &&
                left.pointer_struct_name == right.pointer_struct_name;
+    }
+    if (left.kind == TypeKind::Array) {
+        return left.array_element_kind == right.array_element_kind &&
+               left.array_element_struct == right.array_element_struct;
     }
     return true;
 }
@@ -155,6 +176,8 @@ std::string typeToString(const Type& type) {
             inner.struct_name = type.pointer_struct_name;
             return typeToString(inner) + "*";
         }
+        case TypeKind::Array:
+            return "array " + typeToString(type.arrayElementType());
     }
     return "unknown";
 }
@@ -190,8 +213,15 @@ std::string llvmTypeName(const Type& type) {
             }
             return llvmTypeName(inner) + "*";
         }
+        case TypeKind::Array:
+            return "%array.hdr*";
     }
     throw XlangError("invalid type for LLVM lowering");
+}
+
+std::string arrayTypeName(const Type& element_type) {
+    (void)element_type;
+    return "%array.hdr";
 }
 
 std::size_t llvmTypeAlign(const Type& type) {
@@ -207,6 +237,7 @@ std::size_t llvmTypeAlign(const Type& type) {
         case TypeKind::String:
         case TypeKind::Struct:
         case TypeKind::Pointer:
+        case TypeKind::Array:
             return 8;
         case TypeKind::Bool:
         case TypeKind::Char:

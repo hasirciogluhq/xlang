@@ -1,8 +1,11 @@
 #pragma once
 
+#include <filesystem>
+
 namespace xlang {
 
-// xlank C++ build sırasında runtime/runtime.xlang buraya gömülür.
 extern const char kEmbeddedRuntimeSource[];
+[[nodiscard]] std::filesystem::path materializeEmbeddedRuntime(
+    const std::filesystem::path& work_dir);
 
 }  // namespace xlang

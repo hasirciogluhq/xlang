@@ -15,14 +15,15 @@ FetchContent_Declare(
 FetchContent_MakeAvailable(CLI11)
 
 set(EMBEDDED_RUNTIME_CPP "${CMAKE_CURRENT_BINARY_DIR}/embedded_runtime.cpp")
+file(GLOB RUNTIME_XLANG_FILES "${CMAKE_CURRENT_SOURCE_DIR}/runtime/*.xlang")
 add_custom_command(
     OUTPUT "${EMBEDDED_RUNTIME_CPP}"
     COMMAND ${CMAKE_COMMAND}
-        -DRUNTIME_FILE=${CMAKE_CURRENT_SOURCE_DIR}/runtime/runtime.xlang
+        -DRUNTIME_DIR=${CMAKE_CURRENT_SOURCE_DIR}/runtime
         -DOUTPUT_FILE=${EMBEDDED_RUNTIME_CPP}
         -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/embed_runtime.cmake
     DEPENDS
-        ${CMAKE_CURRENT_SOURCE_DIR}/runtime/runtime.xlang
+        ${RUNTIME_XLANG_FILES}
         ${CMAKE_CURRENT_SOURCE_DIR}/cmake/embed_runtime.cmake
     VERBATIM
 )
@@ -46,6 +47,9 @@ add_executable(xlank
 add_dependencies(xlank embedded_runtime)
 
 target_include_directories(xlank PRIVATE include)
+target_compile_definitions(xlank PRIVATE
+    "XLANG_RUNTIME_DIR=\"${CMAKE_CURRENT_SOURCE_DIR}/runtime\""
+)
 target_link_libraries(xlank PRIVATE CLI11::CLI11)
 
 install(TARGETS xlank RUNTIME DESTINATION bin)

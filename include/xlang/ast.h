@@ -10,7 +10,20 @@
 
 namespace xlang {
 
-enum class BinOp { Add, Sub, Mul, Div };
+enum class BinOp {
+    Add,
+    Sub,
+    Mul,
+    Div,
+    Eq,
+    Ne,
+    Lt,
+    Le,
+    Gt,
+    Ge,
+    And,
+    Or,
+};
 
 struct Span {
     std::size_t line{1};
@@ -91,6 +104,8 @@ struct Expr {
         FunctionRef,
         FieldAccess,
         New,
+        NewArray,
+        Index,
         Null,
     } kind;
 
@@ -122,18 +137,36 @@ struct Expr {
                                                  Span span);
     static std::unique_ptr<Expr> makeNew(std::string struct_name,
                                          std::vector<FieldInit> field_inits, Span span);
+    static std::unique_ptr<Expr> makeNewArray(Type element_type, Span span);
+    static std::unique_ptr<Expr> makeIndex(std::unique_ptr<Expr> object, std::unique_ptr<Expr> index,
+                                           Span span);
 };
 
 struct Stmt {
-    enum class Kind { Local, Assign, MemberAssign, Return, Expr, Delete } kind;
+    enum class Kind {
+        Local,
+        Assign,
+        MemberAssign,
+        IndexAssign,
+        Return,
+        Expr,
+        Delete,
+        If,
+        While,
+    } kind;
 
     Span span{};
     std::string name;
     Type type{TypeKind::Int32};
     std::unique_ptr<Expr> target;
+    std::unique_ptr<Expr> index_target;
     std::string field;
     std::unique_ptr<Expr> expr;
     std::unique_ptr<Expr> return_value;
+    std::unique_ptr<Expr> condition;
+    std::unique_ptr<Block> then_block;
+    std::unique_ptr<Block> else_block;
+    std::unique_ptr<Block> loop_body;
 };
 
 struct Block {
