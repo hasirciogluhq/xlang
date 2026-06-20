@@ -1,0 +1,148 @@
+{
+  "$schema": "https://raw.githubusercontent.com/martinring/tmlanguage/master/tmlanguage.json",
+  "name": "xlang",
+  "scopeName": "source.xlang",
+  "patterns": [
+    { "include": "#comments" },
+    { "include": "#strings" },
+    { "include": "#declarations" },
+    { "include": "#keywords" },
+    { "include": "#types" },
+    { "include": "#constants" },
+    { "include": "#numbers" },
+    { "include": "#operators" }
+  ],
+  "repository": {
+    "comments": {
+      "patterns": [
+        {
+          "name": "comment.line.double-slash.xlang",
+          "match": "//.*$"
+        }
+      ]
+    },
+    "strings": {
+      "patterns": [
+        {
+          "name": "string.quoted.double.xlang",
+          "begin": "\"",
+          "end": "\"",
+          "patterns": [
+            {
+              "name": "constant.character.escape.xlang",
+              "match": "\\\\([\"\\\\nrt]|.)"
+            }
+          ]
+        }
+      ]
+    },
+    "declarations": {
+      "patterns": [
+        {
+          "name": "meta.function.xlang",
+          "match": "\\b(export\\s+)?(fn)\\s+([A-Za-z_][A-Za-z0-9_]*)",
+          "captures": {
+            "1": { "name": "keyword.other.export.xlang" },
+            "2": { "name": "keyword.other.fn.xlang" },
+            "3": { "name": "entity.name.function.xlang" }
+          }
+        },
+        {
+          "name": "meta.struct.xlang",
+          "match": "\\b(export\\s+)?(struct)\\s+([A-Za-z_][A-Za-z0-9_]*)",
+          "captures": {
+            "1": { "name": "keyword.other.export.xlang" },
+            "2": { "name": "keyword.other.struct.xlang" },
+            "3": { "name": "entity.name.type.struct.xlang" }
+          }
+        },
+        {
+          "name": "meta.import.xlang",
+          "match": "\\b(import|from)\\s+([A-Za-z_][A-Za-z0-9_]*)",
+          "captures": {
+            "1": { "name": "keyword.control.import.xlang" },
+            "2": { "name": "entity.name.namespace.xlang" }
+          }
+        },
+        {
+          "name": "meta.declare.xlang",
+          "match": "\\b(declare)\\s+(syscall|external)\\s+(fn)\\s+([A-Za-z_][A-Za-z0-9_]*)",
+          "captures": {
+            "1": { "name": "keyword.other.declare.xlang" },
+            "2": { "name": "keyword.other.syscall.xlang" },
+            "3": { "name": "keyword.other.fn.xlang" },
+            "4": { "name": "entity.name.function.xlang" }
+          }
+        }
+      ]
+    },
+    "keywords": {
+      "patterns": [
+        {
+          "name": "keyword.control.xlang",
+          "match": "\\b(if|else|while|return)\\b"
+        },
+        {
+          "name": "keyword.other.xlang",
+          "match": "\\b(local|new|delete|import|from|as|export|external|syscall|declare|struct|fn|array)\\b"
+        }
+      ]
+    },
+    "types": {
+      "patterns": [
+        {
+          "name": "storage.type.primitive.xlang",
+          "match": "\\b(void|int|int32|int64|bigint|float|float32|double|float64|bool|char|string)\\b"
+        },
+        {
+          "name": "storage.type.pointer.xlang",
+          "match": "\\*\\s*(void|int|int32|int64|bigint|float|float32|double|float64|bool|char|string|[A-Za-z_][A-Za-z0-9_]*)"
+        },
+        {
+          "name": "storage.type.array.xlang",
+          "match": "\\barray\\s+[A-Za-z_][A-Za-z0-9_]*"
+        }
+      ]
+    },
+    "constants": {
+      "patterns": [
+        {
+          "name": "constant.language.xlang",
+          "match": "\\b(true|false|null)\\b"
+        }
+      ]
+    },
+    "numbers": {
+      "patterns": [
+        {
+          "name": "constant.numeric.float.xlang",
+          "match": "\\b\\d+\\.\\d+\\b"
+        },
+        {
+          "name": "constant.numeric.integer.xlang",
+          "match": "\\b\\d+\\b"
+        }
+      ]
+    },
+    "operators": {
+      "patterns": [
+        {
+          "name": "keyword.operator.xlang",
+          "match": "(==|!=|<=|>=|&&|\\|\\||\\.\\.\\.)"
+        },
+        {
+          "name": "keyword.operator.arithmetic.xlang",
+          "match": "(\\+|\\-|\\*|/)"
+        },
+        {
+          "name": "keyword.operator.assignment.xlang",
+          "match": "="
+        },
+        {
+          "name": "keyword.operator.comparison.xlang",
+          "match": "(<|>)"
+        }
+      ]
+    }
+  }
+}

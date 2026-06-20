@@ -1,0 +1,274 @@
+// HTTP/HTTPS istemcisi — TCP/TLS/HTTP mantığı xlang içinde.
+// Syscall'lar sadece OS köprüsü.
+
+declare syscall net_tcp_connect(host: string, port: int32): int64
+declare syscall net_send(fd: int64, data: string): int32
+declare syscall net_recv(fd: int64, max: int32): string
+declare syscall net_close(fd: int64): int32
+
+declare syscall net_tls_connect(host: string, port: int32): int64
+declare syscall net_tls_send(fd: int64, data: string): int32
+declare syscall net_tls_recv(fd: int64, max: int32): string
+declare syscall net_tls_close(fd: int64): int32
+
+struct UrlParts {
+    host: string
+    path: string
+    port: int32
+    secure: int32
+    ok: int32
+}
+
+struct FetchResponse {
+    status: int32
+    ok: int32
+    body: string
+}
+
+fn str_to_int(s: string): int32 {
+    local i = 0
+    local n = 0
+    local len = str_len(s)
+    while i < len {
+        local c = str_byte(s, i)
+        if c >= 48 {
+            if c <= 57 {
+                n = n * 10 + (c - 48)
+            }
+        }
+        i = i + 1
+    }
+    return n
+}
+
+fn hex_digit_val(c: int32): int32 {
+    if c >= 48 {
+        if c <= 57 {
+            return c - 48
+        }
+    }
+    if c >= 97 {
+        if c <= 102 {
+            return c - 97 + 10
+        }
+    }
+    if c >= 65 {
+        if c <= 70 {
+            return c - 65 + 10
+        }
+    }
+    return 0
+}
+
+fn is_hex_stop(c: int32): int32 {
+    if c == 59 {
+        return 1
+    }
+    if c == 13 {
+        return 1
+    }
+    if c == 10 {
+        return 1
+    }
+    if c == 32 {
+        return 1
+    }
+    return 0
+}
+
+fn hex_to_int(s: string): int32 {
+    local i = 0
+    local n = 0
+    local len = str_len(s)
+    while i < len {
+        local c = str_byte(s, i)
+        if is_hex_stop(c) != 0 {
+            return n
+        }
+        n = n * 16 + hex_digit_val(c)
+        i = i + 1
+    }
+    return n
+}
+
+fn parse_url(url: string): UrlParts {
+    local bad: UrlParts = new UrlParts { host = "", path = "/", port = 80, secure = 0, ok = 0 }
+    local scheme_len = 0
+    local secure = 0
+    local default_port = 80
+    if str_find(url, "https://") == 0 {
+        scheme_len = 8
+        secure = 1
+        default_port = 443
+    } else {
+        if str_find(url, "http://") == 0 {
+            scheme_len = 7
+        } else {
+            return bad
+        }
+    }
+    local rest = str_sub(url, scheme_len, str_len(url) - scheme_len)
+    local slash = str_find(rest, "/")
+    local host_part = ""
+    local path = "/"
+    if slash == (0 - 1) {
+        host_part = rest
+    } else {
+        host_part = str_sub(rest, 0, slash)
+        path = str_sub(rest, slash, str_len(rest) - slash)
+    }
+    local colon = str_find(host_part, ":")
+    local host = host_part
+    local port = default_port
+    if colon != (0 - 1) {
+        host = str_sub(host_part, 0, colon)
+        local port_str = str_sub(host_part, colon + 1, str_len(host_part) - colon - 1)
+        port = str_to_int(port_str)
+    }
+    local ok: UrlParts = new UrlParts { host = host, path = path, port = port, secure = secure, ok = 1 }
+    return ok
+}
+
+fn session_connect(parts: UrlParts): int64 {
+    if parts.secure != 0 {
+        return net_tls_connect(parts.host, parts.port)
+    }
+    return net_tcp_connect(parts.host, parts.port)
+}
+
+fn session_send(fd: int64, data: string, secure: int32): int32 {
+    if secure != 0 {
+        return net_tls_send(fd, data)
+    }
+    return net_send(fd, data)
+}
+
+fn session_recv(fd: int64, max: int32, secure: int32): string {
+    if secure != 0 {
+        return net_tls_recv(fd, max)
+    }
+    return net_recv(fd, max)
+}
+
+fn session_close(fd: int64, secure: int32): int32 {
+    if secure != 0 {
+        return net_tls_close(fd)
+    }
+    return net_close(fd)
+}
+
+fn build_get_request(path: string, host: string): string {
+    local req = "GET " + path + " HTTP/1.1\r\nHost: " + host + "\r\nConnection: close\r\n\r\n"
+    return req
+}
+
+fn read_all(fd: int64, chunk: int32, secure: int32): string {
+    local out = ""
+    local done = 0
+    while done == 0 {
+        local part = session_recv(fd, chunk, secure)
+        if str_len(part) == 0 {
+            done = 1
+        } else {
+            out = out + part
+        }
+    }
+    return out
+}
+
+fn parse_status_code(response: string): int32 {
+    local sp = str_find(response, " ")
+    if sp == (0 - 1) {
+        return 0
+    }
+    local after = str_sub(response, sp + 1, str_len(response) - sp - 1)
+    local sp2 = str_find(after, " ")
+    local code_str = after
+    if sp2 != (0 - 1) {
+        code_str = str_sub(after, 0, sp2)
+    }
+    return str_to_int(code_str)
+}
+
+fn http_headers(response: string): string {
+    local sep = str_find(response, "\r\n\r\n")
+    if sep == (0 - 1) {
+        return ""
+    }
+    return str_sub(response, 0, sep)
+}
+
+fn http_body_raw(response: string): string {
+    local sep = str_find(response, "\r\n\r\n")
+    if sep == (0 - 1) {
+        return ""
+    }
+    return str_sub(response, sep + 4, str_len(response) - sep - 4)
+}
+
+fn headers_are_chunked(response: string): int32 {
+    local headers = http_headers(response)
+    if str_find(headers, "chunked") != (0 - 1) {
+        return 1
+    }
+    return 0
+}
+
+fn decode_chunked(body: string): string {
+    local out = ""
+    local rest = body
+    while str_len(rest) > 0 {
+        local line_end = str_find(rest, "\r\n")
+        if line_end == (0 - 1) {
+            return out
+        }
+        local size_hex = str_sub(rest, 0, line_end)
+        local size = hex_to_int(size_hex)
+        if size == 0 {
+            return out
+        }
+        local chunk_start = line_end + 2
+        local chunk = str_sub(rest, chunk_start, size)
+        out = out + chunk
+        local next_start = chunk_start + size + 2
+        if next_start >= str_len(rest) {
+            return out
+        }
+        rest = str_sub(rest, next_start, str_len(rest) - next_start)
+    }
+    return out
+}
+
+fn http_body(response: string): string {
+    local raw = http_body_raw(response)
+    if headers_are_chunked(response) != 0 {
+        return decode_chunked(raw)
+    }
+    return raw
+}
+
+export fn fetch(url: string): FetchResponse {
+    local fail: FetchResponse = new FetchResponse { status = 0, ok = 0, body = "" }
+    local parts = parse_url(url)
+    if parts.ok == 0 {
+        return fail
+    }
+    local fd = session_connect(parts)
+    if fd < 0 {
+        return fail
+    }
+    local req = build_get_request(parts.path, parts.host)
+    session_send(fd, req, parts.secure)
+    local response = read_all(fd, 8192, parts.secure)
+    session_close(fd, parts.secure)
+    local status = parse_status_code(response)
+    local body = http_body(response)
+    local ok_flag = 0
+    if status >= 200 {
+        if status < 300 {
+            ok_flag = 1
+        }
+    }
+    local out: FetchResponse = new FetchResponse { status = status, ok = ok_flag, body = body }
+    return out
+}

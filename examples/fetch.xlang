@@ -1,0 +1,18 @@
+fn main() {
+    local resp = fetch("https://jsonplaceholder.typicode.com/todos/1")
+    print("status: %d", resp.status)
+    if resp.ok != 0 {
+        print("ok: true")
+    } else {
+        print("ok: false")
+    }
+    print("userId: %d", json_get_int(resp.body, "userId"))
+    print("id: %d", json_get_int(resp.body, "id"))
+    print("title: %s", json_get_string(resp.body, "title"))
+    if json_get_bool(resp.body, "completed") != 0 {
+        print("completed: true")
+    } else {
+        print("completed: false")
+    }
+    return 0
+}

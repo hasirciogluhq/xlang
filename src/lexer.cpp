@@ -123,6 +123,7 @@ void Lexer::tokenize() {
                         case '"': text += '"'; break;
                         case '\\': text += '\\'; break;
                         case 'n': text += '\n'; break;
+                        case 'r': text += '\r'; break;
                         case 't': text += '\t'; break;
                         default: text += esc; break;
                     }

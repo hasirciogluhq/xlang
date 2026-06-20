@@ -1,0 +1,306 @@
+// JSON yardımcıları — parse mantığı tamamen xlang içinde.
+
+struct JsonResult {
+    ok: int32
+    value: string
+    next: int32
+}
+
+fn is_ws(c: int32): int32 {
+    if c == 32 {
+        return 1
+    }
+    if c == 9 {
+        return 1
+    }
+    if c == 10 {
+        return 1
+    }
+    if c == 13 {
+        return 1
+    }
+    return 0
+}
+
+fn skip_ws(text: string, pos: int32): int32 {
+    local i = pos
+    local len = str_len(text)
+    while i < len {
+        local c = str_byte(text, i)
+        if is_ws(c) == 0 {
+            return i
+        }
+        i = i + 1
+    }
+    return i
+}
+
+fn hex_digit(c: int32): int32 {
+    if c >= 48 {
+        if c <= 57 {
+            return c - 48
+        }
+    }
+    if c >= 97 {
+        if c <= 102 {
+            return c - 97 + 10
+        }
+    }
+    if c >= 65 {
+        if c <= 70 {
+            return c - 65 + 10
+        }
+    }
+    return 0
+}
+
+fn is_hex_stop(c: int32): int32 {
+    if c == 59 {
+        return 1
+    }
+    if c == 13 {
+        return 1
+    }
+    if c == 10 {
+        return 1
+    }
+    if c == 32 {
+        return 1
+    }
+    return 0
+}
+
+fn hex_to_int(s: string): int32 {
+    local i = 0
+    local n = 0
+    local len = str_len(s)
+    while i < len {
+        local c = str_byte(s, i)
+        if is_hex_stop(c) != 0 {
+            return n
+        }
+        n = n * 16 + hex_digit(c)
+        i = i + 1
+    }
+    return n
+}
+
+fn str_to_int_signed(s: string): int32 {
+    local i = 0
+    local n = 0
+    local sign = 1
+    local len = str_len(s)
+    if len > 0 {
+        if str_byte(s, 0) == 45 {
+            sign = 0 - 1
+            i = 1
+        }
+    }
+    while i < len {
+        local c = str_byte(s, i)
+        if c >= 48 {
+            if c <= 57 {
+                n = n * 10 + (c - 48)
+            }
+        }
+        i = i + 1
+    }
+    return n * sign
+}
+
+fn json_fail(): JsonResult {
+    local r: JsonResult = new JsonResult { ok = 0, value = "", next = 0 }
+    return r
+}
+
+fn json_ok(value: string, next: int32): JsonResult {
+    local r: JsonResult = new JsonResult { ok = 1, value = value, next = next }
+    return r
+}
+
+export fn json_unescape(raw: string): string {
+    local out = ""
+    local i = 0
+    local len = str_len(raw)
+    while i < len {
+        local c = str_byte(raw, i)
+        if c == 92 {
+            local j = i + 1
+            if j < len {
+                local esc = str_byte(raw, j)
+                if esc == 110 {
+                    out = out + "\n"
+                } else {
+                    if esc == 116 {
+                        out = out + "\t"
+                    } else {
+                        if esc == 114 {
+                            out = out + "\r"
+                        } else {
+                            if esc == 34 {
+                                out = out + "\""
+                            } else {
+                                if esc == 92 {
+                                    out = out + "\\"
+                                } else {
+                                    out = out + str_sub(raw, j, 1)
+                                }
+                            }
+                        }
+                    }
+                }
+                i = j + 1
+            } else {
+                i = i + 1
+            }
+        } else {
+            out = out + str_sub(raw, i, 1)
+            i = i + 1
+        }
+    }
+    return out
+}
+
+export fn json_parse_string_at(text: string, pos: int32): JsonResult {
+    local len = str_len(text)
+    local i = skip_ws(text, pos)
+    if i >= len {
+        return json_fail()
+    }
+    if str_byte(text, i) != 34 {
+        return json_fail()
+    }
+    local start = i + 1
+    local j = start
+    while j < len {
+        local c = str_byte(text, j)
+        if c == 92 {
+            j = j + 2
+        } else {
+            if c == 34 {
+                local raw = str_sub(text, start, j - start)
+                local val = json_unescape(raw)
+                return json_ok(val, j + 1)
+            }
+            j = j + 1
+        }
+    }
+    return json_fail()
+}
+
+fn is_token_end(ch: int32): int32 {
+    if ch == 44 {
+        return 1
+    }
+    if ch == 125 {
+        return 1
+    }
+    if ch == 93 {
+        return 1
+    }
+    if is_ws(ch) != 0 {
+        return 1
+    }
+    return 0
+}
+
+fn json_parse_token(text: string, pos: int32): JsonResult {
+    local len = str_len(text)
+    local i = skip_ws(text, pos)
+    if i >= len {
+        return json_fail()
+    }
+    local c = str_byte(text, i)
+    if c == 34 {
+        return json_parse_string_at(text, i)
+    }
+    local start = i
+    local end = i
+    local done = 0
+    while done == 0 {
+        if i >= len {
+            done = 1
+        } else {
+            local ch = str_byte(text, i)
+            if is_token_end(ch) != 0 {
+                end = i
+                done = 1
+            } else {
+                i = i + 1
+                end = i
+            }
+        }
+    }
+    local piece = str_sub(text, start, end - start)
+    return json_ok(piece, end)
+}
+
+export fn json_find_key(text: string, key: string): int32 {
+    local needle = "\"" + key + "\""
+    return str_find(text, needle)
+}
+
+export fn json_get_field(text: string, key: string): JsonResult {
+    local quoted = "\"" + key + "\""
+    local at = str_find(text, quoted)
+    if at == (0 - 1) {
+        return json_fail()
+    }
+    local len = str_len(text)
+    local i = at + str_len(quoted)
+    i = skip_ws(text, i)
+    if i >= len {
+        return json_fail()
+    }
+    if str_byte(text, i) != 58 {
+        return json_fail()
+    }
+    i = skip_ws(text, i + 1)
+    return json_parse_token(text, i)
+}
+
+export fn json_get_string(text: string, key: string): string {
+    local field = json_get_field(text, key)
+    if field.ok == 0 {
+        return ""
+    }
+    return field.value
+}
+
+export fn json_get_int(text: string, key: string): int32 {
+    local field = json_get_field(text, key)
+    if field.ok == 0 {
+        return 0
+    }
+    return str_to_int_signed(field.value)
+}
+
+export fn json_get_bool(text: string, key: string): int32 {
+    local field = json_get_field(text, key)
+    if field.ok == 0 {
+        return 0
+    }
+    if str_eq(field.value, "true") != 0 {
+        return 1
+    }
+    return 0
+}
+
+export fn json_has_key(text: string, key: string): int32 {
+    local at = json_find_key(text, key)
+    if at == (0 - 1) {
+        return 0
+    }
+    return 1
+}
+
+export fn json_is_null(text: string, key: string): int32 {
+    local field = json_get_field(text, key)
+    if field.ok == 0 {
+        return 0
+    }
+    if str_eq(field.value, "null") != 0 {
+        return 1
+    }
+    return 0
+}

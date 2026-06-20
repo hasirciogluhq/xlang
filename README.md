@@ -108,7 +108,9 @@ xlang/
 ├── include/xlang/    # C++ headers
 ├── runtime/          # Self-hosting runtime (xlang)
 │   ├── runtime.xlang     # print export
-│   └── scheduler.xlang   # spawn, wait_all, worker pool
+│   ├── scheduler.xlang   # spawn, wait_all, worker pool
+│   ├── net.xlang         # fetch HTTP/HTTPS client
+│   └── json.xlang        # json_get_* parse helpers
 ├── examples/         # Sample programs
 ├── test/             # Module + link tests
 ├── cmake/            # Runtime embed script
@@ -131,10 +133,12 @@ xlang/
 User programs are linked with the **runtime** by default. The runtime provides:
 
 - **`print(...)`** — variadic, single function (`printf`-based)
+- **`fetch(url)`** — HTTP/HTTPS GET client (returns status + body)
+- **`json_get_string/int/bool(json, key)`** — JSON field helpers
 - **`spawn(bound_call)`** — Go-routine-like task queue
 - **`wait_all()`**, **`cpu()`**, **`add_worker()`**
 
-Scheduler logic (`queue`, `worker_loop`, mutex/cond) lives entirely in `runtime/scheduler.xlang`. Syscalls are only for OS access such as CPU count, mutex, condition variables, and thread creation.
+Scheduler logic (`queue`, `worker_loop`, mutex/cond) lives entirely in `runtime/scheduler.xlang`. HTTP/TCP logic lives in `runtime/net.xlang`. Syscalls are only for OS access such as CPU count, mutex, condition variables, thread creation, and raw socket I/O.
 
 ### Library + external linking
 

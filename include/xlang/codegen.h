@@ -17,12 +17,14 @@ struct CodegenOptions {
     BuildKind build_kind{BuildKind::Exe};
     bool link_runtime{true};
     std::vector<FunctionSignature> runtime_exports;
+    std::vector<StructDecl> runtime_structs;
 };
 
 struct CodegenResult {
     std::string ir;
     std::unordered_set<std::string> syscalls;
     bool needs_thread_link{false};
+    bool needs_ssl_link{false};
 };
 
 class Codegen {

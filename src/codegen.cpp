@@ -384,6 +384,7 @@ CodegenResult Codegen::generate(const Program& program, const CodegenOptions& op
     result.ir = std::move(cg.output_);
     result.syscalls = std::move(cg.syscalls_);
     result.needs_thread_link = syscallsNeedThreadLink(result.syscalls);
+    result.needs_ssl_link = syscallsNeedSslLink(result.syscalls);
     return result;
 }
 
@@ -453,6 +454,74 @@ void Codegen::emitStringRuntimeSupport() {
     writeln("  %buf = call i8* @malloc(i64 %size)");
     writeln("  call i8* @strcpy(i8* %buf, i8* %a)");
     writeln("  call i8* @strcat(i8* %buf, i8* %b)");
+    writeln("  ret i8* %buf");
+    writeln("}");
+    writeln("");
+    writeln("declare i32 @strcmp(i8*, i8*)");
+    writeln("declare i8* @strstr(i8*, i8*)");
+    writeln("declare i8* @strncpy(i8*, i8*, i64)");
+    writeln("");
+    writeln("define internal i32 @__xlang_str_len(i8* %s) {");
+    writeln("  %n = call i64 @strlen(i8* %s)");
+    writeln("  %n32 = trunc i64 %n to i32");
+    writeln("  ret i32 %n32");
+    writeln("}");
+    writeln("");
+    writeln("define internal i32 @__xlang_str_eq(i8* %a, i8* %b) {");
+    writeln("  %rc = call i32 @strcmp(i8* %a, i8* %b)");
+    writeln("  %eq = icmp eq i32 %rc, 0");
+    writeln("  %one = select i1 %eq, i32 1, i32 0");
+    writeln("  ret i32 %one");
+    writeln("}");
+    writeln("");
+    writeln("define internal i32 @__xlang_str_byte(i8* %s, i32 %i) {");
+    writeln("  %len = call i64 @strlen(i8* %s)");
+    writeln("  %i64 = sext i32 %i to i64");
+    writeln("  %bad = icmp uge i64 %i64, %len");
+    writeln("  br i1 %bad, label %out, label %load");
+    writeln("load:");
+    writeln("  %p = getelementptr i8, i8* %s, i64 %i64");
+    writeln("  %c = load i8, i8* %p");
+    writeln("  %u = zext i8 %c to i32");
+    writeln("  ret i32 %u");
+    writeln("out:");
+    writeln("  ret i32 -1");
+    writeln("}");
+    writeln("");
+    writeln("define internal i32 @__xlang_str_find(i8* %hay, i8* %needle) {");
+    writeln("  %hit = call i8* @strstr(i8* %hay, i8* %needle)");
+    writeln("  %miss = icmp eq i8* %hit, null");
+    writeln("  br i1 %miss, label %none, label %found");
+    writeln("found:");
+    writeln("  %off = ptrtoint i8* %hit to i64");
+    writeln("  %base = ptrtoint i8* %hay to i64");
+    writeln("  %idx64 = sub i64 %off, %base");
+    writeln("  %idx = trunc i64 %idx64 to i32");
+    writeln("  ret i32 %idx");
+    writeln("none:");
+    writeln("  ret i32 -1");
+    writeln("}");
+    writeln("");
+    writeln("define internal i8* @__xlang_str_sub(i8* %s, i32 %start, i32 %len) {");
+    writeln("  %total = call i64 @strlen(i8* %s)");
+    writeln("  %start64 = sext i32 %start to i64");
+    writeln("  %len64 = sext i32 %len to i64");
+    writeln("  %bad_start = icmp uge i64 %start64, %total");
+    writeln("  %end64 = add i64 %start64, %len64");
+    writeln("  %bad_end = icmp ugt i64 %end64, %total");
+    writeln("  %bad = or i1 %bad_start, %bad_end");
+    writeln("  br i1 %bad, label %empty, label %copy");
+    writeln("empty:");
+    writeln("  %z = call i8* @malloc(i64 1)");
+    writeln("  store i8 0, i8* %z");
+    writeln("  ret i8* %z");
+    writeln("copy:");
+    writeln("  %size = add i64 %len64, 1");
+    writeln("  %buf = call i8* @malloc(i64 %size)");
+    writeln("  %src = getelementptr i8, i8* %s, i64 %start64");
+    writeln("  call i8* @strncpy(i8* %buf, i8* %src, i64 %len64)");
+    writeln("  %end = getelementptr i8, i8* %buf, i64 %len64");
+    writeln("  store i8 0, i8* %end");
     writeln("  ret i8* %buf");
     writeln("}");
     writeln("");
@@ -759,6 +828,7 @@ void Codegen::ensureStringLiteralGlobal(const std::string& text) {
             case '"': escaped += "\\22"; break;
             case '\n': escaped += "\\0A"; break;
             case '\t': escaped += "\\09"; break;
+            case '/': escaped += "\\2F"; break;
             default: escaped += c; break;
         }
     }
@@ -814,6 +884,24 @@ void Codegen::collectStringLiteralsFromStmt(const Stmt& stmt) {
     if (stmt.target) {
         collectStringLiteralsFromExpr(*stmt.target);
     }
+    if (stmt.condition) {
+        collectStringLiteralsFromExpr(*stmt.condition);
+    }
+    if (stmt.then_block) {
+        for (const Stmt& inner : stmt.then_block->statements) {
+            collectStringLiteralsFromStmt(inner);
+        }
+    }
+    if (stmt.else_block) {
+        for (const Stmt& inner : stmt.else_block->statements) {
+            collectStringLiteralsFromStmt(inner);
+        }
+    }
+    if (stmt.loop_body) {
+        for (const Stmt& inner : stmt.loop_body->statements) {
+            collectStringLiteralsFromStmt(inner);
+        }
+    }
 }
 
 void Codegen::preemitStringLiterals(const Program& program) {
@@ -845,7 +933,7 @@ std::string Codegen::emitStringConcat(const std::string& left, const std::string
 }
 
 void Codegen::emitStructTypes(const Program& program) {
-    for (const StructDecl& decl : program.structs) {
+    auto emitOne = [&](const StructDecl& decl) {
         std::ostringstream body;
         for (std::size_t i = 0; i < decl.fields.size(); ++i) {
             if (i > 0) {
@@ -863,8 +951,21 @@ void Codegen::emitStructTypes(const Program& program) {
         } else {
             writeln(structValueTypeName(decl.name) + " = type { " + body.str() + " }");
         }
+    };
+
+    std::unordered_set<std::string> emitted;
+    for (const StructDecl& decl : program.structs) {
+        emitOne(decl);
+        emitted.insert(decl.name);
     }
-    if (!program.structs.empty()) {
+    for (const StructDecl& decl : options_.runtime_structs) {
+        if (emitted.find(decl.name) != emitted.end()) {
+            continue;
+        }
+        emitOne(decl);
+        emitted.insert(decl.name);
+    }
+    if (!emitted.empty()) {
         writeln("");
     }
 }
@@ -914,6 +1015,11 @@ std::optional<FunctionSignature> Codegen::resolveFunctionCall(
 
 const StructDecl* Codegen::findStruct(const std::string& name) const {
     for (const StructDecl& decl : program_->structs) {
+        if (decl.name == name) {
+            return &decl;
+        }
+    }
+    for (const StructDecl& decl : options_.runtime_structs) {
         if (decl.name == name) {
             return &decl;
         }
@@ -1624,6 +1730,62 @@ std::pair<Type, std::string> Codegen::emitExpr(
                 const std::string tmp = freshTmp();
                 writeln("  " + tmp + " = trunc i64 " + len64 + " to i32");
                 return {Type{TypeKind::Int32}, tmp};
+            }
+
+            if (expr.name == "str_len" && expr.args.size() == 1) {
+                const auto [ty, val] = emitExpr(*expr.args[0], locals);
+                if (!isStringType(ty)) {
+                    throw XlangError("str_len requires string");
+                }
+                const std::string tmp = freshTmp();
+                writeln("  " + tmp + " = call i32 @__xlang_str_len(i8* " + val + ")");
+                return {Type{TypeKind::Int32}, tmp};
+            }
+
+            if (expr.name == "str_eq" && expr.args.size() == 2) {
+                const auto [a_ty, a] = emitExpr(*expr.args[0], locals);
+                const auto [b_ty, b] = emitExpr(*expr.args[1], locals);
+                if (!isStringType(a_ty) || !isStringType(b_ty)) {
+                    throw XlangError("str_eq requires two strings");
+                }
+                const std::string tmp = freshTmp();
+                writeln("  " + tmp + " = call i32 @__xlang_str_eq(i8* " + a + ", i8* " + b + ")");
+                return {Type{TypeKind::Int32}, tmp};
+            }
+
+            if (expr.name == "str_byte" && expr.args.size() == 2) {
+                const auto [s_ty, s] = emitExpr(*expr.args[0], locals);
+                const auto [_, i] = emitExpr(*expr.args[1], locals);
+                if (!isStringType(s_ty)) {
+                    throw XlangError("str_byte requires string");
+                }
+                const std::string tmp = freshTmp();
+                writeln("  " + tmp + " = call i32 @__xlang_str_byte(i8* " + s + ", i32 " + i + ")");
+                return {Type{TypeKind::Int32}, tmp};
+            }
+
+            if (expr.name == "str_find" && expr.args.size() == 2) {
+                const auto [a_ty, a] = emitExpr(*expr.args[0], locals);
+                const auto [b_ty, b] = emitExpr(*expr.args[1], locals);
+                if (!isStringType(a_ty) || !isStringType(b_ty)) {
+                    throw XlangError("str_find requires two strings");
+                }
+                const std::string tmp = freshTmp();
+                writeln("  " + tmp + " = call i32 @__xlang_str_find(i8* " + a + ", i8* " + b + ")");
+                return {Type{TypeKind::Int32}, tmp};
+            }
+
+            if (expr.name == "str_sub" && expr.args.size() == 3) {
+                const auto [s_ty, s] = emitExpr(*expr.args[0], locals);
+                const auto [_, start] = emitExpr(*expr.args[1], locals);
+                const auto [__, len] = emitExpr(*expr.args[2], locals);
+                if (!isStringType(s_ty)) {
+                    throw XlangError("str_sub requires string");
+                }
+                const std::string tmp = freshTmp();
+                writeln("  " + tmp + " = call i8* @__xlang_str_sub(i8* " + s + ", i32 " + start +
+                        ", i32 " + len + ")");
+                return {Type{TypeKind::String}, tmp};
             }
 
             if (expr.name == "array_push" && expr.args.size() == 2) {

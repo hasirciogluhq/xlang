@@ -17,7 +17,10 @@ bool isKnownSyscall(const std::string& name) {
            name == "random_range" || name == "print_done" || name == "wait_all_jobs" ||
            name == "cpu_count" || name == "mutex_init" || name == "mutex_lock" ||
            name == "mutex_unlock" || name == "cond_init" || name == "cond_wait" ||
-           name == "cond_signal" || name == "cond_broadcast";
+           name == "cond_signal" || name == "cond_broadcast" ||
+           name == "net_tcp_connect" || name == "net_send" || name == "net_recv" ||
+           name == "net_close" || name == "net_tls_connect" || name == "net_tls_send" ||
+           name == "net_tls_recv" || name == "net_tls_close";
 }
 
 namespace {
@@ -152,6 +155,158 @@ void emitSyncSupport(std::string& output) {
     output += "}\n\n";
 }
 
+#if defined(__APPLE__)
+constexpr int kAddrinfoAddrlenOff = 16;
+constexpr int kAddrinfoAddrOff = 32;
+constexpr int kAddrinfoNextOff = 40;
+constexpr int kAddrinfoFamilyOff = 4;
+#elif defined(__linux__)
+constexpr int kAddrinfoAddrlenOff = 16;
+constexpr int kAddrinfoAddrOff = 24;
+constexpr int kAddrinfoNextOff = 40;
+constexpr int kAddrinfoFamilyOff = 4;
+#else
+constexpr int kAddrinfoAddrlenOff = 16;
+constexpr int kAddrinfoAddrOff = 32;
+constexpr int kAddrinfoNextOff = 40;
+constexpr int kAddrinfoFamilyOff = 4;
+#endif
+
+void emitNetSupport(std::string& output) {
+    output += "; xlang OS bridge syscalls (TCP sockets)\n";
+    output += "declare i32 @getaddrinfo(i8*, i8*, i8*, i8**)\n";
+    output += "declare void @freeaddrinfo(i8*)\n";
+    output += "declare i32 @socket(i32, i32, i32)\n";
+    output += "declare i32 @connect(i32, i8*, i32)\n";
+    output += "declare i32 @close(i32)\n";
+    output += "declare i64 @send(i32, i8*, i64, i32)\n";
+    output += "declare i64 @recv(i32, i8*, i64, i32)\n";
+    output += "@__xlang_port_fmt = private unnamed_addr constant [3 x i8] c\"%d\\00\"\n\n";
+
+    output += "define internal i8* @__xlang_port_to_str(i32 %port) {\n";
+    output += "  %buf = call i8* @malloc(i64 16)\n";
+    output += "  call i32 (i8*, i8*, ...) @sprintf(i8* %buf, i8* getelementptr inbounds "
+              "([3 x i8], [3 x i8]* @__xlang_port_fmt, i32 0, i32 0), i32 %port)\n";
+    output += "  ret i8* %buf\n";
+    output += "}\n\n";
+
+    output += "define weak i64 @net_tcp_connect(i8* %host, i32 %port) {\n";
+    output += "entry:\n";
+    output += "  %portbuf = call i8* @__xlang_port_to_str(i32 %port)\n";
+    output += "  %res_ptr = alloca i8*, align 8\n";
+    output += "  %ga_rc = call i32 @getaddrinfo(i8* %host, i8* %portbuf, i8* null, i8** %res_ptr)\n";
+    output += "  call void @free(i8* %portbuf)\n";
+    output += "  %fail_ga = icmp ne i32 %ga_rc, 0\n";
+    output += "  br i1 %fail_ga, label %fail_out, label %try_init\n";
+    output += "try_init:\n";
+    output += "  %head = load i8*, i8** %res_ptr\n";
+    output += "  br label %try_loop\n";
+    output += "try_loop:\n";
+    output += "  %node = phi i8* [ %head, %try_init ], [ %next, %next_node ]\n";
+    output += "  %empty = icmp eq i8* %node, null\n";
+    output += "  br i1 %empty, label %fail_free, label %do_try\n";
+    output += "do_try:\n";
+    output += "  %family_p = getelementptr i8, i8* %node, i64 " +
+              std::to_string(kAddrinfoFamilyOff) + "\n";
+    output += "  %family = load i32, i32* %family_p\n";
+    output += "  %addrlen_p = getelementptr i8, i8* %node, i64 " +
+              std::to_string(kAddrinfoAddrlenOff) + "\n";
+    output += "  %addrlen = load i32, i32* %addrlen_p\n";
+    output += "  %addr_ptr_p = getelementptr i8, i8* %node, i64 " +
+              std::to_string(kAddrinfoAddrOff) + "\n";
+    output += "  %addr_ptr = load i8*, i8** %addr_ptr_p\n";
+    output += "  %sock = call i32 @socket(i32 %family, i32 1, i32 0)\n";
+    output += "  %sock_bad = icmp slt i32 %sock, 0\n";
+    output += "  br i1 %sock_bad, label %next_node, label %do_connect\n";
+    output += "do_connect:\n";
+    output += "  %conn = call i32 @connect(i32 %sock, i8* %addr_ptr, i32 %addrlen)\n";
+    output += "  %conn_ok = icmp eq i32 %conn, 0\n";
+    output += "  br i1 %conn_ok, label %success, label %close_sock\n";
+    output += "close_sock:\n";
+    output += "  call i32 @close(i32 %sock)\n";
+    output += "  br label %next_node\n";
+    output += "next_node:\n";
+    output += "  %next_p = getelementptr i8, i8* %node, i64 " +
+              std::to_string(kAddrinfoNextOff) + "\n";
+    output += "  %next = load i8*, i8** %next_p\n";
+    output += "  br label %try_loop\n";
+    output += "success:\n";
+    output += "  %res_list = load i8*, i8** %res_ptr\n";
+    output += "  call void @freeaddrinfo(i8* %res_list)\n";
+    output += "  %fd64 = sext i32 %sock to i64\n";
+    output += "  ret i64 %fd64\n";
+    output += "fail_free:\n";
+    output += "  %res_fail = load i8*, i8** %res_ptr\n";
+    output += "  call void @freeaddrinfo(i8* %res_fail)\n";
+    output += "  br label %fail_out\n";
+    output += "fail_out:\n";
+    output += "  ret i64 -1\n";
+    output += "}\n\n";
+
+    output += "define weak i32 @net_send(i64 %fd, i8* %data) {\n";
+    output += "  %fd32 = trunc i64 %fd to i32\n";
+    output += "  %len = call i64 @strlen(i8* %data)\n";
+    output += "  %sent = call i64 @send(i32 %fd32, i8* %data, i64 %len, i32 0)\n";
+    output += "  %sent32 = trunc i64 %sent to i32\n";
+    output += "  ret i32 %sent32\n";
+    output += "}\n\n";
+
+    output += "define weak i8* @net_recv(i64 %fd, i32 %max) {\n";
+    output += "entry:\n";
+    output += "  %max64 = sext i32 %max to i64\n";
+    output += "  %buf = call i8* @malloc(i64 %max64)\n";
+    output += "  %fd32 = trunc i64 %fd to i32\n";
+    output += "  %n = call i64 @recv(i32 %fd32, i8* %buf, i64 %max64, i32 0)\n";
+    output += "  %bad = icmp sle i64 %n, 0\n";
+    output += "  br i1 %bad, label %empty, label %term\n";
+    output += "empty:\n";
+    output += "  call void @free(i8* %buf)\n";
+    output += "  %z = call i8* @malloc(i64 1)\n";
+    output += "  store i8 0, i8* %z\n";
+    output += "  ret i8* %z\n";
+    output += "term:\n";
+    output += "  %n1 = add i64 %n, 1\n";
+    output += "  %buf2 = call i8* @realloc(i8* %buf, i64 %n1)\n";
+    output += "  %end = getelementptr i8, i8* %buf2, i64 %n\n";
+    output += "  store i8 0, i8* %end\n";
+    output += "  ret i8* %buf2\n";
+    output += "}\n\n";
+
+    output += "define weak i32 @net_close(i64 %fd) {\n";
+    output += "  %fd32 = trunc i64 %fd to i32\n";
+    output += "  %rc = call i32 @close(i32 %fd32)\n";
+    output += "  ret i32 %rc\n";
+    output += "}\n\n";
+}
+
+void emitTlsSupport(std::string& output) {
+    output += "; xlang OS bridge syscalls (TLS via OpenSSL)\n";
+    output += "declare i64 @xlang_tls_connect(i8*, i32)\n";
+    output += "declare i32 @xlang_tls_send(i64, i8*)\n";
+    output += "declare i8* @xlang_tls_recv(i64, i32)\n";
+    output += "declare i32 @xlang_tls_close(i64)\n\n";
+
+    output += "define weak i64 @net_tls_connect(i8* %host, i32 %port) {\n";
+    output += "  %fd = call i64 @xlang_tls_connect(i8* %host, i32 %port)\n";
+    output += "  ret i64 %fd\n";
+    output += "}\n\n";
+
+    output += "define weak i32 @net_tls_send(i64 %fd, i8* %data) {\n";
+    output += "  %n = call i32 @xlang_tls_send(i64 %fd, i8* %data)\n";
+    output += "  ret i32 %n\n";
+    output += "}\n\n";
+
+    output += "define weak i8* @net_tls_recv(i64 %fd, i32 %max) {\n";
+    output += "  %buf = call i8* @xlang_tls_recv(i64 %fd, i32 %max)\n";
+    output += "  ret i8* %buf\n";
+    output += "}\n\n";
+
+    output += "define weak i32 @net_tls_close(i64 %fd) {\n";
+    output += "  %rc = call i32 @xlang_tls_close(i64 %fd)\n";
+    output += "  ret i32 %rc\n";
+    output += "}\n\n";
+}
+
 }  // namespace
 
 // Compiler backend: xlang `declare syscall` primitiflerini LLVM IR'ye indirger.
@@ -234,6 +389,22 @@ void emitSyscallDefinitions(std::string& output, const std::unordered_set<std::s
         emitSyncSupport(output);
     }
 
+    const bool needs_net = syscalls.find("net_tcp_connect") != syscalls.end() ||
+                           syscalls.find("net_send") != syscalls.end() ||
+                           syscalls.find("net_recv") != syscalls.end() ||
+                           syscalls.find("net_close") != syscalls.end();
+    if (needs_net) {
+        emitNetSupport(output);
+    }
+
+    const bool needs_tls = syscalls.find("net_tls_connect") != syscalls.end() ||
+                           syscalls.find("net_tls_send") != syscalls.end() ||
+                           syscalls.find("net_tls_recv") != syscalls.end() ||
+                           syscalls.find("net_tls_close") != syscalls.end();
+    if (needs_tls) {
+        emitTlsSupport(output);
+    }
+
     for (const std::string& name : syscalls) {
         if (!isKnownSyscall(name)) {
             throw XlangError("unknown xlang syscall: " + name);
@@ -246,6 +417,13 @@ bool syscallsNeedThreadLink(const std::unordered_set<std::string>& syscalls) {
            syscalls.find("wait_all_jobs") != syscalls.end() ||
            syscalls.find("mutex_init") != syscalls.end() ||
            syscalls.find("cond_init") != syscalls.end();
+}
+
+bool syscallsNeedSslLink(const std::unordered_set<std::string>& syscalls) {
+    return syscalls.find("net_tls_connect") != syscalls.end() ||
+           syscalls.find("net_tls_send") != syscalls.end() ||
+           syscalls.find("net_tls_recv") != syscalls.end() ||
+           syscalls.find("net_tls_close") != syscalls.end();
 }
 
 }  // namespace xlang

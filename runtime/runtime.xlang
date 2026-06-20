@@ -1,4 +1,6 @@
 import scheduler
+import net
+import json
 
 export fn print(...) {
     return 0

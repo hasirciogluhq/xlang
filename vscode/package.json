@@ -1,0 +1,120 @@
+{
+  "name": "xlang",
+  "displayName": "xlang",
+  "description": "Syntax highlighting, snippets, diagnostics, and formatting for the xlang programming language",
+  "version": "0.1.0",
+  "publisher": "xlang",
+  "license": "MIT",
+  "engines": {
+    "vscode": "^1.85.0"
+  },
+  "categories": [
+    "Programming Languages",
+    "Snippets",
+    "Formatters"
+  ],
+  "keywords": [
+    "xlang",
+    "xlank"
+  ],
+  "activationEvents": [
+    "onLanguage:xlang"
+  ],
+  "main": "./out/extension.js",
+  "contributes": {
+    "languages": [
+      {
+        "id": "xlang",
+        "aliases": [
+          "xlang",
+          "Xlang"
+        ],
+        "extensions": [
+          ".xlang"
+        ],
+        "configuration": "./language-configuration.json",
+        "icon": {
+          "light": "./icons/xlang-light.svg",
+          "dark": "./icons/xlang-dark.svg"
+        }
+      }
+    ],
+    "grammars": [
+      {
+        "language": "xlang",
+        "scopeName": "source.xlang",
+        "path": "./syntaxes/xlang.tmLanguage.json"
+      }
+    ],
+    "snippets": [
+      {
+        "language": "xlang",
+        "path": "./snippets/xlang.json"
+      }
+    ],
+    "configuration": {
+      "title": "xlang",
+      "properties": {
+        "xlang.xlankPath": {
+          "type": "string",
+          "default": "",
+          "description": "Path to the xlank compiler binary. Empty = auto-detect (build/xlank in workspace, then PATH)."
+        },
+        "xlang.enableDiagnostics": {
+          "type": "boolean",
+          "default": true,
+          "description": "Run xlank parse on open/save and show syntax errors."
+        },
+        "xlang.diagnosticsOnType": {
+          "type": "boolean",
+          "default": false,
+          "description": "Re-run diagnostics while typing (debounced)."
+        },
+        "xlang.formatter.tabSize": {
+          "type": "number",
+          "default": 4,
+          "minimum": 2,
+          "maximum": 8,
+          "description": "Indent size for the xlang formatter."
+        }
+      }
+    },
+    "commands": [
+      {
+        "command": "xlang.runFile",
+        "title": "xlang: Run Current File",
+        "icon": "$(play)"
+      },
+      {
+        "command": "xlang.buildFile",
+        "title": "xlang: Build Current File"
+      },
+      {
+        "command": "xlang.formatDocument",
+        "title": "xlang: Format Document"
+      }
+    ],
+    "menus": {
+      "editor/context": [
+        {
+          "command": "xlang.runFile",
+          "when": "resourceLangId == xlang",
+          "group": "navigation"
+        }
+      ]
+    }
+  },
+  "scripts": {
+    "vscode:prepublish": "npm run compile",
+    "compile": "tsc -p ./",
+    "watch": "tsc -watch -p ./",
+    "package": "vsce package --no-dependencies",
+    "lint": "tsc -p ./ --noEmit"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.0",
+    "@types/vscode": "^1.85.0",
+    "@vscode/vsce": "^3.2.1",
+    "typescript": "^5.7.2"
+  }
+}

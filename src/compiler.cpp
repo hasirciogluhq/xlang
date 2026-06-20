@@ -70,13 +70,38 @@ void copyFile(const std::filesystem::path& from, const std::filesystem::path& to
     }
 }
 
+#ifndef XLANG_TLS_BRIDGE
+#define XLANG_TLS_BRIDGE ""
+#endif
+#ifndef XLANG_OPENSSL_SSL
+#define XLANG_OPENSSL_SSL ""
+#endif
+#ifndef XLANG_OPENSSL_CRYPTO
+#define XLANG_OPENSSL_CRYPTO ""
+#endif
+
+void appendLinkFlags(std::ostringstream& cmd, bool needs_pthread, bool needs_ssl) {
+    if (needs_pthread) {
+        cmd << " -pthread";
+    }
+    if (needs_ssl) {
+        if (XLANG_TLS_BRIDGE[0] != '\0') {
+            cmd << " \"" << XLANG_TLS_BRIDGE << "\"";
+        }
+        if (XLANG_OPENSSL_SSL[0] != '\0') {
+            cmd << " \"" << XLANG_OPENSSL_SSL << "\"";
+        }
+        if (XLANG_OPENSSL_CRYPTO[0] != '\0') {
+            cmd << " \"" << XLANG_OPENSSL_CRYPTO << "\"";
+        }
+    }
+}
+
 void compileLlvmIrToObject(const std::string& clang, const std::filesystem::path& ir_path,
                            const std::filesystem::path& object_path, bool needs_pthread) {
     std::ostringstream cmd;
     cmd << clang << " -c \"" << ir_path.string() << "\" -o \"" << object_path.string() << "\"";
-    if (needs_pthread) {
-        cmd << " -pthread";
-    }
+    appendLinkFlags(cmd, needs_pthread, false);
     const int status = runCommand(cmd.str());
     if (status != 0) {
         throw XlangError("clang failed to compile LLVM IR");
@@ -84,7 +109,7 @@ void compileLlvmIrToObject(const std::string& clang, const std::filesystem::path
 }
 
 void linkObjects(const std::string& clang, const std::vector<std::filesystem::path>& objects,
-                 const std::filesystem::path& output, bool needs_pthread) {
+                 const std::filesystem::path& output, bool needs_pthread, bool needs_ssl) {
     ensureParentDir(output);
 
     std::ostringstream cmd;
@@ -93,9 +118,7 @@ void linkObjects(const std::string& clang, const std::vector<std::filesystem::pa
         cmd << " \"" << object.string() << "\"";
     }
     cmd << " -o \"" << output.string() << "\"";
-    if (needs_pthread) {
-        cmd << " -pthread";
-    }
+    appendLinkFlags(cmd, needs_pthread, needs_ssl);
 
     const int status = runCommand(cmd.str());
     if (status != 0) {
@@ -156,6 +179,7 @@ CompileResult compileXlangProgram(const Program& program, BuildContext& ctx) {
             runtime = loadRuntimeExports(runtime_options);
         }
         cg_options.runtime_exports = runtime.exports;
+        cg_options.runtime_structs = runtime.structs;
     }
 
     const CodegenResult generated = Codegen::generate(program, cg_options);
@@ -209,7 +233,8 @@ CompileResult compileXlangProgram(const Program& program, BuildContext& ctx) {
         link_inputs.push_back(runtime.object);
     }
     linkObjects(ctx.options.clang, link_inputs, output,
-                generated.needs_thread_link || runtime.needs_thread_link);
+                generated.needs_thread_link || runtime.needs_thread_link,
+                generated.needs_ssl_link || runtime.needs_ssl_link);
 
     if (!ctx.options.keep_ir) {
         std::error_code ec;
@@ -257,7 +282,8 @@ CompileResult compileObjectInput(BuildContext& ctx) {
     if (!ctx.options.skip_runtime) {
         link_inputs.push_back(runtime.object);
     }
-    linkObjects(ctx.options.clang, link_inputs, output, runtime.needs_thread_link);
+    linkObjects(ctx.options.clang, link_inputs, output, runtime.needs_thread_link,
+                runtime.needs_ssl_link);
     result.executable = output;
     return result;
 }
@@ -308,7 +334,8 @@ CompileResult compileLlvmIrInput(BuildContext& ctx) {
     if (!ctx.options.skip_runtime) {
         link_inputs.push_back(runtime.object);
     }
-    linkObjects(ctx.options.clang, link_inputs, output, runtime.needs_thread_link);
+    linkObjects(ctx.options.clang, link_inputs, output, runtime.needs_thread_link,
+                runtime.needs_ssl_link);
     result.executable = output;
     return result;
 }

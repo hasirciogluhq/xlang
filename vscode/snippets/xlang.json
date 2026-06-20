@@ -1,0 +1,114 @@
+{
+  "Main function": {
+    "prefix": "main",
+    "body": [
+      "fn main() {",
+      "\t$0",
+      "\treturn 0",
+      "}"
+    ],
+    "description": "Program entry point"
+  },
+  "Function": {
+    "prefix": "fn",
+    "body": [
+      "fn ${1:name}(${2:args}) {",
+      "\t$0",
+      "}"
+    ],
+    "description": "Function definition"
+  },
+  "Typed function": {
+    "prefix": "fnt",
+    "body": [
+      "fn ${1:name}(${2:arg}: ${3:int32}): ${4:int32} {",
+      "\t$0",
+      "\treturn 0",
+      "}"
+    ],
+    "description": "Function with typed params and return"
+  },
+  "Local variable": {
+    "prefix": "local",
+    "body": "local ${1:name} = ${2:0}",
+    "description": "Local variable"
+  },
+  "Typed local": {
+    "prefix": "localt",
+    "body": "local ${1:name}: ${2:int32} = ${3:0}",
+    "description": "Typed local variable"
+  },
+  "Struct": {
+    "prefix": "struct",
+    "body": [
+      "struct ${1:Name} {",
+      "\t${2:field}: ${3:int32}",
+      "}"
+    ],
+    "description": "Struct definition"
+  },
+  "If statement": {
+    "prefix": "if",
+    "body": [
+      "if ${1:condition} {",
+      "\t$0",
+      "}"
+    ],
+    "description": "If block"
+  },
+  "If else": {
+    "prefix": "ife",
+    "body": [
+      "if ${1:condition} {",
+      "\t$2",
+      "} else {",
+      "\t$0",
+      "}"
+    ],
+    "description": "If / else block"
+  },
+  "While loop": {
+    "prefix": "while",
+    "body": [
+      "while ${1:condition} {",
+      "\t$0",
+      "}"
+    ],
+    "description": "While loop"
+  },
+  "Import module": {
+    "prefix": "import",
+    "body": "import ${1:module}",
+    "description": "Import a module"
+  },
+  "From import": {
+    "prefix": "from",
+    "body": "from ${1:module} import ${2:name}",
+    "description": "Selective import"
+  },
+  "Declare syscall": {
+    "prefix": "syscall",
+    "body": "declare syscall ${1:name}(${2:args})",
+    "description": "OS syscall bridge declaration"
+  },
+  "Declare external": {
+    "prefix": "external",
+    "body": "declare external fn ${1:name}(${2:args})",
+    "description": "External function declaration"
+  },
+  "New struct": {
+    "prefix": "new",
+    "body": "new ${1:Type} { ${2:field} = ${3:value} }",
+    "description": "Struct initialization"
+  },
+  "Print": {
+    "prefix": "print",
+    "body": "print(\"${1:message}\")",
+    "description": "Print call"
+  },
+  "Spawn": {
+    "prefix": "spawn",
+    "body": "spawn(${1:worker}(${2:args}))",
+    "description": "Spawn a goroutine-like task"
+  }
+}

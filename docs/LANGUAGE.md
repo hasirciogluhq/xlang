@@ -415,6 +415,74 @@ Syscalls only for: `cpu_count`, `mutex_*`, `cond_*`, `start_thread`.
 
 ---
 
+## Networking and fetch
+
+HTTP/HTTPS client logic lives in `runtime/net.xlang`. Syscalls bridge TCP/TLS I/O to the OS (OpenSSL for HTTPS).
+
+| API | Description |
+|-----|-------------|
+| `fetch(url: string)` | HTTP GET; returns `FetchResponse` |
+
+```xlang
+struct FetchResponse {
+    status: int32   // HTTP status code (e.g. 200)
+    ok: int32       // 1 if 2xx, else 0
+    body: string    // response body
+}
+
+fn main() {
+    local resp = fetch("https://jsonplaceholder.typicode.com/todos/1")
+    print("status: %d", resp.status)
+    print("title: %s", json_get_string(resp.body, "title"))
+    return 0
+}
+```
+
+Supported URLs:
+
+| Scheme | Default port |
+|--------|----------------|
+| `http://host/path` | 80 |
+| `https://host/path` | 443 |
+| `http://host:8080/path` | custom |
+
+Net syscalls (used internally by runtime, not directly by user code):
+
+```xlang
+declare syscall net_tcp_connect(host: string, port: int32): int64
+declare syscall net_tls_connect(host: string, port: int32): int64
+declare syscall net_send(fd: int64, data: string): int32
+declare syscall net_tls_send(fd: int64, data: string): int32
+declare syscall net_recv(fd: int64, max: int32): string
+declare syscall net_tls_recv(fd: int64, max: int32): string
+declare syscall net_close(fd: int64): int32
+declare syscall net_tls_close(fd: int64): int32
+```
+
+---
+
+## JSON parsing
+
+JSON helpers live in `runtime/json.xlang` (pure xlang, no syscall).
+
+| API | Description |
+|-----|-------------|
+| `json_get_string(json, key)` | Object string field (unquoted) |
+| `json_get_int(json, key)` | Object integer field |
+| `json_get_bool(json, key)` | Object bool field (`true` → 1) |
+| `json_has_key(json, key)` | 1 if key exists |
+| `json_is_null(json, key)` | 1 if field is `null` |
+| `json_get_field(json, key)` | Raw `JsonResult { ok, value, next }` |
+| `json_unescape(raw)` | Unescape JSON string contents |
+
+```xlang
+local resp = fetch("https://api.example.com/data")
+local name = json_get_string(resp.body, "name")
+local age = json_get_int(resp.body, "age")
+```
+
+---
+
 ## Syscall
 
 Declaration for OS / kernel access. Implementation in C++ (`syscalls.cpp`) → LLVM IR.
@@ -478,6 +546,11 @@ Not syscalls; codegen special cases:
 | `array_len(arr)` | Array length |
 | `array_push(arr, val)` | Append to end |
 | `array_pop_front(arr)` | Take and remove from front |
+| `str_len(s)` | String length |
+| `str_eq(a, b)` | 1 if equal, else 0 |
+| `str_byte(s, i)` | Byte at index (0–255), or -1 |
+| `str_find(haystack, needle)` | Index of substring, or -1 |
+| `str_sub(s, start, len)` | Substring copy |
 
 `invoke0` is used by the scheduler worker loop to run task entries.
 
@@ -506,6 +579,7 @@ Early version; known constraints:
 | `examples/types.xlang` | struct, new, delete |
 | `examples/math.xlang` | export module |
 | `examples/scheduler.xlang` | spawn, wait_all |
+| `examples/fetch.xlang` | fetch HTTP GET |
 | `test/main.xlang` + `test/lib.xlang` | external link |
 
 ---
@@ -521,4 +595,4 @@ Early version; known constraints:
        → clang link (+ runtime.o) → executable
 ```
 
-Runtime compilation: `runtime/runtime.xlang` (+ `import scheduler`) is built as a separate `.o` and linked into user programs.
+Runtime compilation: `runtime/runtime.xlang` (+ `import scheduler`, `import net`) is built as a separate `.o` and linked into user programs.

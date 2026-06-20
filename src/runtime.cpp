@@ -39,6 +39,10 @@ std::vector<FunctionSignature> collectExports(const Program& program) {
     return exports;
 }
 
+std::vector<StructDecl> collectStructs(const Program& program) {
+    return program.structs;
+}
+
 bool programNeedsThreadLink(const Program& program) {
     for (const Function& function : program.functions) {
         if (!function.syscall) {
@@ -46,6 +50,19 @@ bool programNeedsThreadLink(const Program& program) {
         }
         if (function.name == "start_thread" || function.name == "mutex_init" ||
             function.name == "cond_init") {
+            return true;
+        }
+    }
+    return false;
+}
+
+bool programNeedsSslLink(const Program& program) {
+    for (const Function& function : program.functions) {
+        if (!function.syscall) {
+            continue;
+        }
+        if (function.name == "net_tls_connect" || function.name == "net_tls_send" ||
+            function.name == "net_tls_recv" || function.name == "net_tls_close") {
             return true;
         }
     }
@@ -120,7 +137,9 @@ RuntimeBundle loadRuntimeExports(const RuntimeOptions& options) {
 
     RuntimeBundle bundle;
     bundle.exports = collectExports(program);
+    bundle.structs = collectStructs(program);
     bundle.needs_thread_link = programNeedsThreadLink(program);
+    bundle.needs_ssl_link = programNeedsSslLink(program);
     return bundle;
 }
 
@@ -137,7 +156,9 @@ RuntimeBundle ensureRuntime(const RuntimeOptions& options) {
     RuntimeBundle bundle;
     bundle.object = object;
     bundle.exports = collectExports(program);
+    bundle.structs = collectStructs(program);
     bundle.needs_thread_link = programNeedsThreadLink(program);
+    bundle.needs_ssl_link = programNeedsSslLink(program);
     return bundle;
 }
 
