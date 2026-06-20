@@ -1,0 +1,25 @@
+// Panic + Error — Go tarzı panic/recover ve extend edilebilir Error tipi.
+
+interface Error {
+    Message(): string
+}
+
+export struct BaseError {
+    message: string
+}
+
+declare syscall panic(msg: string): int32
+declare syscall recover(): string
+declare syscall try_invoke0(entry: int64): int32
+
+export fn Message(e: BaseError): string {
+    return e.message
+}
+
+export fn newError(msg: string): BaseError {
+    return new BaseError { message = msg }
+}
+
+export fn tryRun(entry: int64): int32 {
+    return try_invoke0(entry)
+}

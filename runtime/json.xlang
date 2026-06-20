@@ -1,4 +1,18 @@
-// JSON yardımcıları — parse mantığı tamamen xlang içinde.
+// JSON — TypeScript benzeri: json.parse(text) -> Json objesi
+// Kullanım:
+//   import json from json
+//   local data = json.parse(body)
+//   local id = data.Int("userId")
+//   local title = data.Get("title").AsString()
+
+export struct Json {
+    body: string
+}
+
+export struct JsonValue {
+    ok: int32
+    raw: string
+}
 
 struct JsonResult {
     ok: int32
@@ -43,12 +57,12 @@ fn hex_digit(c: int32): int32 {
     }
     if c >= 97 {
         if c <= 102 {
-            return c - 97 + 10
+            return c - 87
         }
     }
     if c >= 65 {
         if c <= 70 {
-            return c - 65 + 10
+            return c - 55
         }
     }
     return 0
@@ -109,16 +123,14 @@ fn str_to_int_signed(s: string): int32 {
 }
 
 fn json_fail(): JsonResult {
-    local r: JsonResult = new JsonResult { ok = 0, value = "", next = 0 }
-    return r
+    return new JsonResult { ok = 0, value = "", next = 0 }
 }
 
 fn json_ok(value: string, next: int32): JsonResult {
-    local r: JsonResult = new JsonResult { ok = 1, value = value, next = next }
-    return r
+    return new JsonResult { ok = 1, value = value, next = next }
 }
 
-export fn json_unescape(raw: string): string {
+fn json_unescape(raw: string): string {
     local out = ""
     local i = 0
     local len = str_len(raw)
@@ -161,7 +173,7 @@ export fn json_unescape(raw: string): string {
     return out
 }
 
-export fn json_parse_string_at(text: string, pos: int32): JsonResult {
+fn json_parse_string_at(text: string, pos: int32): JsonResult {
     local len = str_len(text)
     local i = skip_ws(text, pos)
     if i >= len {
@@ -235,12 +247,12 @@ fn json_parse_token(text: string, pos: int32): JsonResult {
     return json_ok(piece, end)
 }
 
-export fn json_find_key(text: string, key: string): int32 {
+fn json_find_key(text: string, key: string): int32 {
     local needle = "\"" + key + "\""
     return str_find(text, needle)
 }
 
-export fn json_get_field(text: string, key: string): JsonResult {
+fn json_get_field(text: string, key: string): JsonResult {
     local quoted = "\"" + key + "\""
     local at = str_find(text, quoted)
     if at == (0 - 1) {
@@ -259,48 +271,69 @@ export fn json_get_field(text: string, key: string): JsonResult {
     return json_parse_token(text, i)
 }
 
-export fn json_get_string(text: string, key: string): string {
-    local field = json_get_field(text, key)
-    if field.ok == 0 {
+export fn parse(text: string): Json {
+    return new Json { body = text }
+}
+
+export fn Get(j: Json, key: string): JsonValue {
+    local field = json_get_field(j.body, key)
+    return new JsonValue { ok = field.ok, raw = field.value }
+}
+
+export fn AsInt(v: JsonValue): int32 {
+    if v.ok == 0 {
+        return 0
+    }
+    return str_to_int_signed(v.raw)
+}
+
+export fn AsString(v: JsonValue): string {
+    if v.ok == 0 {
         return ""
     }
-    return field.value
+    return v.raw
 }
 
-export fn json_get_int(text: string, key: string): int32 {
-    local field = json_get_field(text, key)
-    if field.ok == 0 {
+export fn AsBool(v: JsonValue): int32 {
+    if v.ok == 0 {
         return 0
     }
-    return str_to_int_signed(field.value)
-}
-
-export fn json_get_bool(text: string, key: string): int32 {
-    local field = json_get_field(text, key)
-    if field.ok == 0 {
-        return 0
-    }
-    if str_eq(field.value, "true") != 0 {
+    if str_eq(v.raw, "true") != 0 {
         return 1
     }
     return 0
 }
 
-export fn json_has_key(text: string, key: string): int32 {
-    local at = json_find_key(text, key)
+export fn IsNull(v: JsonValue): int32 {
+    if v.ok == 0 {
+        return 0
+    }
+    if str_eq(v.raw, "null") != 0 {
+        return 1
+    }
+    return 0
+}
+
+export fn Has(j: Json, key: string): int32 {
+    local at = json_find_key(j.body, key)
     if at == (0 - 1) {
         return 0
     }
     return 1
 }
 
-export fn json_is_null(text: string, key: string): int32 {
-    local field = json_get_field(text, key)
-    if field.ok == 0 {
-        return 0
-    }
-    if str_eq(field.value, "null") != 0 {
-        return 1
-    }
-    return 0
+export fn Int(j: Json, key: string): int32 {
+    return AsInt(Get(j, key))
+}
+
+export fn String(j: Json, key: string): string {
+    return AsString(Get(j, key))
+}
+
+export fn Bool(j: Json, key: string): int32 {
+    return AsBool(Get(j, key))
+}
+
+export fn Null(j: Json, key: string): int32 {
+    return IsNull(Get(j, key))
 }

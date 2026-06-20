@@ -57,6 +57,11 @@ Program Parser::parseProgram() {
             continue;
         }
 
+        if (check(TokenKind::Interface)) {
+            program.interfaces.push_back(parseInterface(modifiers));
+            continue;
+        }
+
         if (modifiers.declare) {
             validateModifiers(modifiers, "declare");
             if (match(TokenKind::Syscall)) {
@@ -168,6 +173,33 @@ StructDecl Parser::parseStruct(const ItemModifiers& modifiers) {
 
     consume(TokenKind::RBrace, "expected '}'");
     registerStruct(decl);
+    return decl;
+}
+
+InterfaceDecl Parser::parseInterface(const ItemModifiers& modifiers) {
+    InterfaceDecl decl;
+    decl.span = currentSpan();
+    decl.exported = modifiers.exported;
+    consume(TokenKind::Interface, "expected 'interface'");
+    decl.name = consume(TokenKind::Ident, "expected interface name").text;
+    consume(TokenKind::LBrace, "expected '{'");
+
+    while (!check(TokenKind::RBrace) && !isAtEnd()) {
+        InterfaceMethod method;
+        method.name = consume(TokenKind::Ident, "expected method name").text;
+        consume(TokenKind::LParen, "expected '('");
+        bool variadic = false;
+        method.params = parseParams(&variadic);
+        (void)variadic;
+        consume(TokenKind::RParen, "expected ')'");
+        consume(TokenKind::Colon, "expected ':' after method params");
+        method.return_type = parseType();
+        consumeEndOfStatement();
+        decl.methods.push_back(std::move(method));
+    }
+
+    consume(TokenKind::RBrace, "expected '}'");
+    registerInterface(decl);
     return decl;
 }
 
@@ -314,6 +346,13 @@ Type Parser::parseType() {
 
     const Token name = consume(TokenKind::Ident, "expected type name");
     Type type = Type::parse(name.text);
+    if (type.kind == TypeKind::Struct) {
+        if (findInterface(name.text) != nullptr) {
+            type = Type::makeInterface(name.text);
+        } else if (findStruct(name.text) == nullptr) {
+            throw error("unknown type `" + name.text + "`");
+        }
+    }
     while (match(TokenKind::Star)) {
         type = Type::makePointer(type);
     }
@@ -370,6 +409,24 @@ Stmt Parser::parseStatement() {
         stmt.kind = Stmt::Kind::Return;
         stmt.span = span;
         stmt.return_value = std::move(value);
+        return stmt;
+    }
+
+    if (match(TokenKind::Go)) {
+        const Token name = consume(TokenKind::Ident, "expected function name after go");
+        consume(TokenKind::LParen, "expected '('");
+        auto args = parseCallArgs();
+        consume(TokenKind::RParen, "expected ')'");
+        consumeEndOfStatement();
+
+        auto bound = Expr::makeCall(name.text, std::move(args), span);
+        std::vector<std::unique_ptr<Expr>> spawn_args;
+        spawn_args.push_back(std::move(bound));
+
+        Stmt stmt;
+        stmt.kind = Stmt::Kind::Expr;
+        stmt.span = span;
+        stmt.expr = Expr::makeCall("spawn", std::move(spawn_args), span);
         return stmt;
     }
 
@@ -558,21 +615,31 @@ std::unique_ptr<Expr> Parser::parseAdditive() {
 }
 
 std::unique_ptr<Expr> Parser::parseMultiplicative() {
-    auto left = parsePostfix(parsePrimary());
+    auto left = parseCast();
     while (true) {
         if (match(TokenKind::Star)) {
             const Span span = left->span;
-            auto right = parsePostfix(parsePrimary());
+            auto right = parseCast();
             left = Expr::makeBinary(BinOp::Mul, std::move(left), std::move(right), span);
         } else if (match(TokenKind::Slash)) {
             const Span span = left->span;
-            auto right = parsePostfix(parsePrimary());
+            auto right = parseCast();
             left = Expr::makeBinary(BinOp::Div, std::move(left), std::move(right), span);
         } else {
             break;
         }
     }
     return left;
+}
+
+std::unique_ptr<Expr> Parser::parseCast() {
+    auto expr = parsePostfix(parsePrimary());
+    while (match(TokenKind::As)) {
+        const Span span = expr->span;
+        const Type target_type = parseType();
+        expr = Expr::makeCast(std::move(expr), target_type, span);
+    }
+    return expr;
 }
 
 std::unique_ptr<Expr> Parser::parsePostfix(std::unique_ptr<Expr> expr) {
@@ -583,7 +650,8 @@ std::unique_ptr<Expr> Parser::parsePostfix(std::unique_ptr<Expr> expr) {
             if (match(TokenKind::LParen)) {
                 auto args = parseCallArgs();
                 consume(TokenKind::RParen, "expected ')'");
-                return Expr::makeMethodCall(std::move(expr), field, std::move(args), span);
+                expr = Expr::makeMethodCall(std::move(expr), field, std::move(args), span);
+                continue;
             }
             expr = Expr::makeFieldAccess(std::move(expr), field, span);
             continue;
@@ -643,6 +711,9 @@ std::unique_ptr<Expr> Parser::parsePrimary() {
             auto args = parseCallArgs();
             consume(TokenKind::RParen, "expected ')'");
             return Expr::makeCall(name, std::move(args), span);
+        }
+        if (check(TokenKind::Dot)) {
+            return Expr::makeVar(name, span);
         }
         if (isFunctionName(name)) {
             return Expr::makeFunctionRef(name, span);
@@ -767,9 +838,21 @@ void Parser::registerStruct(const StructDecl& decl) {
     struct_defs_[decl.name] = decl;
 }
 
+void Parser::registerInterface(const InterfaceDecl& decl) {
+    interface_defs_[decl.name] = decl;
+}
+
 const StructDecl* Parser::findStruct(const std::string& name) const {
     const auto it = struct_defs_.find(name);
     if (it == struct_defs_.end()) {
+        return nullptr;
+    }
+    return &it->second;
+}
+
+const InterfaceDecl* Parser::findInterface(const std::string& name) const {
+    const auto it = interface_defs_.find(name);
+    if (it == interface_defs_.end()) {
         return nullptr;
     }
     return &it->second;

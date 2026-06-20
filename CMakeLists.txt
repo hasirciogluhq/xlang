@@ -33,6 +33,8 @@ find_package(OpenSSL REQUIRED)
 
 add_library(xlang_net_server STATIC src/net_server.c)
 
+add_library(xlang_panic_bridge STATIC src/panic_bridge.c)
+
 add_library(xlang_tls_bridge STATIC src/tls_bridge.c)
 target_include_directories(xlang_tls_bridge PRIVATE ${OPENSSL_INCLUDE_DIR})
 target_link_libraries(xlang_tls_bridge PUBLIC OpenSSL::SSL OpenSSL::Crypto)
@@ -62,8 +64,9 @@ target_compile_definitions(xlank PRIVATE
     "XLANG_OPENSSL_SSL=\"${OPENSSL_SSL_LIBRARY}\""
     "XLANG_OPENSSL_CRYPTO=\"${OPENSSL_CRYPTO_LIBRARY}\""
     "XLANG_NET_SERVER=\"$<TARGET_FILE:xlang_net_server>\""
+    "XLANG_PANIC_BRIDGE=\"$<TARGET_FILE:xlang_panic_bridge>\""
 )
 target_link_libraries(xlank PRIVATE CLI11::CLI11)
-add_dependencies(xlank xlang_tls_bridge xlang_net_server)
+add_dependencies(xlank xlang_tls_bridge xlang_net_server xlang_panic_bridge)
 
 install(TARGETS xlank RUNTIME DESTINATION bin)

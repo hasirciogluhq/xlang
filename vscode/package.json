@@ -2,7 +2,7 @@
   "name": "xlang",
   "displayName": "xlang",
   "description": "Syntax highlighting, snippets, diagnostics, and formatting for the xlang programming language",
-  "version": "0.3.0",
+  "version": "0.5.0",
   "publisher": "xlang",
   "license": "MIT",
   "packageManager": "bun@1.2.0",
@@ -15,8 +15,7 @@
     "Formatters"
   ],
   "keywords": [
-    "xlang",
-    "xlank"
+    "xlang"
   ],
   "activationEvents": [
     "onLanguage:xlang"
@@ -57,15 +56,21 @@
     "configuration": {
       "title": "xlang",
       "properties": {
+        "xlang.compilerPath": {
+          "type": "string",
+          "default": "",
+          "description": "Path to the xlang compiler binary (build/xlank). Empty = auto-detect."
+        },
         "xlang.xlankPath": {
           "type": "string",
           "default": "",
-          "description": "Path to the xlank compiler binary. Empty = auto-detect (build/xlank in workspace, then PATH)."
+          "description": "Deprecated alias for xlang.compilerPath.",
+          "deprecationMessage": "Use xlang.compilerPath instead."
         },
         "xlang.enableDiagnostics": {
           "type": "boolean",
           "default": true,
-          "description": "Run xlank parse on open/save and show syntax errors."
+          "description": "Run xlang parse on open/save and show errors."
         },
         "xlang.diagnosticsOnType": {
           "type": "boolean",
@@ -82,7 +87,7 @@
         "xlang.testRoot": {
           "type": "string",
           "default": "test/xlang",
-          "description": "Default directory for xlank test (relative to workspace root)."
+          "description": "Default directory for xlang test (relative to workspace root)."
         }
       }
     },

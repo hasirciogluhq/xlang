@@ -1,39 +1,29 @@
-fn test_str_len() {
-    expect_eq(str_len("hello"), 5)
-    expect_eq(str_len(""), 0)
+fn TestStrLen() {
+    expect(str_len("hello")).toEqual(5)
+    expect(str_len("")).toEqual(0)
     return 0
 }
 
-fn test_str_eq() {
-    expect_true(str_eq("abc", "abc"))
-    expect_false(str_eq("abc", "xyz"))
+fn TestStrEq() {
+    expect(str_eq("abc", "abc")).toBeTrue()
+    expect(str_eq("abc", "xyz")).toBeFalse()
     return 0
 }
 
-fn test_str_find() {
-    expect_eq(str_find("hello world", "world"), 6)
-    expect_eq(str_find("hello", "z"), (0 - 1))
+fn TestStrFind() {
+    expect(str_find("hello world", "world")).toEqual(6)
+    expect(str_find("hello", "z")).toEqual((0 - 1))
     return 0
 }
 
-fn test_str_sub() {
-    expect_str_eq(str_sub("hello world", 0, 5), "hello")
-    expect_str_eq(str_sub("hello world", 6, 5), "world")
+fn TestStrSub() {
+    expect(str_sub("hello world", 0, 5)).toEqual("hello")
+    expect(str_sub("hello world", 6, 5)).toEqual("world")
     return 0
 }
 
-fn test_str_byte() {
-    expect_eq(str_byte("Hi", 0), 72)
-    expect_eq(str_byte("Hi", 1), 105)
+fn TestStrByte() {
+    expect(str_byte("Hi", 0)).toEqual(72)
+    expect(str_byte("Hi", 1)).toEqual(105)
     return 0
-}
-
-fn main() {
-    describe("strings")
-    it("str_len", test_str_len)
-    it("str_eq", test_str_eq)
-    it("str_find", test_str_find)
-    it("str_sub", test_str_sub)
-    it("str_byte", test_str_byte)
-    return test_summary()
 }

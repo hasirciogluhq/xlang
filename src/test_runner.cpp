@@ -1,7 +1,9 @@
 #include "xlang/test.h"
 
 #include "xlang/compiler.h"
+#include "xlang/embedded_runtime.h"
 #include "xlang/error.h"
+#include "xlang/module.h"
 
 #include <algorithm>
 #include <cstdio>
@@ -12,41 +14,28 @@
 #include <unistd.h>
 #include <vector>
 
+#ifndef XLANG_RUNTIME_DIR
+#define XLANG_RUNTIME_DIR ""
+#endif
+
 namespace xlang {
 
 namespace {
-
-struct ParsedTestCounts {
-    int passed{0};
-    int failed{0};
-    bool found{false};
-};
 
 struct RunOutput {
     int exit_code{1};
     std::string stdout_text;
 };
 
-int runCommand(const std::string& command) {
-    return std::system(command.c_str());
-}
+struct ParsedSummary {
+    bool found{false};
+    int passed{0};
+    int failed{0};
+};
 
 void removeTree(const std::filesystem::path& path) {
     std::error_code ec;
     std::filesystem::remove_all(path, ec);
-}
-
-ParsedTestCounts parseTestMarker(const std::string& output) {
-    static const std::regex pattern(R"(@xlang-test passed=(\d+) failed=(\d+))");
-    std::smatch match;
-    if (!std::regex_search(output, match, pattern)) {
-        return {};
-    }
-    ParsedTestCounts counts;
-    counts.passed = std::stoi(match[1].str());
-    counts.failed = std::stoi(match[2].str());
-    counts.found = true;
-    return counts;
 }
 
 RunOutput executeProgramCapture(const std::filesystem::path& executable) {
@@ -89,7 +78,6 @@ RunOutput executeProgramCapture(const std::filesystem::path& executable) {
             break;
         }
         result.stdout_text.append(buffer, n);
-        std::cout.write(buffer, static_cast<std::streamsize>(n));
     }
 
     std::fclose(read_stream);
@@ -130,6 +118,42 @@ std::vector<std::filesystem::path> discoverTestFiles(const std::filesystem::path
     return files;
 }
 
+void ensureNoMain(const Program& program, const std::filesystem::path& file) {
+    for (const Function& function : program.functions) {
+        if (function.name == "main" && !function.body.statements.empty()) {
+            throw XlangError("test file `" + file.string() +
+                             "` must not define `main`; use `Test*` functions");
+        }
+    }
+}
+
+ParsedSummary parseTestSummary(const std::string& output) {
+    static const std::regex pattern(R"(@xlang-test passed=(\d+) failed=(\d+))");
+    std::smatch match;
+    if (!std::regex_search(output, match, pattern)) {
+        return {};
+    }
+    ParsedSummary summary;
+    summary.found = true;
+    summary.passed = std::stoi(match[1].str());
+    summary.failed = std::stoi(match[2].str());
+    return summary;
+}
+
+Stmt makeCallExprStmt(const std::string& name, std::vector<std::unique_ptr<Expr>> args) {
+    Stmt stmt;
+    stmt.kind = Stmt::Kind::Expr;
+    stmt.expr = Expr::makeCall(name, std::move(args), Span{});
+    return stmt;
+}
+
+Stmt makeReturnCall(const std::string& name, std::vector<std::unique_ptr<Expr>> args) {
+    Stmt stmt;
+    stmt.kind = Stmt::Kind::Return;
+    stmt.return_value = Expr::makeCall(name, std::move(args), Span{});
+    return stmt;
+}
+
 }  // namespace
 
 bool isTestFileName(const std::filesystem::path& path) {
@@ -141,8 +165,114 @@ bool isTestFileName(const std::filesystem::path& path) {
     return filename.compare(filename.size() - suffix.size(), suffix.size(), suffix) == 0;
 }
 
+bool isTestFunctionName(const std::string& name) {
+    const std::string prefix = "Test";
+    if (name.size() <= prefix.size()) {
+        return false;
+    }
+    if (name.compare(0, prefix.size(), prefix) != 0) {
+        return false;
+    }
+    const unsigned char next = static_cast<unsigned char>(name[prefix.size()]);
+    return next >= 'A' && next <= 'Z';
+}
+
+std::vector<std::string> collectTestFunctions(const Program& program) {
+    std::vector<std::string> tests;
+    for (const Function& function : program.functions) {
+        if (function.body.statements.empty()) {
+            continue;
+        }
+        if (!isTestFunctionName(function.name)) {
+            continue;
+        }
+        tests.push_back(function.name);
+    }
+    std::sort(tests.begin(), tests.end());
+    return tests;
+}
+
+Program withTestHarness(const Program& program, const std::vector<std::string>& tests,
+                        bool parallel, const std::string& file_label) {
+    Program copy = cloneProgram(program);
+
+    if (parallel) {
+        for (const std::string& test_name : tests) {
+            Function thunk;
+            thunk.name = "__test_thunk_" + test_name;
+            thunk.return_type = Type{TypeKind::Int32};
+
+            std::vector<std::unique_ptr<Expr>> args;
+            args.push_back(Expr::makeString(test_name, Span{}));
+            args.push_back(Expr::makeFunctionRef(test_name, Span{}));
+            thunk.body.statements.push_back(makeReturnCall("test_run_one", std::move(args)));
+            copy.functions.push_back(std::move(thunk));
+        }
+    }
+
+    Function main_fn;
+    main_fn.name = "main";
+    main_fn.return_type = Type{TypeKind::Int32};
+
+    {
+        std::vector<std::unique_ptr<Expr>> init_args;
+        init_args.push_back(Expr::makeInt(parallel ? 1 : 0, Span{}));
+        init_args.push_back(Expr::makeString(file_label, Span{}));
+        main_fn.body.statements.push_back(makeCallExprStmt("test_init_suite", std::move(init_args)));
+    }
+
+    if (parallel) {
+        for (const std::string& test_name : tests) {
+            const std::string thunk_name = "__test_thunk_" + test_name;
+            auto bound = Expr::makeCall(thunk_name, std::vector<std::unique_ptr<Expr>>{}, Span{});
+            std::vector<std::unique_ptr<Expr>> spawn_args;
+            spawn_args.push_back(std::move(bound));
+            main_fn.body.statements.push_back(makeCallExprStmt("spawn", std::move(spawn_args)));
+        }
+        main_fn.body.statements.push_back(
+            makeCallExprStmt("wait_all", std::vector<std::unique_ptr<Expr>>{}));
+    } else {
+        for (const std::string& test_name : tests) {
+            std::vector<std::unique_ptr<Expr>> args;
+            args.push_back(Expr::makeString(test_name, Span{}));
+            args.push_back(Expr::makeFunctionRef(test_name, Span{}));
+            main_fn.body.statements.push_back(makeCallExprStmt("test_run_one", std::move(args)));
+        }
+    }
+
+    main_fn.body.statements.push_back(
+        makeReturnCall("test_finish_suite", std::vector<std::unique_ptr<Expr>>{}));
+    copy.functions.push_back(std::move(main_fn));
+    return copy;
+}
+
+std::vector<std::filesystem::path> materializeModuleSearchPaths(
+    const std::filesystem::path& work_dir, bool skip_runtime) {
+    std::vector<std::filesystem::path> paths;
+    if (!skip_runtime) {
+        const std::filesystem::path embedded_dir = work_dir / "embedded-runtime";
+        (void)materializeEmbeddedRuntime(embedded_dir);
+        paths.push_back(embedded_dir);
+    }
+    if (XLANG_RUNTIME_DIR[0] != '\0') {
+        paths.emplace_back(XLANG_RUNTIME_DIR);
+    }
+    return paths;
+}
+
+void rejectTestFileForBuildRun(const std::filesystem::path& path) {
+    if (isTestFileName(path)) {
+        throw XlangError("test files cannot be built or run; use `xlank test`");
+    }
+}
+
 TestSuiteResult runTestSuite(const TestOptions& options) {
-    const std::vector<std::filesystem::path> files = discoverTestFiles(options.root);
+    std::vector<std::filesystem::path> files;
+    if (isTestFileName(options.root)) {
+        files.push_back(std::filesystem::absolute(options.root));
+    } else {
+        files = discoverTestFiles(options.root);
+    }
 
     TestSuiteResult suite;
     suite.files_total = static_cast<int>(files.size());
@@ -154,52 +284,76 @@ TestSuiteResult runTestSuite(const TestOptions& options) {
     }
 
     for (const std::filesystem::path& file : files) {
-        std::cout << "\n RUN  " << file.string() << "\n\n";
+        std::cout << "\n RUN  " << file.string();
+        if (options.parallel) {
+            std::cout << " (parallel)";
+        }
+        std::cout << "\n\n";
 
         const std::filesystem::path work_dir = makeBuildWorkDir();
-        const std::filesystem::path executable = work_dir / "test-program";
-
-        CompileOptions compile_options;
-        compile_options.input = file;
-        compile_options.output = executable;
-        compile_options.ir_output = work_dir / "test-program.ll";
-        compile_options.clang = options.clang;
-        compile_options.keep_ir = options.keep_artifacts;
-        compile_options.build_kind = BuildKind::Exe;
-        compile_options.work_dir = work_dir;
-        compile_options.runtime_override = options.runtime_override;
+        int file_passed = 0;
+        int file_failed = 0;
 
         try {
-            const CompileResult compiled = compileFile(compile_options);
-            const RunOutput run = executeProgramCapture(compiled.executable);
-            const ParsedTestCounts counts = parseTestMarker(run.stdout_text);
+            const std::vector<std::filesystem::path> module_search_paths =
+                materializeModuleSearchPaths(work_dir, false);
+            const Program loaded = loadProgram(file, module_search_paths);
+            ensureNoMain(loaded, file);
 
-            if (counts.found) {
-                suite.tests_passed += counts.passed;
-                suite.tests_failed += counts.failed;
+            const std::vector<std::string> tests = collectTestFunctions(loaded);
+            if (tests.empty()) {
+                throw XlangError("no `Test*` functions found in `" + file.string() + "`");
             }
 
-            if (run.exit_code == 0) {
-                suite.files_passed += 1;
-                std::cout << "\n ✓ " << file.string();
-                if (counts.found) {
-                    std::cout << " (" << counts.passed << " tests)";
+            const std::filesystem::path executable = work_dir / "test";
+
+            CompileOptions compile_options;
+            compile_options.input = file;
+            compile_options.output = executable;
+            compile_options.ir_output = work_dir / "test.ll";
+            compile_options.clang = options.clang;
+            compile_options.keep_ir = options.keep_artifacts;
+            compile_options.build_kind = BuildKind::Exe;
+            compile_options.work_dir = work_dir;
+            compile_options.runtime_override = options.runtime_override;
+
+            const Program program =
+                withTestHarness(loaded, tests, options.parallel, file.string());
+            const CompileResult compiled = compileProgram(program, compile_options);
+            const RunOutput run = executeProgramCapture(compiled.executable);
+
+            if (!run.stdout_text.empty()) {
+                std::cout << run.stdout_text;
+                if (run.stdout_text.back() != '\n') {
+                    std::cout << '\n';
                 }
-                std::cout << "\n";
+            }
+
+            const ParsedSummary summary = parseTestSummary(run.stdout_text);
+            if (summary.found) {
+                file_passed = summary.passed;
+                file_failed = summary.failed;
+                suite.tests_passed += summary.passed;
+                suite.tests_failed += summary.failed;
+            } else if (run.exit_code == 0) {
+                file_passed = static_cast<int>(tests.size());
+                suite.tests_passed += file_passed;
+            } else {
+                file_failed = static_cast<int>(tests.size());
+                suite.tests_failed += file_failed;
+            }
+
+            if (run.exit_code == 0 && file_failed == 0) {
+                suite.files_passed += 1;
+                std::cout << "\n ✓ " << file.string() << " (" << file_passed << " tests)\n";
             } else {
                 suite.files_failed += 1;
-                std::cout << "\n ✗ " << file.string();
-                if (counts.found) {
-                    std::cout << " (" << counts.failed << " failed)";
-                } else {
-                    std::cout << " (exit " << run.exit_code << ")";
-                }
-                std::cout << "\n";
+                std::cout << "\n ✗ " << file.string() << " (" << file_failed << " failed, "
+                          << file_passed << " passed)\n";
             }
         } catch (const std::exception& error) {
             suite.files_failed += 1;
-            std::cout << " ✗ " << file.string() << " [compile/run error: " << error.what()
-                      << "]\n";
+            std::cout << " ✗ " << file.string() << " [error: " << error.what() << "]\n";
         }
 
         if (!options.keep_artifacts) {

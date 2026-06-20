@@ -1,78 +1,211 @@
-// Vitest/Jest benzeri minimal test runner — mantık tamamen xlang içinde.
+// Vitest / bun:test tarzı test API — orchestration xlang içinde.
+// C++ yalnızca Test* fonksiyonlarını toplayıp synthetic main enjekte eder.
+// spawn / mutex / try_invoke0 runtime.xlang üzerinden scheduler + errors modüllerinden gelir.
 
-current_suite: string = ""
-passed: int32 = 0
-failed: int32 = 0
-current_test_failed: int32 = 0
+export struct Expect {
+    kind: int32
+    negated: int32
+    actual_i32: int32
+    actual_i64: int64
+    actual_str: string
+}
 
-export fn describe(name: string): int32 {
-    current_suite = name
+suite_mu: int64
+suite_parallel: int32 = 0
+suite_passed: int32 = 0
+suite_failed: int32 = 0
+suite_file: string = ""
+assert_failed: int32 = 0
+
+fn flip_ok(ok: int32, negated: int32): int32 {
+    if negated != 0 {
+        if ok != 0 {
+            return 0
+        }
+        return 1
+    }
+    return ok
+}
+
+fn mark_failed() {
+    assert_failed = 1
     return 0
 }
 
-export fn it(name: string, entry: int64): int32 {
-    current_test_failed = 0
-    invoke0(entry)
-    if current_test_failed != 0 {
-        failed = failed + 1
-        print(" ✗ %s > %s", current_suite, name)
+export fn expect(actual: int32): Expect {
+    return new Expect { kind = 1, negated = 0, actual_i32 = actual, actual_i64 = 0, actual_str = "" }
+}
+
+export fn expect(actual: string): Expect {
+    return new Expect { kind = 2, negated = 0, actual_i32 = 0, actual_i64 = 0, actual_str = actual }
+}
+
+export fn expect(actual: int64): Expect {
+    return new Expect { kind = 4, negated = 0, actual_i32 = 0, actual_i64 = actual, actual_str = "" }
+}
+
+export fn expectFn(entry: int64): Expect {
+    return new Expect { kind = 5, negated = 0, actual_i32 = 0, actual_i64 = entry, actual_str = "" }
+}
+
+export fn not(e: Expect): Expect {
+    e.negated = 1
+    return e
+}
+
+export fn toEqual(e: Expect, expected: int32): Expect {
+    local ok = 0
+    if e.kind == 4 {
+        if e.actual_i64 == expected {
+            ok = 1
+        }
     } else {
-        passed = passed + 1
-        print(" ✓ %s > %s", current_suite, name)
+        if e.actual_i32 == expected {
+            ok = 1
+        }
     }
-    return 0
+    ok = flip_ok(ok, e.negated)
+    if ok == 0 {
+        if e.kind == 4 {
+            print("   expected int64 %d, got mismatch", expected)
+        } else {
+            print("   expected %d, got %d", expected, e.actual_i32)
+        }
+        mark_failed()
+    }
+    return e
 }
 
-export fn expect_eq(actual: int32, expected: int32): int32 {
-    if actual != expected {
-        current_test_failed = 1
-        print("   expected %d, got %d", expected, actual)
+export fn toEqual(e: Expect, expected: int64): Expect {
+    local ok = 0
+    if e.actual_i64 == expected {
+        ok = 1
     }
-    return 0
+    ok = flip_ok(ok, e.negated)
+    if ok == 0 {
+        print("   expected int64 mismatch")
+        mark_failed()
+    }
+    return e
 }
 
-export fn expect_str_eq(actual: string, expected: string): int32 {
-    if str_eq(actual, expected) == 0 {
-        current_test_failed = 1
-        print("   expected `%s`, got `%s`", expected, actual)
+export fn toEqual(e: Expect, expected: string): Expect {
+    local ok = str_eq(e.actual_str, expected)
+    ok = flip_ok(ok, e.negated)
+    if ok == 0 {
+        print("   expected `%s`, got `%s`", expected, e.actual_str)
+        mark_failed()
     }
-    return 0
+    return e
 }
 
-export fn expect_true(value: int32): int32 {
-    if value == 0 {
-        current_test_failed = 1
+export fn toBeTrue(e: Expect): Expect {
+    local ok = 0
+    if e.actual_i32 != 0 {
+        ok = 1
+    }
+    ok = flip_ok(ok, e.negated)
+    if ok == 0 {
         print("   expected true, got false")
+        mark_failed()
     }
-    return 0
+    return e
 }
 
-export fn expect_false(value: int32): int32 {
-    if value != 0 {
-        current_test_failed = 1
+export fn toBeFalse(e: Expect): Expect {
+    local ok = 0
+    if e.actual_i32 == 0 {
+        ok = 1
+    }
+    ok = flip_ok(ok, e.negated)
+    if ok == 0 {
         print("   expected false, got true")
+        mark_failed()
+    }
+    return e
+}
+
+export fn toThrow(e: Expect): Expect {
+    local rc = try_invoke0(e.actual_i64)
+    local ok = 0
+    if rc == 2 {
+        ok = 1
+    }
+    ok = flip_ok(ok, e.negated)
+    if ok == 0 {
+        if e.negated != 0 {
+            print("   expected no panic, but function panicked")
+        } else {
+            print("   expected panic, but function completed")
+        }
+        mark_failed()
+    }
+    return e
+}
+
+export fn toError(e: Expect): Expect {
+    local rc = try_invoke0(e.actual_i64)
+    local ok = 0
+    if rc != 0 {
+        ok = 1
+    }
+    ok = flip_ok(ok, e.negated)
+    if ok == 0 {
+        if e.negated != 0 {
+            print("   expected no error, but function failed or panicked")
+        } else {
+            print("   expected error, but function succeeded")
+        }
+        mark_failed()
+    }
+    return e
+}
+
+export fn fail(message: string): int32 {
+    print("   %s", message)
+    mark_failed()
+    return 1
+}
+
+export fn test_init_suite(parallel: int32, file_label: string): int32 {
+    suite_parallel = parallel
+    suite_passed = 0
+    suite_failed = 0
+    suite_file = file_label
+    assert_failed = 0
+    if parallel != 0 {
+        suite_mu = mutex_init()
     }
     return 0
 }
 
-export fn expect_ne(actual: int32, expected: int32): int32 {
-    if actual == expected {
-        current_test_failed = 1
-        print("   expected not %d", expected)
+export fn test_run_one(name: string, entry: int64): int32 {
+    assert_failed = 0
+    local rc = invoke0(entry)
+    local failed = assert_failed
+    if rc != 0 {
+        failed = 1
     }
-    return 0
-}
-
-export fn expect_ne(actual: int64, expected: int64): int32 {
-    if actual == expected {
-        current_test_failed = 1
-        print("   expected handler mismatch")
+    if suite_parallel != 0 {
+        mutex_lock(suite_mu)
     }
-    return 0
-}
-
-export fn test_summary(): int32 {
-    print("")
-    print(" @xlang-test passed=%d failed=%d", passed, failed)
+    if failed != 0 {
+        print(" ✗ %s", name)
+        suite_failed = suite_failed + 1
+    } else {
+        print(" ✓ %s", name)
+        suite_passed = suite_passed + 1
+    }
+    if suite_parallel != 0 {
+        mutex_unlock(suite_mu)
+    }
     return failed
+}
+
+export fn test_finish_suite(): int32 {
+    print("@xlang-test passed=%d failed=%d file=%s", suite_passed, suite_failed, suite_file)
+    if suite_failed != 0 {
+        return 1
+    }
+    return 0
 }

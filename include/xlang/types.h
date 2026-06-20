@@ -19,6 +19,7 @@ enum class TypeKind {
     Char,
     String,
     Struct,
+    Interface,
     Pointer,
     Array,
 };
@@ -40,6 +41,7 @@ struct Type {
     [[nodiscard]] Type dereferenced() const;
 
     [[nodiscard]] static Type makeStruct(std::string name);
+    [[nodiscard]] static Type makeInterface(std::string name);
     [[nodiscard]] static Type makePointer(Type inner);
     [[nodiscard]] static Type makeArray(Type element);
     [[nodiscard]] Type arrayElementType() const;

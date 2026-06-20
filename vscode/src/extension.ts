@@ -1,7 +1,11 @@
 import * as path from "node:path";
 import * as vscode from "vscode";
 import { registerCompletions } from "./completions";
-import { XlangDiagnostics, resolveXlankPath, runXlank } from "./diagnostics";
+import {
+  XlangDiagnostics,
+  resolveCompilerPath,
+  runCompiler,
+} from "./diagnostics";
 import { formatXlangDocument } from "./formatter";
 
 let diagnostics: XlangDiagnostics | undefined;
@@ -78,7 +82,7 @@ export function deactivate(): void {
 async function runCurrentFile(): Promise<void> {
   const editor = vscode.window.activeTextEditor;
   if (!editor || editor.document.languageId !== "xlang") {
-    vscode.window.showWarningMessage("Open a .xlang file first.");
+    vscode.window.showWarningMessage("Önce bir .xlang dosyası aç.");
     return;
   }
 
@@ -87,6 +91,11 @@ async function runCurrentFile(): Promise<void> {
   }
 
   const filePath = editor.document.uri.fsPath;
+  if (isTestFile(filePath)) {
+    vscode.window.showWarningMessage("*.test.xlang dosyaları `xlang test` ile çalışır.");
+    return;
+  }
+
   const cwd = path.dirname(filePath);
   const terminal = vscode.window.createTerminal({
     name: "xlang run",
@@ -94,14 +103,14 @@ async function runCurrentFile(): Promise<void> {
   });
 
   terminal.show();
-  const binary = (await resolveXlankPath()) ?? "xlank";
+  const binary = (await resolveCompilerPath()) ?? "xlank";
   terminal.sendText(`${quote(binary)} run ${quote(filePath)}`);
 }
 
 async function buildCurrentFile(): Promise<void> {
   const editor = vscode.window.activeTextEditor;
   if (!editor || editor.document.languageId !== "xlang") {
-    vscode.window.showWarningMessage("Open a .xlang file first.");
+    vscode.window.showWarningMessage("Önce bir .xlang dosyası aç.");
     return;
   }
 
@@ -110,10 +119,15 @@ async function buildCurrentFile(): Promise<void> {
   }
 
   const filePath = editor.document.uri.fsPath;
+  if (isTestFile(filePath)) {
+    vscode.window.showWarningMessage("*.test.xlang build edilemez; `xlang test` kullan.");
+    return;
+  }
+
   const cwd = path.dirname(filePath);
 
   try {
-    const { stderr } = await runXlank(["build", filePath], cwd);
+    const { stderr } = await runCompiler(["build", filePath], cwd, filePath);
     if (stderr.trim()) {
       vscode.window.showInformationMessage(stderr.trim());
     } else {
@@ -128,7 +142,7 @@ async function buildCurrentFile(): Promise<void> {
 async function testCurrentFile(): Promise<void> {
   const editor = vscode.window.activeTextEditor;
   if (!editor || editor.document.languageId !== "xlang") {
-    vscode.window.showWarningMessage("Open a .xlang file first.");
+    vscode.window.showWarningMessage("Önce bir .xlang dosyası aç.");
     return;
   }
 
@@ -144,10 +158,10 @@ async function testCurrentFile(): Promise<void> {
   });
 
   terminal.show();
-  const binary = (await resolveXlankPath()) ?? "xlank";
+  const binary = (await resolveCompilerPath()) ?? "xlank";
 
   if (isTestFile(filePath)) {
-    terminal.sendText(`${quote(binary)} run ${quote(filePath)}`);
+    terminal.sendText(`${quote(binary)} test ${quote(filePath)}`);
     return;
   }
 
@@ -163,7 +177,7 @@ async function testSuite(): Promise<void> {
   });
 
   terminal.show();
-  const binary = (await resolveXlankPath()) ?? "xlank";
+  const binary = (await resolveCompilerPath()) ?? "xlank";
   const testRoot = resolveTestRoot(cwd);
   terminal.sendText(`${quote(binary)} test ${quote(testRoot)}`);
 }

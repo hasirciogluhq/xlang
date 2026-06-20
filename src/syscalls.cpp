@@ -18,6 +18,7 @@ bool isKnownSyscall(const std::string& name) {
            name == "cpu_count" || name == "mutex_init" || name == "mutex_lock" ||
            name == "mutex_unlock" || name == "cond_init" || name == "cond_wait" ||
            name == "cond_signal" || name == "cond_broadcast" ||
+           name == "panic" || name == "recover" || name == "try_invoke0" ||
            name == "net_tcp_connect" || name == "net_send" || name == "net_recv" ||
            name == "net_close" || name == "net_tcp_listen" || name == "net_tcp_accept" ||
            name == "net_tls_connect" || name == "net_tls_send" ||
@@ -324,6 +325,30 @@ void emitTlsSupport(std::string& output) {
     output += "}\n\n";
 }
 
+void emitPanicSupport(std::string& output) {
+    output += "; xlang panic/recover bridge\n";
+    output += "declare void @xlang_panic(i8*)\n";
+    output += "declare i32 @xlang_try_enter()\n";
+    output += "declare void @xlang_try_leave()\n";
+    output += "declare i8* @xlang_recover_message()\n";
+    output += "declare i32 @xlang_try_invoke0(i64)\n\n";
+
+    output += "define weak i32 @panic(i8* %msg) {\n";
+    output += "  call void @xlang_panic(i8* %msg)\n";
+    output += "  ret i32 0\n";
+    output += "}\n\n";
+
+    output += "define weak i8* @recover() {\n";
+    output += "  %msg = call i8* @xlang_recover_message()\n";
+    output += "  ret i8* %msg\n";
+    output += "}\n\n";
+
+    output += "define weak i32 @try_invoke0(i64 %entry) {\n";
+    output += "  %rc = call i32 @xlang_try_invoke0(i64 %entry)\n";
+    output += "  ret i32 %rc\n";
+    output += "}\n\n";
+}
+
 }  // namespace
 
 // Compiler backend: xlang `declare syscall` primitiflerini LLVM IR'ye indirger.
@@ -430,6 +455,13 @@ void emitSyscallDefinitions(std::string& output, const std::unordered_set<std::s
         emitTlsSupport(output);
     }
 
+    const bool needs_panic = syscalls.find("panic") != syscalls.end() ||
+                             syscalls.find("recover") != syscalls.end() ||
+                             syscalls.find("try_invoke0") != syscalls.end();
+    if (needs_panic) {
+        emitPanicSupport(output);
+    }
+
     for (const std::string& name : syscalls) {
         if (!isKnownSyscall(name)) {
             throw XlangError("unknown xlang syscall: " + name);
@@ -454,6 +486,12 @@ bool syscallsNeedSslLink(const std::unordered_set<std::string>& syscalls) {
 bool syscallsNeedServerLink(const std::unordered_set<std::string>& syscalls) {
     return syscalls.find("net_tcp_listen") != syscalls.end() ||
            syscalls.find("net_tcp_accept") != syscalls.end();
+}
+
+bool syscallsNeedPanicLink(const std::unordered_set<std::string>& syscalls) {
+    return syscalls.find("panic") != syscalls.end() ||
+           syscalls.find("recover") != syscalls.end() ||
+           syscalls.find("try_invoke0") != syscalls.end();
 }
 
 }  // namespace xlang

@@ -6,8 +6,12 @@ import * as vscode from "vscode";
 
 const execFileAsync = promisify(execFile);
 
-const ERROR_RE =
+const DIAGNOSTIC_SOURCE = "xlang";
+
+const PARSE_ERROR_RE =
   /(?:lex|parse) error at line (\d+), column (\d+): (.+)/;
+
+const MODULE_ERROR_RE = /module not found:\s*(\S+)/;
 
 export class XlangDiagnostics {
   private readonly collection: vscode.DiagnosticCollection;
@@ -55,8 +59,8 @@ export class XlangDiagnostics {
       return;
     }
 
-    const xlankPath = await resolveXlankPath();
-    if (!xlankPath) {
+    const compilerPath = await resolveCompilerPath();
+    if (!compilerPath) {
       return;
     }
 
@@ -64,9 +68,9 @@ export class XlangDiagnostics {
     let stderr = "";
 
     try {
-      await execFileAsync(xlankPath, ["parse", filePath], {
+      await execFileAsync(compilerPath, ["parse", filePath], {
         cwd: path.dirname(filePath),
-        env: buildEnv(),
+        env: buildEnv(filePath),
         timeout: 15_000,
         maxBuffer: 1024 * 1024,
       });
@@ -90,7 +94,7 @@ function parseDiagnostic(
 ): vscode.Diagnostic | undefined {
   for (const line of stderr.split("\n")) {
     const trimmed = line.replace(/^error:\s*/, "");
-    const match = ERROR_RE.exec(trimmed);
+    const match = PARSE_ERROR_RE.exec(trimmed);
     if (!match) {
       continue;
     }
@@ -103,38 +107,78 @@ function parseDiagnostic(
     const startCharacter = Math.max(0, column - 1);
     const endCharacter = document.lineAt(startLine).text.length;
 
-    const range = new vscode.Range(
-      startLine,
-      startCharacter,
-      startLine,
-      Math.max(startCharacter + 1, endCharacter)
-    );
-
     const diagnostic = new vscode.Diagnostic(
-      range,
+      new vscode.Range(
+        startLine,
+        startCharacter,
+        startLine,
+        Math.max(startCharacter + 1, endCharacter)
+      ),
       message,
       vscode.DiagnosticSeverity.Error
     );
-    diagnostic.source = "xlank";
+    diagnostic.source = DIAGNOSTIC_SOURCE;
+    return diagnostic;
+  }
+
+  const moduleMatch = MODULE_ERROR_RE.exec(stderr);
+  if (moduleMatch) {
+    const moduleName = moduleMatch[1];
+    const diagnostic = new vscode.Diagnostic(
+      findImportRange(document, moduleName),
+      `module not found: ${moduleName}`,
+      vscode.DiagnosticSeverity.Error
+    );
+    diagnostic.source = DIAGNOSTIC_SOURCE;
     return diagnostic;
   }
 
   if (stderr.includes("error:")) {
+    const message = stderr
+      .split("\n")
+      .map((line) => line.replace(/^error:\s*/, ""))
+      .filter(Boolean)
+      .join("\n")
+      .trim();
+
     const diagnostic = new vscode.Diagnostic(
       new vscode.Range(0, 0, 0, 1),
-      stderr.trim(),
+      message,
       vscode.DiagnosticSeverity.Error
     );
-    diagnostic.source = "xlank";
+    diagnostic.source = DIAGNOSTIC_SOURCE;
     return diagnostic;
   }
 
   return undefined;
 }
 
+function findImportRange(
+  document: vscode.TextDocument,
+  moduleName: string
+): vscode.Range {
+  const root = moduleName.split("/")[0];
+  for (let i = 0; i < document.lineCount; i += 1) {
+    const text = document.lineAt(i).text;
+    if (!text.includes("import")) {
+      continue;
+    }
+    if (text.includes(moduleName) || text.includes(root)) {
+      return document.lineAt(i).range;
+    }
+  }
+  return new vscode.Range(0, 0, 0, 1);
+}
+
+export async function resolveCompilerPath(): Promise<string | undefined> {
+  return resolveXlankPath();
+}
+
 export async function resolveXlankPath(): Promise<string | undefined> {
   const config = vscode.workspace.getConfiguration("xlang");
-  const configured = config.get<string>("xlankPath", "").trim();
+  const configured =
+    config.get<string>("compilerPath", "").trim() ||
+    config.get<string>("xlankPath", "").trim();
   if (configured) {
     return configured;
   }
@@ -152,24 +196,53 @@ export async function resolveXlankPath(): Promise<string | undefined> {
   return "xlank";
 }
 
-export function buildEnv(): NodeJS.ProcessEnv {
+export function buildEnv(filePath?: string): NodeJS.ProcessEnv {
   const env = { ...process.env };
-  const folders = vscode.workspace.workspaceFolders ?? [];
-  if (folders.length === 0) {
-    return env;
-  }
-
-  const paths: string[] = [];
-  for (const folder of folders) {
-    const root = folder.uri.fsPath;
-    paths.push(root);
-    paths.push(path.join(root, "runtime"));
-    paths.push(path.join(root, "..", "runtime"));
-  }
-
+  const paths = collectModuleSearchPaths(filePath);
   const existing = env.XLANG_PATH?.split(":").filter(Boolean) ?? [];
   env.XLANG_PATH = [...new Set([...paths, ...existing])].join(":");
   return env;
+}
+
+function collectModuleSearchPaths(filePath?: string): string[] {
+  const paths: string[] = [];
+  const seen = new Set<string>();
+
+  const addDir = (dir: string) => {
+    const norm = path.normalize(dir);
+    if (seen.has(norm) || !fs.existsSync(norm)) {
+      return;
+    }
+    seen.add(norm);
+    paths.push(norm);
+  };
+
+  const addRuntime = (base: string) => {
+    addDir(path.join(base, "runtime"));
+  };
+
+  if (filePath) {
+    let dir = path.dirname(filePath);
+    for (let i = 0; i < 12; i += 1) {
+      addRuntime(dir);
+      addDir(dir);
+      const parent = path.dirname(dir);
+      if (parent === dir) {
+        break;
+      }
+      dir = parent;
+    }
+  }
+
+  for (const folder of vscode.workspace.workspaceFolders ?? []) {
+    const root = folder.uri.fsPath;
+    addRuntime(root);
+    addRuntime(path.join(root, ".."));
+    addDir(root);
+    addDir(path.join(root, ".."));
+  }
+
+  return paths;
 }
 
 function isExecError(
@@ -178,18 +251,21 @@ function isExecError(
   return typeof error === "object" && error !== null && "message" in error;
 }
 
-export async function runXlank(
+export async function runCompiler(
   args: string[],
-  cwd: string
+  cwd: string,
+  filePath?: string
 ): Promise<{ stdout: string; stderr: string }> {
-  const xlankPath = await resolveXlankPath();
-  if (!xlankPath) {
-    throw new Error("xlank binary not found. Build the compiler or set xlang.xlankPath.");
+  const compilerPath = await resolveCompilerPath();
+  if (!compilerPath) {
+    throw new Error(
+      "xlang compiler not found. Build the project or set xlang.compilerPath."
+    );
   }
 
-  const result = await execFileAsync(xlankPath, args, {
+  const result = await execFileAsync(compilerPath, args, {
     cwd,
-    env: buildEnv(),
+    env: buildEnv(filePath),
     timeout: 120_000,
     maxBuffer: 4 * 1024 * 1024,
   });
@@ -199,3 +275,6 @@ export async function runXlank(
     stderr: result.stderr.toString(),
   };
 }
+
+/** @deprecated use runCompiler */
+export const runXlank = runCompiler;

@@ -105,10 +105,13 @@ int main(int argc, char** argv) {
     parse->add_option("input", parse_input, "xlang source file")->required()->check(CLI::ExistingFile);
 
     std::filesystem::path test_root = "test/xlang";
+    bool test_parallel = false;
     auto* test_cmd = app.add_subcommand("test", "Run *.test.xlang files (Vitest-style)");
-    test_cmd->add_option("path", test_root, "Test root directory");
+    test_cmd->add_option("path", test_root, "Test file or root directory")
+        ->check(CLI::ExistingPath);
     test_cmd->add_option("--runtime", runtime_override, "Custom runtime .xlang (+ imports)")
         ->check(CLI::ExistingFile);
+    test_cmd->add_flag("--parallel", test_parallel, "Run Test* functions in parallel via spawn");
     test_cmd->add_flag("--keep-artifacts", keep_artifacts, "Keep temp build directories");
     test_cmd->add_option("--clang", clang, "Clang binary path");
 
@@ -116,6 +119,13 @@ int main(int argc, char** argv) {
 
     try {
         if (build->parsed()) {
+            for (const std::filesystem::path& input : inputs) {
+                if (xlang::isTestFileName(input)) {
+                    throw xlang::XlangError(
+                        "test files cannot be built; use `xlank test`");
+                }
+            }
+
             const xlang::CompileOptions options =
                 makeCompileOptions(inputs, output, build_kind, emit_ir, keep_ir, runtime_override,
                                    skip_runtime, clang);
@@ -135,6 +145,9 @@ int main(int argc, char** argv) {
 
         if (run->parsed()) {
             const xlang::ResolvedBuildInputs resolved = xlang::resolveBuildInputs(run_inputs);
+            if (xlang::isTestFileName(resolved.primary)) {
+                throw xlang::XlangError("test files cannot be run; use `xlank test`");
+            }
             if (resolved.primary_kind != xlang::InputKind::Xlang) {
                 throw xlang::XlangError("run requires a .xlang source as the first input");
             }
@@ -159,7 +172,14 @@ int main(int argc, char** argv) {
         }
 
         if (parse->parsed()) {
-            const xlang::Program program = xlang::loadProgram(parse_input);
+            const std::filesystem::path work_dir = xlang::makeBuildWorkDir();
+            const std::vector<std::filesystem::path> module_search_paths =
+                xlang::materializeModuleSearchPaths(work_dir, false);
+            const xlang::Program program =
+                xlang::loadProgram(parse_input, module_search_paths);
+
+            std::error_code ec;
+            std::filesystem::remove_all(work_dir, ec);
 
             std::cout << "globals: " << program.globals.size() << '\n';
             for (const xlang::GlobalVar& global : program.globals) {
@@ -183,6 +203,7 @@ int main(int argc, char** argv) {
             options.root = test_root;
             options.runtime_override = runtime_override;
             options.keep_artifacts = keep_artifacts;
+            options.parallel = test_parallel;
             if (!clang.empty()) {
                 options.clang = clang;
             }

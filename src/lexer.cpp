@@ -18,6 +18,7 @@ const std::unordered_map<std::string, TokenKind> kKeywords = {
     {"false", TokenKind::False},     {"null", TokenKind::Null},
     {"if", TokenKind::If},           {"else", TokenKind::Else},
     {"while", TokenKind::While},     {"array", TokenKind::Array},
+    {"go", TokenKind::Go},           {"interface", TokenKind::Interface},
 };
 
 }  // namespace

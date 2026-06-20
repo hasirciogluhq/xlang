@@ -49,6 +49,8 @@ std::unique_ptr<Expr> cloneExpr(const Expr& expr) {
             return Expr::makeMethodCall(cloneExpr(*expr.object), expr.name, std::move(args),
                                         expr.span);
         }
+        case Expr::Kind::Cast:
+            return Expr::makeCast(cloneExpr(*expr.object), expr.new_type, expr.span);
         case Expr::Kind::New: {
             std::vector<FieldInit> inits;
             for (const FieldInit& init : expr.field_inits) {
@@ -243,10 +245,11 @@ std::string prefixed(const std::string& alias, const std::string& name) {
     return alias + "_" + name;
 }
 
-Program cloneProgram(const Program& program) {
+Program cloneProgramImpl(const Program& program) {
     Program copy;
     copy.imports = program.imports;
     copy.structs = program.structs;
+    copy.interfaces = program.interfaces;
     for (const GlobalVar& global : program.globals) {
         copy.globals.push_back(cloneGlobal(global));
     }
@@ -257,6 +260,10 @@ Program cloneProgram(const Program& program) {
 }
 
 }  // namespace
+
+Program cloneProgram(const Program& program) {
+    return cloneProgramImpl(program);
+}
 
 Program loadProgram(const std::filesystem::path& entry,
                     const std::vector<std::filesystem::path>& search_paths) {
@@ -276,7 +283,7 @@ Program ModuleLoader::loadFile(const std::filesystem::path& path) {
     const std::string key = absolute.string();
 
     if (cache_.find(key) != cache_.end()) {
-        return cloneProgram(cache_.at(key));
+        return cloneProgramImpl(cache_.at(key));
     }
     if (loading_.find(key) != loading_.end()) {
         throw XlangError("circular import: " + key);
@@ -316,6 +323,15 @@ Program ModuleLoader::loadFile(const std::filesystem::path& path) {
         merged.structs.push_back(decl);
     }
 
+    for (const InterfaceDecl& decl : source.interfaces) {
+        for (const InterfaceDecl& existing : merged.interfaces) {
+            if (existing.name == decl.name) {
+                throw XlangError("duplicate interface: " + decl.name);
+            }
+        }
+        merged.interfaces.push_back(decl);
+    }
+
     for (const GlobalVar& global : source.globals) {
         addGlobal(merged, cloneGlobal(global));
     }
@@ -324,7 +340,7 @@ Program ModuleLoader::loadFile(const std::filesystem::path& path) {
     }
 
     loading_.erase(key);
-    cache_.emplace(key, cloneProgram(merged));
+    cache_.emplace(key, cloneProgramImpl(merged));
     return std::move(merged);
 }
 
@@ -365,7 +381,7 @@ std::filesystem::path ModuleLoader::resolveModule(const std::filesystem::path& f
     throw XlangError("module not found: " + name);
 }
 
-void ModuleLoader::mergeAll(Program& into, const Program& from) {
+void mergeStructs(Program& into, const Program& from) {
     for (const StructDecl& decl : from.structs) {
         bool exists = false;
         for (const StructDecl& existing : into.structs) {
@@ -378,6 +394,22 @@ void ModuleLoader::mergeAll(Program& into, const Program& from) {
             into.structs.push_back(decl);
         }
     }
+    for (const InterfaceDecl& decl : from.interfaces) {
+        bool exists = false;
+        for (const InterfaceDecl& existing : into.interfaces) {
+            if (existing.name == decl.name) {
+                exists = true;
+                break;
+            }
+        }
+        if (!exists) {
+            into.interfaces.push_back(decl);
+        }
+    }
+}
+
+void ModuleLoader::mergeAll(Program& into, const Program& from) {
+    mergeStructs(into, from);
     for (const GlobalVar& global : from.globals) {
         if (hasGlobal(into, global.name)) {
             continue;
@@ -392,21 +424,6 @@ void ModuleLoader::mergeAll(Program& into, const Program& from) {
             continue;
         }
         addFunction(into, cloneFunction(function));
-    }
-}
-
-void mergeStructs(Program& into, const Program& from) {
-    for (const StructDecl& decl : from.structs) {
-        bool exists = false;
-        for (const StructDecl& existing : into.structs) {
-            if (existing.name == decl.name) {
-                exists = true;
-                break;
-            }
-        }
-        if (!exists) {
-            into.structs.push_back(decl);
-        }
     }
 }
 

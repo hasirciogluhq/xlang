@@ -128,4 +128,13 @@ std::unique_ptr<Expr> Expr::makeIndex(std::unique_ptr<Expr> object, std::unique_
     return expr;
 }
 
+std::unique_ptr<Expr> Expr::makeCast(std::unique_ptr<Expr> value, Type target_type, Span span) {
+    auto expr = std::make_unique<Expr>();
+    expr->kind = Kind::Cast;
+    expr->object = std::move(value);
+    expr->new_type = std::move(target_type);
+    expr->span = span;
+    return expr;
+}
+
 }  // namespace xlang

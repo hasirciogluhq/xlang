@@ -11,25 +11,42 @@ const RUNTIME_BUILTINS: Builtin[] = [
   { label: "add_worker", detail: "Add scheduler worker thread", insertText: "add_worker()" },
 ];
 
-const JSON_BUILTINS: Builtin[] = [
-  { label: "json_get_int", detail: "JSON object field as int32", insertText: 'json_get_int(${1:body}, "${2:key}")' },
-  { label: "json_get_string", detail: "JSON object field as string", insertText: 'json_get_string(${1:body}, "${2:key}")' },
-  { label: "json_get_bool", detail: "JSON object field as bool", insertText: "json_get_bool(${1:body}, \"${2:key}\")" },
-  { label: "json_has_key", detail: "1 if JSON key exists", insertText: 'json_has_key(${1:body}, "${2:key}")' },
-  { label: "json_is_null", detail: "1 if JSON field is null", insertText: 'json_is_null(${1:body}, "${2:key}")' },
-  { label: "json_get_field", detail: "Raw JsonResult { ok, value, next }", insertText: 'json_get_field(${1:body}, "${2:key}")' },
-  { label: "json_unescape", detail: "Unescape JSON string contents", insertText: "json_unescape(${1:raw})" },
+const JSON_MODULE: Builtin[] = [
+  { label: "parse", detail: "json.parse(text) → Json object", insertText: "parse(${1:text})" },
+  { label: "Get", detail: "json.Get(j, key) → JsonValue", insertText: 'Get(${1:data}, "${2:key}")' },
+  { label: "Int", detail: "json.Int(j, key) → int32", insertText: 'Int(${1:data}, "${2:key}")' },
+  { label: "String", detail: "json.String(j, key) → string", insertText: 'String(${1:data}, "${2:key}")' },
+  { label: "Bool", detail: "json.Bool(j, key) → int32", insertText: 'Bool(${1:data}, "${2:key}")' },
+  { label: "Has", detail: "json.Has(j, key) → int32", insertText: 'Has(${1:data}, "${2:key}")' },
+  { label: "Null", detail: "json.Null(j, key) → int32", insertText: 'Null(${1:data}, "${2:key}")' },
+  { label: "AsInt", detail: "json.AsInt(v) → int32", insertText: "AsInt(${1:value})" },
+  { label: "AsString", detail: "json.AsString(v) → string", insertText: "AsString(${1:value})" },
+  { label: "AsBool", detail: "json.AsBool(v) → int32", insertText: "AsBool(${1:value})" },
+  { label: "IsNull", detail: "json.IsNull(v) → int32", insertText: "IsNull(${1:value})" },
+];
+
+const JSON_METHODS: Builtin[] = [
+  { label: "Int", detail: "data.Int(key) → int32", insertText: 'Int("${1:key}")' },
+  { label: "String", detail: "data.String(key) → string", insertText: 'String("${1:key}")' },
+  { label: "Bool", detail: "data.Bool(key) → int32", insertText: 'Bool("${1:key}")' },
+  { label: "Has", detail: "data.Has(key) → int32", insertText: 'Has("${1:key}")' },
+  { label: "Null", detail: "data.Null(key) → int32", insertText: 'Null("${1:key}")' },
+  { label: "Get", detail: "data.Get(key) → JsonValue", insertText: 'Get("${1:key}")' },
+  { label: "AsInt", detail: "value.AsInt() → int32", insertText: "AsInt()" },
+  { label: "AsString", detail: "value.AsString() → string", insertText: "AsString()" },
+  { label: "AsBool", detail: "value.AsBool() → int32", insertText: "AsBool()" },
+  { label: "IsNull", detail: "value.IsNull() → int32", insertText: "IsNull()" },
 ];
 
 const HTTP_BUILTINS: Builtin[] = [
   { label: "NewRouter", detail: "Create HTTP router", insertText: "NewRouter()" },
-  { label: "Get", detail: "Register GET route", insertText: 'Get(${1:r}, "${2:/path}", ${3:handler})' },
-  { label: "Post", detail: "Register POST route", insertText: 'Post(${1:r}, "${2:/path}", ${3:handler})' },
-  { label: "Put", detail: "Register PUT route", insertText: 'Put(${1:r}, "${2:/path}", ${3:handler})' },
-  { label: "Delete", detail: "Register DELETE route", insertText: 'Delete(${1:r}, "${2:/path}", ${3:handler})' },
-  { label: "Group", detail: "Route group with prefix", insertText: 'Group(${1:r}, "${2:/prefix}")' },
-  { label: "Mount", detail: "Mount sub-router", insertText: 'Mount(${1:r}, "${2:/prefix}", ${3:child})' },
-  { label: "Match", detail: "Match method + path → handler ptr", insertText: 'Match(${1:r}, "${2:GET}", "${3:/path}")' },
+  { label: "Get", detail: "Register GET route", insertText: 'Get("${1:/path}", ${2:handler})' },
+  { label: "Post", detail: "Register POST route", insertText: 'Post("${1:/path}", ${2:handler})' },
+  { label: "Put", detail: "Register PUT route", insertText: 'Put("${1:/path}", ${2:handler})' },
+  { label: "Delete", detail: "Register DELETE route", insertText: 'Delete("${1:/path}", ${2:handler})' },
+  { label: "Group", detail: "Route group with prefix", insertText: 'Group("${1:/prefix}")' },
+  { label: "Mount", detail: "Mount sub-router", insertText: 'Mount("${1:/prefix}", ${2:child})' },
+  { label: "Match", detail: "Match method + path → handler ptr", insertText: 'Match("${1:GET}", "${2:/path}")' },
   { label: "URLParam", detail: "Route param from last match", insertText: 'URLParam("${1:name}")' },
   { label: "RespondText", detail: "Set text/plain response", insertText: 'RespondText(${1:200}, "${2:ok}")' },
   { label: "RespondJson", detail: "Set application/json response", insertText: 'RespondJson(${1:200}, "${2:{}}")' },
@@ -52,20 +69,26 @@ const COMPILER_BUILTINS: Builtin[] = [
   { label: "array_pop_front", detail: "Pop from array front", insertText: "array_pop_front(${1:arr})" },
 ];
 
+const EXPECT_CHAIN: Builtin[] = [
+  { label: "toEqual", detail: "Assert equality", insertText: "toEqual(${1:expected})" },
+  { label: "toBeTrue", detail: "Assert truthy", insertText: "toBeTrue()" },
+  { label: "toBeFalse", detail: "Assert falsy", insertText: "toBeFalse()" },
+  { label: "toThrow", detail: "Assert panic", insertText: "toThrow()" },
+  { label: "toError", detail: "Assert error return", insertText: "toError()" },
+  { label: "not", detail: "Negate assertion", insertText: "not()" },
+];
+
 const TEST_BUILTINS: Builtin[] = [
-  { label: "describe", detail: "Test suite name", insertText: 'describe("${1:suite}")' },
-  { label: "it", detail: "Run test function", insertText: 'it("${1:name}", ${2:test_fn})' },
-  { label: "expect_eq", detail: "Assert int32 equality", insertText: "expect_eq(${1:actual}, ${2:expected})" },
-  { label: "expect_ne", detail: "Assert int32/int64 inequality", insertText: "expect_ne(${1:actual}, ${2:expected})" },
-  { label: "expect_str_eq", detail: "Assert string equality", insertText: 'expect_str_eq(${1:actual}, "${2:expected}")' },
-  { label: "expect_true", detail: "Assert truthy value", insertText: "expect_true(${1:value})" },
-  { label: "expect_false", detail: "Assert falsy value", insertText: "expect_false(${1:value})" },
-  { label: "test_summary", detail: "Print summary, return failure count", insertText: "test_summary()" },
+  { label: "expect", detail: "Vitest-style assertion (chain .toEqual / .toBeTrue / .not())", insertText: "expect(${1:actual}).toEqual(${2:expected})" },
+  { label: "expectFn", detail: "Expect for function pointer (.toThrow / .toError)", insertText: "expectFn(${1:handler}).toThrow()" },
+  { label: "fail", detail: "Fail test with message", insertText: 'fail("${1:message}")' },
+  { label: "panic", detail: "Panic with stack trace (Go-style)", insertText: 'panic("${1:message}")' },
+  { label: "recover", detail: "Recover from panic (Go-style)", insertText: "recover()" },
 ];
 
 const KEYWORDS = [
   "fn", "local", "return", "import", "from", "as", "export", "external",
-  "syscall", "declare", "struct", "new", "delete", "if", "else", "while", "array",
+  "syscall", "declare", "struct", "interface", "new", "delete", "if", "else", "while", "array", "go",
   "true", "false", "null",
 ];
 
@@ -79,10 +102,24 @@ const MODULES = [
   { label: "http", detail: "HTTP router + server (runtime/http.xlang)" },
   { label: "http/router", detail: "Chi-like HTTP router" },
   { label: "http/server", detail: "HTTP server + ListenAndServe" },
+  { label: "json", detail: "json.parse + field accessors" },
   { label: "net", detail: "fetch HTTP/HTTPS client" },
-  { label: "json", detail: "JSON parse helpers" },
   { label: "scheduler", detail: "spawn / wait_all worker pool" },
-  { label: "test", detail: "describe / it / expect_* runner" },
+  { label: "test", detail: "expect / test_run_* helpers" },
+  { label: "errors", detail: "Error interface + panic/recover" },
+];
+
+const NET_SYSCALLS: Builtin[] = [
+  { label: "net_tcp_connect", detail: "TCP connect", insertText: "net_tcp_connect(${1:host}: string, ${2:port}: int32): int64" },
+  { label: "net_tls_connect", detail: "TLS connect", insertText: "net_tls_connect(${1:host}: string, ${2:port}: int32): int64" },
+  { label: "net_tcp_listen", detail: "TCP listen", insertText: "net_tcp_listen(${1:host}: string, ${2:port}: int32): int64" },
+  { label: "net_tcp_accept", detail: "TCP accept", insertText: "net_tcp_accept(${1:listen_fd}: int64): int64" },
+  { label: "net_send", detail: "Send on TCP fd", insertText: "net_send(${1:fd}: int64, ${2:data}: string): int32" },
+  { label: "net_tls_send", detail: "Send on TLS fd", insertText: "net_tls_send(${1:fd}: int64, ${2:data}: string): int32" },
+  { label: "net_recv", detail: "Recv from TCP fd", insertText: "net_recv(${1:fd}: int64, ${2:max}: int32): string" },
+  { label: "net_tls_recv", detail: "Recv from TLS fd", insertText: "net_tls_recv(${1:fd}: int64, ${2:max}: int32): string" },
+  { label: "net_close", detail: "Close TCP fd", insertText: "net_close(${1:fd}: int64): int32" },
+  { label: "net_tls_close", detail: "Close TLS fd", insertText: "net_tls_close(${1:fd}: int64): int32" },
 ];
 
 export function registerCompletions(context: vscode.ExtensionContext): void {
@@ -98,26 +135,27 @@ export function registerCompletions(context: vscode.ExtensionContext): void {
         const items: vscode.CompletionItem[] = [];
 
         for (const kw of KEYWORDS) {
-          const item = new vscode.CompletionItem(kw, vscode.CompletionItemKind.Keyword);
-          item.sortText = `0_${kw}`;
-          items.push(item);
+          items.push(makeItem(kw, vscode.CompletionItemKind.Keyword, kw, `0_${kw}`));
         }
 
         for (const ty of TYPES) {
-          const item = new vscode.CompletionItem(ty, vscode.CompletionItemKind.TypeParameter);
-          item.sortText = `1_${ty}`;
-          items.push(item);
+          items.push(makeItem(ty, vscode.CompletionItemKind.TypeParameter, ty, `1_${ty}`));
         }
 
-        const allBuiltins = [
+        for (const builtin of [
           ...RUNTIME_BUILTINS,
-          ...JSON_BUILTINS,
+          ...JSON_MODULE,
           ...HTTP_BUILTINS,
           ...COMPILER_BUILTINS,
           ...TEST_BUILTINS,
-        ];
-        for (const builtin of allBuiltins) {
+        ]) {
           items.push(makeBuiltin(builtin, "2"));
+        }
+
+        if (/\.[\w]*$/.test(linePrefix)) {
+          for (const method of [...JSON_METHODS, ...EXPECT_CHAIN]) {
+            items.push(makeBuiltin(method, "2m"));
+          }
         }
 
         if (/^\s*import\s+\w*\s*$/.test(linePrefix) || /^\s*import\s$/.test(linePrefix)) {
@@ -136,34 +174,36 @@ export function registerCompletions(context: vscode.ExtensionContext): void {
 
         if (/^\s*declare\s+syscall\s+\w*\s*$/.test(linePrefix.trimEnd())) {
           for (const sc of NET_SYSCALLS) {
-            const item = new vscode.CompletionItem(sc.label, vscode.CompletionItemKind.Function);
-            item.detail = sc.detail;
-            item.insertText = new vscode.SnippetString(sc.insertText ?? sc.label);
-            item.sortText = `4_${sc.label}`;
-            items.push(item);
+            items.push(makeBuiltin(sc, "4"));
           }
+        }
+
+        if (/^\s*go\s*$/.test(linePrefix.trimEnd())) {
+          items.push(makeSnippet("go ${1:worker}(${2:args})", "go worker(args)"));
         }
 
         return items;
       },
-    }, ...ALL_TRIGGER_CHARS)
+    }, ...TRIGGER_CHARS)
   );
 }
 
-const NET_SYSCALLS: Builtin[] = [
-  { label: "net_tcp_connect", detail: "TCP connect", insertText: "net_tcp_connect(${1:host}: string, ${2:port}: int32): int64" },
-  { label: "net_tls_connect", detail: "TLS connect", insertText: "net_tls_connect(${1:host}: string, ${2:port}: int32): int64" },
-  { label: "net_tcp_listen", detail: "TCP listen", insertText: "net_tcp_listen(${1:host}: string, ${2:port}: int32): int64" },
-  { label: "net_tcp_accept", detail: "TCP accept", insertText: "net_tcp_accept(${1:listen_fd}: int64): int64" },
-  { label: "net_send", detail: "Send on TCP fd", insertText: "net_send(${1:fd}: int64, ${2:data}: string): int32" },
-  { label: "net_recv", detail: "Recv from TCP fd", insertText: "net_recv(${1:fd}: int64, ${2:max}: int32): string" },
-  { label: "net_close", detail: "Close TCP fd", insertText: "net_close(${1:fd}: int64): int32" },
-];
-
-const ALL_TRIGGER_CHARS = [
+const TRIGGER_CHARS = [
   ".", "(", " ", "a", "b", "c", "d", "e", "f", "g", "h", "i", "j", "k", "l", "m",
   "n", "o", "p", "q", "r", "s", "t", "u", "v", "w", "x", "y", "z",
 ];
+
+function makeItem(
+  label: string,
+  kind: vscode.CompletionItemKind,
+  detail: string,
+  sortText: string
+): vscode.CompletionItem {
+  const item = new vscode.CompletionItem(label, kind);
+  item.detail = detail;
+  item.sortText = sortText;
+  return item;
+}
 
 function makeBuiltin(builtin: Builtin, sortPrefix: string): vscode.CompletionItem {
   const item = new vscode.CompletionItem(builtin.label, vscode.CompletionItemKind.Function);

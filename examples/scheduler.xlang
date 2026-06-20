@@ -1,4 +1,4 @@
-// Paralel job scheduler — spawn(bound_call) + tek print(...)
+// Paralel job scheduler — go fn(...) + wait_all()
 declare syscall sleep_ms(ms)
 declare syscall random_range(min, max)
 declare syscall print_done(job_id)
@@ -13,10 +13,10 @@ fn job_worker(job_id: int32, name: string) {
 
 fn main() {
     print("cpu: %d", cpu())
-    spawn(job_worker(1, "sex"))
-    spawn(job_worker(2, "ask"))
-    spawn(job_worker(3, "ds"))
-    spawn(job_worker(4, "ff"))
+    go job_worker(1, "sex")
+    go job_worker(2, "ask")
+    go job_worker(3, "ds")
+    go job_worker(4, "ff")
     wait_all()
     return 0
 }

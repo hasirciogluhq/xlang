@@ -9,6 +9,8 @@
 namespace xlang {
 
 enum class TokenKind {
+    Go,
+    Interface,
     End,
     Fn,
     Local,

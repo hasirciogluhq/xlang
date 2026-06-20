@@ -1,0 +1,21 @@
+// Port/adapter örneği — interface tanımı + struct + as cast (Go/TS port mantığı)
+
+interface Greeter {
+    Greet(name: string): int32
+}
+
+struct ConsoleGreeter {
+    prefix: string
+}
+
+fn Greet(g: ConsoleGreeter, name: string): int32 {
+    print("%s %s", g.prefix, name)
+    return 0
+}
+
+fn main() {
+    local c: ConsoleGreeter = new ConsoleGreeter { prefix = "hello" }
+    Greet(c, "xlang")
+    local g = c as Greeter
+    return 0
+}

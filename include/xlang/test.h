@@ -1,8 +1,11 @@
 #pragma once
 
+#include "xlang/ast.h"
+
 #include <filesystem>
 #include <optional>
 #include <string>
+#include <vector>
 
 namespace xlang {
 
@@ -11,6 +14,7 @@ struct TestOptions {
     std::optional<std::filesystem::path> runtime_override;
     std::string clang{"clang"};
     bool keep_artifacts{false};
+    bool parallel{false};
 };
 
 struct TestSuiteResult {
@@ -24,5 +28,13 @@ struct TestSuiteResult {
 
 [[nodiscard]] TestSuiteResult runTestSuite(const TestOptions& options);
 [[nodiscard]] bool isTestFileName(const std::filesystem::path& path);
+[[nodiscard]] bool isTestFunctionName(const std::string& name);
+[[nodiscard]] std::vector<std::string> collectTestFunctions(const Program& program);
+[[nodiscard]] Program withTestHarness(const Program& program, const std::vector<std::string>& tests,
+                                      bool parallel, const std::string& file_label);
+[[nodiscard]] std::vector<std::filesystem::path> materializeModuleSearchPaths(
+    const std::filesystem::path& work_dir, bool skip_runtime);
+
+void rejectTestFileForBuildRun(const std::filesystem::path& path);
 
 }  // namespace xlang

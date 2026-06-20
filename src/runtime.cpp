@@ -1,6 +1,7 @@
 #include "xlang/runtime.h"
 
 #include "xlang/codegen.h"
+#include "xlang/compiler.h"
 #include "xlang/embedded_runtime.h"
 #include "xlang/error.h"
 #include "xlang/module.h"
@@ -81,6 +82,19 @@ bool programNeedsServerLink(const Program& program) {
     return false;
 }
 
+bool programNeedsPanicLink(const Program& program) {
+    for (const Function& function : program.functions) {
+        if (!function.syscall) {
+            continue;
+        }
+        if (function.name == "panic" || function.name == "recover" ||
+            function.name == "try_invoke0") {
+            return true;
+        }
+    }
+    return false;
+}
+
 std::filesystem::path runtimeEntryFromSourceTree() {
     if (std::string(XLANG_RUNTIME_DIR).empty()) {
         return {};
@@ -114,6 +128,7 @@ void compileProgramToObject(const Program& program, const std::string& clang,
     CodegenOptions cg_options;
     cg_options.build_kind = BuildKind::Lib;
     cg_options.link_runtime = false;
+    cg_options.target_triple = getClangTargetTriple(clang);
 
     const CodegenResult generated = Codegen::generate(program, cg_options);
     const std::filesystem::path ir_path = work_dir / (object_path.stem().string() + ".ll");
@@ -128,6 +143,7 @@ void compileProgramToObject(const Program& program, const std::string& clang,
 
     std::ostringstream cmd;
     cmd << clang << " -c \"" << ir_path.string() << "\" -o \"" << object_path.string() << "\"";
+    cmd << " -Wno-override-module";
     if (generated.needs_thread_link) {
         cmd << " -pthread";
     }
@@ -153,6 +169,7 @@ RuntimeBundle loadRuntimeExports(const RuntimeOptions& options) {
     bundle.needs_thread_link = programNeedsThreadLink(program);
     bundle.needs_ssl_link = programNeedsSslLink(program);
     bundle.needs_server_link = programNeedsServerLink(program);
+    bundle.needs_panic_link = programNeedsPanicLink(program);
     return bundle;
 }
 
@@ -173,6 +190,7 @@ RuntimeBundle ensureRuntime(const RuntimeOptions& options) {
     bundle.needs_thread_link = programNeedsThreadLink(program);
     bundle.needs_ssl_link = programNeedsSslLink(program);
     bundle.needs_server_link = programNeedsServerLink(program);
+    bundle.needs_panic_link = programNeedsPanicLink(program);
     return bundle;
 }
 

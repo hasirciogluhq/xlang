@@ -1,43 +1,36 @@
-fn test_json_get_int() {
-    local body = "{\"userId\": 7, \"id\": 42, \"completed\": 0}"
-    expect_eq(json_get_int(body, "userId"), 7)
-    expect_eq(json_get_int(body, "id"), 42)
+import json from json
+
+fn TestJsonParseInt() {
+    local data = json.parse("{\"userId\": 7, \"id\": 42, \"completed\": 0}")
+    expect(data.Int("userId")).toEqual(7)
+    expect(data.Get("id").AsInt()).toEqual(42)
     return 0
 }
 
-fn test_json_get_string() {
-    local body = "{\"title\": \"hello world\"}"
-    expect_str_eq(json_get_string(body, "title"), "hello world")
+fn TestJsonParseString() {
+    local data = json.parse("{\"title\": \"hello world\"}")
+    expect(data.String("title")).toEqual("hello world")
+    expect(data.Get("title").AsString()).toEqual("hello world")
     return 0
 }
 
-fn test_json_get_bool() {
-    local body = "{\"done\": true, \"pending\": false}"
-    expect_true(json_get_bool(body, "done"))
-    expect_false(json_get_bool(body, "pending"))
+fn TestJsonParseBool() {
+    local data = json.parse("{\"done\": true, \"pending\": false}")
+    expect(data.Bool("done")).toBeTrue()
+    expect(data.Bool("pending")).toBeFalse()
     return 0
 }
 
-fn test_json_has_key() {
-    local body = "{\"name\": \"xlang\"}"
-    expect_true(json_has_key(body, "name"))
-    expect_false(json_has_key(body, "missing"))
+fn TestJsonHasKey() {
+    local data = json.parse("{\"name\": \"xlang\"}")
+    expect(data.Has("name")).toBeTrue()
+    expect(data.Has("missing")).toBeFalse()
     return 0
 }
 
-fn test_json_is_null() {
-    local body = "{\"value\": null}"
-    expect_true(json_is_null(body, "value"))
-    expect_false(json_is_null(body, "value2"))
+fn TestJsonIsNull() {
+    local data = json.parse("{\"value\": null}")
+    expect(data.Null("value")).toBeTrue()
+    expect(data.Null("value2")).toBeFalse()
     return 0
-}
-
-fn main() {
-    describe("json")
-    it("reads integer fields", test_json_get_int)
-    it("reads string fields", test_json_get_string)
-    it("reads bool fields", test_json_get_bool)
-    it("detects keys", test_json_has_key)
-    it("detects null", test_json_is_null)
-    return test_summary()
 }

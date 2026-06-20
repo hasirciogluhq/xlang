@@ -1,5 +1,6 @@
 #pragma once
 
+#include "xlang/ast.h"
 #include "xlang/build.h"
 
 #include <filesystem>
@@ -44,10 +45,12 @@ struct RunResult {
 };
 
 CompileResult compileSource(const std::string& source, const CompileOptions& options);
+CompileResult compileProgram(const Program& program, const CompileOptions& options);
 CompileResult compileFile(const CompileOptions& options);
 RunResult runFile(const RunOptions& options);
 
 [[nodiscard]] std::string defaultClang();
+[[nodiscard]] std::string getClangTargetTriple(const std::string& clang);
 [[nodiscard]] std::filesystem::path makeBuildWorkDir();
 
 }  // namespace xlang

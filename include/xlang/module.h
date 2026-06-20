@@ -32,5 +32,6 @@ private:
 
 Program loadProgram(const std::filesystem::path& entry,
                     const std::vector<std::filesystem::path>& search_paths = {});
+[[nodiscard]] Program cloneProgram(const Program& program);
 
 }  // namespace xlang

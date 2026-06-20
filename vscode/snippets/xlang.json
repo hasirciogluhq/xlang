@@ -28,6 +28,30 @@
     ],
     "description": "Function with typed params and return"
   },
+  "Go test function": {
+    "prefix": "testfn",
+    "body": [
+      "fn Test${1:Name}() {",
+      "\texpect(${2:actual}).toEqual(${3:expected})",
+      "\treturn 0",
+      "}"
+    ],
+    "description": "Go-style Test* function (Vitest expect API)"
+  },
+  "Interface": {
+    "prefix": "interface",
+    "body": [
+      "interface ${1:Name} {",
+      "\t${2:Method}(${3:arg}: ${4:string}): ${5:int32}",
+      "}"
+    ],
+    "description": "Interface definition"
+  },
+  "Go spawn": {
+    "prefix": "go",
+    "body": "go ${1:worker}(${2:args})",
+    "description": "Spawn shorthand (go fn(args))"
+  },
   "Local variable": {
     "prefix": "local",
     "body": "local ${1:name} = ${2:0}",
@@ -83,7 +107,7 @@
   },
   "Import with alias": {
     "prefix": "importfrom",
-    "body": "import ${1:http} from ${2:http}",
+    "body": "import ${1:json} from ${2:json}",
     "description": "import alias from module/path"
   },
   "Import as alias": {
@@ -121,56 +145,41 @@
     "body": "spawn(${1:worker}(${2:args}))",
     "description": "Spawn a goroutine-like task"
   },
-  "Fetch": {
+  "Fetch with JSON": {
     "prefix": "fetch",
-    "body": "fetch(\"${1:https://example.com}\")",
-    "description": "HTTP GET request"
-  },
-  "Test file main": {
-    "prefix": "testmain",
     "body": [
-      "fn ${1:test_name}() {",
-      "\t$0",
-      "\treturn 0",
-      "}",
+      "import json from json",
       "",
-      "fn main() {",
-      "\tdescribe(\"${2:suite}\")",
-      "\tit(\"${3:case}\", ${1:test_name})",
-      "\treturn test_summary()",
-      "}"
+      "local resp = fetch(\"${1:https://example.com}\")",
+      "local data = json.parse(resp.body)",
+      "local ${2:value} = data.${3|Int,String,Bool|}(\"${4:key}\")"
     ],
-    "description": "Vitest-style test file scaffold"
-  },
-  "Describe suite": {
-    "prefix": "describe",
-    "body": "describe(\"${1:suite}\")",
-    "description": "Test suite name"
-  },
-  "It case": {
-    "prefix": "it",
-    "body": "it(\"${1:name}\", ${2:test_fn})",
-    "description": "Register test case"
+    "description": "HTTP fetch + json.parse"
   },
   "Expect equal": {
     "prefix": "expect",
-    "body": "expect_eq(${1:actual}, ${2:expected})",
-    "description": "Assert int32 equality"
+    "body": "expect(${1:actual}).toEqual(${2:expected})",
+    "description": "Vitest-style equality assertion"
   },
   "Expect string equal": {
     "prefix": "expectstr",
-    "body": "expect_str_eq(${1:actual}, \"${2:expected}\")",
-    "description": "Assert string equality"
+    "body": "expect(${1:actual}).toEqual(\"${2:expected}\")",
+    "description": "String equality assertion"
   },
   "Expect true": {
     "prefix": "expecttrue",
-    "body": "expect_true(${1:value})",
+    "body": "expect(${1:value}).toBeTrue()",
     "description": "Assert truthy value"
   },
   "Expect false": {
     "prefix": "expectfalse",
-    "body": "expect_false(${1:value})",
+    "body": "expect(${1:value}).toBeFalse()",
     "description": "Assert falsy value"
+  },
+  "Expect throw": {
+    "prefix": "expectthrow",
+    "body": "expectFn(${1:handler}).toThrow()",
+    "description": "Assert function panics"
   },
   "HTTP server": {
     "prefix": "httpserver",
@@ -201,9 +210,14 @@
     ],
     "description": "HTTP handler with RespondText"
   },
-  "JSON get field": {
-    "prefix": "jsonget",
-    "body": "json_get_string(${1:body}, \"${2:key}\")",
-    "description": "Get JSON string field"
+  "JSON parse": {
+    "prefix": "jsonparse",
+    "body": [
+      "import json from json",
+      "",
+      "local data = json.parse(${1:body})",
+      "local ${2:value} = data.${3|Int,String,Bool|}(\"${4:key}\")"
+    ],
+    "description": "json.parse + field accessor"
   }
 }

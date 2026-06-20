@@ -30,6 +30,13 @@ Type Type::makeStruct(std::string name) {
     return type;
 }
 
+Type Type::makeInterface(std::string name) {
+    Type type;
+    type.kind = TypeKind::Interface;
+    type.struct_name = std::move(name);
+    return type;
+}
+
 Type Type::makePointer(Type inner) {
     Type type;
     type.kind = TypeKind::Pointer;
@@ -110,6 +117,8 @@ std::string typeMangleComponent(const Type& type) {
             return "str";
         case TypeKind::Struct:
             return "S" + type.struct_name;
+        case TypeKind::Interface:
+            return "I" + type.struct_name;
         case TypeKind::Pointer: {
             Type inner;
             inner.kind = type.pointer_to;
@@ -138,7 +147,7 @@ bool typesEqual(const Type& left, const Type& right) {
     if (left.kind != right.kind) {
         return false;
     }
-    if (left.kind == TypeKind::Struct) {
+    if (left.kind == TypeKind::Struct || left.kind == TypeKind::Interface) {
         return left.struct_name == right.struct_name;
     }
     if (left.kind == TypeKind::Pointer) {
@@ -174,6 +183,8 @@ std::string typeToString(const Type& type) {
             return "string";
         case TypeKind::Struct:
             return type.struct_name;
+        case TypeKind::Interface:
+            return type.struct_name;
         case TypeKind::Pointer: {
             Type inner;
             inner.kind = type.pointer_to;
@@ -208,6 +219,8 @@ std::string llvmTypeName(const Type& type) {
             return "i8*";
         case TypeKind::Struct:
             return "%struct." + type.struct_name + "*";
+        case TypeKind::Interface:
+            return "i8*";
         case TypeKind::Pointer: {
             Type inner;
             inner.kind = type.pointer_to;
@@ -240,6 +253,7 @@ std::size_t llvmTypeAlign(const Type& type) {
         case TypeKind::BigInt:
         case TypeKind::String:
         case TypeKind::Struct:
+        case TypeKind::Interface:
         case TypeKind::Pointer:
         case TypeKind::Array:
             return 8;

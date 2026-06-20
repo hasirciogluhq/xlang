@@ -2,6 +2,7 @@ import scheduler
 import net
 import json
 import test
+import errors
 
 export fn print(...) {
     return 0

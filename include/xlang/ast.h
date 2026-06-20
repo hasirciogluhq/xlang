@@ -72,6 +72,19 @@ struct StructField {
     Type type{TypeKind::Int32};
 };
 
+struct InterfaceMethod {
+    std::string name;
+    std::vector<TypedName> params;
+    Type return_type{TypeKind::Int32};
+};
+
+struct InterfaceDecl {
+    std::string name;
+    std::vector<InterfaceMethod> methods;
+    bool exported{false};
+    Span span{};
+};
+
 struct StructDecl {
     std::string name;
     std::vector<StructField> fields;
@@ -109,6 +122,7 @@ struct Expr {
         NewArray,
         Index,
         Null,
+        Cast,
     } kind;
 
     Span span{};
@@ -144,6 +158,7 @@ struct Expr {
     static std::unique_ptr<Expr> makeNewArray(Type element_type, Span span);
     static std::unique_ptr<Expr> makeIndex(std::unique_ptr<Expr> object, std::unique_ptr<Expr> index,
                                            Span span);
+    static std::unique_ptr<Expr> makeCast(std::unique_ptr<Expr> value, Type target_type, Span span);
 };
 
 struct Stmt {
@@ -193,6 +208,7 @@ struct Function {
 struct Program {
     std::vector<ImportDecl> imports;
     std::vector<StructDecl> structs;
+    std::vector<InterfaceDecl> interfaces;
     std::vector<GlobalVar> globals;
     std::vector<Function> functions;
 };

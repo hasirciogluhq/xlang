@@ -38,6 +38,7 @@ private:
   [[nodiscard]] std::string parseModulePath();
   std::vector<ImportSpec> parseImportNames();
   StructDecl parseStruct(const ItemModifiers &modifiers);
+  InterfaceDecl parseInterface(const ItemModifiers &modifiers);
   GlobalVar parseGlobalVar(const ItemModifiers &modifiers);
   GlobalVar parseDeclareGlobal(const ItemModifiers &modifiers);
   Function parseFunction(const ItemModifiers &modifiers);
@@ -53,6 +54,7 @@ private:
   std::unique_ptr<Expr> parseComparison();
   std::unique_ptr<Expr> parseAdditive();
   std::unique_ptr<Expr> parseMultiplicative();
+  std::unique_ptr<Expr> parseCast();
   std::unique_ptr<Expr> parsePostfix(std::unique_ptr<Expr> expr);
   std::unique_ptr<Expr> parsePrimary();
   std::unique_ptr<Expr> parseNewExpr(const Span &span);
@@ -65,13 +67,16 @@ private:
   [[nodiscard]] bool isFunctionName(const std::string &name) const;
   void registerFunction(const std::string &name);
   void registerStruct(const StructDecl &decl);
+  void registerInterface(const InterfaceDecl &decl);
   [[nodiscard]] const StructDecl *findStruct(const std::string &name) const;
+  [[nodiscard]] const InterfaceDecl *findInterface(const std::string &name) const;
   [[nodiscard]] ParseError error(const std::string &message) const;
 
   std::vector<Token> tokens_;
   std::size_t pos_{0};
   std::unordered_set<std::string> function_names_;
   std::unordered_map<std::string, StructDecl> struct_defs_;
+  std::unordered_map<std::string, InterfaceDecl> interface_defs_;
 };
 
 } // namespace xlang

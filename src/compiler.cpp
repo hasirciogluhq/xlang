@@ -7,11 +7,14 @@
 #include "xlang/module.h"
 #include "xlang/parser.h"
 #include "xlang/runtime.h"
+#include "xlang/test.h"
 
 #include <cstdlib>
 #include <fstream>
 #include <random>
 #include <sstream>
+#include <cstdio>
+#include <unordered_map>
 #include <sys/wait.h>
 #include <unistd.h>
 
@@ -87,8 +90,12 @@ void copyFile(const std::filesystem::path& from, const std::filesystem::path& to
 #ifndef XLANG_NET_SERVER
 #define XLANG_NET_SERVER ""
 #endif
+#ifndef XLANG_PANIC_BRIDGE
+#define XLANG_PANIC_BRIDGE ""
+#endif
 
-void appendLinkFlags(std::ostringstream& cmd, bool needs_pthread, bool needs_ssl, bool needs_server) {
+void appendLinkFlags(std::ostringstream& cmd, bool needs_pthread, bool needs_ssl, bool needs_server,
+                     bool needs_panic) {
     if (needs_pthread) {
         cmd << " -pthread";
     }
@@ -108,13 +115,23 @@ void appendLinkFlags(std::ostringstream& cmd, bool needs_pthread, bool needs_ssl
             cmd << " \"" << XLANG_NET_SERVER << "\"";
         }
     }
+    if (needs_panic) {
+        if (XLANG_PANIC_BRIDGE[0] != '\0') {
+            cmd << " \"" << XLANG_PANIC_BRIDGE << "\"";
+        }
+    }
+}
+
+void appendIrCompileFlags(std::ostringstream& cmd) {
+    cmd << " -Wno-override-module";
 }
 
 void compileLlvmIrToObject(const std::string& clang, const std::filesystem::path& ir_path,
                            const std::filesystem::path& object_path, bool needs_pthread) {
     std::ostringstream cmd;
     cmd << clang << " -c \"" << ir_path.string() << "\" -o \"" << object_path.string() << "\"";
-    appendLinkFlags(cmd, needs_pthread, false, false);
+    appendIrCompileFlags(cmd);
+    appendLinkFlags(cmd, needs_pthread, false, false, false);
     const int status = runCommand(cmd.str());
     if (status != 0) {
         throw XlangError("clang failed to compile LLVM IR");
@@ -123,7 +140,7 @@ void compileLlvmIrToObject(const std::string& clang, const std::filesystem::path
 
 void linkObjects(const std::string& clang, const std::vector<std::filesystem::path>& objects,
                  const std::filesystem::path& output, bool needs_pthread, bool needs_ssl,
-                 bool needs_server) {
+                 bool needs_server, bool needs_panic) {
     ensureParentDir(output);
 
     std::ostringstream cmd;
@@ -132,7 +149,7 @@ void linkObjects(const std::string& clang, const std::vector<std::filesystem::pa
         cmd << " \"" << object.string() << "\"";
     }
     cmd << " -o \"" << output.string() << "\"";
-    appendLinkFlags(cmd, needs_pthread, needs_ssl, needs_server);
+    appendLinkFlags(cmd, needs_pthread, needs_ssl, needs_server, needs_panic);
 
     const int status = runCommand(cmd.str());
     if (status != 0) {
@@ -179,6 +196,7 @@ CompileResult compileXlangProgram(const Program& program, BuildContext& ctx) {
     CodegenOptions cg_options;
     cg_options.build_kind = ctx.options.build_kind;
     cg_options.link_runtime = !ctx.options.skip_runtime && ctx.options.build_kind == BuildKind::Exe;
+    cg_options.target_triple = getClangTargetTriple(ctx.options.clang);
 
     RuntimeBundle runtime;
     if (!ctx.options.skip_runtime) {
@@ -249,7 +267,8 @@ CompileResult compileXlangProgram(const Program& program, BuildContext& ctx) {
     linkObjects(ctx.options.clang, link_inputs, output,
                 generated.needs_thread_link || runtime.needs_thread_link,
                 generated.needs_ssl_link || runtime.needs_ssl_link,
-                generated.needs_server_link || runtime.needs_server_link);
+                generated.needs_server_link || runtime.needs_server_link,
+                generated.needs_panic_link || runtime.needs_panic_link);
 
     if (!ctx.options.keep_ir) {
         std::error_code ec;
@@ -298,7 +317,7 @@ CompileResult compileObjectInput(BuildContext& ctx) {
         link_inputs.push_back(runtime.object);
     }
     linkObjects(ctx.options.clang, link_inputs, output, runtime.needs_thread_link,
-                runtime.needs_ssl_link, runtime.needs_server_link);
+                runtime.needs_ssl_link, runtime.needs_server_link, runtime.needs_panic_link);
     result.executable = output;
     return result;
 }
@@ -350,7 +369,7 @@ CompileResult compileLlvmIrInput(BuildContext& ctx) {
         link_inputs.push_back(runtime.object);
     }
     linkObjects(ctx.options.clang, link_inputs, output, runtime.needs_thread_link,
-                runtime.needs_ssl_link, runtime.needs_server_link);
+                runtime.needs_ssl_link, runtime.needs_server_link, runtime.needs_panic_link);
     result.executable = output;
     return result;
 }
@@ -384,6 +403,46 @@ std::string defaultClang() {
     return "clang";
 }
 
+std::string getClangTargetTriple(const std::string& clang) {
+    static std::unordered_map<std::string, std::string> cache;
+    const auto found = cache.find(clang);
+    if (found != cache.end()) {
+        return found->second;
+    }
+
+    const std::string command = clang + " -print-target-triple 2>/dev/null";
+    std::string triple;
+    FILE* pipe = popen(command.c_str(), "r");
+    if (pipe != nullptr) {
+        char buffer[256];
+        if (std::fgets(buffer, sizeof(buffer), pipe) != nullptr) {
+            triple = buffer;
+            while (!triple.empty() && (triple.back() == '\n' || triple.back() == '\r')) {
+                triple.pop_back();
+            }
+        }
+        (void)pclose(pipe);
+    }
+
+    if (triple.empty()) {
+        triple = "unknown-unknown-unknown";
+    }
+    cache.emplace(clang, triple);
+    return triple;
+}
+
+CompileResult compileProgram(const Program& program, const CompileOptions& options) {
+    BuildContext ctx = makeBuildContext(options);
+    try {
+        CompileResult result = compileXlangProgram(program, ctx);
+        cleanupBuildContext(ctx);
+        return result;
+    } catch (...) {
+        cleanupBuildContext(ctx);
+        throw;
+    }
+}
+
 CompileResult compileSource(const std::string& source, const CompileOptions& options) {
     const Program program = parseSource(source);
     BuildContext ctx = makeBuildContext(options);
@@ -398,6 +457,8 @@ CompileResult compileSource(const std::string& source, const CompileOptions& opt
 }
 
 CompileResult compileFile(const CompileOptions& options) {
+    rejectTestFileForBuildRun(options.input);
+
     const ResolvedBuildInputs resolved = resolveBuildInputs(
         [&]() {
             std::vector<std::filesystem::path> all = {options.input};
@@ -445,6 +506,8 @@ CompileResult compileFile(const CompileOptions& options) {
 }
 
 RunResult runFile(const RunOptions& options) {
+    rejectTestFileForBuildRun(options.input);
+
     const std::filesystem::path work_dir = makeBuildWorkDir();
     const std::filesystem::path executable = work_dir / "program";
 
