@@ -7,6 +7,8 @@ import {
   runCompiler,
 } from "./diagnostics";
 import { formatXlangDocument } from "./formatter";
+import { registerDefinitions, registerHover } from "./hover";
+import { getLanguageIndex, resetLanguageIndex } from "./languageIndex";
 
 let diagnostics: XlangDiagnostics | undefined;
 
@@ -15,6 +17,14 @@ export function activate(context: vscode.ExtensionContext): void {
   diagnostics = new XlangDiagnostics(collection);
   context.subscriptions.push(collection, { dispose: () => diagnostics?.dispose() });
 
+  const refreshIndex = (doc?: vscode.TextDocument) => {
+    if (doc?.languageId === "xlang") {
+      getLanguageIndex().invalidate(doc.uri);
+    } else {
+      resetLanguageIndex();
+    }
+  };
+
   context.subscriptions.push(
     vscode.workspace.onDidOpenTextDocument((doc) => {
       if (doc.languageId === "xlang") {
@@ -22,11 +32,13 @@ export function activate(context: vscode.ExtensionContext): void {
       }
     }),
     vscode.workspace.onDidSaveTextDocument((doc) => {
+      refreshIndex(doc);
       if (doc.languageId === "xlang") {
         void diagnostics?.refresh(doc);
       }
     }),
     vscode.workspace.onDidChangeTextDocument((event) => {
+      refreshIndex(event.document);
       const config = vscode.workspace.getConfiguration("xlang");
       if (!config.get<boolean>("diagnosticsOnType", false)) {
         return;
@@ -37,6 +49,7 @@ export function activate(context: vscode.ExtensionContext): void {
     }),
     vscode.workspace.onDidCloseTextDocument((doc) => {
       diagnostics?.clear(doc);
+      refreshIndex(doc);
     })
   );
 
@@ -58,6 +71,8 @@ export function activate(context: vscode.ExtensionContext): void {
   );
 
   registerCompletions(context);
+  registerHover(context);
+  registerDefinitions(context);
 
   context.subscriptions.push(
     vscode.commands.registerCommand("xlang.formatDocument", async () => {
@@ -77,6 +92,7 @@ export function activate(context: vscode.ExtensionContext): void {
 export function deactivate(): void {
   diagnostics?.dispose();
   diagnostics = undefined;
+  resetLanguageIndex();
 }
 
 async function runCurrentFile(): Promise<void> {
@@ -92,16 +108,12 @@ async function runCurrentFile(): Promise<void> {
 
   const filePath = editor.document.uri.fsPath;
   if (isTestFile(filePath)) {
-    vscode.window.showWarningMessage("*.test.xlang dosyaları `xlang test` ile çalışır.");
+    vscode.window.showWarningMessage("*.test.xlang dosyaları `xlank test` ile çalışır.");
     return;
   }
 
   const cwd = path.dirname(filePath);
-  const terminal = vscode.window.createTerminal({
-    name: "xlang run",
-    cwd,
-  });
-
+  const terminal = vscode.window.createTerminal({ name: "xlang run", cwd });
   terminal.show();
   const binary = (await resolveCompilerPath()) ?? "xlank";
   terminal.sendText(`${quote(binary)} run ${quote(filePath)}`);
@@ -120,7 +132,7 @@ async function buildCurrentFile(): Promise<void> {
 
   const filePath = editor.document.uri.fsPath;
   if (isTestFile(filePath)) {
-    vscode.window.showWarningMessage("*.test.xlang build edilemez; `xlang test` kullan.");
+    vscode.window.showWarningMessage("*.test.xlang build edilemez; `xlank test` kullan.");
     return;
   }
 
@@ -152,11 +164,7 @@ async function testCurrentFile(): Promise<void> {
 
   const filePath = editor.document.uri.fsPath;
   const cwd = resolveWorkspaceRoot(filePath);
-  const terminal = vscode.window.createTerminal({
-    name: "xlang test",
-    cwd,
-  });
-
+  const terminal = vscode.window.createTerminal({ name: "xlang test", cwd });
   terminal.show();
   const binary = (await resolveCompilerPath()) ?? "xlank";
 
@@ -171,11 +179,7 @@ async function testCurrentFile(): Promise<void> {
 
 async function testSuite(): Promise<void> {
   const cwd = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath ?? process.cwd();
-  const terminal = vscode.window.createTerminal({
-    name: "xlang test",
-    cwd,
-  });
-
+  const terminal = vscode.window.createTerminal({ name: "xlang test", cwd });
   terminal.show();
   const binary = (await resolveCompilerPath()) ?? "xlank";
   const testRoot = resolveTestRoot(cwd);

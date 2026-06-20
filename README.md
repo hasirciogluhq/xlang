@@ -22,14 +22,15 @@
 |------|---------|
 | Types | `int32`, `int64`, `float`, `double`, `bool`, `string`, struct, pointer, array |
 | Functions | Overload, variadic (`...`), `export` / `external` |
-| Modules | `import`, `from … import`, multi-file compilation |
+| Modules | `import`, `import * as`, directory packages (`libs/http/`), `XLANG_PATH` |
 | Memory | `new` / `delete`, struct fields, heap |
 | Control flow | `if` / `else`, `while` |
 | Strings | Concat (`+`), `printf`-style formatted `print` |
 | Concurrency | Go-routine-like `spawn` / `wait_all` (scheduler in xlang) |
 | Linking | Link external `.o` files |
 
-Full language reference: **[docs/LANGUAGE.md](docs/LANGUAGE.md)**
+Full language reference: **[docs/LANGUAGE.md](docs/LANGUAGE.md)**  
+VS Code extension (IntelliSense, hover, diagnostics): **[vscode/README.md](vscode/README.md)**
 
 ## Requirements
 
@@ -61,9 +62,20 @@ Runtime sources live in `runtime/` and are embedded into the binary at build tim
 # Struct + heap
 ./build/xlank run examples/types.xlang
 
-# Parallel scheduler
-./build/xlank run examples/scheduler.xlang
+# HTTP server
+./build/xlank run examples/http_server.xlang
 ```
+
+## VS Code extension
+
+IntelliSense, hover documentation, import-aware completions, diagnostics, and run/test commands:
+
+```bash
+cd vscode && bun install && bun run compile && bun run package
+code --install-extension xlang-0.6.0.vsix
+```
+
+See [vscode/README.md](vscode/README.md) for details.
 
 ## CLI
 
@@ -106,21 +118,27 @@ Runs Vitest-style tests from `*.test.xlang` files (one process per file).
 
 ```bash
 xlank test                    # default: test/xlang/
-xlank test path/to/tests
+xlank test http               # pattern filter
+xlank test --parallel         # parallel Test* functions
 ```
 
-Test API (runtime `test.xlang`): `describe`, `it`, `expect_eq`, `expect_str_eq`, `expect_true`, `expect_false`, `test_summary`.
+Test API (`libs/test.xlang`): `expect(actual).toEqual(expected)`, `expectFn(fn).toThrow()`, `Test*` functions.
 
 ```xlang
-fn test_add() {
-    expect_eq(1 + 1, 2)
+import test from test
+import router from http/router
+
+fn TestPingRoute() {
+    local r = router.NewRouter()
+    r.Get("/ping", handle_ping)
+    router.DispatchRequest(r, "GET", "/ping")
     return 0
 }
 
-fn main() {
-    describe("math")
-    it("adds numbers", test_add)
-    return test_summary()   // exit code = failure count
+fn handle_ping() {
+    router.RespondText(200, "pong")
+    expect(1).toEqual(1)
+    return 0
 }
 ```
 
@@ -130,19 +148,14 @@ fn main() {
 xlang/
 ├── src/              # xlank compiler (lexer, parser, codegen, linker)
 ├── include/xlang/    # C++ headers
-├── runtime/          # Self-hosting runtime (xlang)
-│   ├── runtime.xlang     # print export
-│   ├── scheduler.xlang   # spawn, wait_all, worker pool
-│   ├── net.xlang         # fetch HTTP/HTTPS client
-│   ├── json.xlang        # json_get_* parse helpers
-│   └── test.xlang        # describe / it / expect_*
+├── runtime/          # Embedded runtime package (print, scheduler, net, errors)
+├── libs/             # Importable libraries (json, http/, test, process)
+│   └── http/         # Router + server package
 ├── examples/         # Sample programs
-├── test/
-│   ├── main.xlang + lib.xlang   # external link demo
-│   └── xlang/                   # *.test.xlang suite
-├── cmake/            # Runtime embed script
-└── docs/
-    └── LANGUAGE.md   # Language reference
+├── test/xlang/       # *.test.xlang suite
+├── vscode/           # VS Code extension (IntelliSense, hover, diagnostics)
+├── cmake/            # Embed scripts (runtime + libs)
+└── docs/LANGUAGE.md
 ```
 
 ## Architecture overview
@@ -157,15 +170,18 @@ xlang/
 
 ### Runtime
 
-User programs are linked with the **runtime** by default. The runtime provides:
+User programs are linked with the **runtime** by default (`runtime/` package):
 
-- **`print(...)`** — variadic, single function (`printf`-based)
-- **`fetch(url)`** — HTTP/HTTPS GET client (returns status + body)
-- **`json_get_string/int/bool(json, key)`** — JSON field helpers
-- **`spawn(bound_call)`** — Go-routine-like task queue
-- **`wait_all()`**, **`cpu()`**, **`add_worker()`**
+- **`print(...)`** — variadic formatted output
+- **`fetch(url)`** — HTTP/HTTPS GET (`runtime/net.xlang`)
+- **`spawn` / `wait_all` / `cpu` / `add_worker`** — scheduler (`runtime/scheduler.xlang`)
 
-Scheduler logic (`queue`, `worker_loop`, mutex/cond) lives entirely in `runtime/scheduler.xlang`. HTTP/TCP logic lives in `runtime/net.xlang`. Syscalls are only for OS access such as CPU count, mutex, condition variables, thread creation, and raw socket I/O.
+Importable **libs** (embedded at compile time):
+
+- **`json`** — parse + typed field access
+- **`http`** — router + TCP server (`ListenAndServe` with listen callback)
+- **`test`** — Vitest-style `expect`
+- **`process`** — fork, pipe, fd, env, `file_read`
 
 ### Library + external linking
 
@@ -191,7 +207,9 @@ fn main() {
 
 | Variable | Description |
 |----------|-------------|
-| `XLANG_PATH` | Colon-separated module search directories (`modul.xlang`) |
+| `XLANG_PATH` | Colon-separated module search directories |
+| `XLANG_RUNTIME_DIR` | Override runtime source tree (development) |
+| `XLANG_LIBS_DIR` | Override libs source tree (development) |
 
 ## Status
 

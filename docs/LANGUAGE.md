@@ -310,43 +310,58 @@ Array runtime is codegen'd by the compiler as `%array.hdr`.
 
 ## Modules and import
 
-### Full module import
+xlang resolves modules from:
 
-```xlang
-import scheduler
-// all symbols exported by scheduler are merged
+1. **`libs/`** — importable standard library (`json`, `http`, `process`, …)
+2. **`runtime/`** — linked automatically; also importable (`scheduler`, `net`)
+3. **Relative paths** — `import foo from ./foo`
+4. **`XLANG_PATH`** — colon-separated extra search directories
+
+### Directory packages
+
+A folder under `libs/` is a **package** — no barrel file required:
+
+```
+libs/http/router.xlang
+libs/http/server.xlang
 ```
 
-### Alias
-
 ```xlang
-import math as m
+import * as http from http          // merges http/*
+import Router from http             // submodule http/router
+import router from http/router      // single file
 ```
 
-### Selective import
+### Import syntax
 
 ```xlang
-from math import add
-from math import add as sum
+import * as json from json                    // namespace — json.parse(...)
+import Router from http                       // submodule or symbol
+import * as http, Router from http             // mixed
+import router from http/router                 // legacy alias (path with /)
+import test from test                          // same-name alias
+from json import parse                         // selective (legacy)
 ```
 
-### Module resolution
+**Rules**
 
-1. Directory of the importing file: `modul.xlang`
-2. Directories in the `XLANG_PATH` environment variable
+- `import * as X from M` — exported symbols available as `X.Name`
+- `import Name from M` — submodule (`http/router`) or exported symbol
+- `import alias from M/path` — prefix import when module path contains `/`
+- Bare `import M` merges all symbols (including private) into the current file
 
-Same directory with `math.xlang` + `hello.xlang`:
+### libs layout
 
-```xlang
-// math.xlang
-export fn add(a, b) { return a + b }
+| Module | Description |
+|--------|-------------|
+| `json` | `parse`, field accessors |
+| `http` | Router + TCP server package |
+| `http/router` | Routes, params, `RespondText/Json/Html` |
+| `http/server` | `ListenAndServe`, listen callback |
+| `test` | Vitest-style `expect` |
+| `process` | fork, pipe, fd, env, `file_read` |
 
-// hello.xlang
-from math import add
-fn main() { print(add(1, 2)) }
-```
-
-**Rule:** `import modul` (no alias) merges all symbols (including private). `from modul import x` only imports `export` symbols.
+See [vscode/README.md](../vscode/README.md) for IDE completion of imported modules.
 
 ---
 

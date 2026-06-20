@@ -2,10 +2,18 @@
   "name": "xlang",
   "displayName": "xlang",
   "description": "Syntax highlighting, snippets, diagnostics, and formatting for the xlang programming language",
-  "version": "0.5.0",
+  "version": "1.0.0",
   "publisher": "xlang",
   "license": "MIT",
-  "packageManager": "bun@1.2.0",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/hasirciogluhq/xlang.git"
+  },
+  "homepage": "https://github.com/hasirciogluhq/xlang#readme",
+  "bugs": {
+    "url": "https://github.com/hasirciogluhq/xlang/issues"
+  },
+  "packageManager": "bun@1.3.14",
   "engines": {
     "vscode": "^1.85.0"
   },
@@ -15,7 +23,10 @@
     "Formatters"
   ],
   "keywords": [
-    "xlang"
+    "xlang",
+    "intellisense",
+    "completion",
+    "hover"
   ],
   "activationEvents": [
     "onLanguage:xlang"

@@ -3,6 +3,7 @@ import * as path from "node:path";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import * as vscode from "vscode";
+import { buildEnv, collectModuleSearchPaths } from "./paths";
 
 const execFileAsync = promisify(execFile);
 
@@ -196,61 +197,7 @@ export async function resolveXlankPath(): Promise<string | undefined> {
   return "xlank";
 }
 
-export function buildEnv(filePath?: string): NodeJS.ProcessEnv {
-  const env = { ...process.env };
-  const paths = collectModuleSearchPaths(filePath);
-  const existing = env.XLANG_PATH?.split(":").filter(Boolean) ?? [];
-  env.XLANG_PATH = [...new Set([...paths, ...existing])].join(":");
-  return env;
-}
-
-function collectModuleSearchPaths(filePath?: string): string[] {
-  const paths: string[] = [];
-  const seen = new Set<string>();
-
-  const addDir = (dir: string) => {
-    const norm = path.normalize(dir);
-    if (seen.has(norm) || !fs.existsSync(norm)) {
-      return;
-    }
-    seen.add(norm);
-    paths.push(norm);
-  };
-
-  const addRuntime = (base: string) => {
-    addDir(path.join(base, "runtime"));
-  };
-
-  const addLibs = (base: string) => {
-    addDir(path.join(base, "libs"));
-  };
-
-  if (filePath) {
-    let dir = path.dirname(filePath);
-    for (let i = 0; i < 12; i += 1) {
-      addRuntime(dir);
-      addLibs(dir);
-      addDir(dir);
-      const parent = path.dirname(dir);
-      if (parent === dir) {
-        break;
-      }
-      dir = parent;
-    }
-  }
-
-  for (const folder of vscode.workspace.workspaceFolders ?? []) {
-    const root = folder.uri.fsPath;
-    addRuntime(root);
-    addLibs(root);
-    addRuntime(path.join(root, ".."));
-    addLibs(path.join(root, ".."));
-    addDir(root);
-    addDir(path.join(root, ".."));
-  }
-
-  return paths;
-}
+export { buildEnv, collectModuleSearchPaths } from "./paths";
 
 function isExecError(
   error: unknown
