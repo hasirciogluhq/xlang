@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>xlang — LLVM-native language with a self-hosting runtime</title>
-  <meta name="description" content="xlang compiles to native code with LLVM. Runtime, scheduler, and HTTP stack written in xlang. Simple syntax, real performance.">
+  <meta name="description" content="xlang compiles to native code with LLVM. Runtime, scheduler, and HTTP stack written in xlang.">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
@@ -23,218 +23,273 @@
     }
     body { font-family: var(--font-sans); color: var(--color-ink); background: var(--color-canvas); }
     code, pre { font-family: var(--font-mono); }
+    .ref-table { border-collapse: collapse; width: 100%; font-size: 13px; }
+    .ref-table th, .ref-table td {
+      border: 1px solid var(--color-border);
+      padding: 0.5rem 0.75rem;
+      text-align: left;
+      vertical-align: top;
+    }
+    .ref-table th { background: var(--color-subtle); font-weight: 600; color: var(--color-ink); }
   </style>
 </head>
 <body class="antialiased">
+
   <!-- Nav -->
-  <header class="sticky top-0 z-50 border-b border-[var(--color-border)] bg-white/80 backdrop-blur-md">
+  <header class="sticky top-0 z-50 border-b border-[var(--color-border)] bg-white/90 backdrop-blur-sm">
     <div class="mx-auto flex h-14 max-w-6xl items-center justify-between px-6">
-      <a href="#" class="flex items-center gap-2 font-semibold tracking-tight text-[var(--color-ink)]">
-        <span class="flex h-8 w-8 items-center justify-center rounded-md bg-[var(--color-accent)] text-sm font-bold text-white">x</span>
+      <a href="#" class="flex items-center gap-2.5 font-semibold tracking-tight text-[var(--color-ink)]">
+        <span class="flex h-7 w-7 items-center justify-center rounded bg-[var(--color-ink)] text-xs font-bold text-white">x</span>
         xlang
       </a>
-      <nav class="hidden items-center gap-8 text-sm text-[var(--color-muted)] md:flex">
+      <nav class="hidden items-center gap-7 text-sm text-[var(--color-muted)] md:flex">
         <a href="#features" class="hover:text-[var(--color-ink)] transition-colors">Features</a>
-        <a href="#code" class="hover:text-[var(--color-ink)] transition-colors">Syntax</a>
-        <a href="#runtime" class="hover:text-[var(--color-ink)] transition-colors">Runtime</a>
+        <a href="#repository" class="hover:text-[var(--color-ink)] transition-colors">Repository</a>
+        <a href="#code" class="hover:text-[var(--color-ink)] transition-colors">Example</a>
+        <a href="#toolchain" class="hover:text-[var(--color-ink)] transition-colors">CLI</a>
         <a href="https://github.com/hasirciogluhq/xlang" class="hover:text-[var(--color-ink)] transition-colors" target="_blank" rel="noopener">GitHub</a>
       </nav>
-      <a href="#start" class="rounded-md bg-[var(--color-accent)] px-4 py-2 text-sm font-medium text-white hover:opacity-90 transition-opacity">
+      <a href="#start" class="rounded-md bg-[var(--color-ink)] px-4 py-2 text-sm font-medium text-white hover:bg-[#1a1917] transition-colors">
         Get started
       </a>
     </div>
   </header>
 
   <!-- Hero -->
-  <section class="relative overflow-hidden border-b border-[var(--color-border)] bg-[var(--color-subtle)]">
-    <div class="pointer-events-none absolute inset-0 bg-[radial-gradient(ellipse_80%_50%_at_50%_-20%,rgba(35,131,226,0.12),transparent)]"></div>
-    <div class="relative mx-auto max-w-6xl px-6 py-24 md:py-32">
-      <div class="max-w-3xl">
-        <p class="mb-4 inline-flex items-center gap-2 rounded-full border border-[var(--color-border)] bg-white px-3 py-1 text-xs font-medium text-[var(--color-muted)]">
-          <span class="h-1.5 w-1.5 rounded-full bg-emerald-500"></span>
-          Native LLVM · Self-hosting runtime
-        </p>
-        <h1 class="text-4xl font-semibold leading-tight tracking-tight text-[var(--color-ink)] md:text-6xl md:leading-[1.1]">
-          A small language that compiles to fast, native code.
-        </h1>
-        <p class="mt-6 text-lg leading-relaxed text-[var(--color-muted)] md:text-xl">
-          xlang keeps the compiler thin and pushes scheduler, HTTP, sync, and I/O into a runtime written in xlang itself. C/Go-flavored syntax. No VM. No garbage collector.
-        </p>
-        <div class="mt-10 flex flex-wrap items-center gap-4">
-          <a href="#start" class="rounded-md bg-[var(--color-accent)] px-6 py-3 text-sm font-medium text-white shadow-sm hover:opacity-90 transition-opacity">
-            Build your first binary
-          </a>
-          <a href="/api/info" class="rounded-md border border-[var(--color-border)] bg-white px-6 py-3 text-sm font-medium text-[var(--color-ink)] hover:bg-[var(--color-subtle)] transition-colors">
-            API · /api/info
-          </a>
-        </div>
+  <section class="border-b border-[var(--color-border)] bg-[var(--color-subtle)]">
+    <div class="mx-auto max-w-6xl px-6 py-20 md:py-28">
+      <p class="mb-3 text-xs font-medium uppercase tracking-widest text-[var(--color-muted)]">
+        LLVM &middot; Native binaries &middot; MIT
+      </p>
+      <h1 class="max-w-2xl text-4xl font-semibold leading-tight tracking-tight md:text-5xl md:leading-[1.15]">
+        A programming language that compiles to native code.
+      </h1>
+      <p class="mt-5 max-w-xl text-base leading-relaxed text-[var(--color-muted)] md:text-lg">
+        Thin C++/LLVM compiler. Scheduler, HTTP, sync, and I/O in a runtime written in xlang.
+        C/Go-flavored syntax — no VM, no garbage collector.
+      </p>
+      <div class="mt-8 flex flex-wrap items-center gap-3">
+        <a href="#start" class="rounded-md bg-[var(--color-accent)] px-5 py-2.5 text-sm font-medium text-white hover:opacity-90 transition-opacity">
+          Build from source
+        </a>
+        <a href="https://github.com/hasirciogluhq/xlang" class="rounded-md border border-[var(--color-border)] bg-white px-5 py-2.5 text-sm font-medium text-[var(--color-ink)] hover:bg-[var(--color-subtle)] transition-colors" target="_blank" rel="noopener">
+          View on GitHub
+        </a>
       </div>
 
-      <!-- Stats -->
-      <dl class="mt-16 grid grid-cols-2 gap-6 border-t border-[var(--color-border)] pt-10 md:grid-cols-4">
-        <div>
-          <dt class="text-xs font-medium uppercase tracking-wider text-[var(--color-muted)]">Backend</dt>
-          <dd class="mt-1 text-2xl font-semibold">LLVM</dd>
+      <dl class="mt-14 grid grid-cols-2 gap-px overflow-hidden rounded-lg border border-[var(--color-border)] bg-[var(--color-border)] md:grid-cols-4">
+        <div class="bg-white px-5 py-4">
+          <dt class="text-xs text-[var(--color-muted)]">Backend</dt>
+          <dd class="mt-0.5 text-lg font-semibold">LLVM</dd>
         </div>
-        <div>
-          <dt class="text-xs font-medium uppercase tracking-wider text-[var(--color-muted)]">Concurrency</dt>
-          <dd class="mt-1 text-2xl font-semibold">spawn</dd>
+        <div class="bg-white px-5 py-4">
+          <dt class="text-xs text-[var(--color-muted)]">Concurrency</dt>
+          <dd class="mt-0.5 text-lg font-semibold">spawn</dd>
         </div>
-        <div>
-          <dt class="text-xs font-medium uppercase tracking-wider text-[var(--color-muted)]">HTTP</dt>
-          <dd class="mt-1 text-2xl font-semibold">Built-in</dd>
+        <div class="bg-white px-5 py-4">
+          <dt class="text-xs text-[var(--color-muted)]">HTTP</dt>
+          <dd class="mt-0.5 text-lg font-semibold">Built-in</dd>
         </div>
-        <div>
-          <dt class="text-xs font-medium uppercase tracking-wider text-[var(--color-muted)]">Deploy</dt>
-          <dd class="mt-1 text-2xl font-semibold">Native</dd>
+        <div class="bg-white px-5 py-4">
+          <dt class="text-xs text-[var(--color-muted)]">Platforms</dt>
+          <dd class="mt-0.5 text-lg font-semibold">macOS · Linux</dd>
         </div>
       </dl>
     </div>
   </section>
 
   <!-- Features -->
-  <section id="features" class="mx-auto max-w-6xl px-6 py-24">
-    <div class="max-w-2xl">
-      <h2 class="text-3xl font-semibold tracking-tight">Everything you need, nothing you don&apos;t</h2>
-      <p class="mt-4 text-[var(--color-muted)] leading-relaxed">
-        Static types, modules, structs, and a global runtime — available without ceremony.
-      </p>
-    </div>
-    <div class="mt-14 grid gap-6 md:grid-cols-2 lg:grid-cols-3">
-      <article class="rounded-xl border border-[var(--color-border)] bg-white p-6 shadow-sm">
-        <div class="mb-4 flex h-10 w-10 items-center justify-center rounded-lg bg-[var(--color-accent-soft)] text-[var(--color-accent)]">
-          <svg class="h-5 w-5" fill="none" stroke="currentColor" stroke-width="1.5" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M17.25 6.75 22.5 12l-5.25 5.25m-10.5 0L1.5 12l5.25-5.25m7.5-3-4.5 16.5"/></svg>
-        </div>
-        <h3 class="font-semibold">Native codegen</h3>
-        <p class="mt-2 text-sm leading-relaxed text-[var(--color-muted)]">xlank lowers xlang to LLVM IR and links with Clang. Single static binaries, predictable performance.</p>
+  <section id="features" class="mx-auto max-w-6xl px-6 py-20">
+    <h2 class="text-2xl font-semibold tracking-tight">Features</h2>
+    <p class="mt-2 max-w-lg text-sm text-[var(--color-muted)]">
+      Static types, modules, and a global runtime linked without imports.
+    </p>
+    <div class="mt-10 grid gap-4 md:grid-cols-2 lg:grid-cols-3">
+      <article class="rounded-lg border border-[var(--color-border)] p-5">
+        <h3 class="text-sm font-semibold">Native codegen</h3>
+        <p class="mt-1.5 text-sm leading-relaxed text-[var(--color-muted)]"><code>xlank</code> lowers to LLVM IR and links with Clang. Single static binaries.</p>
       </article>
-      <article class="rounded-xl border border-[var(--color-border)] bg-white p-6 shadow-sm">
-        <div class="mb-4 flex h-10 w-10 items-center justify-center rounded-lg bg-[var(--color-accent-soft)] text-[var(--color-accent)]">
-          <svg class="h-5 w-5" fill="none" stroke="currentColor" stroke-width="1.5" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M3.75 13.5l10.5-11.25L12 10.5h8.25L9.75 21.75 12 13.5H3.75z"/></svg>
-        </div>
-        <h3 class="font-semibold">Runtime in xlang</h3>
-        <p class="mt-2 text-sm leading-relaxed text-[var(--color-muted)]">print, spawn, fetch, file I/O, sync primitives — implemented in the language, linked automatically.</p>
+      <article class="rounded-lg border border-[var(--color-border)] p-5">
+        <h3 class="text-sm font-semibold">Runtime in xlang</h3>
+        <p class="mt-1.5 text-sm leading-relaxed text-[var(--color-muted)]">print, spawn, fetch, file I/O — implemented in the language, embedded at build time.</p>
       </article>
-      <article class="rounded-xl border border-[var(--color-border)] bg-white p-6 shadow-sm">
-        <div class="mb-4 flex h-10 w-10 items-center justify-center rounded-lg bg-[var(--color-accent-soft)] text-[var(--color-accent)]">
-          <svg class="h-5 w-5" fill="none" stroke="currentColor" stroke-width="1.5" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M12 21a9.004 9.004 0 0 0 8.716-6.747M12 21a9.004 9.004 0 0 1-8.716-6.747M12 21c2.485 0 4.5-4.03 4.5-9S14.485 3 12 3m0 18c-2.485 0-4.5-4.03-4.5-9S9.515 3 12 3m0 0a8.997 8.997 0 0 1 7.843 4.582M12 3a8.997 8.997 0 0 0-7.843 4.582m15.686 0A11.953 11.953 0 0 1 12 10.5c-2.998 0-5.74-1.1-7.843-2.918m15.686 0A8.959 8.959 0 0 1 21 12c0 .778-.099 1.533-.284 2.253m0 0A17.919 17.919 0 0 1 12 16.5a17.92 17.92 0 0 1-8.716-2.247m0 0A8.966 8.966 0 0 1 3 12c0-1.264.26-2.467.732-3.553"/></svg>
-        </div>
-        <h3 class="font-semibold">HTTP &amp; fetch</h3>
-        <p class="mt-2 text-sm leading-relaxed text-[var(--color-muted)]">Gin-style router, middleware, JSON responses — plus HTTPS client built into the runtime.</p>
+      <article class="rounded-lg border border-[var(--color-border)] p-5">
+        <h3 class="text-sm font-semibold">HTTP &amp; fetch</h3>
+        <p class="mt-1.5 text-sm leading-relaxed text-[var(--color-muted)]">Router, middleware, JSON/HTML responses. HTTPS client via OpenSSL bridge.</p>
       </article>
-      <article class="rounded-xl border border-[var(--color-border)] bg-white p-6 shadow-sm">
-        <div class="mb-4 flex h-10 w-10 items-center justify-center rounded-lg bg-[var(--color-accent-soft)] text-[var(--color-accent)]">
-          <svg class="h-5 w-5" fill="none" stroke="currentColor" stroke-width="1.5" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M7.5 21 3 16.5m0 0L7.5 12M3 16.5h13.5m0-13.5L21 7.5m0 0L16.5 12M21 7.5H7.5"/></svg>
-        </div>
-        <h3 class="font-semibold">Modules</h3>
-        <p class="mt-2 text-sm leading-relaxed text-[var(--color-muted)]">Directory packages, selective imports, and libs/ standard library — json, http, test, process.</p>
+      <article class="rounded-lg border border-[var(--color-border)] p-5">
+        <h3 class="text-sm font-semibold">Modules &amp; libs</h3>
+        <p class="mt-1.5 text-sm leading-relaxed text-[var(--color-muted)]">Directory packages under <code>libs/</code> — http, json, test, process.</p>
       </article>
-      <article class="rounded-xl border border-[var(--color-border)] bg-white p-6 shadow-sm">
-        <div class="mb-4 flex h-10 w-10 items-center justify-center rounded-lg bg-[var(--color-accent-soft)] text-[var(--color-accent)]">
-          <svg class="h-5 w-5" fill="none" stroke="currentColor" stroke-width="1.5" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M9 12.75 11.25 15 15 9.75m-3-7.036A11.959 11.959 0 0 1 3.598 6 11.99 11.99 0 0 0 3 9.749c0 5.592 3.824 10.29 9 11.623 5.176-1.332 9-6.03 9-11.622 0-1.31-.21-2.571-.598-3.751h-.152c-3.196 0-6.1-1.248-8.25-3.285Z"/></svg>
-        </div>
-        <h3 class="font-semibold">Sync primitives</h3>
-        <p class="mt-2 text-sm leading-relaxed text-[var(--color-muted)]">Lock, RWLock, AtomicInt — embeddable in structs, method-style API, worker pool via go spawn.</p>
+      <article class="rounded-lg border border-[var(--color-border)] p-5">
+        <h3 class="text-sm font-semibold">Sync primitives</h3>
+        <p class="mt-1.5 text-sm leading-relaxed text-[var(--color-muted)]">Lock, RWLock, AtomicInt — embeddable in structs, worker pools via spawn.</p>
       </article>
-      <article class="rounded-xl border border-[var(--color-border)] bg-white p-6 shadow-sm">
-        <div class="mb-4 flex h-10 w-10 items-center justify-center rounded-lg bg-[var(--color-accent-soft)] text-[var(--color-accent)]">
-          <svg class="h-5 w-5" fill="none" stroke="currentColor" stroke-width="1.5" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M12 6v6h4.5m4.5 0a9 9 0 1 1-18 0 9 9 0 0 1 18 0Z"/></svg>
-        </div>
-        <h3 class="font-semibold">Time API</h3>
-        <p class="mt-2 text-sm leading-relaxed text-[var(--color-muted)]">Date-like Now(), Format(), ElapsedMs() — globally available, no imports required.</p>
+      <article class="rounded-lg border border-[var(--color-border)] p-5">
+        <h3 class="text-sm font-semibold">Time API</h3>
+        <p class="mt-1.5 text-sm leading-relaxed text-[var(--color-muted)]">Now(), Format(), ElapsedMs() — globally available, TypeScript Date-like.</p>
       </article>
     </div>
   </section>
 
-  <!-- Code -->
-  <section id="code" class="border-y border-[var(--color-border)] bg-[var(--color-subtle)] py-24">
+  <!-- Repository -->
+  <section id="repository" class="border-y border-[var(--color-border)] bg-[var(--color-subtle)] py-20">
     <div class="mx-auto max-w-6xl px-6">
-      <div class="grid items-start gap-12 lg:grid-cols-2">
-        <div>
-          <h2 class="text-3xl font-semibold tracking-tight">Readable syntax, serious output</h2>
-          <p class="mt-4 text-[var(--color-muted)] leading-relaxed">
-            Functions, structs, imports, and spawn — familiar if you&apos;ve written Go or C. The compiler handles LLVM, linking, and runtime injection.
-          </p>
-          <ul class="mt-8 space-y-3 text-sm text-[var(--color-muted)]">
-            <li class="flex items-center gap-2"><span class="text-[var(--color-accent)]">→</span> Static typing with int32, string, struct, array</li>
-            <li class="flex items-center gap-2"><span class="text-[var(--color-accent)]">→</span> Variadic print, overload resolution</li>
-            <li class="flex items-center gap-2"><span class="text-[var(--color-accent)]">→</span> Vitest-style test runner (.test.xlang)</li>
-            <li class="flex items-center gap-2"><span class="text-[var(--color-accent)]">→</span> VS Code extension with IntelliSense</li>
-          </ul>
-        </div>
-        <div class="overflow-hidden rounded-xl border border-[var(--color-border)] bg-[#1e1e1e] shadow-lg">
-          <div class="flex items-center gap-2 border-b border-white/10 px-4 py-3">
-            <span class="h-3 w-3 rounded-full bg-[#ff5f57]"></span>
-            <span class="h-3 w-3 rounded-full bg-[#febc2e]"></span>
-            <span class="h-3 w-3 rounded-full bg-[#28c840]"></span>
-            <span class="ml-2 text-xs text-white/40">hello.xlang</span>
-          </div>
-          <pre class="overflow-x-auto p-5 text-[13px] leading-6 text-[#d4d4d4]"><code><span class="text-[#569cd6]">import</span> * <span class="text-[#569cd6]">as</span> http <span class="text-[#569cd6]">from</span> http
+      <h2 class="text-2xl font-semibold tracking-tight">Repository</h2>
+      <p class="mt-2 text-sm text-[var(--color-muted)]">Source, docs, issues, and examples on GitHub.</p>
+      <div class="mt-8 overflow-hidden rounded-lg border border-[var(--color-border)] bg-white">
+        <table class="ref-table">
+          <tbody>
+            <tr>
+              <th class="w-28">GitHub</th>
+              <td>
+                <a href="https://github.com/hasirciogluhq/xlang" class="text-[var(--color-accent)] hover:underline" target="_blank" rel="noopener">
+                  github.com/hasirciogluhq/xlang
+                </a>
+              </td>
+            </tr>
+            <tr>
+              <th>Clone</th>
+              <td><code class="text-[13px]">git clone https://github.com/hasirciogluhq/xlang.git</code></td>
+            </tr>
+            <tr>
+              <th>Docs</th>
+              <td class="text-[var(--color-muted)]">
+                <a href="https://github.com/hasirciogluhq/xlang/blob/main/docs/LANGUAGE.md" class="text-[var(--color-accent)] hover:underline" target="_blank" rel="noopener">LANGUAGE.md</a>
+                &middot;
+                <a href="https://github.com/hasirciogluhq/xlang/blob/main/README.md" class="text-[var(--color-accent)] hover:underline" target="_blank" rel="noopener">README.md</a>
+                &middot;
+                <a href="https://github.com/hasirciogluhq/xlang/tree/main/examples" class="text-[var(--color-accent)] hover:underline" target="_blank" rel="noopener">examples/</a>
+              </td>
+            </tr>
+            <tr>
+              <th>Issues</th>
+              <td>
+                <a href="https://github.com/hasirciogluhq/xlang/issues" class="text-[var(--color-accent)] hover:underline" target="_blank" rel="noopener">
+                  github.com/hasirciogluhq/xlang/issues
+                </a>
+              </td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </section>
 
-<span class="text-[#569cd6]">fn</span> <span class="text-[#dcdcaa]">handle_ping</span>(ctx: Context) {
-    ctx.String(<span class="text-[#b5cea8]">200</span>, <span class="text-[#ce9178]">"pong"</span>)
-    <span class="text-[#c586c0]">return</span> <span class="text-[#b5cea8]">0</span>
+  <!-- Code example -->
+  <section id="code" class="mx-auto max-w-6xl px-6 py-20">
+    <div class="grid items-start gap-12 lg:grid-cols-2">
+      <div>
+        <h2 class="text-2xl font-semibold tracking-tight">Example</h2>
+        <p class="mt-2 text-sm leading-relaxed text-[var(--color-muted)]">
+          HTTP server with the built-in router. Full reference in
+          <a href="https://github.com/hasirciogluhq/xlang/blob/main/docs/LANGUAGE.md" class="text-[var(--color-accent)] hover:underline" target="_blank" rel="noopener">LANGUAGE.md</a>.
+        </p>
+        <ul class="mt-6 space-y-2 text-sm text-[var(--color-muted)]">
+          <li>Static typing — int32, string, struct, array</li>
+          <li>Variadic print, function overloading</li>
+          <li>Vitest-style test runner (<code>*.test.xlang</code>)</li>
+          <li>VS Code extension with IntelliSense</li>
+        </ul>
+      </div>
+      <div class="overflow-hidden rounded-lg border border-[var(--color-border)]">
+        <div class="border-b border-[var(--color-border)] bg-[var(--color-subtle)] px-4 py-2 text-xs text-[var(--color-muted)]">
+          examples/http_server.xlang
+        </div>
+        <pre class="overflow-x-auto bg-[#fafafa] p-4 text-[13px] leading-6 text-[var(--color-ink)]"><code>import * as http from http
+
+fn handle_ping(ctx: Context) {
+    ctx.String(200, "pong")
+    return 0
 }
 
-<span class="text-[#569cd6]">fn</span> <span class="text-[#dcdcaa]">main</span>() {
-    <span class="text-[#569cd6]">local</span> r = http.NewRouter()
-    r.Get(<span class="text-[#ce9178]">"/ping"</span>, handle_ping)
-    r.ListenAndServe(<span class="text-[#ce9178]">"0.0.0.0"</span>, <span class="text-[#b5cea8]">8080</span>, on_listen)
-    <span class="text-[#c586c0]">return</span> <span class="text-[#b5cea8]">0</span>
+fn main() {
+    local r = http.NewRouter()
+    r.Get("/ping", handle_ping)
+    r.ListenAndServe("0.0.0.0", 8080, on_listen)
+    return 0
 }</code></pre>
-        </div>
       </div>
     </div>
   </section>
 
   <!-- Runtime -->
-  <section id="runtime" class="mx-auto max-w-6xl px-6 py-24">
-    <div class="rounded-2xl border border-[var(--color-border)] bg-white p-8 md:p-12">
-      <div class="grid gap-10 md:grid-cols-2 md:items-center">
-        <div>
-          <h2 class="text-3xl font-semibold tracking-tight">Self-hosting runtime</h2>
-          <p class="mt-4 text-[var(--color-muted)] leading-relaxed">
-            Syscalls are only an OS bridge — pthread, sockets, files. Scheduling, HTTP parsing, JSON, and sync logic live in <code class="rounded bg-[var(--color-subtle)] px-1.5 py-0.5 text-sm">runtime/*.xlang</code>.
-          </p>
-        </div>
-        <div class="rounded-xl bg-[var(--color-subtle)] p-6 font-mono text-sm leading-7 text-[var(--color-muted)]">
-          <div><span class="text-[var(--color-accent)]">print</span> · spawn · fetch</div>
-          <div>ReadAll · Write · Now · Format</div>
-          <div>NewLock · AtomicInt · go worker()</div>
-          <div class="mt-4 border-t border-[var(--color-border)] pt-4 text-xs uppercase tracking-wider">Linked globally — no import</div>
-        </div>
+  <section id="runtime" class="border-t border-[var(--color-border)] bg-[var(--color-subtle)] py-20">
+    <div class="mx-auto max-w-6xl px-6">
+      <h2 class="text-2xl font-semibold tracking-tight">Runtime</h2>
+      <p class="mt-2 max-w-2xl text-sm text-[var(--color-muted)]">
+        Syscalls are an OS bridge only — pthread, sockets, files. Scheduling and protocol logic live in <code>runtime/*.xlang</code>.
+      </p>
+      <div class="mt-8 overflow-hidden rounded-lg border border-[var(--color-border)] bg-white">
+        <table class="ref-table">
+          <thead>
+            <tr><th>Symbol</th><th>Description</th></tr>
+          </thead>
+          <tbody class="text-[var(--color-muted)]">
+            <tr><td><code>print</code></td><td>Formatted output (variadic)</td></tr>
+            <tr><td><code>spawn</code> / <code>wait_all</code></td><td>Thread pool</td></tr>
+            <tr><td><code>fetch</code></td><td>HTTP/HTTPS client</td></tr>
+            <tr><td><code>ReadAll</code> / <code>Write</code></td><td>File I/O</td></tr>
+            <tr><td><code>Now</code> / <code>Format</code> / <code>ElapsedMs</code></td><td>Time API</td></tr>
+            <tr><td><code>NewLock</code> / <code>AtomicInt</code></td><td>Sync primitives</td></tr>
+          </tbody>
+        </table>
       </div>
     </div>
   </section>
 
-  <!-- CTA -->
-  <section id="start" class="border-t border-[var(--color-border)] bg-[var(--color-subtle)] py-24">
-    <div class="mx-auto max-w-6xl px-6 text-center">
-      <h2 class="text-3xl font-semibold tracking-tight md:text-4xl">Start building with xlang</h2>
-      <p class="mx-auto mt-4 max-w-xl text-[var(--color-muted)]">
-        Clone the repo, build xlank, and run your first program in under a minute.
-      </p>
-      <div class="mx-auto mt-10 max-w-lg overflow-hidden rounded-xl border border-[var(--color-border)] bg-[#1e1e1e] text-left shadow-lg">
-        <pre class="overflow-x-auto p-5 text-sm leading-7 text-[#d4d4d4]"><code>git clone https://github.com/hasirciogluhq/xlang
+  <!-- Toolchain -->
+  <section id="toolchain" class="mx-auto max-w-6xl px-6 py-20">
+    <h2 class="text-2xl font-semibold tracking-tight">CLI</h2>
+    <div class="mt-8 overflow-hidden rounded-lg border border-[var(--color-border)]">
+      <table class="ref-table">
+        <thead>
+          <tr><th>Command</th><th>Description</th></tr>
+        </thead>
+        <tbody class="text-[var(--color-muted)]">
+          <tr><td><code>xlank run &lt;file&gt;</code></td><td>Compile and execute</td></tr>
+          <tr><td><code>xlank build &lt;file&gt; -o &lt;out&gt;</code></td><td>Build native executable</td></tr>
+          <tr><td><code>xlank build --build=lib -o lib.o</code></td><td>Emit object file</td></tr>
+          <tr><td><code>xlank test [path]</code></td><td>Run *.test.xlang files</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p class="mt-4 text-xs text-[var(--color-muted)]">
+      Requires CMake &ge; 3.16, C++17, Clang on PATH, OpenSSL dev headers.
+      Env: <code>XLANG_RUNTIME_DIR</code>, <code>XLANG_PATH</code>, <code>XLANG_CLANG</code>
+    </p>
+  </section>
+
+  <!-- Get started -->
+  <section id="start" class="border-t border-[var(--color-border)] bg-[var(--color-subtle)] py-20">
+    <div class="mx-auto max-w-6xl px-6">
+      <h2 class="text-2xl font-semibold tracking-tight">Get started</h2>
+      <p class="mt-2 text-sm text-[var(--color-muted)]">Clone, build, run.</p>
+      <div class="mt-6 max-w-xl overflow-hidden rounded-lg border border-[var(--color-border)] bg-white">
+        <pre class="overflow-x-auto p-4 text-[13px] leading-7 text-[var(--color-ink)]"><code>git clone https://github.com/hasirciogluhq/xlang
 cd xlang && mkdir build && cd build
-cmake .. && make -j4
-./xlank run examples/hello.xlang</code></pre>
+cmake .. && cmake --build . -j$(nproc)
+./xlank run ../examples/hello.xlang</code></pre>
       </div>
-      <p class="mt-8 text-sm text-[var(--color-muted)]">
-        You&apos;re viewing this page served by the xlang HTTP server · <a href="/ping" class="text-[var(--color-accent)] hover:underline">/ping</a>
+      <p class="mt-6 text-xs text-[var(--color-muted)]">
+        This page is served by <code>deploy/server.xlang</code> —
+        <a href="/ping" class="text-[var(--color-accent)] hover:underline">/ping</a>,
+        <a href="/api/info" class="text-[var(--color-accent)] hover:underline">/api/info</a>
       </p>
     </div>
   </section>
 
   <!-- Footer -->
-  <footer class="border-t border-[var(--color-border)] py-10">
-    <div class="mx-auto flex max-w-6xl flex-col items-center justify-between gap-4 px-6 text-sm text-[var(--color-muted)] md:flex-row">
-      <p>© 2026 xlang · LLVM-native · MIT</p>
-      <div class="flex gap-6">
+  <footer class="border-t border-[var(--color-border)] py-8">
+    <div class="mx-auto flex max-w-6xl flex-col items-start justify-between gap-4 px-6 text-sm text-[var(--color-muted)] md:flex-row md:items-center">
+      <p>&copy; 2026 xlang &middot; MIT &middot; LLVM-native</p>
+      <div class="flex gap-5">
         <a href="https://github.com/hasirciogluhq/xlang" class="hover:text-[var(--color-ink)] transition-colors" target="_blank" rel="noopener">GitHub</a>
+        <a href="https://github.com/hasirciogluhq/xlang/issues" class="hover:text-[var(--color-ink)] transition-colors" target="_blank" rel="noopener">Issues</a>
         <a href="/api/info" class="hover:text-[var(--color-ink)] transition-colors">API</a>
       </div>
     </div>
   </footer>
+
 </body>
 </html>
