@@ -10,10 +10,11 @@ Built with **Bun** + TypeScript. Requires the [`xlank`](https://github.com/hasir
 
 | Feature | Description |
 |---------|-------------|
-| **Completion** | Keywords, types, runtime/builtins, local symbols, import aliases |
-| **Import-aware** | `http.NewRouter()`, `file.ReadAll()`, `json.parse()` — completes from `libs/` and `runtime/` after import |
-| **Member access** | `r.Get(`, `ctx.JSON(`, `data.Int(`, `conn.Read(` — methods on `Router`, `Context`, `Json`, `Conn`, … |
-| **Module picker** | Typing `import` suggests workspace modules (`http`, `json`, `file`, `http/router`, …) with export preview |
+| **Completion** | Keywords, types, global runtime (`print`, `fetch`, `ReadAll`, `NewLock`, …), compiler builtins, local symbols |
+| **Import-aware** | `http.NewRouter()`, `json.parse()` — completes from `libs/` after import |
+| **Global runtime** | `print`, `spawn`, `fetch`, `ReadAll`, `NewLock`, `Lock()`, … — no import required |
+| **Member access** | `r.Get(`, `ctx.JSON(`, `lock.Lock(`, `a.FetchAdd(` — methods on known receiver types |
+| **Module picker** | Typing `import` suggests workspace modules (`http`, `json`, `http/router`, …) with export preview |
 | **Selective import** | Snippets for `import expect from test`, `import router from http/router` |
 | **Hover** | Markdown docs on builtins, exported functions, structs, and imported symbols |
 | **Go to definition** | Jump to the `.xlang` file where an imported symbol is defined |
@@ -97,6 +98,12 @@ Or install from the marketplace when published.
 ```xlang
 import * as http from http
 
+fn handle_index(ctx: Context) {
+    local html = ReadAll("examples/index.html")
+    ctx.HTML(200, html)
+    return 0
+}
+
 fn handle_ping(ctx: Context) {
     ctx.String(200, "pong")
     return 0
@@ -109,13 +116,14 @@ fn on_listen(info: ServerInfo) {
 
 fn main() {
     local r = http.NewRouter()
+    r.Get("/", handle_index)
     r.Get("/ping", handle_ping)
     r.ListenAndServe("127.0.0.1", 8080, on_listen)
     return 0
 }
 ```
 
-Hover `ctx.JSON` or `r.Use` for signatures. Completion after `ctx.` lists Context methods.
+Hover `ReadAll` or `ctx.JSON` for signatures. Runtime symbols (`print`, `fetch`, `ReadAll`, sync, file I/O) need no import.
 
 ## License
 

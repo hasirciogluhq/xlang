@@ -228,23 +228,19 @@
   "File read/write": {
     "prefix": "filio",
     "body": [
-      "import * as file from file",
-      "",
-      "file.Write(\"${1:path}\", \"${2:data}\")",
-      "local body = file.ReadAll(\"${1:path}\")"
+      "Write(\"${1:path}\", \"${2:data}\")",
+      "local body = ReadAll(\"${1:path}\")"
     ],
-    "description": "file.Write + file.ReadAll"
+    "description": "Write + ReadAll (global runtime, no import)"
   },
   "File stream": {
     "prefix": "filestream",
     "body": [
-      "import * as file from file",
-      "",
-      "local f = file.OpenRead(\"${1:path}\")",
-      "local body = file.Read(f)",
-      "file.Close(f)"
+      "local f = OpenRead(\"${1:path}\")",
+      "local body = Read(f)",
+      "Close(f)"
     ],
-    "description": "OpenRead + Read + Close"
+    "description": "OpenRead + Read + Close (global runtime, no import)"
   },
   "Test file header": {
     "prefix": "testfile",

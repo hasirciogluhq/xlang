@@ -1,7 +1,7 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 import * as vscode from "vscode";
-import { ATOMIC_BOOL_METHODS, ATOMIC_INT_METHODS, CONN_METHODS, CONTEXT_METHODS, JSON_METHODS, LOCK_METHODS, ROUTER_METHODS, RWLOCK_METHODS, SERVER_METHODS, SYNC_FACTORIES, type CatalogEntry } from "./builtins";
+import { ATOMIC_BOOL_METHODS, ATOMIC_INT_METHODS, CONN_METHODS, CONTEXT_METHODS, ERROR_METHODS, findGlobalRuntimeEntry, JSON_METHODS, LOCK_METHODS, ROUTER_METHODS, RWLOCK_METHODS, SERVER_METHODS, type CatalogEntry } from "./builtins";
 import {
   type ImportBinding,
   type ParsedModule,
@@ -79,7 +79,7 @@ export class LanguageIndex {
   }
 
   methodsForType(typeName: string): SymbolDoc[] {
-    return [...ROUTER_METHODS, ...JSON_METHODS, ...LOCK_METHODS, ...RWLOCK_METHODS, ...ATOMIC_INT_METHODS, ...ATOMIC_BOOL_METHODS, ...CONTEXT_METHODS, ...SERVER_METHODS, ...CONN_METHODS]
+    return [...ROUTER_METHODS, ...JSON_METHODS, ...LOCK_METHODS, ...RWLOCK_METHODS, ...ATOMIC_INT_METHODS, ...ATOMIC_BOOL_METHODS, ...CONTEXT_METHODS, ...SERVER_METHODS, ...CONN_METHODS, ...ERROR_METHODS]
       .filter((m) => m.receiver === typeName)
       .map(catalogToSymbolDoc);
   }
@@ -159,6 +159,10 @@ export class LanguageIndex {
           line: 0,
         };
       }
+    }
+    const global = findGlobalRuntimeEntry(name);
+    if (global) {
+      return catalogToSymbolDoc(global);
     }
     return undefined;
   }
@@ -256,13 +260,13 @@ export class LanguageIndex {
 function catalogToSymbolDoc(entry: CatalogEntry): SymbolDoc {
   return {
     name: entry.label,
-    kind: "function",
+    kind: entry.kind === vscode.CompletionItemKind.Struct ? "struct" : "function",
     signature: entry.detail,
     detail: entry.detail,
     documentation: entry.documentation,
     exported: true,
     receiver: entry.receiver,
-    moduleId: "builtin",
+    moduleId: "runtime",
     filePath: "",
     line: 0,
   };

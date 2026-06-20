@@ -47,28 +47,111 @@ export const TYPES: CatalogEntry[] = [
   { label: "string", detail: "type", documentation: "UTF-8 string (`i8*`)." },
 ];
 
+const GLOBAL_RUNTIME_NOTE =
+  "Global runtime symbol — auto-linked into every executable; no `import` required.";
+
 export const RUNTIME_BUILTINS: CatalogEntry[] = [
   {
     label: "print",
     detail: "print(...) → int32",
-    documentation: "Variadic formatted output (printf-style). Single-arg calls append a newline.",
+    documentation: `Variadic formatted output (printf-style). Single-arg calls append a newline. ${GLOBAL_RUNTIME_NOTE}`,
     insertText: 'print("$0")',
   },
   {
     label: "fetch",
     detail: "fetch(url: string) → FetchResponse",
-    documentation: "HTTP/HTTPS GET client from `runtime/net.xlang`. Returns status code and body.",
+    documentation: `HTTP/HTTPS GET client. Returns status code and body. ${GLOBAL_RUNTIME_NOTE}`,
     insertText: 'fetch("$0")',
   },
   {
     label: "spawn",
     detail: "spawn(fn)",
-    documentation: "Enqueue a goroutine-like task on the runtime scheduler.",
+    documentation: `Enqueue a goroutine-like task on the runtime scheduler. ${GLOBAL_RUNTIME_NOTE}`,
     insertText: "spawn(${1:worker}(${2:args}))",
   },
-  { label: "wait_all", detail: "wait_all() → int32", documentation: "Block until all spawned tasks finish.", insertText: "wait_all()" },
-  { label: "cpu", detail: "cpu() → int32", documentation: "Logical CPU count.", insertText: "cpu()" },
-  { label: "add_worker", detail: "add_worker() → int32", documentation: "Add a scheduler worker thread.", insertText: "add_worker()" },
+  {
+    label: "wait_all",
+    detail: "wait_all() → int32",
+    documentation: `Block until all spawned tasks finish. ${GLOBAL_RUNTIME_NOTE}`,
+    insertText: "wait_all()",
+  },
+  { label: "cpu", detail: "cpu() → int32", documentation: `Logical CPU count. ${GLOBAL_RUNTIME_NOTE}`, insertText: "cpu()" },
+  {
+    label: "add_worker",
+    detail: "add_worker() → int32",
+    documentation: `Add a scheduler worker thread. ${GLOBAL_RUNTIME_NOTE}`,
+    insertText: "add_worker()",
+  },
+];
+
+export const RUNTIME_TYPES: CatalogEntry[] = [
+  {
+    label: "File",
+    detail: "type (runtime)",
+    documentation: `Open file handle — use Read(f), Close(f), WriteStream(f, data). ${GLOBAL_RUNTIME_NOTE}`,
+    kind: vscode.CompletionItemKind.Struct,
+  },
+  {
+    label: "FetchResponse",
+    detail: "type (runtime)",
+    documentation: `fetch() result — fields: status, ok, body. ${GLOBAL_RUNTIME_NOTE}`,
+    kind: vscode.CompletionItemKind.Struct,
+  },
+  {
+    label: "Lock",
+    detail: "type (runtime)",
+    documentation: `Embeddable mutex — Lock(), Unlock(), TryLock(). ${GLOBAL_RUNTIME_NOTE}`,
+    kind: vscode.CompletionItemKind.Struct,
+  },
+  {
+    label: "RWLock",
+    detail: "type (runtime)",
+    documentation: `Reader-writer lock. ${GLOBAL_RUNTIME_NOTE}`,
+    kind: vscode.CompletionItemKind.Struct,
+  },
+  {
+    label: "AtomicInt",
+    detail: "type (runtime)",
+    documentation: `Heap atomic int64 cell. ${GLOBAL_RUNTIME_NOTE}`,
+    kind: vscode.CompletionItemKind.Struct,
+  },
+  {
+    label: "AtomicBool",
+    detail: "type (runtime)",
+    documentation: `Heap atomic bool cell. ${GLOBAL_RUNTIME_NOTE}`,
+    kind: vscode.CompletionItemKind.Struct,
+  },
+  {
+    label: "BaseError",
+    detail: "type (runtime)",
+    documentation: `Extendable error struct with Message(). ${GLOBAL_RUNTIME_NOTE}`,
+    kind: vscode.CompletionItemKind.Struct,
+  },
+];
+
+export const ERROR_RUNTIME: CatalogEntry[] = [
+  {
+    label: "newError",
+    detail: "newError(msg: string) → BaseError",
+    documentation: `Create a BaseError value. ${GLOBAL_RUNTIME_NOTE}`,
+    insertText: 'newError("${1:message}")',
+  },
+  {
+    label: "tryRun",
+    detail: "tryRun(entry: int64) → int32",
+    documentation: `Run fn ptr with panic/recover wrapper. ${GLOBAL_RUNTIME_NOTE}`,
+    insertText: "tryRun(${1:entry})",
+  },
+];
+
+export const ERROR_METHODS: CatalogEntry[] = [
+  {
+    label: "Message",
+    detail: "Message() → string",
+    documentation: "Error message string.",
+    insertText: "Message()",
+    receiver: "BaseError",
+  },
 ];
 
 export const COMPILER_BUILTINS: CatalogEntry[] = [
@@ -166,10 +249,10 @@ export const SERVER_METHODS: CatalogEntry[] = [
 ];
 
 export const SYNC_FACTORIES: CatalogEntry[] = [
-  { label: "NewLock", detail: "NewLock() → Lock", documentation: "Create embeddable mutex.", insertText: "NewLock()" },
-  { label: "NewRWLock", detail: "NewRWLock() → RWLock", documentation: "Create reader-writer lock.", insertText: "NewRWLock()" },
-  { label: "NewAtomicInt", detail: "NewAtomicInt(n) → AtomicInt", documentation: "Heap atomic int64 cell.", insertText: "NewAtomicInt(${1:0})" },
-  { label: "NewAtomicBool", detail: "NewAtomicBool(v) → AtomicBool", documentation: "Heap atomic bool cell.", insertText: "NewAtomicBool(${1:0})" },
+  { label: "NewLock", detail: "NewLock() → Lock", documentation: `Create embeddable mutex. ${GLOBAL_RUNTIME_NOTE}`, insertText: "NewLock()" },
+  { label: "NewRWLock", detail: "NewRWLock() → RWLock", documentation: `Create reader-writer lock. ${GLOBAL_RUNTIME_NOTE}`, insertText: "NewRWLock()" },
+  { label: "NewAtomicInt", detail: "NewAtomicInt(n) → AtomicInt", documentation: `Heap atomic int64 cell. ${GLOBAL_RUNTIME_NOTE}`, insertText: "NewAtomicInt(${1:0})" },
+  { label: "NewAtomicBool", detail: "NewAtomicBool(v) → AtomicBool", documentation: `Heap atomic bool cell. ${GLOBAL_RUNTIME_NOTE}`, insertText: "NewAtomicBool(${1:0})" },
 ];
 
 export const LOCK_METHODS: CatalogEntry[] = [
@@ -202,19 +285,19 @@ export const ATOMIC_BOOL_METHODS: CatalogEntry[] = [
 ];
 
 export const FILE_FUNCTIONS: CatalogEntry[] = [
-  { label: "ReadAll", detail: "ReadAll(path) → string", documentation: "Read entire file into string.", insertText: 'ReadAll("${1:path}")' },
-  { label: "Write", detail: "Write(path, data) → int32", documentation: "Overwrite file contents.", insertText: 'Write("${1:path}", "${2:data}")' },
-  { label: "Append", detail: "Append(path, data) → int32", documentation: "Append to file.", insertText: 'Append("${1:path}", "${2:data}")' },
-  { label: "Exists", detail: "Exists(path) → int32", documentation: "Returns 1 if file exists.", insertText: 'Exists("${1:path}")' },
-  { label: "Size", detail: "Size(path) → int64", documentation: "File size in bytes.", insertText: 'Size("${1:path}")' },
-  { label: "Open", detail: "Open(path, mode) → File", documentation: "Open file handle.", insertText: 'Open("${1:path}", ${2:mode})' },
-  { label: "OpenRead", detail: "OpenRead(path) → File", documentation: "Open file for reading.", insertText: 'OpenRead("${1:path}")' },
-  { label: "OpenWrite", detail: "OpenWrite(path) → File", documentation: "Open file for writing (truncate).", insertText: 'OpenWrite("${1:path}")' },
-  { label: "OpenAppend", detail: "OpenAppend(path) → File", documentation: "Open file for append.", insertText: 'OpenAppend("${1:path}")' },
-  { label: "Close", detail: "Close(f) → int32", documentation: "Close open file handle.", insertText: "Close(${1:f})" },
-  { label: "Read", detail: "Read(f) → string", documentation: "Read from open handle.", insertText: "Read(${1:f})" },
-  { label: "WriteStream", detail: "WriteStream(f, data) → int32", documentation: "Write to open handle.", insertText: 'WriteStream(${1:f}, "${2:data}")' },
-  { label: "IsOpen", detail: "IsOpen(f) → int32", documentation: "Returns 1 when handle is valid.", insertText: "IsOpen(${1:f})" },
+  { label: "ReadAll", detail: "ReadAll(path) → string", documentation: `Read entire file into string. ${GLOBAL_RUNTIME_NOTE}`, insertText: 'ReadAll("${1:path}")' },
+  { label: "Write", detail: "Write(path, data) → int32", documentation: `Overwrite file contents. ${GLOBAL_RUNTIME_NOTE}`, insertText: 'Write("${1:path}", "${2:data}")' },
+  { label: "Append", detail: "Append(path, data) → int32", documentation: `Append to file. ${GLOBAL_RUNTIME_NOTE}`, insertText: 'Append("${1:path}", "${2:data}")' },
+  { label: "Exists", detail: "Exists(path) → int32", documentation: `Returns 1 if file exists. ${GLOBAL_RUNTIME_NOTE}`, insertText: 'Exists("${1:path}")' },
+  { label: "Size", detail: "Size(path) → int64", documentation: `File size in bytes. ${GLOBAL_RUNTIME_NOTE}`, insertText: 'Size("${1:path}")' },
+  { label: "Open", detail: "Open(path, mode) → File", documentation: `Open file handle. ${GLOBAL_RUNTIME_NOTE}`, insertText: 'Open("${1:path}", ${2:mode})' },
+  { label: "OpenRead", detail: "OpenRead(path) → File", documentation: `Open file for reading. ${GLOBAL_RUNTIME_NOTE}`, insertText: 'OpenRead("${1:path}")' },
+  { label: "OpenWrite", detail: "OpenWrite(path) → File", documentation: `Open file for writing (truncate). ${GLOBAL_RUNTIME_NOTE}`, insertText: 'OpenWrite("${1:path}")' },
+  { label: "OpenAppend", detail: "OpenAppend(path) → File", documentation: `Open file for append. ${GLOBAL_RUNTIME_NOTE}`, insertText: 'OpenAppend("${1:path}")' },
+  { label: "Close", detail: "Close(f) → int32", documentation: `Close open file handle. ${GLOBAL_RUNTIME_NOTE}`, insertText: "Close(${1:f})" },
+  { label: "Read", detail: "Read(f) → string", documentation: `Read from open handle. ${GLOBAL_RUNTIME_NOTE}`, insertText: "Read(${1:f})" },
+  { label: "WriteStream", detail: "WriteStream(f, data) → int32", documentation: `Write to open handle. ${GLOBAL_RUNTIME_NOTE}`, insertText: 'WriteStream(${1:f}, "${2:data}")' },
+  { label: "IsOpen", detail: "IsOpen(f) → int32", documentation: `Returns 1 when handle is valid. ${GLOBAL_RUNTIME_NOTE}`, insertText: "IsOpen(${1:f})" },
 ];
 
 export const CONN_METHODS: CatalogEntry[] = [
@@ -233,12 +316,33 @@ export const KNOWN_MODULES: CatalogEntry[] = [
   { label: "json", detail: "module", documentation: "JSON parse + typed field accessors (`data.Int(key)`)." },
   { label: "test", detail: "module", documentation: "Vitest-style `expect` API and test runner hooks." },
   { label: "process", detail: "module", documentation: "Process, pipe, fd, env syscalls." },
-  { label: "sync", detail: "module (runtime)", documentation: "Lock, RWLock, AtomicInt — method-style API (`l.Lock()`, `a.FetchAdd()`)." },
-  { label: "scheduler", detail: "module (runtime)", documentation: "spawn / wait_all worker pool." },
-  { label: "net", detail: "module (runtime)", documentation: "fetch HTTP client." },
-  { label: "file", detail: "module (runtime)", documentation: "File I/O — ReadAll, Write, OpenRead, Exists, stream API." },
-  { label: "errors", detail: "module (runtime)", documentation: "panic / recover helpers." },
+  { label: "sync", detail: "module (runtime, global)", documentation: "Auto-linked — NewLock, AtomicInt, … available globally; import optional for namespacing." },
+  { label: "scheduler", detail: "module (runtime, global)", documentation: "Auto-linked — spawn, wait_all, cpu available globally." },
+  { label: "net", detail: "module (runtime, global)", documentation: "Auto-linked — fetch available globally." },
+  { label: "file", detail: "module (runtime, global)", documentation: "Auto-linked — ReadAll, Write, OpenRead, … available globally." },
+  { label: "errors", detail: "module (runtime, global)", documentation: "Auto-linked — newError, tryRun, BaseError available globally." },
 ];
+
+/** All runtime functions available globally without import. */
+export const GLOBAL_RUNTIME_FUNCTIONS: CatalogEntry[] = [
+  ...RUNTIME_BUILTINS,
+  ...FILE_FUNCTIONS,
+  ...SYNC_FACTORIES,
+  ...ERROR_RUNTIME,
+];
+
+export function findGlobalRuntimeEntry(name: string): CatalogEntry | undefined {
+  const pools: CatalogEntry[] = [
+    ...GLOBAL_RUNTIME_FUNCTIONS,
+    ...RUNTIME_TYPES,
+    ...LOCK_METHODS,
+    ...RWLOCK_METHODS,
+    ...ATOMIC_INT_METHODS,
+    ...ATOMIC_BOOL_METHODS,
+    ...ERROR_METHODS,
+  ];
+  return pools.find((e) => e.label === name);
+}
 
 export const PROCESS_SYSCALLS: CatalogEntry[] = [
   { label: "file_read", detail: "file_read(path) → string", documentation: "Read an entire file into a string (process module).", insertText: 'file_read("${1:path}")' },

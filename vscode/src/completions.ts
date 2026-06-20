@@ -2,14 +2,13 @@ import * as vscode from "vscode";
 import {
   COMPILER_BUILTINS,
   EXPECT_CHAIN,
-  FILE_FUNCTIONS,
+  GLOBAL_RUNTIME_FUNCTIONS,
   HTTP_TYPES,
   JSON_METHODS,
   KEYWORDS,
   NET_SYSCALLS,
   PROCESS_SYSCALLS,
-  RUNTIME_BUILTINS,
-  SYNC_FACTORIES,
+  RUNTIME_TYPES,
   TEST_BUILTINS,
   TYPES,
   catalogToCompletion,
@@ -67,13 +66,11 @@ export function registerCompletions(context: vscode.ExtensionContext): void {
             items.push(catalogToCompletion({ ...ty, kind: vscode.CompletionItemKind.TypeParameter }, "2"));
           }
 
-          for (const entry of [
-            ...RUNTIME_BUILTINS,
-            ...COMPILER_BUILTINS,
-            ...TEST_BUILTINS,
-            ...PROCESS_SYSCALLS,
-          ]) {
+          for (const entry of [...GLOBAL_RUNTIME_FUNCTIONS, ...COMPILER_BUILTINS, ...TEST_BUILTINS, ...PROCESS_SYSCALLS]) {
             items.push(catalogToCompletion(entry, "3"));
+          }
+          for (const ty of RUNTIME_TYPES) {
+            items.push(catalogToCompletion(ty, "3"));
           }
 
           for (const sym of index.localSymbols(document)) {
@@ -89,16 +86,6 @@ export function registerCompletions(context: vscode.ExtensionContext): void {
             item.sortText = `5_${binding.alias}`;
             items.push(item);
 
-            if (binding.modulePath === "sync" || binding.alias === "sync") {
-              for (const entry of SYNC_FACTORIES) {
-                items.push(catalogToCompletion(entry, "5"));
-              }
-            }
-            if (binding.modulePath === "file" || binding.alias === "file") {
-              for (const entry of FILE_FUNCTIONS) {
-                items.push(catalogToCompletion(entry, "5"));
-              }
-            }
             if (binding.modulePath === "json" || binding.alias === "json") {
               for (const entry of JSON_METHODS.filter((m) => !m.receiver)) {
                 items.push(catalogToCompletion(entry, "5"));
