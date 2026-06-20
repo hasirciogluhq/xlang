@@ -6,6 +6,6 @@ fn main() {
     local x = 10
     local y = 20
     counter = counter + 1
-    print_int(add(x, y))
-    print_int(counter)
+    print(add(x, y))
+    print(counter)
 }
