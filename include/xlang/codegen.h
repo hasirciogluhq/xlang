@@ -51,6 +51,7 @@ private:
     void emitDeclareFunction(const Function& function);
     void emitSyscallLowering();
     void emitStringRuntimeSupport();
+    void emitArrayHeaderType();
     void emitArrayRuntimeSupport();
     void preemitStringLiterals(const Program& program);
     void collectStringLiteralsFromExpr(const Expr& expr);
@@ -125,6 +126,7 @@ private:
     bool needs_heap_{false};
     bool needs_strings_{false};
     bool needs_arrays_{false};
+    bool array_hdr_type_emitted_{false};
     bool needs_printf_{false};
     std::uint32_t spawn_thunk_counter_{0};
     std::vector<std::string> spawn_thunks_;

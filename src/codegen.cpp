@@ -341,6 +341,13 @@ bool exprHasArray(const Expr& expr) {
     if (expr.kind == Expr::Kind::NewArray) {
         return true;
     }
+    if (expr.kind == Expr::Kind::New) {
+        for (const FieldInit& init : expr.field_inits) {
+            if (init.value && exprHasArray(*init.value)) {
+                return true;
+            }
+        }
+    }
     if (expr.kind == Expr::Kind::Index && expr.object) {
         return true;
     }
@@ -404,7 +411,21 @@ bool stmtHasArray(const Stmt& stmt) {
     return false;
 }
 
+bool structUsesArrayField(const StructDecl& decl) {
+    for (const StructField& field : decl.fields) {
+        if (field.type.isArray()) {
+            return true;
+        }
+    }
+    return false;
+}
+
 bool programUsesArrays(const Program& program) {
+    for (const StructDecl& decl : program.structs) {
+        if (structUsesArrayField(decl)) {
+            return true;
+        }
+    }
     for (const GlobalVar& global : program.globals) {
         if (global.type.isArray()) {
             return true;
@@ -436,8 +457,17 @@ CodegenResult Codegen::generate(const Program& program, const CodegenOptions& op
     cg.needs_heap_ = programUsesHeap(program) || programUsesStrings(program) || programUsesArrays(program);
     cg.needs_strings_ = programUsesStrings(program);
     cg.needs_arrays_ = programUsesArrays(program);
+    for (const StructDecl& decl : options.runtime_structs) {
+        if (structUsesArrayField(decl)) {
+            cg.needs_arrays_ = true;
+            break;
+        }
+    }
     cg.collectSyscalls(program);
     cg.emitPrelude(program);
+    if (cg.needs_arrays_) {
+        cg.emitArrayHeaderType();
+    }
     cg.emitStructTypes(program);
     if (cg.needs_arrays_) {
         cg.emitArrayRuntimeSupport();
@@ -771,8 +801,16 @@ std::string Codegen::emitSpawnEntry(const Expr& arg,
     return entry;
 }
 
-void Codegen::emitArrayRuntimeSupport() {
+void Codegen::emitArrayHeaderType() {
+    if (array_hdr_type_emitted_) {
+        return;
+    }
+    array_hdr_type_emitted_ = true;
     writeln("%array.hdr = type { i8*, i64, i64, i64 }");
+}
+
+void Codegen::emitArrayRuntimeSupport() {
+    emitArrayHeaderType();
     writeln("declare i8* @realloc(i8*, i64)");
     writeln("declare i8* @memcpy(i8*, i8*, i64)");
     writeln("");
@@ -1054,6 +1092,21 @@ std::string Codegen::emitStringConcat(const std::string& left, const std::string
 }
 
 void Codegen::emitStructTypes(const Program& program) {
+    for (const StructDecl& decl : program.structs) {
+        if (structUsesArrayField(decl)) {
+            emitArrayHeaderType();
+            break;
+        }
+    }
+    if (!array_hdr_type_emitted_) {
+        for (const StructDecl& decl : options_.runtime_structs) {
+            if (structUsesArrayField(decl)) {
+                emitArrayHeaderType();
+                break;
+            }
+        }
+    }
+
     auto emitOne = [&](const StructDecl& decl) {
         std::ostringstream body;
         for (std::size_t i = 0; i < decl.fields.size(); ++i) {

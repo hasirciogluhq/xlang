@@ -80,8 +80,8 @@ fn register_route(r: Router, method: string, pattern: string, handler: int64): i
         pattern = full,
         handler = handler
     }
-    array_push(r.routes, route)
-    return 0
+array_push(r.routes, route)
+return 0
 }
 
 export fn Get(r: Router, pattern: string, handler: int64): int32 {
@@ -128,10 +128,10 @@ fn merge_routes(dest: array RouteDef, prefix: string, src: array RouteDef): int3
             pattern = prefix + route.pattern,
             handler = route.handler
         }
-        array_push(dest, copy)
-        i = i + 1
-    }
-    return 0
+    array_push(dest, copy)
+    i = i + 1
+}
+return 0
 }
 
 export fn Mount(r: Router, prefix: string, child: Router): int32 {
@@ -143,25 +143,25 @@ fn path_has_prefix(path: string, prefix: string): int32 {
     if str_len(prefix) == 0 {
         return 1
     }
-    if str_len(path) < str_len(prefix) {
-        return 0
-    }
-    local head = str_sub(path, 0, str_len(prefix))
-    if str_eq(head, prefix) != 0 {
-        return 1
-    }
+if str_len(path) < str_len(prefix) {
     return 0
+}
+local head = str_sub(path, 0, str_len(prefix))
+if str_eq(head, prefix) != 0 {
+    return 1
+}
+return 0
 }
 
 fn path_strip_prefix(path: string, prefix: string): string {
     if str_len(path) <= str_len(prefix) {
         return "/"
     }
-    local rest = str_sub(path, str_len(prefix), str_len(path) - str_len(prefix))
-    if str_len(rest) == 0 {
-        return "/"
-    }
-    return rest
+local rest = str_sub(path, str_len(prefix), str_len(path) - str_len(prefix))
+if str_len(rest) == 0 {
+    return "/"
+}
+return rest
 }
 
 fn route_match(pattern: string, path: string): RouteMatchInfo {
@@ -170,21 +170,21 @@ fn route_match(pattern: string, path: string): RouteMatchInfo {
         miss.matched = 1
         return miss
     }
-    local brace = str_find(pattern, "{")
-    if brace == (0 - 1) {
-        return miss
-    }
-    local close = str_find(pattern, "}")
-    if close == (0 - 1) {
-        return miss
-    }
-    local pfx = str_sub(pattern, 0, brace)
-    if path_has_prefix(path, pfx) == 0 {
-        return miss
-    }
-    local val = path_strip_prefix(path, pfx)
-    local name = str_sub(pattern, brace + 1, close - brace - 1)
-    return new RouteMatchInfo { matched = 1, param_name = name, param_value = val }
+local brace = str_find(pattern, "{")
+if brace == (0 - 1) {
+    return miss
+}
+local close = str_find(pattern, "}")
+if close == (0 - 1) {
+    return miss
+}
+local pfx = str_sub(pattern, 0, brace)
+if path_has_prefix(path, pfx) == 0 {
+    return miss
+}
+local val = path_strip_prefix(path, pfx)
+local name = str_sub(pattern, brace + 1, close - brace - 1)
+return new RouteMatchInfo { matched = 1, param_name = name, param_value = val }
 }
 
 fn find_match(r: Router, method: string, path: string): MatchResult {
@@ -202,11 +202,11 @@ fn find_match(r: Router, method: string, path: string): MatchResult {
                     method = method,
                     path = path
                 }
-            }
         }
-        i = i + 1
-    }
-    return empty_match(method, path)
+}
+i = i + 1
+}
+return empty_match(method, path)
 }
 
 export fn Match(r: Router, method: string, path: string): MatchResult {
@@ -217,7 +217,33 @@ export fn URLParam(m: MatchResult, name: string): string {
     if str_eq(name, m.param_name) != 0 {
         return m.param_value
     }
-    return ""
+return ""
+}
+
+// Yalnızca DispatchRequest → invoke0 penceresinde aktif (route storage değil)
+dispatch_ctx: MatchResult
+dispatch_resp: Router
+dispatch_on: int32 = 0
+
+export fn RequestParam(name: string): string {
+    if dispatch_on != 0 {
+        return URLParam(dispatch_ctx, name)
+    }
+return ""
+}
+
+export fn RespondText(status: int32, body: string): int32 {
+    if dispatch_on != 0 {
+        dispatch_resp = RespondTextR(dispatch_resp, status, body)
+    }
+return 0
+}
+
+export fn RespondJson(status: int32, body: string): int32 {
+    if dispatch_on != 0 {
+        dispatch_resp = RespondJsonR(dispatch_resp, status, body)
+    }
+return 0
 }
 
 export fn WithMatch(r: Router, m: MatchResult): Router {
@@ -253,12 +279,16 @@ export fn DispatchRequest(r: Router, method: string, path: string): DispatchResu
             body = out.resp_body,
             type = out.resp_type
         }
-    }
-    invoke0(m.handler)
-    return new DispatchResult {
-        router = out,
-        status = out.resp_status,
-        body = out.resp_body,
-        type = out.resp_type
-    }
+}
+dispatch_ctx = m
+dispatch_resp = out
+dispatch_on = 1
+invoke0(m.handler)
+dispatch_on = 0
+return new DispatchResult {
+    router = dispatch_resp,
+    status = dispatch_resp.resp_status,
+    body = dispatch_resp.resp_body,
+    type = dispatch_resp.resp_type
+}
 }
