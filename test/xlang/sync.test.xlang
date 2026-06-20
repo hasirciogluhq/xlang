@@ -1,4 +1,4 @@
-import * as test from test
+import expect from test
 import * as sync from sync
 
 fn TestAtomicFetchAdd() {
@@ -36,5 +36,3 @@ fn TestRWLockReadWrite() {
     expect(1).toEqual(1)
     return 0
 }
-
-declare syscall sleep_ms(ms: int32): int32
