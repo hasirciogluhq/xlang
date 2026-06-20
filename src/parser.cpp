@@ -608,7 +608,8 @@ void Parser::consumeEndOfStatement() {
         check(TokenKind::Import) || check(TokenKind::From) || check(TokenKind::Ident) ||
         check(TokenKind::Export) || check(TokenKind::External) || check(TokenKind::Syscall) ||
         check(TokenKind::Declare) || check(TokenKind::Struct) || check(TokenKind::Delete) ||
-        check(TokenKind::New) || check(TokenKind::If) || check(TokenKind::While)) {
+        check(TokenKind::New) || check(TokenKind::If) || check(TokenKind::While) ||
+        check(TokenKind::Go)) {
         return;
     }
     throw error("expected ';' or newline");

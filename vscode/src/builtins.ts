@@ -129,6 +129,14 @@ export const ROUTER_METHODS: CatalogEntry[] = [
   { label: "Mount", detail: "Mount(prefix, child)", documentation: "Mount a sub-router.", insertText: 'Mount("${1:/prefix}", ${2:child})', receiver: "Router" },
 ];
 
+export const LOCK_METHODS: CatalogEntry[] = [
+  { label: "Lock", detail: "Lock() → int32", documentation: "Acquire mutex (blocks until available).", insertText: "Lock()", receiver: "Lock" },
+  { label: "Unlock", detail: "Unlock() → int32", documentation: "Release mutex and reset timeout to 0.", insertText: "Unlock()", receiver: "Lock" },
+  { label: "SetTimeout", detail: "SetTimeout(ms) → int32", documentation: "Auto-release after ms while held. Only works when locked.", insertText: "SetTimeout(${1:ms})", receiver: "Lock" },
+  { label: "TryLock", detail: "TryLock() → int32", documentation: "Non-blocking acquire attempt.", insertText: "TryLock()", receiver: "Lock" },
+  { label: "IsHeld", detail: "IsHeld() → int32", documentation: "Returns 1 when this lock is held.", insertText: "IsHeld()", receiver: "Lock" },
+];
+
 export const KNOWN_MODULES: CatalogEntry[] = [
   { label: "http", detail: "module", documentation: "HTTP package — `libs/http/` (router + server)." },
   { label: "http/router", detail: "module", documentation: "Chi-like router — routes, params, dispatch." },

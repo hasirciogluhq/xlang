@@ -1,0 +1,40 @@
+import test from test
+import sync from sync
+
+fn TestAtomicFetchAdd() {
+    local a = sync.NewAtomicInt(10)
+    sync.AtomicFetchAdd(a, 5)
+    expect(sync.AtomicLoad(a)).toEqual(15)
+    return 0
+}
+
+fn TestLockTimeoutAutoRelease() {
+    local l = sync.NewLock()
+    l.Lock()
+    l.SetTimeout(50)
+    sleep_ms(80)
+    expect(l.IsHeld()).toEqual(0)
+    return 0
+}
+
+fn TestLockSetTimeoutOnlyWhileHeld() {
+    local l = sync.NewLock()
+    expect(l.SetTimeout(50)).toEqual(0)
+    l.Lock()
+    expect(l.SetTimeout(50)).toEqual(1)
+    l.Unlock()
+    expect(l.SetTimeout(50)).toEqual(0)
+    return 0
+}
+
+fn TestRWLockReadWrite() {
+    local rw = sync.NewRWLock()
+    sync.RWLockWriteAcquire(rw, 0)
+    sync.RWLockWriteRelease(rw)
+    sync.RWLockReadAcquire(rw, 0)
+    sync.RWLockReadRelease(rw)
+    expect(1).toEqual(1)
+    return 0
+}
+
+declare syscall sleep_ms(ms: int32): int32

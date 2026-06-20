@@ -497,6 +497,13 @@ CompileResult compileFile(const CompileOptions& options) {
                     const std::filesystem::path embedded_dir =
                         ctx.work_dir / "embedded-runtime";
                     materializeEmbeddedRuntime(embedded_dir);
+                    module_search_paths.push_back(embedded_dir);
+                }
+#ifndef XLANG_RUNTIME_DIR
+#define XLANG_RUNTIME_DIR ""
+#endif
+                if (XLANG_RUNTIME_DIR[0] != '\0') {
+                    module_search_paths.emplace_back(XLANG_RUNTIME_DIR);
                 }
 #ifndef XLANG_LIBS_DIR
 #define XLANG_LIBS_DIR ""

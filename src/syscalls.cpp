@@ -16,8 +16,11 @@ bool isKnownSyscall(const std::string& name) {
     return name == "start_thread" || name == "sleep_ms" ||
            name == "random_range" || name == "print_done" || name == "wait_all_jobs" ||
            name == "cpu_count" || name == "mutex_init" || name == "mutex_lock" ||
-           name == "mutex_unlock" || name == "cond_init" || name == "cond_wait" ||
-           name == "cond_signal" || name == "cond_broadcast" ||
+           name == "mutex_trylock" || name == "mutex_unlock" || name == "cond_init" ||
+           name == "cond_wait" || name == "cond_signal" || name == "cond_broadcast" ||
+           name == "now_ms" || name == "atomic_alloc" || name == "atomic_load" ||
+           name == "atomic_store" || name == "atomic_fetch_add" ||
+           name == "atomic_compare_exchange" ||
            name == "panic" || name == "recover" || name == "try_invoke0" ||
            name == "env_get" || name == "run_capture" || name == "capture_stdout" ||
            name == "env_set" || name == "cwd" || name == "chdir" ||
@@ -104,6 +107,7 @@ void emitSyncSupport(std::string& output) {
     output += "declare i64 @sysconf(i64)\n";
     output += "declare i32 @pthread_mutex_init(i8*, i8*)\n";
     output += "declare i32 @pthread_mutex_lock(i8*)\n";
+    output += "declare i32 @pthread_mutex_trylock(i8*)\n";
     output += "declare i32 @pthread_mutex_unlock(i8*)\n";
     output += "declare i32 @pthread_cond_init(i8*, i8*)\n";
     output += "declare i32 @pthread_cond_wait(i8*, i8*)\n";
@@ -137,6 +141,14 @@ void emitSyncSupport(std::string& output) {
     output += "  ret i32 0\n";
     output += "}\n\n";
 
+    output += "define weak i32 @mutex_trylock(i64 %handle) {\n";
+    output += "  %m = inttoptr i64 %handle to i8*\n";
+    output += "  %rc = call i32 @pthread_mutex_trylock(i8* %m)\n";
+    output += "  %ok = icmp eq i32 %rc, 0\n";
+    output += "  %ret = select i1 %ok, i32 1, i32 0\n";
+    output += "  ret i32 %ret\n";
+    output += "}\n\n";
+
     output += "define weak i64 @cond_init() {\n";
     output += "  %c = call i8* @malloc(i64 64)\n";
     output += "  call i32 @pthread_cond_init(i8* %c, i8* null)\n";
@@ -161,6 +173,60 @@ void emitSyncSupport(std::string& output) {
     output += "  %c = inttoptr i64 %cond_handle to i8*\n";
     output += "  call i32 @pthread_cond_broadcast(i8* %c)\n";
     output += "  ret i32 0\n";
+    output += "}\n\n";
+}
+
+void emitNowMsSupport(std::string& output) {
+    output += "; xlang syscall: now_ms (monotonic-ish wall clock)\n";
+    output += "declare i32 @gettimeofday(i8*, i8*)\n";
+    output += "define weak i64 @now_ms() {\n";
+    output += "  %tv = alloca [2 x i64], align 8\n";
+    output += "  %rc = call i32 @gettimeofday(i8* %tv, i8* null)\n";
+    output += "  %sec_ptr = getelementptr [2 x i64], [2 x i64]* %tv, i32 0, i32 0\n";
+    output += "  %usec_ptr = getelementptr [2 x i64], [2 x i64]* %tv, i32 0, i32 1\n";
+    output += "  %sec = load i64, i64* %sec_ptr\n";
+    output += "  %usec = load i64, i64* %usec_ptr\n";
+    output += "  %sec_ms = mul i64 %sec, 1000\n";
+    output += "  %usec_ms = udiv i64 %usec, 1000\n";
+    output += "  %ms = add i64 %sec_ms, %usec_ms\n";
+    output += "  ret i64 %ms\n";
+    output += "}\n\n";
+}
+
+void emitAtomicSupport(std::string& output) {
+    output += "; xlang atomic syscalls (LLVM atomicrmw / cmpxchg)\n";
+    output += "define weak i64 @atomic_alloc() {\n";
+    output += "  %p = call i8* @malloc(i64 8)\n";
+    output += "  %q = bitcast i8* %p to i64*\n";
+    output += "  store atomic i64 0, i64* %q monotonic, align 8\n";
+    output += "  %h = ptrtoint i8* %p to i64\n";
+    output += "  ret i64 %h\n";
+    output += "}\n\n";
+
+    output += "define weak i64 @atomic_load(i64 %handle) {\n";
+    output += "  %p = inttoptr i64 %handle to i64*\n";
+    output += "  %v = load atomic i64, i64* %p monotonic, align 8\n";
+    output += "  ret i64 %v\n";
+    output += "}\n\n";
+
+    output += "define weak i32 @atomic_store(i64 %handle, i64 %val) {\n";
+    output += "  %p = inttoptr i64 %handle to i64*\n";
+    output += "  store atomic i64 %val, i64* %p monotonic, align 8\n";
+    output += "  ret i32 0\n";
+    output += "}\n\n";
+
+    output += "define weak i64 @atomic_fetch_add(i64 %handle, i64 %delta) {\n";
+    output += "  %p = inttoptr i64 %handle to i64*\n";
+    output += "  %old = atomicrmw add i64* %p, i64 %delta monotonic\n";
+    output += "  ret i64 %old\n";
+    output += "}\n\n";
+
+    output += "define weak i32 @atomic_compare_exchange(i64 %handle, i64 %expected, i64 %desired) {\n";
+    output += "  %p = inttoptr i64 %handle to i64*\n";
+    output += "  %pair = cmpxchg i64* %p, i64 %expected, i64 %desired acq_rel acquire\n";
+    output += "  %ok = extractvalue { i64, i1 } %pair, 1\n";
+    output += "  %ret = select i1 %ok, i32 1, i32 0\n";
+    output += "  ret i32 %ret\n";
     output += "}\n\n";
 }
 
@@ -482,11 +548,18 @@ void emitSyscallDefinitions(std::string& output, const std::unordered_set<std::s
     const bool needs_sync = syscalls.find("cpu_count") != syscalls.end() ||
                             syscalls.find("mutex_init") != syscalls.end() ||
                             syscalls.find("mutex_lock") != syscalls.end() ||
+                            syscalls.find("mutex_trylock") != syscalls.end() ||
                             syscalls.find("mutex_unlock") != syscalls.end() ||
                             syscalls.find("cond_init") != syscalls.end() ||
                             syscalls.find("cond_wait") != syscalls.end() ||
                             syscalls.find("cond_signal") != syscalls.end() ||
                             syscalls.find("cond_broadcast") != syscalls.end();
+    const bool needs_now_ms = syscalls.find("now_ms") != syscalls.end();
+    const bool needs_atomic = syscalls.find("atomic_alloc") != syscalls.end() ||
+                              syscalls.find("atomic_load") != syscalls.end() ||
+                              syscalls.find("atomic_store") != syscalls.end() ||
+                              syscalls.find("atomic_fetch_add") != syscalls.end() ||
+                              syscalls.find("atomic_compare_exchange") != syscalls.end();
     const bool needs_threads = syscalls.find("start_thread") != syscalls.end() ||
                                syscalls.find("wait_all_jobs") != syscalls.end() ||
                                needs_sync;
@@ -556,6 +629,14 @@ void emitSyscallDefinitions(std::string& output, const std::unordered_set<std::s
         emitSyncSupport(output);
     }
 
+    if (needs_now_ms) {
+        emitNowMsSupport(output);
+    }
+
+    if (needs_atomic) {
+        emitAtomicSupport(output);
+    }
+
     const bool needs_net = syscalls.find("net_tcp_connect") != syscalls.end() ||
                            syscalls.find("net_send") != syscalls.end() ||
                            syscalls.find("net_recv") != syscalls.end() ||
@@ -612,6 +693,7 @@ bool syscallsNeedThreadLink(const std::unordered_set<std::string>& syscalls) {
     return syscalls.find("start_thread") != syscalls.end() ||
            syscalls.find("wait_all_jobs") != syscalls.end() ||
            syscalls.find("mutex_init") != syscalls.end() ||
+           syscalls.find("mutex_trylock") != syscalls.end() ||
            syscalls.find("cond_init") != syscalls.end();
 }
 

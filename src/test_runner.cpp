@@ -322,11 +322,21 @@ Program withTestHarness(const Program& program, const std::vector<std::string>& 
 
 std::vector<std::filesystem::path> materializeModuleSearchPaths(
     const std::filesystem::path& work_dir, bool skip_runtime) {
-    (void)skip_runtime;
     std::vector<std::filesystem::path> paths;
     const std::filesystem::path embedded_libs = work_dir / "embedded-libs";
     (void)materializeEmbeddedLibs(embedded_libs);
     paths.push_back(embedded_libs);
+    if (!skip_runtime) {
+        const std::filesystem::path embedded_runtime = work_dir / "embedded-runtime";
+        (void)materializeEmbeddedRuntime(embedded_runtime);
+        paths.push_back(embedded_runtime);
+    }
+#ifndef XLANG_RUNTIME_DIR
+#define XLANG_RUNTIME_DIR ""
+#endif
+    if (XLANG_RUNTIME_DIR[0] != '\0') {
+        paths.emplace_back(XLANG_RUNTIME_DIR);
+    }
     if (XLANG_LIBS_DIR[0] != '\0') {
         paths.emplace_back(XLANG_LIBS_DIR);
     }

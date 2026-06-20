@@ -1,7 +1,7 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 import * as vscode from "vscode";
-import { JSON_METHODS, ROUTER_METHODS, type CatalogEntry } from "./builtins";
+import { JSON_METHODS, LOCK_METHODS, ROUTER_METHODS, type CatalogEntry } from "./builtins";
 import {
   type ImportBinding,
   type ParsedModule,
@@ -79,7 +79,7 @@ export class LanguageIndex {
   }
 
   methodsForType(typeName: string): SymbolDoc[] {
-    return [...ROUTER_METHODS, ...JSON_METHODS]
+    return [...ROUTER_METHODS, ...JSON_METHODS, ...LOCK_METHODS]
       .filter((m) => m.receiver === typeName)
       .map(catalogToSymbolDoc);
   }

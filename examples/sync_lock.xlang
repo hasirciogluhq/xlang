@@ -1,0 +1,40 @@
+// Mutex + atomik sayaç — struct içinde Lock gömme + go spawn örneği.
+import sync from sync
+
+struct SharedCounter {
+    total: AtomicInt
+    guard: Lock
+}
+
+g_counter: SharedCounter
+
+fn setup_counter() {
+    g_counter = new SharedCounter {
+        total = sync.NewAtomicInt(0),
+        guard = sync.NewLock()
+    }
+    return 0
+}
+
+fn bump(n: int32) {
+    g_counter.guard.Lock()
+    sync.AtomicFetchAdd(g_counter.total, n)
+    g_counter.guard.Unlock()
+    return 0
+}
+
+fn worker(id: int32) {
+    bump(1)
+    print("worker %d done", id)
+    return 0
+}
+
+fn main() {
+    setup_counter()
+    go worker(1)
+    go worker(2)
+    go worker(3)
+    wait_all()
+    print("total=%d", sync.AtomicLoad(g_counter.total))
+    return 0
+}
