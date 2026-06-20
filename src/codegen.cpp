@@ -19,7 +19,19 @@ std::vector<Type> paramTypes(const std::vector<TypedName>& params) {
     return types;
 }
 
-bool paramTypesMatch(const std::vector<Type>& expected, const std::vector<Type>& actual) {
+bool paramTypesMatch(const std::vector<Type>& expected, const std::vector<Type>& actual,
+                     bool variadic) {
+    if (variadic) {
+        if (actual.size() < expected.size()) {
+            return false;
+        }
+        for (std::size_t i = 0; i < expected.size(); ++i) {
+            if (!typesEqual(expected[i], actual[i])) {
+                return false;
+            }
+        }
+        return true;
+    }
     if (expected.size() != actual.size()) {
         return false;
     }
@@ -40,7 +52,7 @@ std::optional<FunctionSignature> findMatchingFunction(
             continue;
         }
         const std::vector<Type> expected = paramTypes(candidate.params);
-        if (!paramTypesMatch(expected, arg_types)) {
+        if (!paramTypesMatch(expected, arg_types, candidate.variadic)) {
             continue;
         }
         if (match != nullptr) {
@@ -62,6 +74,7 @@ std::vector<FunctionSignature> collectDefinedFunctions(const Program& program) {
             signature.name = function.name;
             signature.params = function.params;
             signature.return_type = function.return_type;
+            signature.variadic = function.variadic;
             functions.push_back(std::move(signature));
             continue;
         }
@@ -72,6 +85,7 @@ std::vector<FunctionSignature> collectDefinedFunctions(const Program& program) {
         signature.name = function.name;
         signature.params = function.params;
         signature.return_type = function.return_type;
+        signature.variadic = function.variadic;
         functions.push_back(std::move(signature));
     }
     return functions;
@@ -83,7 +97,7 @@ const Function* findFunctionDefinition(const Program& program, const std::string
         if (function.name != name) {
             continue;
         }
-        if (!paramTypesMatch(paramTypes(function.params), param_types)) {
+        if (!paramTypesMatch(paramTypes(function.params), param_types, function.variadic)) {
             continue;
         }
         return &function;
@@ -358,10 +372,12 @@ CodegenResult Codegen::generate(const Program& program, const CodegenOptions& op
             cg.emitDeclareFunction(function);
         } else if (!function.body.statements.empty()) {
             const std::vector<Type> types = paramTypes(function.params);
-            cg.defined_functions_.insert(mangleFunctionName(function.name, types));
+            cg.defined_functions_.insert(
+                mangleFunctionName(function.name, types, function.variadic));
             cg.emitFunction(function);
         }
     }
+    cg.emitDeferredThunks();
     cg.emitSyscallLowering();
 
     CodegenResult result;
@@ -397,10 +413,18 @@ void Codegen::emitPrelude(const Program& program) {
         writeln("");
     }
 
+    writeln("declare i32 @printf(i8*, ...)");
+    writeln("@__xlang_print_nl = private unnamed_addr constant [2 x i8] c\"\\0A\\00\"");
+    writeln("@__xlang_print_fmt_s = private unnamed_addr constant [3 x i8] c\"%s\\00\"");
+    writeln("@__xlang_print_fmt_d = private unnamed_addr constant [3 x i8] c\"%d\\00\"");
+    writeln("@__xlang_print_fmt_f = private unnamed_addr constant [3 x i8] c\"%f\\00\"");
+    writeln("");
+
     for (const Function& function : program.functions) {
         if (function.external) {
             const std::vector<Type> types = paramTypes(function.params);
-            defined_functions_.insert(mangleFunctionName(function.name, types));
+            defined_functions_.insert(
+                mangleFunctionName(function.name, types, function.external ? false : function.variadic));
         }
     }
 
@@ -432,6 +456,161 @@ void Codegen::emitStringRuntimeSupport() {
     writeln("  ret i8* %buf");
     writeln("}");
     writeln("");
+}
+
+void Codegen::emitDeferredThunks() {
+    if (spawn_cap_globals_.empty() && spawn_thunks_.empty()) {
+        return;
+    }
+    for (const std::string& cap : spawn_cap_globals_) {
+        writeln(cap);
+    }
+    if (!spawn_cap_globals_.empty()) {
+        writeln("");
+    }
+    for (const std::string& thunk : spawn_thunks_) {
+        writeln(thunk);
+    }
+    writeln("");
+}
+
+std::pair<Type, std::string> Codegen::emitPrintCall(
+    const std::vector<std::unique_ptr<Expr>>& args,
+    const std::unordered_map<std::string, std::string>& locals) {
+    needs_printf_ = true;
+    if (args.empty()) {
+        throw XlangError("print requires at least one argument");
+    }
+
+    const auto emitPrintf = [&](const std::string& fmt, const std::vector<std::pair<Type, std::string>>& values) {
+        std::ostringstream call_args;
+        call_args << "i8* " << fmt;
+        for (const auto& [ty, val] : values) {
+            call_args << ", " << llvmTypeName(ty) << " " << val;
+        }
+        const std::string tmp = freshTmp();
+        writeln("  " + tmp + " = call i32 (i8*, ...) @printf(" + call_args.str() + ")");
+        return tmp;
+    };
+
+    if (args.size() == 1) {
+        const auto [ty, val] = emitExpr(*args[0], locals);
+        if (isStringType(ty)) {
+            emitPrintf("getelementptr inbounds ([3 x i8], [3 x i8]* @__xlang_print_fmt_s, i32 0, i32 0)",
+                       {{ty, val}});
+        } else if (ty.kind == TypeKind::Int32) {
+            emitPrintf("getelementptr inbounds ([3 x i8], [3 x i8]* @__xlang_print_fmt_d, i32 0, i32 0)",
+                       {{ty, val}});
+        } else if (ty.isFloating()) {
+            emitPrintf("getelementptr inbounds ([3 x i8], [3 x i8]* @__xlang_print_fmt_f, i32 0, i32 0)",
+                       {{ty, val}});
+        } else {
+            throw XlangError("print supports string and numeric types");
+        }
+    } else {
+        const auto [fmt_ty, fmt_val] = emitExpr(*args[0], locals);
+        if (!isStringType(fmt_ty)) {
+            throw XlangError("print format string must be a string");
+        }
+        std::vector<std::pair<Type, std::string>> values;
+        for (std::size_t i = 1; i < args.size(); ++i) {
+            values.push_back(emitExpr(*args[i], locals));
+        }
+        emitPrintf(fmt_val, values);
+    }
+
+    const std::string nl = freshTmp();
+    writeln("  " + nl +
+            " = call i32 (i8*, ...) @printf(i8* getelementptr inbounds ([2 x i8], "
+            "[2 x i8]* @__xlang_print_nl, i32 0, i32 0))");
+    (void)nl;
+    const std::string tmp = freshTmp();
+    writeln("  " + tmp + " = add i32 0, 0");
+    return {Type{TypeKind::Int32}, tmp};
+}
+
+std::string Codegen::emitSpawnEntry(const Expr& arg,
+                                    const std::unordered_map<std::string, std::string>& locals) {
+    if (arg.kind == Expr::Kind::FunctionRef) {
+        const Function* function = findUniqueFunctionByName(*program_, arg.name);
+        if (function == nullptr) {
+            throw XlangError("unknown function `" + arg.name + "` for spawn");
+        }
+        if (!function->params.empty()) {
+            throw XlangError("spawn requires a bound call such as spawn(worker(1, 2))");
+        }
+        const std::string llvm_name =
+            mangleFunctionName(function->name, paramTypes(function->params), function->variadic);
+        const std::string tmp = freshTmp();
+        writeln("  " + tmp + " = ptrtoint i32 ()* @" + llvm_name + " to i64");
+        return tmp;
+    }
+
+    if (arg.kind != Expr::Kind::Call) {
+        throw XlangError("spawn requires a function call such as spawn(worker(1, 2))");
+    }
+
+    std::vector<Type> arg_types;
+    std::vector<std::pair<Type, std::string>> arg_values;
+    for (const auto& inner_arg : arg.args) {
+        const auto emitted = emitExpr(*inner_arg, locals);
+        arg_types.push_back(emitted.first);
+        arg_values.push_back(emitted);
+    }
+
+    const std::optional<FunctionSignature> resolved =
+        resolveFunctionCall(arg.name, arg_types);
+    if (!resolved) {
+        throw XlangError("no matching function for spawn target `" + arg.name + "`");
+    }
+
+    const std::string inner_llvm =
+        mangleFunctionName(resolved->name, paramTypes(resolved->params), resolved->variadic);
+
+    const std::uint32_t id = spawn_thunk_counter_++;
+    std::ostringstream thunk;
+    std::vector<std::string> cap_globals;
+    for (std::size_t i = 0; i < arg_values.size(); ++i) {
+        const std::string cap = "@__spawn_cap_" + std::to_string(id) + "_" + std::to_string(i);
+        cap_globals.push_back(cap);
+        const Type& ty = arg_values[i].first;
+        if (ty.kind == TypeKind::Struct) {
+            throw XlangError("spawn does not support struct arguments yet");
+        }
+        spawn_cap_globals_.push_back(cap + " = internal global " + llvmTypeName(ty) +
+                                       " zeroinitializer");
+        writeln("  store " + llvmTypeName(ty) + " " + arg_values[i].second + ", " +
+                llvmTypeName(ty) + "* " + cap + ", align " + std::to_string(llvmTypeAlign(ty)));
+    }
+
+    const std::string thunk_name = "__spawn_thunk_" + std::to_string(id);
+    thunk << "define internal i32 @" << thunk_name << "() {\n";
+    std::ostringstream call_args;
+    for (std::size_t i = 0; i < arg_values.size(); ++i) {
+        const Type& ty = arg_values[i].first;
+        const std::string loaded = "%cap" + std::to_string(i);
+        if (ty.kind == TypeKind::Struct) {
+            thunk << "  " << loaded << " = load " << structTypeName(ty.struct_name) << ", "
+                  << structTypeName(ty.struct_name) << "* " << cap_globals[i] << ", align 8\n";
+        } else {
+            thunk << "  " << loaded << " = load " << llvmTypeName(ty) << ", " << llvmTypeName(ty)
+                  << "* " << cap_globals[i] << ", align " << std::to_string(llvmTypeAlign(ty))
+                  << "\n";
+        }
+        if (i > 0) {
+            call_args << ", ";
+        }
+        call_args << llvmTypeName(ty) << " " << loaded;
+    }
+    thunk << "  call " << llvmTypeName(resolved->return_type) << " @" << inner_llvm << "("
+          << call_args.str() << ")\n";
+    thunk << "  ret i32 0\n";
+    thunk << "}\n";
+    spawn_thunks_.push_back(thunk.str());
+
+    const std::string entry = freshTmp();
+    writeln("  " + entry + " = ptrtoint i32 ()* @" + thunk_name + " to i64");
+    return entry;
 }
 
 void Codegen::emitArrayRuntimeSupport() {
@@ -713,7 +892,7 @@ bool Codegen::definesFunction(const Program& program, const std::string& name,
         if (function.name != name || function.body.statements.empty()) {
             continue;
         }
-        if (paramTypesMatch(paramTypes(function.params), param_types)) {
+        if (paramTypesMatch(paramTypes(function.params), param_types, function.variadic)) {
             return true;
         }
     }
@@ -874,13 +1053,20 @@ void Codegen::emitGlobalInit(const Program& program) {
 
 void Codegen::emitDeclareFunction(const FunctionSignature& function) {
     const std::vector<Type> param_type_list = paramTypes(function.params);
-    const std::string llvm_name = mangleFunctionName(function.name, param_type_list);
+    const std::string llvm_name =
+        mangleFunctionName(function.name, param_type_list, function.variadic);
     std::ostringstream params;
     for (std::size_t i = 0; i < function.params.size(); ++i) {
         if (i > 0) {
             params << ", ";
         }
         params << llvmTypeName(function.params[i].type);
+    }
+    if (function.variadic) {
+        if (!function.params.empty()) {
+            params << ", ";
+        }
+        params << "...";
     }
     writeln("declare " + llvmTypeName(function.return_type) + " @" + llvm_name + "(" +
             params.str() + ")");
@@ -888,23 +1074,18 @@ void Codegen::emitDeclareFunction(const FunctionSignature& function) {
 }
 
 void Codegen::emitDeclareFunction(const Function& function) {
-    const std::vector<Type> param_type_list = paramTypes(function.params);
-    const std::string llvm_name = mangleFunctionName(function.name, param_type_list);
-    std::ostringstream params;
-    for (std::size_t i = 0; i < function.params.size(); ++i) {
-        if (i > 0) {
-            params << ", ";
-        }
-        params << llvmTypeName(function.params[i].type);
-    }
-    writeln("declare " + llvmTypeName(function.return_type) + " @" + llvm_name + "(" +
-            params.str() + ")");
-    writeln("");
+    FunctionSignature signature;
+    signature.name = function.name;
+    signature.params = function.params;
+    signature.return_type = function.return_type;
+    signature.variadic = function.variadic;
+    emitDeclareFunction(signature);
 }
 
 void Codegen::emitFunction(const Function& function) {
     const std::vector<Type> param_type_list = paramTypes(function.params);
-    const std::string llvm_name = mangleFunctionName(function.name, param_type_list);
+    const std::string llvm_name =
+        mangleFunctionName(function.name, param_type_list, function.variadic);
     std::ostringstream params;
     for (std::size_t i = 0; i < function.params.size(); ++i) {
         if (i > 0) {
@@ -912,9 +1093,22 @@ void Codegen::emitFunction(const Function& function) {
         }
         params << llvmTypeName(function.params[i].type) << " %" << function.params[i].name;
     }
+    if (function.variadic) {
+        if (!function.params.empty()) {
+            params << ", ";
+        }
+        params << "...";
+    }
 
     writeln("define " + fnLinkage(function) + llvmTypeName(function.return_type) + " @" +
             llvm_name + "(" + params.str() + ") {");
+
+    if (function.variadic && function.name == "print") {
+        writeln("  ret i32 0");
+        writeln("}");
+        writeln("");
+        return;
+    }
 
     std::unordered_map<std::string, std::string> locals;
     local_types_.clear();
@@ -1378,6 +1572,20 @@ std::pair<Type, std::string> Codegen::emitExpr(
             return {result_ty, tmp};
         }
         case Expr::Kind::Call: {
+            if (expr.name == "print") {
+                return emitPrintCall(expr.args, locals);
+            }
+
+            if (expr.name == "spawn") {
+                if (expr.args.size() != 1) {
+                    throw XlangError("spawn requires exactly one bound call argument");
+                }
+                const std::string entry = emitSpawnEntry(*expr.args[0], locals);
+                const std::string tmp = freshTmp();
+                writeln("  " + tmp + " = call i32 @spawn$i64(i64 " + entry + ")");
+                return {Type{TypeKind::Int32}, tmp};
+            }
+
             std::vector<Type> arg_types;
             std::ostringstream args;
             for (std::size_t i = 0; i < expr.args.size(); ++i) {
@@ -1387,6 +1595,15 @@ std::pair<Type, std::string> Codegen::emitExpr(
                 const auto [ty, val] = emitExpr(*expr.args[i], locals);
                 arg_types.push_back(ty);
                 args << llvmTypeName(ty) << " " << val;
+            }
+
+            if (expr.name == "invoke0" && expr.args.size() == 1) {
+                const auto [_, entry] = emitExpr(*expr.args[0], locals);
+                const std::string fn = freshTmp();
+                writeln("  " + fn + " = inttoptr i64 " + entry + " to i32 ()*");
+                const std::string tmp = freshTmp();
+                writeln("  " + tmp + " = call i32 " + fn + "()");
+                return {Type{TypeKind::Int32}, tmp};
             }
 
             if (expr.name == "invoke" && expr.args.size() == 2) {
@@ -1472,7 +1689,8 @@ std::pair<Type, std::string> Codegen::emitExpr(
                     definition != nullptr && definition->syscall) {
                     return definition->name;
                 }
-                return mangleFunctionName(resolved->name, paramTypes(resolved->params));
+                return mangleFunctionName(resolved->name, paramTypes(resolved->params),
+                                        resolved->variadic);
             }();
             const std::string tmp = freshTmp();
             writeln("  " + tmp + " = call " + llvmTypeName(resolved->return_type) + " @" +

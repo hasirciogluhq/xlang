@@ -1,22 +1,5 @@
 import scheduler
 
-declare syscall print_int(n: int32)
-declare syscall print_cstr(s: string)
-declare syscall print_fmt_str(fmt: string, arg: string)
-declare syscall print_fmt_int(fmt: string, arg: int32)
-
-export fn print(n: int32) {
-    return print_int(n)
-}
-
-export fn print(s: string) {
-    return print_cstr(s)
-}
-
-export fn print(fmt: string, arg: string) {
-    return print_fmt_str(fmt, arg)
-}
-
-export fn print(fmt: string, arg: int32) {
-    return print_fmt_int(fmt, arg)
+export fn print(...) {
+    return 0
 }

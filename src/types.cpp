@@ -122,10 +122,14 @@ std::string typeMangleComponent(const Type& type) {
     return "unknown";
 }
 
-std::string mangleFunctionName(const std::string& name, const std::vector<Type>& param_types) {
+std::string mangleFunctionName(const std::string& name, const std::vector<Type>& param_types,
+                               bool variadic) {
     std::string result = name;
     for (const Type& param_type : param_types) {
         result += "$" + typeMangleComponent(param_type);
+    }
+    if (variadic) {
+        result += "$v";
     }
     return result;
 }

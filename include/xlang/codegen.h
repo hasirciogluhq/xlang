@@ -64,6 +64,12 @@ private:
     std::pair<Type, std::string> emitExpr(const Expr& expr,
                                           const std::unordered_map<std::string, std::string>& locals);
 
+    std::pair<Type, std::string> emitPrintCall(const std::vector<std::unique_ptr<Expr>>& args,
+                                               const std::unordered_map<std::string, std::string>& locals);
+    std::string emitSpawnEntry(const Expr& arg,
+                               const std::unordered_map<std::string, std::string>& locals);
+    void emitDeferredThunks();
+
     [[nodiscard]] bool definesFunction(const Program& program, const std::string& name,
                                        const std::vector<Type>& param_types) const;
     [[nodiscard]] std::optional<FunctionSignature> resolveFunctionCall(
@@ -106,6 +112,10 @@ private:
     bool needs_heap_{false};
     bool needs_strings_{false};
     bool needs_arrays_{false};
+    bool needs_printf_{false};
+    std::uint32_t spawn_thunk_counter_{0};
+    std::vector<std::string> spawn_thunks_;
+    std::vector<std::string> spawn_cap_globals_;
     std::uint32_t string_literal_counter_{0};
     std::uint32_t label_counter_{0};
     std::unordered_map<std::string, std::string> string_literal_globals_;

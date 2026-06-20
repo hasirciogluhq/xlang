@@ -128,6 +128,7 @@ Function cloneFunction(const Function& function) {
     copy.exported = function.exported;
     copy.external = function.external;
     copy.syscall = function.syscall;
+    copy.variadic = function.variadic;
     copy.body.span = function.body.span;
     for (const Stmt& stmt : function.body.statements) {
         copy.body.statements.push_back(cloneStmt(stmt));

@@ -33,6 +33,7 @@ std::vector<FunctionSignature> collectExports(const Program& program) {
         signature.name = function.name;
         signature.params = function.params;
         signature.return_type = function.return_type;
+        signature.variadic = function.variadic;
         exports.push_back(std::move(signature));
     }
     return exports;

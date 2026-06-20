@@ -57,6 +57,7 @@ enum class TokenKind {
     Else,
     While,
     Array,
+    Ellipsis,
 };
 
 struct Token {

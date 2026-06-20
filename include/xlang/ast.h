@@ -45,6 +45,7 @@ struct FunctionSignature {
     std::string name;
     std::vector<TypedName> params;
     Type return_type{TypeKind::Int32};
+    bool variadic{false};
 };
 
 struct ImportSpec {
@@ -182,6 +183,7 @@ struct Function {
     bool exported{false};
     bool external{false};
     bool syscall{false};
+    bool variadic{false};
     Span span{};
 };
 

@@ -42,7 +42,7 @@ private:
   Function parseFunction(const ItemModifiers &modifiers);
   Function parseDeclareFunction(const ItemModifiers &modifiers);
   Function parseDeclareSyscall();
-  std::vector<TypedName> parseParams();
+  std::vector<TypedName> parseParams(bool* variadic_out = nullptr);
   Block parseBlock();
   Stmt parseStatement();
   std::unique_ptr<Expr> parseExpr();

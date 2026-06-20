@@ -50,7 +50,8 @@ struct Type {
 [[nodiscard]] std::string typeToString(const Type& type);
 [[nodiscard]] std::string typeMangleComponent(const Type& type);
 [[nodiscard]] std::string mangleFunctionName(const std::string& name,
-                                             const std::vector<Type>& param_types);
+                                             const std::vector<Type>& param_types,
+                                             bool variadic = false);
 [[nodiscard]] bool typesEqual(const Type& left, const Type& right);
 [[nodiscard]] std::string llvmTypeName(const Type& type);
 [[nodiscard]] std::string arrayTypeName(const Type& element_type);

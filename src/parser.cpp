@@ -182,7 +182,8 @@ Function Parser::parseFunction(const ItemModifiers& modifiers) {
     consume(TokenKind::Fn, "expected 'fn'");
     const Token name = consume(TokenKind::Ident, "expected function name");
     consume(TokenKind::LParen, "expected '('");
-    std::vector<TypedName> params = parseParams();
+    bool variadic = false;
+    std::vector<TypedName> params = parseParams(&variadic);
     consume(TokenKind::RParen, "expected ')'");
     Type return_type = defaultType();
     if (match(TokenKind::Colon)) {
@@ -194,6 +195,7 @@ Function Parser::parseFunction(const ItemModifiers& modifiers) {
     function.name = name.text;
     function.params = std::move(params);
     function.return_type = return_type;
+    function.variadic = variadic;
     function.body = std::move(body);
     function.exported = modifiers.exported;
     function.external = modifiers.external;
@@ -208,7 +210,8 @@ Function Parser::parseDeclareSyscall() {
     }
     const Token name = consume(TokenKind::Ident, "expected syscall name");
     consume(TokenKind::LParen, "expected '('");
-    std::vector<TypedName> params = parseParams();
+    bool variadic = false;
+    std::vector<TypedName> params = parseParams(&variadic);
     consume(TokenKind::RParen, "expected ')'");
     Type return_type = defaultType();
     if (match(TokenKind::Colon)) {
@@ -220,6 +223,7 @@ Function Parser::parseDeclareSyscall() {
     function.name = name.text;
     function.params = std::move(params);
     function.return_type = return_type;
+    function.variadic = variadic;
     function.syscall = true;
     function.span = start;
     registerFunction(function.name);
@@ -231,7 +235,8 @@ Function Parser::parseDeclareFunction(const ItemModifiers& modifiers) {
     consume(TokenKind::Fn, "expected 'fn'");
     const Token name = consume(TokenKind::Ident, "expected function name");
     consume(TokenKind::LParen, "expected '('");
-    std::vector<TypedName> params = parseParams();
+    bool variadic = false;
+    std::vector<TypedName> params = parseParams(&variadic);
     consume(TokenKind::RParen, "expected ')'");
     if (match(TokenKind::Colon)) {
         (void)parseType();
@@ -241,6 +246,7 @@ Function Parser::parseDeclareFunction(const ItemModifiers& modifiers) {
     Function function;
     function.name = name.text;
     function.params = std::move(params);
+    function.variadic = variadic;
     function.external = true;
     function.span = start;
     registerFunction(function.name);
@@ -248,9 +254,19 @@ Function Parser::parseDeclareFunction(const ItemModifiers& modifiers) {
     return function;
 }
 
-std::vector<TypedName> Parser::parseParams() {
+std::vector<TypedName> Parser::parseParams(bool* variadic_out) {
     std::vector<TypedName> params;
+    if (variadic_out != nullptr) {
+        *variadic_out = false;
+    }
     if (check(TokenKind::RParen)) {
+        return params;
+    }
+
+    if (match(TokenKind::Ellipsis)) {
+        if (variadic_out != nullptr) {
+            *variadic_out = true;
+        }
         return params;
     }
 
@@ -260,6 +276,10 @@ std::vector<TypedName> Parser::parseParams() {
         param.type = parseOptionalTypeAfterName(defaultType());
         params.push_back(std::move(param));
     } while (match(TokenKind::Comma));
+
+    if (match(TokenKind::Ellipsis) && variadic_out != nullptr) {
+        *variadic_out = true;
+    }
 
     return params;
 }

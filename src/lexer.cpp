@@ -177,7 +177,16 @@ void Lexer::tokenize() {
             case ',': tokens_.push_back(makeToken(TokenKind::Comma, start_line, start_column)); break;
             case ';': tokens_.push_back(makeToken(TokenKind::Semicolon, start_line, start_column)); break;
             case ':': tokens_.push_back(makeToken(TokenKind::Colon, start_line, start_column)); break;
-            case '.': tokens_.push_back(makeToken(TokenKind::Dot, start_line, start_column)); break;
+            case '.':
+                if (peek() == '.' && peekNext() == '.') {
+                    advance();
+                    advance();
+                    column += 2;
+                    tokens_.push_back(makeToken(TokenKind::Ellipsis, start_line, start_column));
+                } else {
+                    tokens_.push_back(makeToken(TokenKind::Dot, start_line, start_column));
+                }
+                break;
             case '+': tokens_.push_back(makeToken(TokenKind::Plus, start_line, start_column)); break;
             case '-': tokens_.push_back(makeToken(TokenKind::Minus, start_line, start_column)); break;
             case '*': tokens_.push_back(makeToken(TokenKind::Star, start_line, start_column)); break;

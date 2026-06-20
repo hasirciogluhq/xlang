@@ -3,7 +3,6 @@
 
 struct SpawnTask {
     entry: int64
-    arg: int32
 }
 
 declare syscall cpu_count(): int32
@@ -56,7 +55,7 @@ fn worker_loop(worker_id: int32) {
         local task = array_pop_front(spawn_queue)
         inflight = inflight + 1
         mutex_unlock(queue_mu)
-        invoke(task.entry, task.arg)
+        invoke0(task.entry)
         mutex_lock(queue_mu)
         inflight = inflight - 1
         if array_len(spawn_queue) == 0 {
@@ -69,9 +68,9 @@ fn worker_loop(worker_id: int32) {
     return 0
 }
 
-export fn spawn(entry: int64, arg: int32) {
+export fn spawn(entry: int64) {
     init_scheduler()
-    local task: SpawnTask = new SpawnTask { entry = entry, arg = arg }
+    local task: SpawnTask = new SpawnTask { entry = entry }
     mutex_lock(queue_mu)
     array_push(spawn_queue, task)
     cond_signal(queue_cv_work)
