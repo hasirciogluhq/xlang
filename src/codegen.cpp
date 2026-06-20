@@ -1940,8 +1940,8 @@ std::pair<Type, std::string> Codegen::emitExpr(
             if (from_ty.kind == TypeKind::Int64 && target.kind == TypeKind::Struct) {
                 const std::string ptr = freshTmp();
                 writeln("  " + ptr + " = inttoptr i64 " + val + " to " +
-                        structTypeName(target.struct_name) + "*");
-                return loadValue(target, ptr, locals);
+                        structTypeName(target.struct_name));
+                return {target, ptr};
             }
             throw XlangError("unsupported cast from `" + typeToString(from_ty) + "` to `" +
                              typeToString(target) + "`");
