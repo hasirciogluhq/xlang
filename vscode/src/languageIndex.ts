@@ -1,7 +1,7 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 import * as vscode from "vscode";
-import { ATOMIC_BOOL_METHODS, ATOMIC_INT_METHODS, CONTEXT_METHODS, JSON_METHODS, LOCK_METHODS, ROUTER_METHODS, RWLOCK_METHODS, SERVER_METHODS, SYNC_FACTORIES, type CatalogEntry } from "./builtins";
+import { ATOMIC_BOOL_METHODS, ATOMIC_INT_METHODS, CONN_METHODS, CONTEXT_METHODS, JSON_METHODS, LOCK_METHODS, ROUTER_METHODS, RWLOCK_METHODS, SERVER_METHODS, SYNC_FACTORIES, type CatalogEntry } from "./builtins";
 import {
   type ImportBinding,
   type ParsedModule,
@@ -79,7 +79,7 @@ export class LanguageIndex {
   }
 
   methodsForType(typeName: string): SymbolDoc[] {
-    return [...ROUTER_METHODS, ...JSON_METHODS, ...LOCK_METHODS, ...RWLOCK_METHODS, ...ATOMIC_INT_METHODS, ...ATOMIC_BOOL_METHODS, ...CONTEXT_METHODS, ...SERVER_METHODS]
+    return [...ROUTER_METHODS, ...JSON_METHODS, ...LOCK_METHODS, ...RWLOCK_METHODS, ...ATOMIC_INT_METHODS, ...ATOMIC_BOOL_METHODS, ...CONTEXT_METHODS, ...SERVER_METHODS, ...CONN_METHODS]
       .filter((m) => m.receiver === typeName)
       .map(catalogToSymbolDoc);
   }

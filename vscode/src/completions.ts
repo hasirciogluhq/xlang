@@ -2,7 +2,9 @@ import * as vscode from "vscode";
 import {
   COMPILER_BUILTINS,
   EXPECT_CHAIN,
+  FILE_FUNCTIONS,
   HTTP_TYPES,
+  JSON_METHODS,
   KEYWORDS,
   NET_SYSCALLS,
   PROCESS_SYSCALLS,
@@ -92,6 +94,16 @@ export function registerCompletions(context: vscode.ExtensionContext): void {
                 items.push(catalogToCompletion(entry, "5"));
               }
             }
+            if (binding.modulePath === "file" || binding.alias === "file") {
+              for (const entry of FILE_FUNCTIONS) {
+                items.push(catalogToCompletion(entry, "5"));
+              }
+            }
+            if (binding.modulePath === "json" || binding.alias === "json") {
+              for (const entry of JSON_METHODS.filter((m) => !m.receiver)) {
+                items.push(catalogToCompletion(entry, "5"));
+              }
+            }
             if (binding.modulePath === "http" || binding.modulePath.startsWith("http/")) {
               for (const entry of HTTP_TYPES) {
                 items.push(catalogToCompletion(entry, "5"));
@@ -130,6 +142,8 @@ function isImportLine(linePrefix: string): boolean {
 function importSnippets(): vscode.CompletionItem[] {
   return [
     makeSnippet('import * as ${1:alias} from ${2:module}', "import * as alias from module"),
+    makeSnippet('import ${1:expect} from ${2:test}', "import expect from test (selective)"),
+    makeSnippet('import ${1:router} from ${2:http/router}', "import router from http/router"),
     makeSnippet('import ${1:Name} from ${2:module}', "import Name from module"),
     makeSnippet('import * as ${1:a}, ${2:Name} from ${3:module}', "import * as a, Name from module"),
     makeSnippet('import ${1:alias} from ${2:module/path}', "import alias from module/path"),

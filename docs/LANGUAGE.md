@@ -18,10 +18,16 @@ This document describes the syntax, types, module system, and runtime API of the
 10. [Modules and import](#modules-and-import)
 11. [Print](#print)
 12. [Scheduler and spawn](#scheduler-and-spawn)
-13. [Syscall](#syscall)
-14. [External linking](#external-linking)
-15. [Compiler builtins](#compiler-builtins)
-16. [Limitations](#limitations)
+13. [Concurrency and sync](#concurrency-and-sync)
+14. [HTTP server](#http-server-libshttp)
+15. [Networking and fetch](#networking-and-fetch)
+16. [JSON parsing](#json-parsing)
+17. [File I/O](#file-io)
+18. [Syscall](#syscall)
+19. [External linking](#external-linking)
+20. [Compiler builtins](#compiler-builtins)
+21. [Testing](#testing)
+22. [Limitations](#limitations)
 
 ---
 
@@ -156,6 +162,33 @@ export fn process(s: string) { print(s) }
 ```
 
 The compiler selects the correct overload at call site based on argument types.
+
+### Interface
+
+Port/adapter style contracts (Go/TypeScript inspired):
+
+```xlang
+interface Greeter {
+    Greet(name: string): int32
+}
+
+struct ConsoleGreeter {
+    prefix: string
+}
+
+fn Greet(g: ConsoleGreeter, name: string): int32 {
+    print("%s %s", g.prefix, name)
+    return 0
+}
+
+fn main() {
+    local c: ConsoleGreeter = new ConsoleGreeter { prefix = "hello" }
+    local g = c as Greeter
+    return 0
+}
+```
+
+Use `as InterfaceName` to cast a struct to an interface handle.
 
 ### Variadic
 
@@ -335,29 +368,36 @@ import router from http/router      // single file
 
 ```xlang
 import * as json from json                    // namespace — json.parse(...)
-import Router from http                       // submodule or symbol
-import * as http, Router from http             // mixed
-import router from http/router                 // legacy alias (path with /)
-import test from test                          // same-name alias
-from json import parse                         // selective (legacy)
+import expect from test                        // selective symbol import
+import router from http/router                 // submodule as namespace (path with /)
+import * as http, Router from http             // mixed clause import
+import json from json                          // same-name namespace alias
+from json import parse                         // legacy selective import
 ```
 
 **Rules**
 
 - `import * as X from M` — exported symbols available as `X.Name`
-- `import Name from M` — submodule (`http/router`) or exported symbol
+- `import Symbol from M` — import a single exported function or global (e.g. `expect` from `test`)
+- `import Name from M` — submodule (`http/router`) when `M/Name` exists, or exported symbol
 - `import alias from M/path` — prefix import when module path contains `/`
+- `from M import a, b` — legacy selective import (same as clause form)
 - Bare `import M` merges all symbols (including private) into the current file
+
+Selective imports pull only the named exported symbols (and supporting structs/globals) into the current module — private symbols cannot be imported.
 
 ### libs layout
 
 | Module | Description |
 |--------|-------------|
-| `json` | `parse`, field accessors |
-| `http` | Router + TCP server package |
-| `http/router` | Gin-style `Context`, `r.Use`, `ctx.String/JSON/HTML`, `ctx.Put/Get`, `ctx.Bind/Ref` |
-| `test` | Vitest-style `expect` |
+| `json` | `parse`, typed field accessors (`data.Int(key)`) |
+| `http` | Package merging `http/router` + `http/server` |
+| `http/router` | Gin-style `Context`, `r.Use`, `r.Get`, `ListenAndServe` |
+| `http/server` | TCP transport — `Conn`, `ServerInfo`, `Listen`, `AcceptOnce` |
+| `test` | Vitest-style `expect`, `expectFn`, `fail` |
 | `process` | fork, pipe, fd, env, `file_read` |
+| `file` (runtime) | `ReadAll`, `Write`, `OpenRead`, `Exists`, stream I/O |
+| `sync` (runtime) | `Lock`, `RWLock`, `AtomicInt` — method-style API |
 
 See [vscode/README.md](../vscode/README.md) for IDE completion of imported modules.
 
@@ -401,19 +441,22 @@ fn worker(id: int32, tag: string) {
 }
 
 fn main() {
-    spawn(worker(1, "alpha"))
-    spawn(worker(2, "beta"))
+    go worker(1, "alpha")
+    go worker(2, "beta")
     wait_all()
     return 0
 }
 ```
 
-**Important:** `spawn` only accepts a **bound call** — arguments are given inside the call:
+**Important:** `spawn` / `go` only accept a **bound call** — arguments are given inside the call:
 
 ```xlang
-spawn(job_worker(1, "ok"))   // ✓
-spawn(job_worker, 1, "ok") // ✗ (old API, not supported)
+go job_worker(1, "ok")       // ✓ shorthand
+spawn(job_worker(1, "ok"))   // ✓ explicit
+spawn(job_worker, 1, "ok")   // ✗ (old API, not supported)
 ```
+
+`go expr` is syntactic sugar for `spawn(expr)`.
 
 The compiler automatically generates a **thunk** (parameterless `i32()` wrapper) for each `spawn(...)`; worker threads run this thunk.
 
@@ -490,7 +533,19 @@ See `examples/sync_lock.xlang` for `go` + mutex + atomic counter.
 
 ## HTTP server (libs/http)
 
-Gin-inspired minimal router. Handlers receive **`Context`** (request + response + per-request stash). No module globals.
+Gin-inspired minimal router split into two modules:
+
+- **`http/router`** — routing, middleware, `Context`, HTTP parsing, `ListenAndServe`
+- **`http/server`** — raw TCP I/O (`Conn`, `ServerInfo`, `Listen`, `AcceptOnce`)
+
+Import the package namespace or submodules directly:
+
+```xlang
+import * as http from http          // merged package
+import router from http/router      // router-only (tests)
+```
+
+Handlers receive **`Context`** (request + response + per-request stash). No module globals.
 
 ```xlang
 import * as http from http
@@ -554,6 +609,8 @@ HTTP/HTTPS client logic lives in `runtime/net.xlang`. Syscalls bridge TCP/TLS I/
 | `fetch(url: string)` | HTTP GET; returns `FetchResponse` |
 
 ```xlang
+import * as json from json
+
 struct FetchResponse {
     status: int32   // HTTP status code (e.g. 200)
     ok: int32       // 1 if 2xx, else 0
@@ -563,7 +620,8 @@ struct FetchResponse {
 fn main() {
     local resp = fetch("https://jsonplaceholder.typicode.com/todos/1")
     print("status: %d", resp.status)
-    print("title: %s", json_get_string(resp.body, "title"))
+    local data = json.parse(resp.body)
+    print("title: %s", data.String("title"))
     return 0
 }
 ```
@@ -593,23 +651,73 @@ declare syscall net_tls_close(fd: int64): int32
 
 ## JSON parsing
 
-JSON helpers live in `runtime/json.xlang` (pure xlang, no syscall).
+JSON helpers live in `libs/json.xlang` (pure xlang, no syscall). Parse once, then read fields via method-style accessors on the `Json` object.
 
 | API | Description |
 |-----|-------------|
-| `json_get_string(json, key)` | Object string field (unquoted) |
-| `json_get_int(json, key)` | Object integer field |
-| `json_get_bool(json, key)` | Object bool field (`true` → 1) |
-| `json_has_key(json, key)` | 1 if key exists |
-| `json_is_null(json, key)` | 1 if field is `null` |
-| `json_get_field(json, key)` | Raw `JsonResult { ok, value, next }` |
-| `json_unescape(raw)` | Unescape JSON string contents |
+| `json.parse(text)` | Parse JSON string → `Json` object |
+| `data.Int(key)` | Object integer field |
+| `data.String(key)` | Object string field (unquoted) |
+| `data.Bool(key)` | Object bool field (`true` → 1) |
+| `data.Has(key)` | 1 if key exists |
+| `data.Null(key)` | 1 if field is `null` |
+| `data.Get(key)` | Raw `JsonValue` wrapper |
+| `value.AsInt()` / `AsString()` / `AsBool()` / `IsNull()` | Coerce `JsonValue` |
 
 ```xlang
-local resp = fetch("https://api.example.com/data")
-local name = json_get_string(resp.body, "name")
-local age = json_get_int(resp.body, "age")
+import * as json from json
+
+fn main() {
+    local resp = fetch("https://api.example.com/data")
+    local data = json.parse(resp.body)
+    local name = data.String("name")
+    local age = data.Int("age")
+    local nested = data.Get("meta").AsString()
+    return 0
+}
 ```
+
+---
+
+## File I/O
+
+High-level file operations live in `runtime/file.xlang`. Backed by C++ fstream syscalls — not exposed directly to user code.
+
+```xlang
+import * as file from file
+
+fn main() {
+    file.Write("out.txt", "hello")
+    local body = file.ReadAll("out.txt")
+    print("%s", body)
+
+    local f = file.OpenRead("out.txt")
+    local chunk = file.Read(f)
+    file.Close(f)
+
+    if file.Exists("out.txt") != 0 {
+        print("size: %d", file.Size("out.txt"))
+    }
+    return 0
+}
+```
+
+### API (runtime/file)
+
+| Function | Description |
+|----------|-------------|
+| `ReadAll(path)` | Read entire file into string |
+| `Write(path, data)` | Overwrite file |
+| `Append(path, data)` | Append to file |
+| `Exists(path)` | 1 if file exists |
+| `Size(path)` | File size in bytes |
+| `Open(path, mode)` | Open handle (`File` struct) |
+| `OpenRead(path)` / `OpenWrite(path)` / `OpenAppend(path)` | Convenience openers |
+| `Read(f)` / `WriteStream(f, data)` | Stream read/write on open handle |
+| `Close(f)` | Close handle |
+| `IsOpen(f)` | 1 if handle is valid |
+
+Internal syscalls (bridge only): `file_open`, `file_close`, `file_read_path`, `file_write_path`, `file_exists`, `file_size`, `file_read_handle`, `file_write_handle`.
 
 ---
 
@@ -677,14 +785,76 @@ Not syscalls; codegen special cases:
 | `invoke1(entry, ctx)` | `int64` fn ptr → call with one arg (`Context`, `ServerInfo`, …) |
 | `array_len(arr)` | Array length |
 | `array_push(arr, val)` | Append to end |
+| `array_get(arr, i)` | Read element by index |
+| `array_pop(arr)` | Pop from end |
 | `array_pop_front(arr)` | Take and remove from front |
 | `str_len(s)` | String length |
 | `str_eq(a, b)` | 1 if equal, else 0 |
 | `str_byte(s, i)` | Byte at index (0–255), or -1 |
 | `str_find(haystack, needle)` | Index of substring, or -1 |
 | `str_sub(s, start, len)` | Substring copy |
+| `str_from_int(n)` | Format int32 as decimal string |
 
 `invoke0` — scheduler worker loop. `invoke1` — HTTP handlers (`fn(ctx: Context)`) and listen callbacks (`fn(info: ServerInfo)`). `ref(obj)` + `handle as Type` for context struct stash.
+
+---
+
+## Testing
+
+Builtin test runner (Vitest-like). Test files must end with **`.test.xlang`** (like `filename.test.ts`). Do **not** define `main` — use `Test*` functions instead; the runner injects a synthetic harness.
+
+```bash
+xlank test
+xlank test test/xlang
+xlank test test/xlang/json.test.xlang
+```
+
+Each file is compiled and run individually. The C++ runner discovers all exported `Test*` functions and calls them via `test_run_one`. Output example:
+
+```
+ RUN  test/xlang/json.test.xlang
+
+ ✓ TestJsonParseInt
+ ✓ TestJsonParseString
+
+ Test Files  1 passed (1)
+      Tests  2 passed (2)
+```
+
+### Import
+
+```xlang
+import expect from test
+import * as json from json
+```
+
+Selective `import expect from test` pulls only the assertion API — not the whole test module.
+
+### Assertion API (`libs/test.xlang`)
+
+| Function | Description |
+|----------|-------------|
+| `expect(actual)` | Start assertion chain (int32, int64, or string) |
+| `expectFn(entry)` | Assert on function pointer |
+| `expect(actual).toEqual(expected)` | Equality (int or string) |
+| `expect(v).toBeTrue()` / `.toBeFalse()` | Truthiness |
+| `expectFn(fn).toThrow()` | Function must panic |
+| `expectFn(fn).toError()` | Function must return error |
+| `expect(actual).not().toEqual(...)` | Negated assertion |
+| `fail(msg)` | Fail current test |
+
+```xlang
+import expect from test
+import * as json from json
+
+fn TestJsonParseInt() {
+    local data = json.parse("{\"userId\": 7}")
+    expect(data.Int("userId")).toEqual(7)
+    return 0
+}
+```
+
+Function names must start with `Test` (Go-style). Each test function returns `0` on success; failed assertions set an internal flag read by the harness.
 
 ---
 
@@ -711,60 +881,12 @@ Early version; known constraints:
 | `examples/types.xlang` | struct, new, delete |
 | `examples/math.xlang` | export module |
 | `examples/scheduler.xlang` | spawn, wait_all |
-| `examples/fetch.xlang` | fetch HTTP GET |
+| `examples/fetch.xlang` | fetch HTTP GET + json.parse |
 | `examples/http_server.xlang` | HTTP router + ListenAndServe |
-| `examples/sync_lock.xlang` | Lock + AtomicInt + spawn |
+| `examples/sync_lock.xlang` | Lock + AtomicInt + go spawn |
+| `examples/interfaces.xlang` | interface + struct + as cast |
 | `test/main.xlang` + `test/lib.xlang` | external link |
 | `test/xlang/*.test.xlang` | runtime tests (`xlank test`) |
-
----
-
-## Testing
-
-Builtin test runner (Vitest-like). Test files must end with **`.test.xlang`** (like `filename.test.ts`).
-
-```bash
-xlank test
-xlank test test/xlang
-```
-
-Each file is compiled and run individually. Output example:
-
-```
- RUN  test/xlang/json.test.xlang
-
- ✓ json > reads integer fields
- ✓ json > reads string fields
-
- Test Files  1 passed (1)
-      Tests  2 passed (2)
-```
-
-API (`runtime/test.xlang`):
-
-| Function | Description |
-|----------|-------------|
-| `describe(name)` | Group name for following `it` calls |
-| `it(name, fn)` | Run test function (pass fn ref, not call) |
-| `expect_eq(a, b)` | `int32` equality |
-| `expect_str_eq(a, b)` | string equality |
-| `expect_true(v)` / `expect_false(v)` | truthiness |
-| `expect_ne(a, b)` | `int32` inequality |
-| `test_summary()` | Print summary; return failure count (use as `main` exit) |
-
-```xlang
-fn test_user_id() {
-    local body = "{\"userId\": 1}"
-    expect_eq(json_get_int(body, "userId"), 1)
-    return 0
-}
-
-fn main() {
-    describe("json")
-    it("reads userId", test_user_id)
-    return test_summary()
-}
-```
 
 ---
 
@@ -779,4 +901,4 @@ fn main() {
        → clang link (+ runtime.o) → executable
 ```
 
-Runtime compilation: `runtime/runtime.xlang` (+ `import scheduler`, `import net`) is built as a separate `.o` and linked into user programs.
+Runtime compilation: `runtime/runtime.xlang` is built as a separate `.o` and linked into user programs. Additional runtime modules (`scheduler`, `net`, `file`, `sync`) are resolved via import and linked as needed.

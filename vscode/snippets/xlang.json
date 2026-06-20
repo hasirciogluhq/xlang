@@ -107,13 +107,13 @@
   },
   "Import with alias": {
     "prefix": "importfrom",
-    "body": "import ${1:json} from ${2:json}",
-    "description": "import alias from module/path"
+    "body": "import ${1:expect} from ${2:test}",
+    "description": "Selective symbol import (import expect from test)"
   },
   "Import as alias": {
     "prefix": "importas",
-    "body": "import ${1:scheduler} as ${2:s}",
-    "description": "Import module with alias"
+    "body": "import * as ${2:alias} from ${1:module}",
+    "description": "Import module with namespace alias"
   },
   "From import": {
     "prefix": "from",
@@ -148,7 +148,7 @@
   "Fetch with JSON": {
     "prefix": "fetch",
     "body": [
-      "import json from json",
+      "import * as json from json",
       "",
       "local resp = fetch(\"${1:https://example.com}\")",
       "local data = json.parse(resp.body)",
@@ -218,11 +218,44 @@
   "JSON parse": {
     "prefix": "jsonparse",
     "body": [
-      "import json from json",
+      "import * as json from json",
       "",
       "local data = json.parse(${1:body})",
       "local ${2:value} = data.${3|Int,String,Bool|}(\"${4:key}\")"
     ],
     "description": "json.parse + field accessor"
+  },
+  "File read/write": {
+    "prefix": "filio",
+    "body": [
+      "import * as file from file",
+      "",
+      "file.Write(\"${1:path}\", \"${2:data}\")",
+      "local body = file.ReadAll(\"${1:path}\")"
+    ],
+    "description": "file.Write + file.ReadAll"
+  },
+  "File stream": {
+    "prefix": "filestream",
+    "body": [
+      "import * as file from file",
+      "",
+      "local f = file.OpenRead(\"${1:path}\")",
+      "local body = file.Read(f)",
+      "file.Close(f)"
+    ],
+    "description": "OpenRead + Read + Close"
+  },
+  "Test file header": {
+    "prefix": "testfile",
+    "body": [
+      "import expect from test",
+      "",
+      "fn Test${1:Name}() {",
+      "\texpect(${2:actual}).toEqual(${3:expected})",
+      "\treturn 0",
+      "}"
+    ],
+    "description": "Test file with expect import"
   }
 }

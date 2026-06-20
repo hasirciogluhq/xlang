@@ -112,10 +112,12 @@ export const EXPECT_CHAIN: CatalogEntry[] = [
 ];
 
 export const JSON_METHODS: CatalogEntry[] = [
+  { label: "parse", detail: "parse(text) → Json", documentation: "Parse JSON string into Json object.", insertText: 'parse(${1:body})' },
   { label: "Int", detail: "Int(key) → int32", documentation: "Read integer field from Json object.", insertText: 'Int("${1:key}")', receiver: "Json" },
   { label: "String", detail: "String(key) → string", documentation: "Read string field.", insertText: 'String("${1:key}")', receiver: "Json" },
   { label: "Bool", detail: "Bool(key) → int32", documentation: "Read bool field.", insertText: 'Bool("${1:key}")', receiver: "Json" },
   { label: "Has", detail: "Has(key) → int32", documentation: "Check if key exists.", insertText: 'Has("${1:key}")', receiver: "Json" },
+  { label: "Null", detail: "Null(key) → int32", documentation: "True when field is JSON null.", insertText: 'Null("${1:key}")', receiver: "Json" },
   { label: "Get", detail: "Get(key) → JsonValue", documentation: "Get nested value.", insertText: 'Get("${1:key}")', receiver: "Json" },
   { label: "AsInt", detail: "AsInt() → int32", documentation: "Coerce JsonValue to int32.", insertText: "AsInt()", receiver: "JsonValue" },
   { label: "AsString", detail: "AsString() → string", documentation: "Coerce JsonValue to string.", insertText: "AsString()", receiver: "JsonValue" },
@@ -199,6 +201,31 @@ export const ATOMIC_BOOL_METHODS: CatalogEntry[] = [
   { label: "Store", detail: "Store(val) → int32", documentation: "Atomic bool store.", insertText: "Store(${1:val})", receiver: "AtomicBool" },
 ];
 
+export const FILE_FUNCTIONS: CatalogEntry[] = [
+  { label: "ReadAll", detail: "ReadAll(path) → string", documentation: "Read entire file into string.", insertText: 'ReadAll("${1:path}")' },
+  { label: "Write", detail: "Write(path, data) → int32", documentation: "Overwrite file contents.", insertText: 'Write("${1:path}", "${2:data}")' },
+  { label: "Append", detail: "Append(path, data) → int32", documentation: "Append to file.", insertText: 'Append("${1:path}", "${2:data}")' },
+  { label: "Exists", detail: "Exists(path) → int32", documentation: "Returns 1 if file exists.", insertText: 'Exists("${1:path}")' },
+  { label: "Size", detail: "Size(path) → int64", documentation: "File size in bytes.", insertText: 'Size("${1:path}")' },
+  { label: "Open", detail: "Open(path, mode) → File", documentation: "Open file handle.", insertText: 'Open("${1:path}", ${2:mode})' },
+  { label: "OpenRead", detail: "OpenRead(path) → File", documentation: "Open file for reading.", insertText: 'OpenRead("${1:path}")' },
+  { label: "OpenWrite", detail: "OpenWrite(path) → File", documentation: "Open file for writing (truncate).", insertText: 'OpenWrite("${1:path}")' },
+  { label: "OpenAppend", detail: "OpenAppend(path) → File", documentation: "Open file for append.", insertText: 'OpenAppend("${1:path}")' },
+  { label: "Close", detail: "Close(f) → int32", documentation: "Close open file handle.", insertText: "Close(${1:f})" },
+  { label: "Read", detail: "Read(f) → string", documentation: "Read from open handle.", insertText: "Read(${1:f})" },
+  { label: "WriteStream", detail: "WriteStream(f, data) → int32", documentation: "Write to open handle.", insertText: 'WriteStream(${1:f}, "${2:data}")' },
+  { label: "IsOpen", detail: "IsOpen(f) → int32", documentation: "Returns 1 when handle is valid.", insertText: "IsOpen(${1:f})" },
+];
+
+export const CONN_METHODS: CatalogEntry[] = [
+  { label: "Read", detail: "Read(max) → string", documentation: "Read up to max bytes from TCP connection.", insertText: "Read(${1:4096})", receiver: "Conn" },
+  { label: "Write", detail: "Write(data) → int32", documentation: "Send data on TCP connection.", insertText: 'Write("${1:data}")', receiver: "Conn" },
+  { label: "Close", detail: "Close() → int32", documentation: "Close TCP connection.", insertText: "Close()", receiver: "Conn" },
+  { label: "ReadUntil", detail: "ReadUntil(marker) → string", documentation: "Read until marker string found.", insertText: 'ReadUntil("${1:\\r\\n\\r\\n}")', receiver: "Conn" },
+  { label: "Fd", detail: "Fd() → int64", documentation: "Underlying socket fd.", insertText: "Fd()", receiver: "Conn" },
+  { label: "Data", detail: "Data() → int64", documentation: "User data handle attached to Conn.", insertText: "Data()", receiver: "Conn" },
+];
+
 export const KNOWN_MODULES: CatalogEntry[] = [
   { label: "http", detail: "module", documentation: "HTTP package: `http/router` + `http/server` (Context, ListenAndServe)." },
   { label: "http/router", detail: "module", documentation: "Router, Context, middleware — Gin-style routing." },
@@ -209,11 +236,12 @@ export const KNOWN_MODULES: CatalogEntry[] = [
   { label: "sync", detail: "module (runtime)", documentation: "Lock, RWLock, AtomicInt — method-style API (`l.Lock()`, `a.FetchAdd()`)." },
   { label: "scheduler", detail: "module (runtime)", documentation: "spawn / wait_all worker pool." },
   { label: "net", detail: "module (runtime)", documentation: "fetch HTTP client." },
+  { label: "file", detail: "module (runtime)", documentation: "File I/O — ReadAll, Write, OpenRead, Exists, stream API." },
   { label: "errors", detail: "module (runtime)", documentation: "panic / recover helpers." },
 ];
 
 export const PROCESS_SYSCALLS: CatalogEntry[] = [
-  { label: "file_read", detail: "file_read(path) → string", documentation: "Read an entire file into a string.", insertText: 'file_read("${1:path}")' },
+  { label: "file_read", detail: "file_read(path) → string", documentation: "Read an entire file into a string (process module).", insertText: 'file_read("${1:path}")' },
   { label: "env_get", detail: "env_get(key) → string", documentation: "Read environment variable.", insertText: 'env_get("${1:KEY}")' },
   { label: "cwd", detail: "cwd() → string", documentation: "Current working directory.", insertText: "cwd()" },
   { label: "run_capture", detail: "run_capture(path, args) → int32", documentation: "Run subprocess and capture stdout.", insertText: 'run_capture(${1:path}, "${2:args}")' },

@@ -1,5 +1,5 @@
 import * as http from http
-import file_read from process
+import file_read from file
 
 struct User {
     name: string

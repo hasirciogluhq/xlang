@@ -11,9 +11,10 @@ Built with **Bun** + TypeScript. Requires the [`xlank`](https://github.com/hasir
 | Feature | Description |
 |---------|-------------|
 | **Completion** | Keywords, types, runtime/builtins, local symbols, import aliases |
-| **Import-aware** | `http.NewRouter()` completes from `libs/http/` exports after `import * as http from http` |
-| **Member access** | `r.Get(`, `ctx.JSON(`, `data.Int(` — methods on `Router`, `Context`, `Json`, … |
-| **Module picker** | Typing `import` suggests workspace modules (`http`, `json`, `http/router`, …) with export preview |
+| **Import-aware** | `http.NewRouter()`, `file.ReadAll()`, `json.parse()` — completes from `libs/` and `runtime/` after import |
+| **Member access** | `r.Get(`, `ctx.JSON(`, `data.Int(`, `conn.Read(` — methods on `Router`, `Context`, `Json`, `Conn`, … |
+| **Module picker** | Typing `import` suggests workspace modules (`http`, `json`, `file`, `http/router`, …) with export preview |
+| **Selective import** | Snippets for `import expect from test`, `import router from http/router` |
 | **Hover** | Markdown docs on builtins, exported functions, structs, and imported symbols |
 | **Go to definition** | Jump to the `.xlang` file where an imported symbol is defined |
 
@@ -37,7 +38,7 @@ Right-click an `.xlang` editor for Run / Test shortcuts.
 
 ### Snippets
 
-`fn`, `struct`, `import`, `httpserver`, `expect`, `Test*`, and more — see `snippets/xlang.json`.
+`fn`, `struct`, `import`, `httpserver`, `expect`, `Test*`, `filio`, `jsonparse`, and more — see `snippets/xlang.json`.
 
 ## Settings
 
