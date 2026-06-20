@@ -473,7 +473,7 @@ TestSuiteResult runTestSuite(const TestOptions& options) {
 
 void rejectTestFileForBuildRun(const std::filesystem::path& path) {
     if (isTestFileName(path)) {
-        throw XlangError("test files cannot be built or run; use `xlank test`");
+        throw XlangError("test files cannot be built or run; use `xlang test`");
     }
 }
 

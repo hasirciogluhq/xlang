@@ -188,7 +188,7 @@ Program loadEmbeddedRuntimeProgram(const RuntimeOptions& options) {
     }
 
     const std::filesystem::path work_dir =
-        options.work_dir.empty() ? std::filesystem::temp_directory_path() / "xlank-runtime"
+        options.work_dir.empty() ? std::filesystem::temp_directory_path() / "xlang-runtime"
                                  : options.work_dir / "embedded-runtime";
     const std::filesystem::path entry = materializeEmbeddedRuntime(work_dir);
     ModuleLoader loader(entry);

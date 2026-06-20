@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.16)
-project(xlank VERSION 0.1.0 LANGUAGES C CXX)
+project(xlang VERSION 0.1.0 LANGUAGES C CXX)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -56,7 +56,7 @@ add_library(xlang_tls_bridge STATIC src/bridge/tls_bridge.c)
 target_include_directories(xlang_tls_bridge PRIVATE ${OPENSSL_INCLUDE_DIR})
 target_link_libraries(xlang_tls_bridge PUBLIC OpenSSL::SSL OpenSSL::Crypto)
 
-add_executable(xlank
+add_executable(xlang
     src/main.cpp
     src/ast.cpp
     src/lexer.cpp
@@ -73,10 +73,10 @@ add_executable(xlank
     "${EMBEDDED_LIBS_CPP}"
 )
 
-add_dependencies(xlank embedded_runtime embedded_libs)
+add_dependencies(xlang embedded_runtime embedded_libs)
 
-target_include_directories(xlank PRIVATE include)
-target_compile_definitions(xlank PRIVATE
+target_include_directories(xlang PRIVATE include)
+target_compile_definitions(xlang PRIVATE
     "XLANG_RUNTIME_DIR=\"${CMAKE_CURRENT_SOURCE_DIR}/runtime\""
     "XLANG_LIBS_DIR=\"${CMAKE_CURRENT_SOURCE_DIR}/libs\""
     "XLANG_TLS_BRIDGE=\"$<TARGET_FILE:xlang_tls_bridge>\""
@@ -88,7 +88,7 @@ target_compile_definitions(xlank PRIVATE
     "XLANG_TIME_BRIDGE=\"$<TARGET_FILE:xlang_time_bridge>\""
     "XLANG_FILE_BRIDGE=\"$<TARGET_FILE:xlang_file_bridge>\""
 )
-target_link_libraries(xlank PRIVATE CLI11::CLI11)
-add_dependencies(xlank xlang_tls_bridge xlang_net_server xlang_panic_bridge xlang_process_bridge xlang_time_bridge xlang_file_bridge)
+target_link_libraries(xlang PRIVATE CLI11::CLI11)
+add_dependencies(xlang xlang_tls_bridge xlang_net_server xlang_panic_bridge xlang_process_bridge xlang_time_bridge xlang_file_bridge)
 
-install(TARGETS xlank RUNTIME DESTINATION bin)
+install(TARGETS xlang RUNTIME DESTINATION bin)

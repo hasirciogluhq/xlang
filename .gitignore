@@ -9,7 +9,7 @@ compile_commands.json
 *.a
 *.so
 *.dylib
-xlank
+xlang
 hello
 examples/hello
 examples/math

@@ -2,7 +2,7 @@
 
 Language support for **xlang** (`.xlang`, `.test.xlang`): syntax highlighting, IntelliSense, hover docs, go-to-definition, diagnostics, formatting, and run/build/test commands.
 
-Built with **Bun** + TypeScript. Requires the [`xlank`](https://github.com/hasirciogluhq/xlang#readme) compiler for diagnostics and commands.
+Built with **Bun** + TypeScript. Requires the [`xlang`](https://github.com/hasirciogluhq/xlang#readme) compiler for diagnostics and commands.
 
 ## Features
 
@@ -19,20 +19,20 @@ Built with **Bun** + TypeScript. Requires the [`xlank`](https://github.com/hasir
 | **Hover** | Markdown docs on builtins, exported functions, structs, and imported symbols |
 | **Go to definition** | Jump to the `.xlang` file where an imported symbol is defined |
 
-The extension parses `.xlang` sources locally (no LSP server). It scans `libs/` and `runtime/` in your workspace and resolves imports the same way as `xlank` (`XLANG_PATH`).
+The extension parses `.xlang` sources locally (no LSP server). It scans `libs/` and `runtime/` in your workspace and resolves imports the same way as `xlang` (`XLANG_PATH`).
 
 ### Diagnostics
 
-Runs `xlank parse` on open/save (optional debounce while typing). Shows parse errors and missing modules.
+Runs `xlang parse` on open/save (optional debounce while typing). Shows parse errors and missing modules.
 
 ### Commands
 
 | Command | Action |
 |---------|--------|
-| **xlang: Run Current File** | `xlank run <file>` |
-| **xlang: Build Current File** | `xlank build <file>` |
-| **xlang: Test Current File** | `xlank test <file>` or suite |
-| **xlang: Run Test Suite** | `xlank test test/xlang` |
+| **xlang: Run Current File** | `xlang run <file>` |
+| **xlang: Build Current File** | `xlang build <file>` |
+| **xlang: Test Current File** | `xlang test <file>` or suite |
+| **xlang: Run Test Suite** | `xlang test test/xlang` |
 | **xlang: Format Document** | Built-in formatter |
 
 Right-click an `.xlang` editor for Run / Test shortcuts.
@@ -45,13 +45,13 @@ Right-click an `.xlang` editor for Run / Test shortcuts.
 
 | Setting | Default | Description |
 |---------|---------|-------------|
-| `xlang.compilerPath` | *(auto)* | Path to `xlank` binary |
+| `xlang.compilerPath` | *(auto)* | Path to `xlang` binary |
 | `xlang.enableDiagnostics` | `true` | Parse diagnostics on open/save |
 | `xlang.diagnosticsOnType` | `false` | Re-parse while typing (debounced) |
 | `xlang.formatter.tabSize` | `4` | Indent size for formatter |
 | `xlang.testRoot` | `test/xlang` | Default test directory |
 
-Auto-detect looks for `build/xlank` in the workspace root (or parent).
+Auto-detect looks for `build/xlang` in the workspace root (or parent).
 
 ## Development
 
@@ -77,7 +77,7 @@ vscode/
 │   ├── languageIndex.ts  # import resolution + module cache
 │   ├── builtins.ts       # runtime/stdlib catalog + docs
 │   ├── paths.ts          # XLANG_PATH / libs resolution
-│   ├── diagnostics.ts    # xlank parse integration
+│   ├── diagnostics.ts    # xlang parse integration
 │   └── formatter.ts
 ├── syntaxes/             # TextMate grammar
 ├── snippets/

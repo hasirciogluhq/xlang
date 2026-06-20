@@ -427,7 +427,7 @@ std::filesystem::path makeBuildWorkDir() {
 
     for (int attempt = 0; attempt < 32; ++attempt) {
         std::ostringstream name;
-        name << "xlank-" << std::hex << dist(gen);
+        name << "xlang-" << std::hex << dist(gen);
         const std::filesystem::path dir = base / name.str();
         if (!std::filesystem::exists(dir)) {
             std::filesystem::create_directories(dir);

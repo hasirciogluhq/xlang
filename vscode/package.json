@@ -70,12 +70,12 @@
         "xlang.compilerPath": {
           "type": "string",
           "default": "",
-          "description": "Path to the xlang compiler binary (build/xlank). Empty = auto-detect."
+          "description": "Path to the xlang compiler binary (build/xlang). Empty = auto-detect."
         },
         "xlang.xlankPath": {
           "type": "string",
           "default": "",
-          "description": "Deprecated alias for xlang.compilerPath.",
+          "description": "Deprecated alias for xlang.compilerPath (formerly xlank).",
           "deprecationMessage": "Use xlang.compilerPath instead."
         },
         "xlang.enableDiagnostics": {

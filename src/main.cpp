@@ -58,7 +58,7 @@ xlang::CompileOptions makeCompileOptions(const std::vector<std::filesystem::path
 }  // namespace
 
 int main(int argc, char** argv) {
-    CLI::App app{"xlank — xlang compiler (.xlang / .o / .ll -> executable or object)"};
+    CLI::App app{"xlang — compiler (.xlang / .o / .ll -> executable or object)"};
     app.require_subcommand(1);
 
     std::vector<std::filesystem::path> inputs;
@@ -123,7 +123,7 @@ int main(int argc, char** argv) {
             for (const std::filesystem::path& input : inputs) {
                 if (xlang::isTestFileName(input)) {
                     throw xlang::XlangError(
-                        "test files cannot be built; use `xlank test`");
+                        "test files cannot be built; use `xlang test`");
                 }
             }
 
@@ -147,7 +147,7 @@ int main(int argc, char** argv) {
         if (run->parsed()) {
             const xlang::ResolvedBuildInputs resolved = xlang::resolveBuildInputs(run_inputs);
             if (xlang::isTestFileName(resolved.primary)) {
-                throw xlang::XlangError("test files cannot be run; use `xlank test`");
+                throw xlang::XlangError("test files cannot be run; use `xlang test`");
             }
             if (resolved.primary_kind != xlang::InputKind::Xlang) {
                 throw xlang::XlangError("run requires a .xlang source as the first input");

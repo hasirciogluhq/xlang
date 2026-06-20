@@ -750,9 +750,9 @@ declare syscall bar(): int64
 You can compile another xlang module as an object and link it.
 
 ```bash
-xlank build lib.xlang --build=lib -o lib.o
-xlank build main.xlang lib.o -o app
-xlank run main.xlang lib.o
+xlang build lib.xlang --build=lib -o lib.o
+xlang build main.xlang lib.o -o app
+xlang run main.xlang lib.o
 ```
 
 ```xlang
@@ -804,9 +804,9 @@ Not syscalls; codegen special cases:
 Builtin test runner (Vitest-like). Test files must end with **`.test.xlang`** (like `filename.test.ts`). Do **not** define `main` — use `Test*` functions instead; the runner injects a synthetic harness.
 
 ```bash
-xlank test
-xlank test test/xlang
-xlank test test/xlang/json.test.xlang
+xlang test
+xlang test test/xlang
+xlang test test/xlang/json.test.xlang
 ```
 
 Each file is compiled and run individually. The C++ runner discovers all exported `Test*` functions and calls them via `test_run_one`. Output example:
@@ -886,7 +886,7 @@ Early version; known constraints:
 | `examples/sync_lock.xlang` | Lock + AtomicInt + go spawn |
 | `examples/interfaces.xlang` | interface + struct + as cast |
 | `test/main.xlang` + `test/lib.xlang` | external link |
-| `test/xlang/*.test.xlang` | runtime tests (`xlank test`) |
+| `test/xlang/*.test.xlang` | runtime tests (`xlang test`) |
 
 ---
 

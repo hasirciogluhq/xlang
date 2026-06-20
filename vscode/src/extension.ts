@@ -108,14 +108,14 @@ async function runCurrentFile(): Promise<void> {
 
   const filePath = editor.document.uri.fsPath;
   if (isTestFile(filePath)) {
-    vscode.window.showWarningMessage("*.test.xlang dosyaları `xlank test` ile çalışır.");
+    vscode.window.showWarningMessage("*.test.xlang dosyaları `xlang test` ile çalışır.");
     return;
   }
 
   const cwd = path.dirname(filePath);
   const terminal = vscode.window.createTerminal({ name: "xlang run", cwd });
   terminal.show();
-  const binary = (await resolveCompilerPath()) ?? "xlank";
+  const binary = (await resolveCompilerPath()) ?? "xlang";
   terminal.sendText(`${quote(binary)} run ${quote(filePath)}`);
 }
 
@@ -132,7 +132,7 @@ async function buildCurrentFile(): Promise<void> {
 
   const filePath = editor.document.uri.fsPath;
   if (isTestFile(filePath)) {
-    vscode.window.showWarningMessage("*.test.xlang build edilemez; `xlank test` kullan.");
+    vscode.window.showWarningMessage("*.test.xlang build edilemez; `xlang test` kullan.");
     return;
   }
 
@@ -166,7 +166,7 @@ async function testCurrentFile(): Promise<void> {
   const cwd = resolveWorkspaceRoot(filePath);
   const terminal = vscode.window.createTerminal({ name: "xlang test", cwd });
   terminal.show();
-  const binary = (await resolveCompilerPath()) ?? "xlank";
+  const binary = (await resolveCompilerPath()) ?? "xlang";
 
   if (isTestFile(filePath)) {
     terminal.sendText(`${quote(binary)} test ${quote(filePath)}`);
@@ -181,7 +181,7 @@ async function testSuite(): Promise<void> {
   const cwd = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath ?? process.cwd();
   const terminal = vscode.window.createTerminal({ name: "xlang test", cwd });
   terminal.show();
-  const binary = (await resolveCompilerPath()) ?? "xlank";
+  const binary = (await resolveCompilerPath()) ?? "xlang";
   const testRoot = resolveTestRoot(cwd);
   terminal.sendText(`${quote(binary)} test ${quote(testRoot)}`);
 }

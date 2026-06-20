@@ -1,10 +1,10 @@
 # xlang
 
-**xlang** is an LLVM-based programming language targeting self-hosting. The `xlank` compiler produces native executables or object files from `.xlang` source. The runtime (print, scheduler, spawn) is largely **written in xlang**; C++ only provides the compiler, OS bridge (syscall), and LLVM codegen layer.
+**xlang** is an LLVM-based programming language targeting self-hosting. The compiler binary (`xlang`) produces native executables or object files from `.xlang` source. The runtime (print, scheduler, spawn) is largely **written in xlang**; C++ only provides the compiler, OS bridge (syscall), and LLVM codegen layer.
 
 ```
 ┌─────────────────┐     ┌──────────────────┐     ┌─────────────┐
-│  .xlang source  │ ──► │  xlank (C++/LLVM) │ ──► │  executable │
+│  .xlang source  │ ──► │  xlang (C++/LLVM) │ ──► │  executable │
 └─────────────────┘     └──────────────────┘     └─────────────┘
                                │
                                ▼
@@ -46,7 +46,7 @@ cmake ..
 make -j4
 ```
 
-Compiler binary: `./build/xlank`
+Compiler binary: `./build/xlang`
 
 Runtime sources live in `runtime/` and are embedded into the binary at build time. During development, set `XLANG_RUNTIME_DIR` to use the runtime from the source tree.
 
@@ -54,16 +54,16 @@ Runtime sources live in `runtime/` and are embedded into the binary at build tim
 
 ```bash
 # Hello world
-./build/xlank run examples/strings.xlang
+./build/xlang run examples/strings.xlang
 
 # Module import
-./build/xlank run examples/hello.xlang
+./build/xlang run examples/hello.xlang
 
 # Struct + heap
-./build/xlank run examples/types.xlang
+./build/xlang run examples/types.xlang
 
 # HTTP server
-./build/xlank run examples/http_server.xlang
+./build/xlang run examples/http_server.xlang
 ```
 
 ## VS Code extension
@@ -79,47 +79,47 @@ See [vscode/README.md](vscode/README.md) for details.
 
 ## CLI
 
-### `xlank run`
+### `xlang run`
 
 Compiles source, links with runtime, and runs the program.
 
 ```bash
-xlank run program.xlang
-xlank run main.xlang lib.o          # link additional object files
-xlank run program.xlang --keep-artifacts
-xlank run program.xlang --runtime path/to/runtime.xlang
+xlang run program.xlang
+xlang run main.xlang lib.o          # link additional object files
+xlang run program.xlang --keep-artifacts
+xlang run program.xlang --runtime path/to/runtime.xlang
 ```
 
-### `xlank build`
+### `xlang build`
 
 Produces an executable or object file.
 
 ```bash
-xlank build app.xlang                        # → app (executable)
-xlank build app.xlang lib.o -o myapp         # link with lib.o
-xlank build lib.xlang --build=lib -o lib.o   # object library
-xlank build app.xlang --emit-ir              # write LLVM IR
-xlank build app.xlang --skip-runtime         # no runtime (no print/spawn)
-xlank build app.xlang --keep-ir
-xlank build app.xlang -o output/path
+xlang build app.xlang                        # → app (executable)
+xlang build app.xlang lib.o -o myapp         # link with lib.o
+xlang build lib.xlang --build=lib -o lib.o   # object library
+xlang build app.xlang --emit-ir              # write LLVM IR
+xlang build app.xlang --skip-runtime         # no runtime (no print/spawn)
+xlang build app.xlang --keep-ir
+xlang build app.xlang -o output/path
 ```
 
-### `xlank parse`
+### `xlang parse`
 
 Shows an AST summary (debug).
 
 ```bash
-xlank parse examples/hello.xlang
+xlang parse examples/hello.xlang
 ```
 
-### `xlank test`
+### `xlang test`
 
 Runs Vitest-style tests from `*.test.xlang` files (one process per file).
 
 ```bash
-xlank test                    # default: test/xlang/
-xlank test http               # pattern filter
-xlank test --parallel         # parallel Test* functions
+xlang test                    # default: test/xlang/
+xlang test http               # pattern filter
+xlang test --parallel         # parallel Test* functions
 ```
 
 Test API (`libs/test.xlang`): `expect(actual).toEqual(expected)`, `expectFn(fn).toThrow()`, `Test*` functions.
@@ -147,7 +147,7 @@ fn handle_ping(ctx: Context) {
 
 ```
 xlang/
-├── src/              # xlank compiler (lexer, parser, codegen, linker)
+├── src/              # xlang compiler (lexer, parser, codegen, linker)
 ├── include/xlang/    # C++ headers
 ├── runtime/          # Embedded runtime package (print, scheduler, net, errors)
 ├── libs/             # Importable libraries (json, http/, test, process)
@@ -161,7 +161,7 @@ xlang/
 
 ## Architecture overview
 
-### Compiler (`xlank`)
+### Compiler (`xlang`)
 
 1. **Lexer / Parser** — source → AST  
 2. **Module loader** — merges files via `import`  
@@ -189,10 +189,10 @@ Importable **libs** (embedded at compile time):
 
 ```bash
 # lib.xlang → lib.o
-xlank build test/lib.xlang --build=lib -o test/lib.o
+xlang build test/lib.xlang --build=lib -o test/lib.o
 
 # main.xlang declares external function, lib.o is linked
-xlank run test/main.xlang test/lib.o
+xlang run test/main.xlang test/lib.o
 ```
 
 `test/main.xlang`:

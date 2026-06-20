@@ -172,10 +172,6 @@ function findImportRange(
 }
 
 export async function resolveCompilerPath(): Promise<string | undefined> {
-  return resolveXlankPath();
-}
-
-export async function resolveXlankPath(): Promise<string | undefined> {
   const config = vscode.workspace.getConfiguration("xlang");
   const configured =
     config.get<string>("compilerPath", "").trim() ||
@@ -187,14 +183,14 @@ export async function resolveXlankPath(): Promise<string | undefined> {
   const folders = vscode.workspace.workspaceFolders ?? [];
   for (const folder of folders) {
     for (const base of [folder.uri.fsPath, path.join(folder.uri.fsPath, "..")]) {
-      const candidate = path.normalize(path.join(base, "build", "xlank"));
+      const candidate = path.normalize(path.join(base, "build", "xlang"));
       if (fs.existsSync(candidate)) {
         return candidate;
       }
     }
   }
 
-  return "xlank";
+  return "xlang";
 }
 
 export { buildEnv, collectModuleSearchPaths } from "./paths";
@@ -229,6 +225,3 @@ export async function runCompiler(
     stderr: result.stderr.toString(),
   };
 }
-
-/** @deprecated use runCompiler */
-export const runXlank = runCompiler;

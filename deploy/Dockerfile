@@ -1,4 +1,4 @@
-# xlang — production image (xlank build + welcome landing server)
+# xlang — production image (xlang build + welcome landing server)
 FROM debian:bookworm-slim AS builder
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
@@ -16,7 +16,7 @@ COPY . .
 RUN cmake -B build -DCMAKE_BUILD_TYPE=Release \
     && cmake --build build -j"$(nproc)"
 
-RUN ./build/xlank build deploy/server.xlang -o /out/server
+RUN ./build/xlang build deploy/server.xlang -o /out/server
 
 FROM debian:bookworm-slim AS runner
 
