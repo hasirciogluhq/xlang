@@ -1,0 +1,11 @@
+export fn add(a, b) {
+    return a + b
+}
+
+export fn mul(a, b) {
+    return a * b
+}
+
+fn helper(a) {
+    return a + 1
+}

@@ -1,0 +1,10 @@
+declare external fn __xlang_io_print_int(n)
+declare external fn system(cmd)
+
+export fn print(n) {
+    return __xlang_io_print_int(n)
+}
+
+export fn spawn(cmd) {
+    return system(cmd)
+}
