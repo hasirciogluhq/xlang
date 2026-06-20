@@ -1,0 +1,99 @@
+// High-level file I/O — C++ fstream bridge via syscalls.
+//   import * as file from file
+//   local body = file.ReadAll("path.txt")
+//   file.Write("out.txt", "hello")
+
+declare syscall file_open(path: string, mode: int32): int64
+declare syscall file_close(handle: int64): int32
+declare syscall file_read_path(path: string): string
+declare syscall file_write_path(path: string, data: string, append: int32): int32
+declare syscall file_exists(path: string): int32
+declare syscall file_size(path: string): int64
+declare syscall file_read_handle(handle: int64): string
+declare syscall file_write_handle(handle: int64, data: string): int32
+
+export struct File {
+    handle: int64
+    path: string
+}
+
+fn mode_read(): int32 {
+    return 1
+}
+
+fn mode_write(): int32 {
+    return 2
+}
+
+fn mode_append(): int32 {
+    return 3
+}
+
+fn mode_read_write(): int32 {
+    return 4
+}
+
+export fn Open(path: string, mode: int32): File {
+    local h = file_open(path, mode)
+    return new File { handle = h, path = path }
+}
+
+export fn OpenRead(path: string): File {
+    return Open(path, mode_read())
+}
+
+export fn OpenWrite(path: string): File {
+    return Open(path, mode_write())
+}
+
+export fn OpenAppend(path: string): File {
+    return Open(path, mode_append())
+}
+
+export fn Close(f: File): int32 {
+    if f.handle < 0 {
+        return 1
+    }
+    return file_close(f.handle)
+}
+
+export fn Read(f: File): string {
+    if f.handle < 0 {
+        return ""
+    }
+    return file_read_handle(f.handle)
+}
+
+export fn ReadAll(path: string): string {
+    return file_read_path(path)
+}
+
+export fn Write(path: string, data: string): int32 {
+    return file_write_path(path, data, 0)
+}
+
+export fn Append(path: string, data: string): int32 {
+    return file_write_path(path, data, 1)
+}
+
+export fn Exists(path: string): int32 {
+    return file_exists(path)
+}
+
+export fn Size(path: string): int64 {
+    return file_size(path)
+}
+
+export fn WriteStream(f: File, data: string): int32 {
+    if f.handle < 0 {
+        return 1
+    }
+    return file_write_handle(f.handle, data)
+}
+
+export fn IsOpen(f: File): int32 {
+    if f.handle < 0 {
+        return 0
+    }
+    return 1
+}

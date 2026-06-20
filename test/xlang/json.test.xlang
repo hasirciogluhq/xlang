@@ -1,5 +1,5 @@
-import test from test
-import json from json
+import * as test from test
+import * as json from json
 
 fn TestJsonParseInt() {
     local data = json.parse("{\"userId\": 7, \"id\": 42, \"completed\": 0}")

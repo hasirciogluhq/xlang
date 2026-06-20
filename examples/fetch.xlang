@@ -1,4 +1,4 @@
-import json from json
+import * as json from json
 
 fn main() {
     local resp = fetch("https://jsonplaceholder.typicode.com/todos/1")

@@ -512,12 +512,18 @@ CodegenResult Codegen::generate(const Program& program, const CodegenOptions& op
     result.needs_server_link = syscallsNeedServerLink(result.syscalls);
     result.needs_panic_link = syscallsNeedPanicLink(result.syscalls);
     result.needs_process_link = syscallsNeedProcessLink(result.syscalls);
+    result.needs_file_link = syscallsNeedFileLink(result.syscalls);
     return result;
 }
 
 void Codegen::collectSyscalls(const Program& program) {
     for (const Function& function : program.functions) {
         if (function.syscall) {
+            syscalls_.insert(function.name);
+            continue;
+        }
+        if (function.body.statements.empty() && !function.external &&
+            isKnownSyscall(function.name)) {
             syscalls_.insert(function.name);
         }
     }
@@ -1804,8 +1810,11 @@ std::pair<Type, std::string> Codegen::emitExpr(
                 import_aliases_.find(expr.object->name) != import_aliases_.end()) {
                 const std::string alias = import_aliases_.at(expr.object->name);
                 const std::string fn_name = importPrefixedName(alias, expr.name);
-                const std::optional<FunctionSignature> resolved =
+                std::optional<FunctionSignature> resolved =
                     resolveFunctionCall(fn_name, arg_types);
+                if (!resolved) {
+                    resolved = resolveFunctionCall(expr.name, arg_types);
+                }
                 if (!resolved) {
                     throw XlangError("unknown import call `" + alias + "." + expr.name + "`");
                 }

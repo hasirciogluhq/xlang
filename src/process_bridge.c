@@ -199,30 +199,6 @@ const char* xlang_fd_read(int32_t fd, int32_t max) {
     return io_buffer;
 }
 
-const char* xlang_file_read(const char* path) {
-    if (path == NULL) {
-        io_buffer[0] = '\0';
-        return io_buffer;
-    }
-    const int fd = open(path, O_RDONLY);
-    if (fd < 0) {
-        io_buffer[0] = '\0';
-        return io_buffer;
-    }
-    ssize_t total = 0;
-    while (total < (ssize_t)sizeof(io_buffer) - 1) {
-        const ssize_t n =
-            read(fd, io_buffer + total, (size_t)((ssize_t)sizeof(io_buffer) - 1 - total));
-        if (n <= 0) {
-            break;
-        }
-        total += n;
-    }
-    close(fd);
-    io_buffer[total] = '\0';
-    return io_buffer;
-}
-
 int32_t xlang_fd_write(int32_t fd, const char* data) {
     if (data == NULL) {
         return 0;

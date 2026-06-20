@@ -117,13 +117,31 @@ bool programNeedsProcessLink(const Program& program) {
         "run_capture",   "capture_stdout",  "proc_fork",     "proc_exec",
         "proc_wait",     "proc_exit",       "proc_kill",     "pipe_create",
         "pipe_read_fd",  "pipe_write_fd",   "fd_close",      "fd_read",
-        "fd_write",      "fd_dup2",         "file_read",
+        "fd_write",      "fd_dup2",
     };
     for (const Function& function : program.functions) {
         if (!function.syscall) {
             continue;
         }
         for (const char* name : kProcessSyscalls) {
+            if (function.name == name) {
+                return true;
+            }
+        }
+    }
+    return false;
+}
+
+bool programNeedsFileLink(const Program& program) {
+    static const char* kFileSyscalls[] = {
+        "file_open",        "file_close",       "file_read_path",  "file_write_path",
+        "file_exists",      "file_size",        "file_read_handle", "file_write_handle",
+    };
+    for (const Function& function : program.functions) {
+        if (!function.syscall) {
+            continue;
+        }
+        for (const char* name : kFileSyscalls) {
             if (function.name == name) {
                 return true;
             }
@@ -214,6 +232,7 @@ RuntimeBundle loadRuntimeExports(const RuntimeOptions& options) {
     bundle.needs_server_link = programNeedsServerLink(program);
     bundle.needs_panic_link = programNeedsPanicLink(program);
     bundle.needs_process_link = programNeedsProcessLink(program);
+    bundle.needs_file_link = programNeedsFileLink(program);
     return bundle;
 }
 
@@ -237,6 +256,7 @@ RuntimeBundle ensureRuntime(const RuntimeOptions& options) {
     bundle.needs_server_link = programNeedsServerLink(program);
     bundle.needs_panic_link = programNeedsPanicLink(program);
     bundle.needs_process_link = programNeedsProcessLink(program);
+    bundle.needs_file_link = programNeedsFileLink(program);
     return bundle;
 }
 

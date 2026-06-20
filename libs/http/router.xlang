@@ -9,6 +9,8 @@
 //       ctx.String(200, "pong")
 //   }
 
+import server from http/server
+
 struct RouteDef {
     method: string
     pattern: string
@@ -330,4 +332,99 @@ export fn DispatchRequest(r: Router, method: string, path: string): Context {
         ctx.String(200, "")
     }
     return ctx
+}
+
+fn parse_request_line(raw: string): int32 {
+    local sp1 = str_find(raw, " ")
+    if sp1 == (0 - 1) {
+        return 0
+    }
+    local sp2 = str_find(str_sub(raw, sp1 + 1, str_len(raw) - sp1 - 1), " ")
+    if sp2 == (0 - 1) {
+        return 0
+    }
+    return 1
+}
+
+fn request_method(raw: string): string {
+    local sp = str_find(raw, " ")
+    if sp == (0 - 1) {
+        return ""
+    }
+    return str_sub(raw, 0, sp)
+}
+
+fn request_path(raw: string): string {
+    local sp1 = str_find(raw, " ")
+    if sp1 == (0 - 1) {
+        return "/"
+    }
+    local after = str_sub(raw, sp1 + 1, str_len(raw) - sp1 - 1)
+    local sp2 = str_find(after, " ")
+    if sp2 == (0 - 1) {
+        return after
+    }
+    local path = str_sub(after, 0, sp2)
+    local q = str_find(path, "?")
+    if q == (0 - 1) {
+        return path
+    }
+    return str_sub(path, 0, q)
+}
+
+fn status_text(status: int32): string {
+    if status == 200 {
+        return "OK"
+    }
+    if status == 404 {
+        return "Not Found"
+    }
+    if status == 500 {
+        return "Internal Server Error"
+    }
+    return "OK"
+}
+
+export fn FormatResponse(status: int32, body: string, content_type: string): string {
+    local text = status_text(status)
+    local status_str = str_from_int(status)
+    local len_str = str_from_int(str_len(body))
+    local resp = "HTTP/1.1 " + status_str + " " + text + "\r\n"
+    resp = resp + "Content-Type: " + content_type + "\r\n"
+    resp = resp + "Content-Length: " + len_str + "\r\n"
+    resp = resp + "Connection: close\r\n\r\n"
+    resp = resp + body
+    return resp
+}
+
+export fn HandleConn(r: Router, conn: Conn): int32 {
+    local raw = server.ReadUntil(conn, "\r\n\r\n")
+    if str_len(raw) == 0 {
+        return 0
+    }
+    if parse_request_line(raw) == 0 {
+        local bad = FormatResponse(400, "bad request", "text/plain")
+        server.Write(conn, bad)
+        return 0
+    }
+    local method = request_method(raw)
+    local path = request_path(raw)
+    local ctx = DispatchRequest(r, method, path)
+    local out = FormatResponse(ctx.status, ctx.body, ctx.content_type)
+    server.Write(conn, out)
+    return 0
+}
+
+fn serve_conn(conn: Conn): int32 {
+    local handle = server.Data(conn)
+    local r = handle as Router
+    return HandleConn(r, conn)
+}
+
+export fn ListenAndServe(r: Router, host: string, port: int32, on_listen: int64): int32 {
+    return server.Listen(host, port, on_listen, serve_conn, ref(r))
+}
+
+export fn ServeOnce(r: Router, host: string, port: int32, on_listen: int64): int32 {
+    return server.AcceptOnce(host, port, on_listen, serve_conn, ref(r))
 }

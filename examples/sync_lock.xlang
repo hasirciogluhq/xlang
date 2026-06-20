@@ -1,5 +1,5 @@
 // Mutex + atomik sayaç — struct içinde Lock gömme + go spawn örneği.
-import sync from sync
+import * as sync from sync
 
 struct SharedCounter {
     total: AtomicInt

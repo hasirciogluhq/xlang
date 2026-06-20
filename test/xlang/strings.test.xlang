@@ -1,4 +1,4 @@
-import test from test
+import expect from test
 
 fn TestStrLen() {
     expect(str_len("hello")).toEqual(5)

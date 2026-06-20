@@ -28,7 +28,10 @@ bool isKnownSyscall(const std::string& name) {
            name == "proc_exit" || name == "proc_kill" || name == "pipe_create" ||
            name == "pipe_read_fd" || name == "pipe_write_fd" ||
            name == "fd_close" || name == "fd_read" || name == "fd_write" ||
-           name == "fd_dup2" || name == "file_read" ||
+           name == "fd_dup2" ||
+           name == "file_open" || name == "file_close" || name == "file_read_path" ||
+           name == "file_write_path" || name == "file_exists" || name == "file_size" ||
+           name == "file_read_handle" || name == "file_write_handle" ||
            name == "net_tcp_connect" || name == "net_send" || name == "net_recv" ||
            name == "net_close" || name == "net_tcp_listen" || name == "net_tcp_accept" ||
            name == "net_tls_connect" || name == "net_tls_send" ||
@@ -441,8 +444,7 @@ void emitProcessSupport(std::string& output) {
     output += "declare i32 @xlang_fd_close(i32)\n";
     output += "declare i8* @xlang_fd_read(i32, i32)\n";
     output += "declare i32 @xlang_fd_write(i32, i8*)\n";
-    output += "declare i32 @xlang_fd_dup2(i32, i32)\n";
-    output += "declare i8* @xlang_file_read(i8*)\n\n";
+    output += "declare i32 @xlang_fd_dup2(i32, i32)\n\n";
 
     output += "define weak i32 @run_capture(i8* %path, i8* %args) {\n";
     output += "  %rc = call i32 @xlang_run_capture(i8* %path, i8* %args)\n";
@@ -533,10 +535,57 @@ void emitProcessSupport(std::string& output) {
     output += "  %rc = call i32 @xlang_fd_dup2(i32 %old_fd, i32 %new_fd)\n";
     output += "  ret i32 %rc\n";
     output += "}\n\n";
+}
 
-    output += "define weak i8* @file_read(i8* %path) {\n";
-    output += "  %buf = call i8* @xlang_file_read(i8* %path)\n";
+void emitFileSupport(std::string& output) {
+    output += "; xlang file bridge (C++ fstream)\n";
+    output += "declare i64 @xlang_file_open(i8*, i32)\n";
+    output += "declare i32 @xlang_file_close(i64)\n";
+    output += "declare i8* @xlang_file_read_path(i8*)\n";
+    output += "declare i32 @xlang_file_write_path(i8*, i8*, i32)\n";
+    output += "declare i32 @xlang_file_exists(i8*)\n";
+    output += "declare i64 @xlang_file_size(i8*)\n";
+    output += "declare i8* @xlang_file_read_handle(i64)\n";
+    output += "declare i32 @xlang_file_write_handle(i64, i8*)\n\n";
+
+    output += "define weak i64 @file_open(i8* %path, i32 %mode) {\n";
+    output += "  %h = call i64 @xlang_file_open(i8* %path, i32 %mode)\n";
+    output += "  ret i64 %h\n";
+    output += "}\n\n";
+
+    output += "define weak i32 @file_close(i64 %handle) {\n";
+    output += "  %rc = call i32 @xlang_file_close(i64 %handle)\n";
+    output += "  ret i32 %rc\n";
+    output += "}\n\n";
+
+    output += "define weak i8* @file_read_path(i8* %path) {\n";
+    output += "  %buf = call i8* @xlang_file_read_path(i8* %path)\n";
     output += "  ret i8* %buf\n";
+    output += "}\n\n";
+
+    output += "define weak i32 @file_write_path(i8* %path, i8* %data, i32 %append) {\n";
+    output += "  %rc = call i32 @xlang_file_write_path(i8* %path, i8* %data, i32 %append)\n";
+    output += "  ret i32 %rc\n";
+    output += "}\n\n";
+
+    output += "define weak i32 @file_exists(i8* %path) {\n";
+    output += "  %ok = call i32 @xlang_file_exists(i8* %path)\n";
+    output += "  ret i32 %ok\n";
+    output += "}\n\n";
+
+    output += "define weak i64 @file_size(i8* %path) {\n";
+    output += "  %sz = call i64 @xlang_file_size(i8* %path)\n";
+    output += "  ret i64 %sz\n";
+    output += "}\n\n";
+
+    output += "define weak i8* @file_read_handle(i64 %handle) {\n";
+    output += "  %buf = call i8* @xlang_file_read_handle(i64 %handle)\n";
+    output += "  ret i8* %buf\n";
+    output += "}\n\n";
+
+    output += "define weak i32 @file_write_handle(i64 %handle, i8* %data) {\n";
+    output += "  %rc = call i32 @xlang_file_write_handle(i64 %handle, i8* %data)\n";
+    output += "  ret i32 %rc\n";
     output += "}\n\n";
 }
 
@@ -682,6 +731,18 @@ void emitSyscallDefinitions(std::string& output, const std::unordered_set<std::s
         emitProcessSupport(output);
     }
 
+    const bool needs_file = syscalls.find("file_open") != syscalls.end() ||
+                            syscalls.find("file_close") != syscalls.end() ||
+                            syscalls.find("file_read_path") != syscalls.end() ||
+                            syscalls.find("file_write_path") != syscalls.end() ||
+                            syscalls.find("file_exists") != syscalls.end() ||
+                            syscalls.find("file_size") != syscalls.end() ||
+                            syscalls.find("file_read_handle") != syscalls.end() ||
+                            syscalls.find("file_write_handle") != syscalls.end();
+    if (needs_file) {
+        emitFileSupport(output);
+    }
+
     for (const std::string& name : syscalls) {
         if (!isKnownSyscall(name)) {
             throw XlangError("unknown xlang syscall: " + name);
@@ -721,9 +782,22 @@ bool syscallsNeedProcessLink(const std::unordered_set<std::string>& syscalls) {
         "run_capture",   "capture_stdout",  "proc_fork",     "proc_exec",
         "proc_wait",     "proc_exit",       "proc_kill",     "pipe_create",
         "pipe_read_fd",  "pipe_write_fd",   "fd_close",      "fd_read",
-        "fd_write",      "fd_dup2",         "file_read",
+        "fd_write",      "fd_dup2",
     };
     for (const char* name : kProcessSyscalls) {
+        if (syscalls.find(name) != syscalls.end()) {
+            return true;
+        }
+    }
+    return false;
+}
+
+bool syscallsNeedFileLink(const std::unordered_set<std::string>& syscalls) {
+    static const char* kFileSyscalls[] = {
+        "file_open",        "file_close",       "file_read_path",  "file_write_path",
+        "file_exists",      "file_size",        "file_read_handle", "file_write_handle",
+    };
+    for (const char* name : kFileSyscalls) {
         if (syscalls.find(name) != syscalls.end()) {
             return true;
         }

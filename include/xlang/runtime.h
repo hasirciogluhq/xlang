@@ -19,6 +19,7 @@ struct RuntimeBundle {
     bool needs_server_link{false};
     bool needs_panic_link{false};
     bool needs_process_link{false};
+    bool needs_file_link{false};
 };
 
 struct RuntimeOptions {

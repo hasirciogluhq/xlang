@@ -1,0 +1,65 @@
+import * as test from test
+import * as file from file
+
+fn scratch_path(): string {
+    return "test/xlang/_file_test_scratch.txt"
+}
+
+fn TestWriteAndReadAll() {
+    local path = scratch_path()
+    expect(file.Write(path, "hello file")).toEqual(0)
+    expect(file.ReadAll(path)).toEqual("hello file")
+    return 0
+}
+
+fn TestAppend() {
+    local path = scratch_path()
+    file.Write(path, "a")
+    expect(file.Append(path, "b")).toEqual(0)
+    expect(file.ReadAll(path)).toEqual("ab")
+    return 0
+}
+
+fn TestExistsAndSize() {
+    local path = scratch_path()
+    file.Write(path, "12345")
+    expect(file.Exists(path)).toEqual(1)
+    expect(file.Size(path)).toEqual(5)
+    expect(file.Exists("test/xlang/_missing_file_.txt")).toEqual(0)
+    return 0
+}
+
+fn TestOpenReadStream() {
+    local path = scratch_path()
+    file.Write(path, "stream-read")
+    local f = file.OpenRead(path)
+    expect(file.IsOpen(f)).toEqual(1)
+    expect(file.Read(f)).toEqual("stream-read")
+    expect(file.Close(f)).toEqual(0)
+    return 0
+}
+
+fn TestOpenWriteStream() {
+    local path = scratch_path()
+    local f = file.OpenWrite(path)
+    expect(file.IsOpen(f)).toEqual(1)
+    expect(file.WriteStream(f, "stream-write")).toEqual(0)
+    expect(file.Close(f)).toEqual(0)
+    expect(file.ReadAll(path)).toEqual("stream-write")
+    return 0
+}
+
+fn TestOpenAppendStream() {
+    local path = scratch_path()
+    file.Write(path, "x")
+    local f = file.OpenAppend(path)
+    expect(file.WriteStream(f, "y")).toEqual(0)
+    expect(file.Close(f)).toEqual(0)
+    expect(file.ReadAll(path)).toEqual("xy")
+    return 0
+}
+
+fn TestMissingReadAll() {
+    expect(str_len(file.ReadAll("test/xlang/_missing_read_all_.txt"))).toEqual(0)
+    return 0
+}

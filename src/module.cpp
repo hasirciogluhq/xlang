@@ -244,6 +244,10 @@ const Function* findFunction(const Program& program, const std::string& name) {
     return function.exported && !function.body.statements.empty();
 }
 
+[[nodiscard]] bool isImportableSymbol(const Function& function) {
+    return function.syscall || isImportableFunction(function);
+}
+
 std::string prefixed(const std::string& alias, const std::string& name) {
     return alias + "_" + name;
 }
@@ -398,8 +402,18 @@ Program ModuleLoader::loadFile(const std::filesystem::path& path) {
         if (import.is_from) {
             mergeSelected(merged, dep_program, import);
         } else if (!import.alias.empty()) {
-            registerImportAlias(merged, import.alias);
-            mergePrefixed(merged, dep_program, import.alias);
+            if (import.module.find('/') != std::string::npos) {
+                registerImportAlias(merged, import.alias);
+                mergePrefixed(merged, dep_program, import.alias);
+            } else {
+                ImportDecl selective;
+                selective.module = import.module;
+                selective.is_clause_import = true;
+                ImportSpec spec;
+                spec.name = import.alias;
+                selective.names.push_back(std::move(spec));
+                mergeFromClauses(merged, selective, absolute.parent_path());
+            }
         } else {
             mergeAll(merged, dep_program);
         }
@@ -594,34 +608,31 @@ void ModuleLoader::mergePrefixed(Program& into, const Program& from, const std::
         }
         addGlobal(into, cloneGlobal(global));
     }
+
     for (const Function& function : from.functions) {
-        if (isImportableFunction(function)) {
+        if (function.body.statements.empty() && !function.external && !function.syscall) {
             continue;
         }
-        if (function.body.statements.empty() && !function.external && !function.syscall) {
+        if (function.syscall) {
+            if (hasFunctionOverload(into, function)) {
+                continue;
+            }
+            addFunction(into, cloneFunction(function));
+            continue;
+        }
+        if (isImportableFunction(function)) {
+            Function copy = cloneFunction(function);
+            copy.name = prefixed(alias, function.name);
+            if (hasFunctionOverload(into, copy)) {
+                continue;
+            }
+            addFunction(into, std::move(copy));
             continue;
         }
         if (hasFunctionOverload(into, function)) {
             continue;
         }
         addFunction(into, cloneFunction(function));
-    }
-
-    for (const GlobalVar& global : from.globals) {
-        if (!isImportableGlobal(global)) {
-            continue;
-        }
-        GlobalVar copy = cloneGlobal(global);
-        copy.name = prefixed(alias, global.name);
-        addGlobal(into, std::move(copy));
-    }
-    for (const Function& function : from.functions) {
-        if (!isImportableFunction(function)) {
-            continue;
-        }
-        Function copy = cloneFunction(function);
-        copy.name = prefixed(alias, function.name);
-        addFunction(into, std::move(copy));
     }
 }
 
@@ -694,12 +705,14 @@ void ModuleLoader::mergeFromClauses(Program& into, ImportDecl& import,
             continue;
         }
         if (const Function* function = findFunction(dep_program, spec.name)) {
-            if (!isImportableFunction(*function)) {
+            if (!isImportableSymbol(*function)) {
                 throw XlangError("cannot import private symbol `" + spec.name + "` from `" +
                                  import.module + "`");
             }
             Function copy = cloneFunction(*function);
             copy.name = target;
+            copy.syscall = function->syscall;
+            copy.external = function->external;
             addFunction(into, std::move(copy));
             continue;
         }
@@ -723,12 +736,14 @@ void ModuleLoader::mergeSelected(Program& into, const Program& from, const Impor
             continue;
         }
         if (const Function* function = findFunction(from, spec.name)) {
-            if (!isImportableFunction(*function)) {
+            if (!isImportableSymbol(*function)) {
                 throw XlangError("cannot import private symbol `" + spec.name + "` from `" +
                                  import.module + "`");
             }
             Function copy = cloneFunction(*function);
             copy.name = target;
+            copy.syscall = function->syscall;
+            copy.external = function->external;
             addFunction(into, std::move(copy));
             continue;
         }

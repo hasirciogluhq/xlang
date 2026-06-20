@@ -1,5 +1,5 @@
-import test from test
-import sync from sync
+import * as test from test
+import * as sync from sync
 
 fn TestAtomicFetchAdd() {
     local a = sync.NewAtomicInt(10)
