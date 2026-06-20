@@ -5,7 +5,6 @@ struct User {
 }
 
 fn on_listen(info: ServerInfo) {
-    print("xlang running at %s://%s:%d", info.Protocol(), info.Hostname(), info.Port())
     return 0
 }
 

@@ -23,7 +23,7 @@ bool isKnownSyscall(const std::string& name) {
            name == "atomic_compare_exchange" ||
            name == "panic" || name == "recover" || name == "try_invoke0" ||
            name == "env_get" || name == "run_capture" || name == "capture_stdout" ||
-           name == "env_set" || name == "cwd" || name == "chdir" ||
+           name == "env_set" || name == "cwd" || name == "chdir" || name == "log_timestamp" ||
            name == "proc_fork" || name == "proc_exec" || name == "proc_wait" ||
            name == "proc_exit" || name == "proc_kill" || name == "pipe_create" ||
            name == "pipe_read_fd" || name == "pipe_write_fd" ||
@@ -432,6 +432,7 @@ void emitProcessSupport(std::string& output) {
     output += "declare i8* @xlang_env_get(i8*)\n";
     output += "declare i32 @xlang_env_set(i8*, i8*)\n";
     output += "declare i8* @xlang_cwd_get()\n";
+    output += "declare i8* @xlang_log_timestamp()\n";
     output += "declare i32 @xlang_chdir(i8*)\n";
     output += "declare i32 @xlang_proc_fork()\n";
     output += "declare i32 @xlang_proc_exec(i8*, i8*)\n";
@@ -469,6 +470,11 @@ void emitProcessSupport(std::string& output) {
     output += "define weak i8* @cwd() {\n";
     output += "  %path = call i8* @xlang_cwd_get()\n";
     output += "  ret i8* %path\n";
+    output += "}\n\n";
+
+    output += "define weak i8* @log_timestamp() {\n";
+    output += "  %ts = call i8* @xlang_log_timestamp()\n";
+    output += "  ret i8* %ts\n";
     output += "}\n\n";
 
     output += "define weak i32 @chdir(i8* %path) {\n";
@@ -719,6 +725,7 @@ void emitSyscallDefinitions(std::string& output, const std::unordered_set<std::s
 
     const bool needs_process =
         syscalls.find("env_get") != syscalls.end() ||
+        syscalls.find("log_timestamp") != syscalls.end() ||
         syscalls.find("run_capture") != syscalls.end() ||
         syscalls.find("capture_stdout") != syscalls.end() ||
         syscalls.find("proc_fork") != syscalls.end() ||

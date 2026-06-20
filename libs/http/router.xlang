@@ -11,6 +11,10 @@
 
 import server from http/server
 
+declare syscall env_get(key: string): string
+declare syscall now_ms(): int64
+declare syscall log_timestamp(): string
+
 struct RouteDef {
     method: string
     pattern: string
@@ -50,14 +54,94 @@ export struct Router {
     prefix: string
     routes: array RouteDef
     middleware: array int64
+    access_log: int32
 }
 
 export fn NewRouter(): Router {
+    local access_log = 1
+    if str_eq(env_get("XLANG_ENV"), "production") != 0 {
+        access_log = 0
+    }
     return new Router {
         prefix = "",
         routes = new array RouteDef,
-        middleware = new array int64
+        middleware = new array int64,
+        access_log = access_log
     }
+}
+
+fn pad_method(method: string): string {
+    local out = method
+    while str_len(out) < 7 {
+        out = out + " "
+    }
+    return out
+}
+
+fn status_badge(status: int32): string {
+    local code = str_from_int(status)
+    if status >= 200 && status < 300 {
+        return "\e[42m\e[97m " + code + " \e[0m"
+    }
+    if status >= 400 && status < 500 {
+        return "\e[43m\e[30m " + code + " \e[0m"
+    }
+    if status >= 500 {
+        return "\e[41m\e[97m " + code + " \e[0m"
+    }
+    return "\e[100m\e[97m " + code + " \e[0m"
+}
+
+fn method_badge(method: string): string {
+    local label = pad_method(method)
+    if str_eq(method, "GET") != 0 {
+        return "\e[44m\e[97m" + label + "\e[0m"
+    }
+    if str_eq(method, "POST") != 0 {
+        return "\e[42m\e[97m" + label + "\e[0m"
+    }
+    if str_eq(method, "PUT") != 0 {
+        return "\e[43m\e[30m" + label + "\e[0m"
+    }
+    if str_eq(method, "DELETE") != 0 {
+        return "\e[41m\e[97m" + label + "\e[0m"
+    }
+    if str_eq(method, "PATCH") != 0 {
+        return "\e[45m\e[97m" + label + "\e[0m"
+    }
+    if str_eq(method, "HEAD") != 0 {
+        return "\e[46m\e[30m" + label + "\e[0m"
+    }
+    if str_eq(method, "OPTIONS") != 0 {
+        return "\e[100m\e[97m" + label + "\e[0m"
+    }
+    return "\e[100m\e[97m" + label + "\e[0m"
+}
+
+fn latency_text(start: int64, finished: int64): string {
+    local elapsed: int32 = finished - start
+    if elapsed < 0 {
+        elapsed = 0
+    }
+    return str_from_int(elapsed) + "ms"
+}
+
+fn log_request(r: Router, ctx: Context, start: int64, finished: int64): int32 {
+    if r.access_log == 0 {
+        return 0
+    }
+    local ts = log_timestamp()
+    local line = "Router | " + ts + " | " + status_badge(ctx.status) + " | " + latency_text(start, finished) + " | 127.0.0.1 | " + method_badge(ctx.method) + " \"" + ctx.path + "\""
+    print(line)
+    return 0
+}
+
+fn log_listen(r: Router, host: string, port: int32): int32 {
+    if r.access_log == 0 {
+        return 0
+    }
+    print("[Router] Listening and serving HTTP on %s:%d", host, port)
+    return 0
 }
 
 fn new_context(method: string, path: string, param_name: string, param_value: string): Context {
@@ -81,7 +165,8 @@ fn clone_group(r: Router, prefix: string): Router {
     return new Router {
         prefix = r.prefix + prefix,
         routes = r.routes,
-        middleware = r.middleware
+        middleware = r.middleware,
+        access_log = r.access_log
     }
 }
 
@@ -402,9 +487,15 @@ export fn HandleConn(r: Router, conn: Conn): int32 {
     if str_len(raw) == 0 {
         return 0
     }
+    local start = now_ms()
     if parse_request_line(raw) == 0 {
         local bad = FormatResponse(400, "bad request", "text/plain")
         server.Write(conn, bad)
+        local bad_ctx = new_context("", "/", "", "")
+        bad_ctx.status = 400
+        bad_ctx.content_type = "text/plain"
+        bad_ctx.body = "bad request"
+        log_request(r, bad_ctx, start, now_ms())
         return 0
     }
     local method = request_method(raw)
@@ -412,6 +503,7 @@ export fn HandleConn(r: Router, conn: Conn): int32 {
     local ctx = DispatchRequest(r, method, path)
     local out = FormatResponse(ctx.status, ctx.body, ctx.content_type)
     server.Write(conn, out)
+    log_request(r, ctx, start, now_ms())
     return 0
 }
 
@@ -422,9 +514,11 @@ fn serve_conn(conn: Conn): int32 {
 }
 
 export fn ListenAndServe(r: Router, host: string, port: int32, on_listen: int64): int32 {
+    log_listen(r, host, port)
     return server.Listen(host, port, on_listen, serve_conn, ref(r))
 }
 
 export fn ServeOnce(r: Router, host: string, port: int32, on_listen: int64): int32 {
+    log_listen(r, host, port)
     return server.AcceptOnce(host, port, on_listen, serve_conn, ref(r))
 }
