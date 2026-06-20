@@ -5,8 +5,9 @@
 namespace xlang {
 
 bool isKnownSyscall(const std::string& name) {
-    return name == "print_int" || name == "start_thread" || name == "sleep_ms" ||
-           name == "random_range" || name == "print_done" || name == "wait_all_jobs";
+    return name == "print_int" || name == "print_cstr" || name == "start_thread" ||
+           name == "sleep_ms" || name == "random_range" || name == "print_done" ||
+           name == "wait_all_jobs";
 }
 
 namespace {
@@ -93,6 +94,17 @@ void emitSyscallDefinitions(std::string& output, const std::unordered_set<std::s
         output += "define weak i32 @print_int(i32 %n) {\n";
         output += "  call i32 (i8*, ...) @printf(i8* getelementptr inbounds "
                   "([4 x i8], [4 x i8]* @__xlang_syscall_fmt, i32 0, i32 0), i32 %n)\n";
+        output += "  ret i32 0\n";
+        output += "}\n\n";
+    }
+
+    if (syscalls.find("print_cstr") != syscalls.end()) {
+        output += "; xlang syscall: print_cstr\n";
+        output += "@__xlang_syscall_strfmt = private unnamed_addr constant [4 x i8] c\"%s\\0A\\00\"\n";
+        output += "declare i32 @printf(i8*, ...)\n";
+        output += "define weak i32 @print_cstr(i8* %s) {\n";
+        output += "  call i32 (i8*, ...) @printf(i8* getelementptr inbounds "
+                  "([4 x i8], [4 x i8]* @__xlang_syscall_strfmt, i32 0, i32 0), i8* %s)\n";
         output += "  ret i32 0\n";
         output += "}\n\n";
     }

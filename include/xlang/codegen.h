@@ -2,6 +2,7 @@
 
 #include "xlang/ast.h"
 #include "xlang/build.h"
+#include "xlang/types.h"
 
 #include <cstdint>
 #include <string>
@@ -33,6 +34,7 @@ private:
 
     void collectSyscalls(const Program& program);
     void emitPrelude(const Program& program);
+    void emitStructTypes(const Program& program);
     void emitRuntimeDeclares(const Program& program);
     void emitGlobals(const Program& program);
     void emitGlobalInit(const Program& program);
@@ -40,16 +42,38 @@ private:
     void emitDeclareFunction(const FunctionSignature& function);
     void emitDeclareFunction(const Function& function);
     void emitSyscallLowering();
+    void emitStringRuntimeSupport();
+
+    [[nodiscard]] bool isStringType(const Type& type) const;
+    [[nodiscard]] std::string emitStringLiteral(const std::string& text);
+    void ensureStringLiteralGlobal(const std::string& text);
+    [[nodiscard]] std::string stringLiteralGlobalName(const std::string& text) const;
+    [[nodiscard]] std::string emitIntToString(const std::string& int_value);
+    [[nodiscard]] std::string emitStringConcat(const std::string& left, const std::string& right);
 
     bool emitStatement(const Stmt& stmt, std::unordered_map<std::string, std::string>& locals);
-    std::pair<std::string, std::string> emitExpr(const Expr& expr,
-                                                 const std::unordered_map<std::string, std::string>& locals);
+    std::pair<Type, std::string> emitExpr(const Expr& expr,
+                                          const std::unordered_map<std::string, std::string>& locals);
 
     [[nodiscard]] bool definesFunction(const Program& program, const std::string& name) const;
+    [[nodiscard]] const StructDecl* findStruct(const std::string& name) const;
+    [[nodiscard]] Type resolveVarType(const std::string& name,
+                                      const std::unordered_map<std::string, std::string>& locals) const;
     [[nodiscard]] std::string resolveVar(const std::string& name,
                                          const std::unordered_map<std::string, std::string>& locals) const;
     [[nodiscard]] std::string fnLinkage(const Function& function) const;
     [[nodiscard]] std::string globalLinkage(const GlobalVar& global) const;
+    [[nodiscard]] std::string structTypeName(const std::string& name) const;
+    [[nodiscard]] std::string structValueTypeName(const std::string& name) const;
+    [[nodiscard]] int structFieldIndex(const StructDecl& decl, const std::string& field) const;
+    [[nodiscard]] std::size_t structSizeBytes(const StructDecl& decl) const;
+
+    void allocLocal(const std::string& name, const Type& type,
+                    std::unordered_map<std::string, std::string>& locals);
+    void storeValue(const Type& type, const std::string& value, const std::string& ptr,
+                    const std::unordered_map<std::string, std::string>& locals);
+    std::pair<Type, std::string> loadValue(const Type& type, const std::string& ptr,
+                                           const std::unordered_map<std::string, std::string>& locals);
 
     std::string freshTmp();
     [[nodiscard]] static std::string localPtr(const std::string& name);
@@ -58,12 +82,18 @@ private:
     void writeln(const std::string& line);
 
     CodegenOptions options_;
+    const Program* program_{nullptr};
     std::string output_;
     std::uint32_t tmp_counter_{0};
     std::unordered_set<std::string> globals_;
+    std::unordered_map<std::string, Type> global_types_;
     std::unordered_set<std::string> defined_functions_;
     std::unordered_set<std::string> syscalls_;
     bool needs_global_init_{false};
+    bool needs_heap_{false};
+    bool needs_strings_{false};
+    std::uint32_t string_literal_counter_{0};
+    Type current_return_type_{TypeKind::Int32};
 };
 
 }  // namespace xlang

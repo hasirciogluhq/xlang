@@ -28,6 +28,7 @@ std::vector<FunctionSignature> collectExports(const Program& program) {
         FunctionSignature signature;
         signature.name = function.name;
         signature.params = function.params;
+        signature.return_type = function.return_type;
         exports.push_back(std::move(signature));
     }
     return exports;

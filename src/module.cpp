@@ -15,6 +15,14 @@ std::unique_ptr<Expr> cloneExpr(const Expr& expr) {
     switch (expr.kind) {
         case Expr::Kind::IntLiteral:
             return Expr::makeInt(expr.int_value, expr.span);
+        case Expr::Kind::FloatLiteral:
+            return Expr::makeFloat(expr.float_value, expr.span);
+        case Expr::Kind::BoolLiteral:
+            return Expr::makeBool(expr.bool_value, expr.span);
+        case Expr::Kind::StringLiteral:
+            return Expr::makeString(expr.name, expr.span);
+        case Expr::Kind::Null:
+            return Expr::makeNull(expr.span);
         case Expr::Kind::Variable:
             return Expr::makeVar(expr.name, expr.span);
         case Expr::Kind::Binary:
@@ -29,6 +37,20 @@ std::unique_ptr<Expr> cloneExpr(const Expr& expr) {
         }
         case Expr::Kind::FunctionRef:
             return Expr::makeFunctionRef(expr.name, expr.span);
+        case Expr::Kind::FieldAccess:
+            return Expr::makeFieldAccess(cloneExpr(*expr.object), expr.name, expr.span);
+        case Expr::Kind::New: {
+            std::vector<FieldInit> inits;
+            for (const FieldInit& init : expr.field_inits) {
+                FieldInit copy;
+                copy.name = init.name;
+                if (init.value) {
+                    copy.value = cloneExpr(*init.value);
+                }
+                inits.push_back(std::move(copy));
+            }
+            return Expr::makeNew(expr.name, std::move(inits), expr.span);
+        }
     }
     throw XlangError("invalid expression clone");
 }
@@ -36,6 +58,7 @@ std::unique_ptr<Expr> cloneExpr(const Expr& expr) {
 GlobalVar cloneGlobal(const GlobalVar& global) {
     GlobalVar copy;
     copy.name = global.name;
+    copy.type = global.type;
     copy.span = global.span;
     copy.exported = global.exported;
     copy.external = global.external;
@@ -49,6 +72,7 @@ Function cloneFunction(const Function& function) {
     Function copy;
     copy.name = function.name;
     copy.params = function.params;
+    copy.return_type = function.return_type;
     copy.span = function.span;
     copy.exported = function.exported;
     copy.external = function.external;
@@ -59,6 +83,11 @@ Function cloneFunction(const Function& function) {
         copied.kind = stmt.kind;
         copied.span = stmt.span;
         copied.name = stmt.name;
+        copied.type = stmt.type;
+        copied.field = stmt.field;
+        if (stmt.target) {
+            copied.target = cloneExpr(*stmt.target);
+        }
         if (stmt.expr) {
             copied.expr = cloneExpr(*stmt.expr);
         }
@@ -141,6 +170,7 @@ std::string prefixed(const std::string& alias, const std::string& name) {
 Program cloneProgram(const Program& program) {
     Program copy;
     copy.imports = program.imports;
+    copy.structs = program.structs;
     for (const GlobalVar& global : program.globals) {
         copy.globals.push_back(cloneGlobal(global));
     }
@@ -198,6 +228,15 @@ Program ModuleLoader::loadFile(const std::filesystem::path& path) {
         } else {
             mergeAll(merged, dep_program);
         }
+    }
+
+    for (const StructDecl& decl : source.structs) {
+        for (const StructDecl& existing : merged.structs) {
+            if (existing.name == decl.name) {
+                throw XlangError("duplicate struct: " + decl.name);
+            }
+        }
+        merged.structs.push_back(decl);
     }
 
     for (const GlobalVar& global : source.globals) {

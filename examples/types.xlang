@@ -1,0 +1,12 @@
+struct Point {
+    x: int32
+    y: int32
+}
+
+fn main() {
+    local p: Point = new Point { x = 10, y = 20 }
+    print("sum: " + p.x + p.y)
+    print("x=" + p.x)
+    delete p
+    return 0
+}

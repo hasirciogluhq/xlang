@@ -1,5 +1,7 @@
 #pragma once
 
+#include "xlang/types.h"
+
 #include <cstdint>
 #include <memory>
 #include <string>
@@ -21,9 +23,15 @@ struct Block;
 struct Function;
 struct Program;
 
+struct TypedName {
+    std::string name;
+    Type type{TypeKind::Int32};
+};
+
 struct FunctionSignature {
     std::string name;
-    std::vector<std::string> params;
+    std::vector<TypedName> params;
+    Type return_type{TypeKind::Int32};
 };
 
 struct ImportSpec {
@@ -45,8 +53,26 @@ struct ImportDecl {
     Span span{};
 };
 
+struct StructField {
+    std::string name;
+    Type type{TypeKind::Int32};
+};
+
+struct StructDecl {
+    std::string name;
+    std::vector<StructField> fields;
+    bool exported{false};
+    Span span{};
+};
+
+struct FieldInit {
+    std::string name;
+    std::unique_ptr<Expr> value;
+};
+
 struct GlobalVar {
     std::string name;
+    Type type{TypeKind::Int32};
     std::unique_ptr<Expr> init;
     bool exported{false};
     bool external{false};
@@ -54,30 +80,58 @@ struct GlobalVar {
 };
 
 struct Expr {
-    enum class Kind { IntLiteral, Variable, Binary, Call, FunctionRef } kind;
+    enum class Kind {
+        IntLiteral,
+        FloatLiteral,
+        BoolLiteral,
+        StringLiteral,
+        Variable,
+        Binary,
+        Call,
+        FunctionRef,
+        FieldAccess,
+        New,
+        Null,
+    } kind;
 
     Span span{};
     std::int64_t int_value{};
+    double float_value{};
+    bool bool_value{};
     std::string name;
     BinOp bin_op{};
+    std::unique_ptr<Expr> object;
     std::unique_ptr<Expr> left;
     std::unique_ptr<Expr> right;
     std::vector<std::unique_ptr<Expr>> args;
+    std::vector<FieldInit> field_inits;
+    Type new_type{TypeKind::Struct};
 
     static std::unique_ptr<Expr> makeInt(std::int64_t value, Span span);
+    static std::unique_ptr<Expr> makeFloat(double value, Span span);
+    static std::unique_ptr<Expr> makeBool(bool value, Span span);
+    static std::unique_ptr<Expr> makeString(std::string value, Span span);
+    static std::unique_ptr<Expr> makeNull(Span span);
     static std::unique_ptr<Expr> makeVar(std::string name, Span span);
     static std::unique_ptr<Expr> makeBinary(BinOp op, std::unique_ptr<Expr> left,
                                             std::unique_ptr<Expr> right, Span span);
     static std::unique_ptr<Expr> makeCall(std::string name, std::vector<std::unique_ptr<Expr>> args,
                                           Span span);
     static std::unique_ptr<Expr> makeFunctionRef(std::string name, Span span);
+    static std::unique_ptr<Expr> makeFieldAccess(std::unique_ptr<Expr> object, std::string field,
+                                                 Span span);
+    static std::unique_ptr<Expr> makeNew(std::string struct_name,
+                                         std::vector<FieldInit> field_inits, Span span);
 };
 
 struct Stmt {
-    enum class Kind { Local, Assign, Return, Expr } kind;
+    enum class Kind { Local, Assign, MemberAssign, Return, Expr, Delete } kind;
 
     Span span{};
     std::string name;
+    Type type{TypeKind::Int32};
+    std::unique_ptr<Expr> target;
+    std::string field;
     std::unique_ptr<Expr> expr;
     std::unique_ptr<Expr> return_value;
 };
@@ -89,7 +143,8 @@ struct Block {
 
 struct Function {
     std::string name;
-    std::vector<std::string> params;
+    std::vector<TypedName> params;
+    Type return_type{TypeKind::Int32};
     Block body;
     bool exported{false};
     bool external{false};
@@ -99,6 +154,7 @@ struct Function {
 
 struct Program {
     std::vector<ImportDecl> imports;
+    std::vector<StructDecl> structs;
     std::vector<GlobalVar> globals;
     std::vector<Function> functions;
 };

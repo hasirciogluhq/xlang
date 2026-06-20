@@ -7,12 +7,140 @@
 
 namespace xlang {
 
+bool exprUsesString(const Expr& expr) {
+    if (expr.kind == Expr::Kind::StringLiteral) {
+        return true;
+    }
+    if (expr.kind == Expr::Kind::Binary && expr.bin_op == BinOp::Add) {
+        if (expr.left && exprUsesString(*expr.left)) {
+            return true;
+        }
+        if (expr.right && exprUsesString(*expr.right)) {
+            return true;
+        }
+    }
+    if (expr.object && exprUsesString(*expr.object)) {
+        return true;
+    }
+    if (expr.left && exprUsesString(*expr.left)) {
+        return true;
+    }
+    if (expr.right && exprUsesString(*expr.right)) {
+        return true;
+    }
+    for (const auto& arg : expr.args) {
+        if (exprUsesString(*arg)) {
+            return true;
+        }
+    }
+    for (const FieldInit& init : expr.field_inits) {
+        if (init.value && exprUsesString(*init.value)) {
+            return true;
+        }
+    }
+    return false;
+}
+
+bool stmtUsesString(const Stmt& stmt) {
+    if (stmt.expr && exprUsesString(*stmt.expr)) {
+        return true;
+    }
+    if (stmt.return_value && exprUsesString(*stmt.return_value)) {
+        return true;
+    }
+    if (stmt.target && exprUsesString(*stmt.target)) {
+        return true;
+    }
+    return false;
+}
+
+bool programUsesStrings(const Program& program) {
+    for (const GlobalVar& global : program.globals) {
+        if (global.init && exprUsesString(*global.init)) {
+            return true;
+        }
+    }
+    for (const Function& function : program.functions) {
+        for (const Stmt& stmt : function.body.statements) {
+            if (stmtUsesString(stmt)) {
+                return true;
+            }
+        }
+    }
+    return false;
+}
+
+bool exprUsesHeap(const Expr& expr) {
+    if (expr.kind == Expr::Kind::New) {
+        return true;
+    }
+    if (expr.kind == Expr::Kind::FieldAccess && expr.object) {
+        return exprUsesHeap(*expr.object);
+    }
+    if (expr.left && exprUsesHeap(*expr.left)) {
+        return true;
+    }
+    if (expr.right && exprUsesHeap(*expr.right)) {
+        return true;
+    }
+    for (const auto& arg : expr.args) {
+        if (exprUsesHeap(*arg)) {
+            return true;
+        }
+    }
+    for (const FieldInit& init : expr.field_inits) {
+        if (init.value && exprUsesHeap(*init.value)) {
+            return true;
+        }
+    }
+    return false;
+}
+
+bool stmtUsesHeap(const Stmt& stmt) {
+    if (stmt.kind == Stmt::Kind::Delete) {
+        return true;
+    }
+    if (stmt.expr && exprUsesHeap(*stmt.expr)) {
+        return true;
+    }
+    if (stmt.return_value && exprUsesHeap(*stmt.return_value)) {
+        return true;
+    }
+    if (stmt.target && exprUsesHeap(*stmt.target)) {
+        return true;
+    }
+    return false;
+}
+
+bool programUsesHeap(const Program& program) {
+    for (const GlobalVar& global : program.globals) {
+        if (global.init && exprUsesHeap(*global.init)) {
+            return true;
+        }
+    }
+    for (const Function& function : program.functions) {
+        for (const Stmt& stmt : function.body.statements) {
+            if (stmtUsesHeap(stmt)) {
+                return true;
+            }
+        }
+    }
+    return false;
+}
+
 Codegen::Codegen(CodegenOptions options) : options_(std::move(options)) {}
 
 CodegenResult Codegen::generate(const Program& program, const CodegenOptions& options) {
     Codegen cg(options);
+    cg.program_ = &program;
+    cg.needs_heap_ = programUsesHeap(program) || programUsesStrings(program);
+    cg.needs_strings_ = programUsesStrings(program);
     cg.collectSyscalls(program);
     cg.emitPrelude(program);
+    cg.emitStructTypes(program);
+    if (cg.needs_strings_) {
+        cg.emitStringRuntimeSupport();
+    }
     cg.emitGlobals(program);
     cg.emitGlobalInit(program);
     for (const Function& function : program.functions) {
@@ -55,6 +183,12 @@ void Codegen::emitPrelude(const Program& program) {
     writeln("target triple = \"native\"");
     writeln("");
 
+    if (needs_heap_) {
+        writeln("declare i8* @malloc(i64)");
+        writeln("declare void @free(i8*)");
+        writeln("");
+    }
+
     for (const Function& function : program.functions) {
         if (function.external) {
             defined_functions_.insert(function.name);
@@ -62,6 +196,98 @@ void Codegen::emitPrelude(const Program& program) {
     }
 
     emitRuntimeDeclares(program);
+}
+
+void Codegen::emitStringRuntimeSupport() {
+    writeln("declare i32 @sprintf(i8*, i8*, ...)");
+    writeln("declare i64 @strlen(i8*)");
+    writeln("declare i8* @strcpy(i8*, i8*)");
+    writeln("declare i8* @strcat(i8*, i8*)");
+    writeln("@__xlang_int_fmt = private unnamed_addr constant [3 x i8] c\"%d\\00\"");
+    writeln("");
+    writeln("define internal i8* @__xlang_int_to_str(i32 %n) {");
+    writeln("  %buf = call i8* @malloc(i64 32)");
+    writeln("  call i32 (i8*, i8*, ...) @sprintf(i8* %buf, i8* getelementptr inbounds "
+            "([3 x i8], [3 x i8]* @__xlang_int_fmt, i32 0, i32 0), i32 %n)");
+    writeln("  ret i8* %buf");
+    writeln("}");
+    writeln("");
+    writeln("define internal i8* @__xlang_str_concat(i8* %a, i8* %b) {");
+    writeln("  %la = call i64 @strlen(i8* %a)");
+    writeln("  %lb = call i64 @strlen(i8* %b)");
+    writeln("  %sum = add i64 %la, %lb");
+    writeln("  %size = add i64 %sum, 1");
+    writeln("  %buf = call i8* @malloc(i64 %size)");
+    writeln("  call i8* @strcpy(i8* %buf, i8* %a)");
+    writeln("  call i8* @strcat(i8* %buf, i8* %b)");
+    writeln("  ret i8* %buf");
+    writeln("}");
+    writeln("");
+}
+
+bool Codegen::isStringType(const Type& type) const {
+    return type.kind == TypeKind::String;
+}
+
+std::string Codegen::emitStringLiteral(const std::string& text) {
+    std::string escaped;
+    escaped.reserve(text.size() + 1);
+    for (char c : text) {
+        switch (c) {
+            case '\\': escaped += "\\5C"; break;
+            case '"': escaped += "\\22"; break;
+            case '\n': escaped += "\\0A"; break;
+            case '\t': escaped += "\\09"; break;
+            default: escaped += c; break;
+        }
+    }
+
+    const std::string name = "@__xlang_str." + std::to_string(string_literal_counter_++);
+    const std::size_t size = text.size() + 1;
+    writeln(name + " = private unnamed_addr constant [" + std::to_string(size) + " x i8] c\"" +
+            escaped + "\\00\"");
+
+    const std::string tmp = freshTmp();
+    writeln("  " + tmp + " = getelementptr inbounds [" + std::to_string(size) + " x i8], [" +
+            std::to_string(size) + " x i8]* " + name + ", i32 0, i32 0");
+    return tmp;
+}
+
+std::string Codegen::emitIntToString(const std::string& int_value) {
+    const std::string tmp = freshTmp();
+    writeln("  " + tmp + " = call i8* @__xlang_int_to_str(i32 " + int_value + ")");
+    return tmp;
+}
+
+std::string Codegen::emitStringConcat(const std::string& left, const std::string& right) {
+    const std::string tmp = freshTmp();
+    writeln("  " + tmp + " = call i8* @__xlang_str_concat(i8* " + left + ", i8* " + right + ")");
+    return tmp;
+}
+
+void Codegen::emitStructTypes(const Program& program) {
+    for (const StructDecl& decl : program.structs) {
+        std::ostringstream body;
+        for (std::size_t i = 0; i < decl.fields.size(); ++i) {
+            if (i > 0) {
+                body << ", ";
+            }
+            Type field_type = decl.fields[i].type;
+            if (field_type.kind == TypeKind::Struct) {
+                body << structValueTypeName(field_type.struct_name);
+            } else {
+                body << llvmTypeName(field_type);
+            }
+        }
+        if (decl.fields.empty()) {
+            writeln(structValueTypeName(decl.name) + " = type { }");
+        } else {
+            writeln(structValueTypeName(decl.name) + " = type { " + body.str() + " }");
+        }
+    }
+    if (!program.structs.empty()) {
+        writeln("");
+    }
 }
 
 void Codegen::emitRuntimeDeclares(const Program& program) {
@@ -89,20 +315,71 @@ bool Codegen::definesFunction(const Program& program, const std::string& name) c
     return false;
 }
 
+const StructDecl* Codegen::findStruct(const std::string& name) const {
+    for (const StructDecl& decl : program_->structs) {
+        if (decl.name == name) {
+            return &decl;
+        }
+    }
+    return nullptr;
+}
+
+std::string Codegen::structTypeName(const std::string& name) const {
+    return "%struct." + name + "*";
+}
+
+std::string Codegen::structValueTypeName(const std::string& name) const {
+    return "%struct." + name;
+}
+
+int Codegen::structFieldIndex(const StructDecl& decl, const std::string& field) const {
+    for (std::size_t i = 0; i < decl.fields.size(); ++i) {
+        if (decl.fields[i].name == field) {
+            return static_cast<int>(i);
+        }
+    }
+    throw XlangError("unknown field `" + field + "` on struct `" + decl.name + "`");
+}
+
+std::size_t Codegen::structSizeBytes(const StructDecl& decl) const {
+    std::size_t size = 0;
+    for (const StructField& field : decl.fields) {
+        size += llvmTypeAlign(field.type);
+    }
+    return size == 0 ? 1 : size;
+}
+
 void Codegen::emitGlobals(const Program& program) {
     for (const GlobalVar& global : program.globals) {
+        globals_.insert(global.name);
+        global_types_[global.name] = global.type;
+
         if (global.external) {
-            writeln(globalName(global.name) + " = external global i32");
+            writeln(globalName(global.name) + " = external global " +
+                    llvmTypeName(global.type));
             continue;
         }
 
-        globals_.insert(global.name);
         const std::string linkage = globalLinkage(global);
-        if (global.init && global.init->kind == Expr::Kind::IntLiteral) {
-            writeln(globalName(global.name) + " = " + linkage + "global i32 " +
+        const std::string llvm_ty = llvmTypeName(global.type);
+        if (global.init && global.init->kind == Expr::Kind::IntLiteral &&
+            global.type.kind == TypeKind::Int32) {
+            writeln(globalName(global.name) + " = " + linkage + "global " + llvm_ty + " " +
                     std::to_string(global.init->int_value));
+        } else if (global.init && global.init->kind == Expr::Kind::FloatLiteral &&
+                   global.type.isFloating()) {
+            writeln(globalName(global.name) + " = " + linkage + "global " + llvm_ty + " " +
+                    std::to_string(global.init->float_value));
+        } else if (global.init && global.init->kind == Expr::Kind::BoolLiteral &&
+                   global.type.kind == TypeKind::Bool) {
+            writeln(globalName(global.name) + " = " + linkage + "global " + llvm_ty + " " +
+                    std::to_string(global.init->bool_value ? 1 : 0));
+        } else if (global.init && global.init->kind == Expr::Kind::Null &&
+                   (global.type.isPointer() || global.type.kind == TypeKind::String ||
+                    global.type.kind == TypeKind::Struct)) {
+            writeln(globalName(global.name) + " = " + linkage + "global " + llvm_ty + " null");
         } else {
-            writeln(globalName(global.name) + " = " + linkage + "global i32 0");
+            writeln(globalName(global.name) + " = " + linkage + "global " + llvm_ty + " zeroinitializer");
         }
     }
     if (!program.globals.empty()) {
@@ -115,7 +392,19 @@ void Codegen::emitGlobalInit(const Program& program) {
         if (global.external) {
             continue;
         }
-        if (!global.init || global.init->kind == Expr::Kind::IntLiteral) {
+        if (!global.init) {
+            continue;
+        }
+        if (global.init->kind == Expr::Kind::IntLiteral && global.type.kind == TypeKind::Int32) {
+            continue;
+        }
+        if (global.init->kind == Expr::Kind::FloatLiteral && global.type.isFloating()) {
+            continue;
+        }
+        if (global.init->kind == Expr::Kind::BoolLiteral && global.type.kind == TypeKind::Bool) {
+            continue;
+        }
+        if (global.init->kind == Expr::Kind::Null) {
             continue;
         }
         needs_global_init_ = true;
@@ -129,11 +418,23 @@ void Codegen::emitGlobalInit(const Program& program) {
     writeln("define " + linkage + "void @__xlang_init_globals() {");
     std::unordered_map<std::string, std::string> locals;
     for (const GlobalVar& global : program.globals) {
-        if (global.external || !global.init || global.init->kind == Expr::Kind::IntLiteral) {
+        if (global.external || !global.init) {
+            continue;
+        }
+        if (global.init->kind == Expr::Kind::IntLiteral && global.type.kind == TypeKind::Int32) {
+            continue;
+        }
+        if (global.init->kind == Expr::Kind::FloatLiteral && global.type.isFloating()) {
+            continue;
+        }
+        if (global.init->kind == Expr::Kind::BoolLiteral && global.type.kind == TypeKind::Bool) {
+            continue;
+        }
+        if (global.init->kind == Expr::Kind::Null) {
             continue;
         }
         const auto [ty, val] = emitExpr(*global.init, locals);
-        writeln("  store " + ty + " " + val + ", i32* " + globalName(global.name) + ", align 4");
+        storeValue(ty, val, globalName(global.name), locals);
     }
     writeln("  ret void");
     writeln("}");
@@ -146,9 +447,10 @@ void Codegen::emitDeclareFunction(const FunctionSignature& function) {
         if (i > 0) {
             params << ", ";
         }
-        params << "i32";
+        params << llvmTypeName(function.params[i].type);
     }
-    writeln("declare i32 @" + function.name + "(" + params.str() + ")");
+    writeln("declare " + llvmTypeName(function.return_type) + " @" + function.name + "(" +
+            params.str() + ")");
     writeln("");
 }
 
@@ -158,9 +460,10 @@ void Codegen::emitDeclareFunction(const Function& function) {
         if (i > 0) {
             params << ", ";
         }
-        params << "i32";
+        params << llvmTypeName(function.params[i].type);
     }
-    writeln("declare i32 @" + function.name + "(" + params.str() + ")");
+    writeln("declare " + llvmTypeName(function.return_type) + " @" + function.name + "(" +
+            params.str() + ")");
     writeln("");
 }
 
@@ -170,17 +473,21 @@ void Codegen::emitFunction(const Function& function) {
         if (i > 0) {
             params << ", ";
         }
-        params << "i32 %" << function.params[i];
+        params << llvmTypeName(function.params[i].type) << " %" << function.params[i].name;
     }
 
-    writeln("define " + fnLinkage(function) + "i32 @" + function.name + "(" + params.str() + ") {");
+    writeln("define " + fnLinkage(function) + llvmTypeName(function.return_type) + " @" +
+            function.name + "(" + params.str() + ") {");
 
     std::unordered_map<std::string, std::string> locals;
-    for (const std::string& param : function.params) {
-        const std::string ptr = localPtr(param);
-        writeln("  " + ptr + " = alloca i32, align 4");
-        writeln("  store i32 %" + param + ", i32* " + ptr + ", align 4");
-        locals[param] = ptr;
+    local_types_.clear();
+    current_return_type_ = function.return_type;
+    for (const TypedName& param : function.params) {
+        allocLocal(param.name, param.type, locals);
+        const std::string ptr = localPtr(param.name);
+        const std::string llvm_ty = llvmTypeName(param.type);
+        writeln("  store " + llvm_ty + " %" + param.name + ", " + llvm_ty + "* " + ptr +
+                ", align " + std::to_string(llvmTypeAlign(param.type)));
     }
 
     if (function.name == "main" && needs_global_init_) {
@@ -196,7 +503,11 @@ void Codegen::emitFunction(const Function& function) {
     }
 
     if (!has_return) {
-        writeln("  ret i32 0");
+        if (function.return_type.kind == TypeKind::Void) {
+            writeln("  ret void");
+        } else {
+            writeln("  ret " + llvmTypeName(function.return_type) + " zeroinitializer");
+        }
     }
 
     writeln("}");
@@ -223,30 +534,108 @@ std::string Codegen::globalLinkage(const GlobalVar& global) const {
     return "";
 }
 
+void Codegen::allocLocal(const std::string& name, const Type& type,
+                         std::unordered_map<std::string, std::string>& locals) {
+    const std::string ptr = localPtr(name);
+    const std::string llvm_ty = llvmTypeName(type);
+    if (type.kind == TypeKind::Struct) {
+        writeln("  " + ptr + " = alloca " + structTypeName(type.struct_name) + ", align 8");
+    } else {
+        writeln("  " + ptr + " = alloca " + llvm_ty + ", align " +
+                std::to_string(llvmTypeAlign(type)));
+    }
+    locals[name] = ptr;
+    local_types_[name] = type;
+}
+
+void Codegen::storeValue(const Type& type, const std::string& value, const std::string& ptr,
+                         const std::unordered_map<std::string, std::string>& locals) {
+    (void)locals;
+    const std::string llvm_ty = llvmTypeName(type);
+    if (type.kind == TypeKind::Struct) {
+        writeln("  store " + structTypeName(type.struct_name) + " " + value + ", " +
+                structTypeName(type.struct_name) + "* " + ptr + ", align 8");
+        return;
+    }
+    writeln("  store " + llvm_ty + " " + value + ", " + llvm_ty + "* " + ptr + ", align " +
+            std::to_string(llvmTypeAlign(type)));
+}
+
+std::pair<Type, std::string> Codegen::loadValue(
+    const Type& type, const std::string& ptr,
+    const std::unordered_map<std::string, std::string>& locals) {
+    (void)locals;
+    const std::string tmp = freshTmp();
+    if (type.kind == TypeKind::Struct) {
+        writeln("  " + tmp + " = load " + structTypeName(type.struct_name) + ", " +
+                structTypeName(type.struct_name) + "* " + ptr + ", align 8");
+        return {type, tmp};
+    }
+    const std::string llvm_ty = llvmTypeName(type);
+    writeln("  " + tmp + " = load " + llvm_ty + ", " + llvm_ty + "* " + ptr + ", align " +
+            std::to_string(llvmTypeAlign(type)));
+    return {type, tmp};
+}
+
 bool Codegen::emitStatement(const Stmt& stmt, std::unordered_map<std::string, std::string>& locals) {
     switch (stmt.kind) {
         case Stmt::Kind::Local: {
             const auto [ty, val] = emitExpr(*stmt.expr, locals);
-            const std::string ptr = localPtr(stmt.name);
-            writeln("  " + ptr + " = alloca i32, align 4");
-            writeln("  store " + ty + " " + val + ", i32* " + ptr + ", align 4");
-            locals[stmt.name] = ptr;
+            allocLocal(stmt.name, stmt.type, locals);
+            storeValue(stmt.type, val, localPtr(stmt.name), locals);
+            (void)ty;
             return false;
         }
         case Stmt::Kind::Assign: {
+            const Type var_type = resolveVarType(stmt.name, locals);
             const auto [ty, val] = emitExpr(*stmt.expr, locals);
-            const std::string target = resolveVar(stmt.name, locals);
-            writeln("  store " + ty + " " + val + ", i32* " + target + ", align 4");
+            (void)ty;
+            storeValue(var_type, val, resolveVar(stmt.name, locals), locals);
+            return false;
+        }
+        case Stmt::Kind::MemberAssign: {
+            const auto [obj_ty, obj_ptr] = emitExpr(*stmt.target, locals);
+            if (obj_ty.kind != TypeKind::Struct) {
+                throw XlangError("field assignment requires struct object");
+            }
+            const StructDecl* decl = findStruct(obj_ty.struct_name);
+            if (decl == nullptr) {
+                throw XlangError("unknown struct `" + obj_ty.struct_name + "`");
+            }
+            const int index = structFieldIndex(*decl, stmt.field);
+            const Type field_type = decl->fields[static_cast<std::size_t>(index)].type;
+            const auto [_, val] = emitExpr(*stmt.expr, locals);
+            const std::string tmp = freshTmp();
+            writeln("  " + tmp + " = getelementptr " + structValueTypeName(decl->name) + ", " +
+                    structTypeName(decl->name) + " " + obj_ptr + ", i32 0, i32 " +
+                    std::to_string(index));
+            storeValue(field_type, val, tmp, locals);
             return false;
         }
         case Stmt::Kind::Return: {
             if (stmt.return_value) {
                 const auto [ty, val] = emitExpr(*stmt.return_value, locals);
-                writeln("  ret " + ty + " " + val);
+                writeln("  ret " + llvmTypeName(ty) + " " + val);
+            } else if (current_return_type_.kind == TypeKind::Void) {
+                writeln("  ret void");
             } else {
-                writeln("  ret i32 0");
+                writeln("  ret " + llvmTypeName(current_return_type_) + " zeroinitializer");
             }
             return true;
+        }
+        case Stmt::Kind::Delete: {
+            const auto [ty, val] = emitExpr(*stmt.expr, locals);
+            if (ty.kind != TypeKind::Struct && !(ty.isPointer())) {
+                throw XlangError("delete expects pointer or struct handle");
+            }
+            std::string ptr = val;
+            if (ty.kind == TypeKind::Struct) {
+                ptr = val;
+            }
+            const std::string casted = freshTmp();
+            writeln("  " + casted + " = bitcast " + llvmTypeName(ty) + " " + ptr + " to i8*");
+            writeln("  call void @free(i8* " + casted + ")");
+            return false;
         }
         case Stmt::Kind::Expr: {
             const auto [_, val] = emitExpr(*stmt.expr, locals);
@@ -257,51 +646,157 @@ bool Codegen::emitStatement(const Stmt& stmt, std::unordered_map<std::string, st
     return false;
 }
 
-std::pair<std::string, std::string> Codegen::emitExpr(
+std::pair<Type, std::string> Codegen::emitExpr(
     const Expr& expr, const std::unordered_map<std::string, std::string>& locals) {
     switch (expr.kind) {
         case Expr::Kind::IntLiteral:
-            return {"i32", std::to_string(expr.int_value)};
+            return {Type{TypeKind::Int32}, std::to_string(expr.int_value)};
+        case Expr::Kind::FloatLiteral:
+            return {Type{TypeKind::Double}, std::to_string(expr.float_value)};
+        case Expr::Kind::BoolLiteral:
+            return {Type{TypeKind::Bool}, expr.bool_value ? "1" : "0"};
+        case Expr::Kind::Null:
+            return {Type{TypeKind::String}, "null"};
+        case Expr::Kind::StringLiteral: {
+            const std::string ptr = emitStringLiteral(expr.name);
+            return {Type{TypeKind::String}, ptr};
+        }
         case Expr::Kind::Variable: {
-            const std::string target = resolveVar(expr.name, locals);
-            const std::string tmp = freshTmp();
-            writeln("  " + tmp + " = load i32, i32* " + target + ", align 4");
-            return {"i32", tmp};
+            const Type var_type = resolveVarType(expr.name, locals);
+            return loadValue(var_type, resolveVar(expr.name, locals), locals);
         }
         case Expr::Kind::FunctionRef: {
             const std::string tmp = freshTmp();
             writeln("  " + tmp + " = ptrtoint i32 (i32)* @" + expr.name + " to i64");
-            return {"i64", tmp};
+            return {Type{TypeKind::Int64}, tmp};
+        }
+        case Expr::Kind::FieldAccess: {
+            const auto [obj_ty, obj_val] = emitExpr(*expr.object, locals);
+            if (obj_ty.kind != TypeKind::Struct) {
+                throw XlangError("field access requires struct object");
+            }
+            const StructDecl* decl = findStruct(obj_ty.struct_name);
+            if (decl == nullptr) {
+                throw XlangError("unknown struct `" + obj_ty.struct_name + "`");
+            }
+            const int index = structFieldIndex(*decl, expr.name);
+            const Type field_type = decl->fields[static_cast<std::size_t>(index)].type;
+            const std::string gep = freshTmp();
+            writeln("  " + gep + " = getelementptr " + structValueTypeName(decl->name) + ", " +
+                    structTypeName(decl->name) + " " + obj_val + ", i32 0, i32 " +
+                    std::to_string(index));
+            return loadValue(field_type, gep, locals);
+        }
+        case Expr::Kind::New: {
+            const StructDecl* decl = findStruct(expr.name);
+            if (decl == nullptr) {
+                throw XlangError("unknown struct `" + expr.name + "`");
+            }
+            const std::size_t size = structSizeBytes(*decl);
+            const std::string raw = freshTmp();
+            writeln("  " + raw + " = call i8* @malloc(i64 " + std::to_string(size) + ")");
+            const Type struct_type = Type::makeStruct(expr.name);
+            const std::string typed = freshTmp();
+            writeln("  " + typed + " = bitcast i8* " + raw + " to " +
+                    structTypeName(expr.name));
+
+            for (const FieldInit& init : expr.field_inits) {
+                const int index = structFieldIndex(*decl, init.name);
+                const Type field_type = decl->fields[static_cast<std::size_t>(index)].type;
+                const auto [_, val] = emitExpr(*init.value, locals);
+                const std::string gep = freshTmp();
+                writeln("  " + gep + " = getelementptr " + structValueTypeName(decl->name) +
+                        ", " + structTypeName(decl->name) + " " + typed + ", i32 0, i32 " +
+                        std::to_string(index));
+                storeValue(field_type, val, gep, locals);
+            }
+
+            return {struct_type, typed};
         }
         case Expr::Kind::Binary: {
-            const auto [_, left] = emitExpr(*expr.left, locals);
-            const auto [__, right] = emitExpr(*expr.right, locals);
+            const auto [left_ty, left] = emitExpr(*expr.left, locals);
+            const auto [right_ty, right] = emitExpr(*expr.right, locals);
+
+            if (expr.bin_op == BinOp::Add &&
+                (isStringType(left_ty) || isStringType(right_ty))) {
+                std::string left_str = left;
+                std::string right_str = right;
+                if (!isStringType(left_ty)) {
+                    if (left_ty.kind == TypeKind::Int32 || left_ty.kind == TypeKind::Int64 ||
+                        left_ty.kind == TypeKind::Bool || left_ty.kind == TypeKind::Char) {
+                        left_str = emitIntToString(left);
+                    } else {
+                        throw XlangError("cannot concatenate string with this type");
+                    }
+                }
+                if (!isStringType(right_ty)) {
+                    if (right_ty.kind == TypeKind::Int32 || right_ty.kind == TypeKind::Int64 ||
+                        right_ty.kind == TypeKind::Bool || right_ty.kind == TypeKind::Char) {
+                        right_str = emitIntToString(right);
+                    } else {
+                        throw XlangError("cannot concatenate string with this type");
+                    }
+                }
+                const std::string tmp = emitStringConcat(left_str, right_str);
+                return {Type{TypeKind::String}, tmp};
+            }
+
+            Type result_ty = left_ty;
+            if (left_ty.isFloating() || right_ty.isFloating()) {
+                result_ty = Type{TypeKind::Double};
+            }
             const std::string tmp = freshTmp();
             std::string op;
             switch (expr.bin_op) {
-                case BinOp::Add: op = "add"; break;
-                case BinOp::Sub: op = "sub"; break;
-                case BinOp::Mul: op = "mul"; break;
-                case BinOp::Div: op = "sdiv"; break;
+                case BinOp::Add: op = left_ty.isFloating() ? "fadd" : "add"; break;
+                case BinOp::Sub: op = left_ty.isFloating() ? "fsub" : "sub"; break;
+                case BinOp::Mul: op = left_ty.isFloating() ? "fmul" : "mul"; break;
+                case BinOp::Div: op = left_ty.isFloating() ? "fdiv" : "sdiv"; break;
             }
-            writeln("  " + tmp + " = " + op + " i32 " + left + ", " + right);
-            return {"i32", tmp};
+            writeln("  " + tmp + " = " + op + " " + llvmTypeName(result_ty) + " " + left + ", " +
+                    right);
+            return {result_ty, tmp};
         }
         case Expr::Kind::Call: {
+            if (expr.name == "print" && expr.args.size() == 1) {
+                const auto [arg_ty, arg_val] = emitExpr(*expr.args[0], locals);
+                const std::string tmp = freshTmp();
+                if (isStringType(arg_ty)) {
+                    writeln("  " + tmp + " = call i32 @print_str(i8* " + arg_val + ")");
+                } else {
+                    writeln("  " + tmp + " = call i32 @print(i32 " + arg_val + ")");
+                }
+                return {Type{TypeKind::Int32}, tmp};
+            }
+
             std::ostringstream args;
             for (std::size_t i = 0; i < expr.args.size(); ++i) {
                 if (i > 0) {
                     args << ", ";
                 }
                 const auto [ty, val] = emitExpr(*expr.args[i], locals);
-                args << ty << " " << val;
+                args << llvmTypeName(ty) << " " << val;
             }
             const std::string tmp = freshTmp();
             writeln("  " + tmp + " = call i32 @" + expr.name + "(" + args.str() + ")");
-            return {"i32", tmp};
+            return {Type{TypeKind::Int32}, tmp};
         }
     }
     throw XlangError("invalid expression");
+}
+
+Type Codegen::resolveVarType(const std::string& name,
+                             const std::unordered_map<std::string, std::string>& locals) const {
+    (void)locals;
+    const auto local_it = local_types_.find(name);
+    if (local_it != local_types_.end()) {
+        return local_it->second;
+    }
+    const auto global_it = global_types_.find(name);
+    if (global_it != global_types_.end()) {
+        return global_it->second;
+    }
+    return defaultType();
 }
 
 std::string Codegen::resolveVar(const std::string& name,

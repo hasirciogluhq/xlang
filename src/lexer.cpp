@@ -8,10 +8,14 @@ namespace xlang {
 namespace {
 
 const std::unordered_map<std::string, TokenKind> kKeywords = {
-    {"fn", TokenKind::Fn},         {"local", TokenKind::Local},   {"return", TokenKind::Return},
-    {"import", TokenKind::Import}, {"from", TokenKind::From},   {"as", TokenKind::As},
-    {"export", TokenKind::Export}, {"external", TokenKind::External},
+    {"fn", TokenKind::Fn},           {"local", TokenKind::Local},
+    {"return", TokenKind::Return},   {"import", TokenKind::Import},
+    {"from", TokenKind::From},       {"as", TokenKind::As},
+    {"export", TokenKind::Export},   {"external", TokenKind::External},
     {"syscall", TokenKind::Syscall}, {"declare", TokenKind::Declare},
+    {"struct", TokenKind::Struct},   {"new", TokenKind::New},
+    {"delete", TokenKind::Delete},   {"true", TokenKind::True},
+    {"false", TokenKind::False},     {"null", TokenKind::Null},
 };
 
 }  // namespace
@@ -56,11 +60,12 @@ void Lexer::skipWhitespaceAndComments() {
 }
 
 Token Lexer::makeToken(TokenKind kind, std::size_t line, std::size_t column, std::string text,
-                       std::int64_t number) {
+                       std::int64_t number, double float_number) {
     Token token;
     token.kind = kind;
     token.text = std::move(text);
     token.number = number;
+    token.float_number = float_number;
     token.line = line;
     token.column = column;
     return token;
@@ -102,12 +107,56 @@ void Lexer::tokenize() {
             continue;
         }
 
+        if (c == '"') {
+            advance();
+            ++column;
+            std::string text;
+            while (peek() != '"' && peek() != '\0') {
+                if (peek() == '\\') {
+                    advance();
+                    ++column;
+                    const char esc = advance();
+                    ++column;
+                    switch (esc) {
+                        case '"': text += '"'; break;
+                        case '\\': text += '\\'; break;
+                        case 'n': text += '\n'; break;
+                        case 't': text += '\t'; break;
+                        default: text += esc; break;
+                    }
+                    continue;
+                }
+                text += advance();
+                ++column;
+            }
+            if (peek() != '"') {
+                throw LexError(start_line, start_column, "unterminated string literal");
+            }
+            advance();
+            ++column;
+            tokens_.push_back(makeToken(TokenKind::String, start_line, start_column, text));
+            continue;
+        }
+
         if (std::isdigit(static_cast<unsigned char>(c))) {
             std::string digits;
             while (std::isdigit(static_cast<unsigned char>(peek()))) {
                 digits += advance();
                 ++column;
             }
+
+            if (peek() == '.') {
+                digits += advance();
+                ++column;
+                while (std::isdigit(static_cast<unsigned char>(peek()))) {
+                    digits += advance();
+                    ++column;
+                }
+                tokens_.push_back(makeToken(TokenKind::FloatNumber, start_line, start_column,
+                                            digits, 0, std::stod(digits)));
+                continue;
+            }
+
             tokens_.push_back(
                 makeToken(TokenKind::Number, start_line, start_column, digits, std::stoll(digits)));
             continue;
@@ -123,6 +172,8 @@ void Lexer::tokenize() {
             case '}': tokens_.push_back(makeToken(TokenKind::RBrace, start_line, start_column)); break;
             case ',': tokens_.push_back(makeToken(TokenKind::Comma, start_line, start_column)); break;
             case ';': tokens_.push_back(makeToken(TokenKind::Semicolon, start_line, start_column)); break;
+            case ':': tokens_.push_back(makeToken(TokenKind::Colon, start_line, start_column)); break;
+            case '.': tokens_.push_back(makeToken(TokenKind::Dot, start_line, start_column)); break;
             case '+': tokens_.push_back(makeToken(TokenKind::Plus, start_line, start_column)); break;
             case '-': tokens_.push_back(makeToken(TokenKind::Minus, start_line, start_column)); break;
             case '*': tokens_.push_back(makeToken(TokenKind::Star, start_line, start_column)); break;

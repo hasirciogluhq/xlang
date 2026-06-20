@@ -20,12 +20,20 @@ enum class TokenKind {
     External,
     Syscall,
     Declare,
+    Struct,
+    New,
+    Delete,
+    True,
+    False,
+    Null,
     LParen,
     RParen,
     LBrace,
     RBrace,
     Comma,
     Semicolon,
+    Colon,
+    Dot,
     Plus,
     Minus,
     Star,
@@ -33,12 +41,15 @@ enum class TokenKind {
     Eq,
     Ident,
     Number,
+    FloatNumber,
+    String,
 };
 
 struct Token {
     TokenKind kind{TokenKind::End};
     std::string text;
     std::int64_t number{0};
+    double float_number{0.0};
     std::size_t line{1};
     std::size_t column{1};
 };
@@ -57,7 +68,7 @@ private:
     char advance();
     void skipWhitespaceAndComments();
     Token makeToken(TokenKind kind, std::size_t line, std::size_t column, std::string text = {},
-                    std::int64_t number = 0);
+                    std::int64_t number = 0, double float_number = 0.0);
 
     std::string source_;
     std::size_t pos_{0};
