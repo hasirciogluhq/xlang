@@ -140,6 +140,76 @@ ParsedSummary parseTestSummary(const std::string& output) {
     return summary;
 }
 
+std::string formatTestOutput(const std::string& output) {
+    std::ostringstream formatted;
+    std::istringstream stream(output);
+    std::string line;
+    while (std::getline(stream, line)) {
+        if (line.rfind("@xlang-test", 0) == 0) {
+            continue;
+        }
+        formatted << line << '\n';
+    }
+    return formatted.str();
+}
+
+std::regex makePathPattern(const std::string& query) {
+    try {
+        return std::regex(query, std::regex::ECMAScript | std::regex::icase);
+    } catch (const std::regex_error&) {
+        static const std::regex special_chars(R"([.^$|()?*+[\]\\])");
+        const std::string escaped = std::regex_replace(query, special_chars, std::string{"\\$&"});
+        return std::regex(escaped, std::regex::ECMAScript | std::regex::icase);
+    }
+}
+
+bool pathMatchesPattern(const std::filesystem::path& file,
+                        const std::filesystem::path& search_root,
+                        const std::regex& pattern) {
+    if (std::regex_search(file.string(), pattern)) {
+        return true;
+    }
+    if (std::regex_search(file.filename().string(), pattern)) {
+        return true;
+    }
+    std::error_code ec;
+    const std::filesystem::path relative = std::filesystem::relative(file, search_root, ec);
+    if (!ec && std::regex_search(relative.string(), pattern)) {
+        return true;
+    }
+    return false;
+}
+
+std::vector<std::filesystem::path> resolveTestFiles(const std::filesystem::path& query) {
+    const std::filesystem::path default_root = "test/xlang";
+    const std::filesystem::path project_root = ".";
+
+    if (query.empty()) {
+        return discoverTestFiles(default_root);
+    }
+
+    std::error_code ec;
+    if (std::filesystem::exists(query, ec) && std::filesystem::is_directory(query, ec)) {
+        return discoverTestFiles(query);
+    }
+
+    std::string pattern_str = query.string();
+    if (std::filesystem::exists(query, ec) && isTestFileName(query)) {
+        pattern_str = query.filename().string();
+    }
+
+    const std::vector<std::filesystem::path> all = discoverTestFiles(project_root);
+    const std::regex pattern = makePathPattern(pattern_str);
+
+    std::vector<std::filesystem::path> matched;
+    for (const std::filesystem::path& file : all) {
+        if (pathMatchesPattern(file, project_root, pattern)) {
+            matched.push_back(file);
+        }
+    }
+    return matched;
+}
+
 Stmt makeCallExprStmt(const std::string& name, std::vector<std::unique_ptr<Expr>> args) {
     Stmt stmt;
     stmt.kind = Stmt::Kind::Expr;
@@ -267,18 +337,14 @@ void rejectTestFileForBuildRun(const std::filesystem::path& path) {
 }
 
 TestSuiteResult runTestSuite(const TestOptions& options) {
-    std::vector<std::filesystem::path> files;
-    if (isTestFileName(options.root)) {
-        files.push_back(std::filesystem::absolute(options.root));
-    } else {
-        files = discoverTestFiles(options.root);
-    }
+    const std::vector<std::filesystem::path> files = resolveTestFiles(options.root);
 
     TestSuiteResult suite;
     suite.files_total = static_cast<int>(files.size());
 
     if (files.empty()) {
-        std::cout << "No test files found in " << options.root << " (*.test.xlang)\n";
+        std::cout << "No test files matched `" << options.root.string()
+                  << "` (*.test.xlang)\n";
         suite.exit_code = 1;
         return suite;
     }
@@ -322,9 +388,10 @@ TestSuiteResult runTestSuite(const TestOptions& options) {
             const CompileResult compiled = compileProgram(program, compile_options);
             const RunOutput run = executeProgramCapture(compiled.executable);
 
-            if (!run.stdout_text.empty()) {
-                std::cout << run.stdout_text;
-                if (run.stdout_text.back() != '\n') {
+            const std::string display_output = formatTestOutput(run.stdout_text);
+            if (!display_output.empty()) {
+                std::cout << display_output;
+                if (display_output.back() != '\n') {
                     std::cout << '\n';
                 }
             }

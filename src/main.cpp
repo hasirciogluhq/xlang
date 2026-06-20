@@ -107,8 +107,9 @@ int main(int argc, char** argv) {
     std::filesystem::path test_root = "test/xlang";
     bool test_parallel = false;
     auto* test_cmd = app.add_subcommand("test", "Run *.test.xlang files (Vitest-style)");
-    test_cmd->add_option("path", test_root, "Test file or root directory")
-        ->check(CLI::ExistingPath);
+    test_cmd->add_option("path", test_root,
+                         "Test file, directory, or path/name pattern (regex)")
+        ->default_str("test/xlang");
     test_cmd->add_option("--runtime", runtime_override, "Custom runtime .xlang (+ imports)")
         ->check(CLI::ExistingFile);
     test_cmd->add_flag("--parallel", test_parallel, "Run Test* functions in parallel via spawn");
