@@ -2,6 +2,7 @@
 
 #include "xlang/codegen.h"
 #include "xlang/error.h"
+#include "xlang/input.h"
 #include "xlang/module.h"
 #include "xlang/parser.h"
 #include "xlang/runtime.h"
@@ -47,7 +48,274 @@ int executeProgram(const std::filesystem::path& executable) {
     return 1;
 }
 
-std::filesystem::path makeTempWorkDir() {
+void removeTree(const std::filesystem::path& path) {
+    std::error_code ec;
+    std::filesystem::remove_all(path, ec);
+}
+
+void ensureParentDir(const std::filesystem::path& path) {
+    if (!path.has_parent_path()) {
+        return;
+    }
+    std::error_code ec;
+    std::filesystem::create_directories(path.parent_path(), ec);
+}
+
+void copyFile(const std::filesystem::path& from, const std::filesystem::path& to) {
+    ensureParentDir(to);
+    std::error_code ec;
+    std::filesystem::copy_file(from, to, std::filesystem::copy_options::overwrite_existing, ec);
+    if (ec) {
+        throw XlangError("failed to copy `" + from.string() + "` to `" + to.string() + "`");
+    }
+}
+
+void compileLlvmIrToObject(const std::string& clang, const std::filesystem::path& ir_path,
+                           const std::filesystem::path& object_path, bool needs_pthread) {
+    std::ostringstream cmd;
+    cmd << clang << " -c \"" << ir_path.string() << "\" -o \"" << object_path.string() << "\"";
+    if (needs_pthread) {
+        cmd << " -pthread";
+    }
+    const int status = runCommand(cmd.str());
+    if (status != 0) {
+        throw XlangError("clang failed to compile LLVM IR");
+    }
+}
+
+void linkObjects(const std::string& clang, const std::vector<std::filesystem::path>& objects,
+                 const std::filesystem::path& output, bool needs_pthread) {
+    ensureParentDir(output);
+
+    std::ostringstream cmd;
+    cmd << clang;
+    for (const std::filesystem::path& object : objects) {
+        cmd << " \"" << object.string() << "\"";
+    }
+    cmd << " -o \"" << output.string() << "\"";
+    if (needs_pthread) {
+        cmd << " -pthread";
+    }
+
+    const int status = runCommand(cmd.str());
+    if (status != 0) {
+        throw XlangError("clang failed to link executable");
+    }
+}
+
+struct BuildContext {
+    CompileOptions options;
+    InputKind input_kind;
+    std::filesystem::path work_dir;
+    bool owns_work_dir{false};
+    std::string stem;
+};
+
+BuildContext makeBuildContext(CompileOptions options) {
+    BuildContext ctx;
+    ctx.options = std::move(options);
+    ctx.input_kind = detectInputKind(ctx.options.input);
+    if (ctx.options.build_kind != BuildKind::Exe && ctx.options.build_kind != BuildKind::Lib) {
+        ctx.options.build_kind = defaultBuildKind(ctx.input_kind);
+    }
+
+    if (ctx.options.work_dir.empty()) {
+        ctx.work_dir = makeBuildWorkDir();
+        ctx.owns_work_dir = true;
+    } else {
+        ctx.work_dir = std::filesystem::absolute(ctx.options.work_dir);
+        std::error_code ec;
+        std::filesystem::create_directories(ctx.work_dir, ec);
+    }
+
+    ctx.stem = ctx.options.input.stem().string();
+    return ctx;
+}
+
+void cleanupBuildContext(const BuildContext& ctx) {
+    if (ctx.owns_work_dir && !ctx.options.keep_ir) {
+        removeTree(ctx.work_dir);
+    }
+}
+
+CompileResult compileXlangProgram(const Program& program, BuildContext& ctx) {
+    CodegenOptions cg_options;
+    cg_options.build_kind = ctx.options.build_kind;
+    cg_options.link_runtime = !ctx.options.skip_runtime && ctx.options.build_kind == BuildKind::Exe;
+
+    RuntimeBundle runtime;
+    if (!ctx.options.skip_runtime) {
+        RuntimeOptions runtime_options;
+        runtime_options.override_path = ctx.options.runtime_override;
+        runtime_options.clang = ctx.options.clang;
+        runtime_options.work_dir = ctx.work_dir;
+
+        if (ctx.options.build_kind == BuildKind::Exe) {
+            runtime = ensureRuntime(runtime_options);
+        } else {
+            runtime = loadRuntimeExports(runtime_options);
+        }
+        cg_options.runtime_exports = runtime.exports;
+    }
+
+    const CodegenResult generated = Codegen::generate(program, cg_options);
+
+    const std::filesystem::path ir_path =
+        ctx.options.ir_output.empty() ? ctx.work_dir / (ctx.stem + ".ll") : ctx.options.ir_output;
+
+    {
+        std::ofstream out(ir_path);
+        if (!out) {
+            throw XlangError("failed to write IR: " + ir_path.string());
+        }
+        out << generated.ir;
+    }
+
+    CompileResult result;
+    result.ir_path = ir_path;
+    result.has_ir = true;
+
+    if (ctx.options.emit_ir) {
+        result.executable = ir_path;
+        return result;
+    }
+
+    const std::filesystem::path output =
+        ctx.options.output.empty()
+            ? defaultOutputPath(ctx.options.input, ctx.input_kind, ctx.options.build_kind)
+            : ctx.options.output;
+
+    const std::filesystem::path object_path = ctx.work_dir / (ctx.stem + ".o");
+    compileLlvmIrToObject(ctx.options.clang, ir_path, object_path, generated.needs_thread_link);
+
+    if (ctx.options.build_kind == BuildKind::Lib) {
+        if (object_path != output) {
+            copyFile(object_path, output);
+        }
+        if (!ctx.options.keep_ir) {
+            std::error_code ec;
+            std::filesystem::remove(ir_path, ec);
+            result.has_ir = false;
+        }
+        result.executable = output;
+        return result;
+    }
+
+    std::vector<std::filesystem::path> link_inputs = {object_path};
+    for (const std::filesystem::path& extra : ctx.options.link_objects) {
+        link_inputs.push_back(extra);
+    }
+    if (!ctx.options.skip_runtime) {
+        link_inputs.push_back(runtime.object);
+    }
+    linkObjects(ctx.options.clang, link_inputs, output,
+                generated.needs_thread_link || runtime.needs_thread_link);
+
+    if (!ctx.options.keep_ir) {
+        std::error_code ec;
+        std::filesystem::remove(ir_path, ec);
+        result.has_ir = false;
+    }
+
+    result.executable = output;
+    return result;
+}
+
+CompileResult compileObjectInput(BuildContext& ctx) {
+    const std::filesystem::path output =
+        ctx.options.output.empty()
+            ? defaultOutputPath(ctx.options.input, ctx.input_kind, ctx.options.build_kind)
+            : ctx.options.output;
+
+    CompileResult result;
+
+    if (ctx.options.build_kind == BuildKind::Lib) {
+        if (ctx.options.input != output) {
+            copyFile(ctx.options.input, output);
+        }
+        result.executable = output;
+        return result;
+    }
+
+    if (ctx.options.emit_ir) {
+        throw XlangError("cannot emit IR from object file input");
+    }
+
+    RuntimeBundle runtime;
+    if (!ctx.options.skip_runtime) {
+        RuntimeOptions runtime_options;
+        runtime_options.override_path = ctx.options.runtime_override;
+        runtime_options.clang = ctx.options.clang;
+        runtime_options.work_dir = ctx.work_dir;
+        runtime = ensureRuntime(runtime_options);
+    }
+
+    std::vector<std::filesystem::path> link_inputs = {ctx.options.input};
+    for (const std::filesystem::path& extra : ctx.options.link_objects) {
+        link_inputs.push_back(extra);
+    }
+    if (!ctx.options.skip_runtime) {
+        link_inputs.push_back(runtime.object);
+    }
+    linkObjects(ctx.options.clang, link_inputs, output, runtime.needs_thread_link);
+    result.executable = output;
+    return result;
+}
+
+CompileResult compileLlvmIrInput(BuildContext& ctx) {
+    const std::filesystem::path output =
+        ctx.options.output.empty()
+            ? defaultOutputPath(ctx.options.input, ctx.input_kind, ctx.options.build_kind)
+            : ctx.options.output;
+
+    CompileResult result;
+    result.ir_path = ctx.options.input;
+    result.has_ir = true;
+
+    if (ctx.options.emit_ir) {
+        if (ctx.options.input != output) {
+            copyFile(ctx.options.input, output);
+            result.ir_path = output;
+        }
+        result.executable = result.ir_path;
+        return result;
+    }
+
+    const std::filesystem::path object_path = ctx.work_dir / (ctx.stem + ".o");
+    compileLlvmIrToObject(ctx.options.clang, ctx.options.input, object_path, false);
+
+    if (ctx.options.build_kind == BuildKind::Lib) {
+        if (object_path != output) {
+            copyFile(object_path, output);
+        }
+        result.executable = output;
+        return result;
+    }
+
+    RuntimeBundle runtime;
+    if (!ctx.options.skip_runtime) {
+        RuntimeOptions runtime_options;
+        runtime_options.override_path = ctx.options.runtime_override;
+        runtime_options.clang = ctx.options.clang;
+        runtime_options.work_dir = ctx.work_dir;
+        runtime = ensureRuntime(runtime_options);
+    }
+
+    std::vector<std::filesystem::path> link_inputs = {object_path};
+    for (const std::filesystem::path& extra : ctx.options.link_objects) {
+        link_inputs.push_back(extra);
+    }
+    if (!ctx.options.skip_runtime) {
+        link_inputs.push_back(runtime.object);
+    }
+    linkObjects(ctx.options.clang, link_inputs, output, runtime.needs_thread_link);
+    result.executable = output;
+    return result;
+}
+
+}  // namespace
+
+std::filesystem::path makeBuildWorkDir() {
     const auto base = std::filesystem::temp_directory_path();
 
     std::random_device rd;
@@ -67,125 +335,6 @@ std::filesystem::path makeTempWorkDir() {
     throw XlangError("failed to create temporary directory");
 }
 
-void removeTree(const std::filesystem::path& path) {
-    std::error_code ec;
-    std::filesystem::remove_all(path, ec);
-}
-
-std::filesystem::path defaultOutputPath(const CompileOptions& options) {
-    const std::filesystem::path parent =
-        options.input.has_parent_path() ? options.input.parent_path() : std::filesystem::path(".");
-    const std::string stem = options.input.stem().string();
-    if (options.build_kind == BuildKind::Lib) {
-        return parent / (stem + ".o");
-    }
-    return parent / stem;
-}
-
-CompileResult compileProgram(const Program& program, const CompileOptions& options) {
-    CodegenOptions cg_options;
-    cg_options.build_kind = options.build_kind;
-    cg_options.link_runtime = !options.skip_runtime;
-
-    RuntimeBundle runtime;
-    if (!options.skip_runtime) {
-        runtime = ensureRuntime(options.clang, true);
-        cg_options.runtime_exports = runtime.exports;
-    }
-
-    const CodegenResult generated = Codegen::generate(program, cg_options);
-
-    const std::filesystem::path parent =
-        options.input.has_parent_path() ? options.input.parent_path() : std::filesystem::path(".");
-    const std::string stem = options.input.stem().string();
-
-    const std::filesystem::path ir_path =
-        options.ir_output.empty() ? parent / (stem + ".ll") : options.ir_output;
-
-    {
-        std::ofstream out(ir_path);
-        if (!out) {
-            throw XlangError("failed to write IR: " + ir_path.string());
-        }
-        out << generated.ir;
-    }
-
-    CompileResult result;
-    result.ir_path = ir_path;
-    result.has_ir = true;
-
-    if (options.emit_ir) {
-        result.executable = ir_path;
-        return result;
-    }
-
-    const std::filesystem::path output =
-        options.output.empty() ? defaultOutputPath(options) : options.output;
-
-    if (output.has_parent_path()) {
-        std::error_code ec;
-        std::filesystem::create_directories(output.parent_path(), ec);
-    }
-
-    const std::filesystem::path object_path =
-        options.build_kind == BuildKind::Lib ? output : (output.parent_path() / (stem + ".o"));
-
-    {
-        std::ostringstream cmd;
-        cmd << options.clang << " -c \"" << ir_path.string() << "\" -o \"" << object_path.string()
-            << "\"";
-        if (generated.needs_thread_link) {
-            cmd << " -pthread";
-        }
-        const int status = runCommand(cmd.str());
-        if (status != 0) {
-            throw XlangError("clang failed to compile object file");
-        }
-    }
-
-    if (options.build_kind == BuildKind::Lib) {
-        if (!options.keep_ir) {
-            std::error_code ec;
-            std::filesystem::remove(ir_path, ec);
-            result.has_ir = false;
-        }
-        result.executable = object_path;
-        return result;
-    }
-
-    {
-        std::ostringstream cmd;
-        cmd << options.clang << " \"" << object_path.string() << "\"";
-        if (!options.skip_runtime) {
-            for (const std::filesystem::path& runtime_object : runtime.objects) {
-                cmd << " \"" << runtime_object.string() << "\"";
-            }
-        }
-        cmd << " -o \"" << output.string() << "\"";
-        if (generated.needs_thread_link || runtime.needs_thread_link) {
-            cmd << " -pthread";
-        }
-        const int status = runCommand(cmd.str());
-        if (status != 0) {
-            throw XlangError("clang failed to link executable");
-        }
-    }
-
-    if (!options.keep_ir) {
-        std::error_code ec;
-        std::filesystem::remove(ir_path, ec);
-        result.has_ir = false;
-    }
-
-    std::error_code ec;
-    std::filesystem::remove(object_path, ec);
-
-    result.executable = output;
-    return result;
-}
-
-}  // namespace
-
 std::string defaultClang() {
     if (const char* env = std::getenv("XLANG_CLANG")) {
         return env;
@@ -195,16 +344,55 @@ std::string defaultClang() {
 
 CompileResult compileSource(const std::string& source, const CompileOptions& options) {
     const Program program = parseSource(source);
-    return compileProgram(program, options);
+    BuildContext ctx = makeBuildContext(options);
+    try {
+        CompileResult result = compileXlangProgram(program, ctx);
+        cleanupBuildContext(ctx);
+        return result;
+    } catch (...) {
+        cleanupBuildContext(ctx);
+        throw;
+    }
 }
 
 CompileResult compileFile(const CompileOptions& options) {
-    const Program program = loadProgram(options.input);
-    return compileProgram(program, options);
+    const ResolvedBuildInputs resolved = resolveBuildInputs(
+        [&]() {
+            std::vector<std::filesystem::path> all = {options.input};
+            all.insert(all.end(), options.link_objects.begin(), options.link_objects.end());
+            return all;
+        }());
+
+    CompileOptions normalized = options;
+    normalized.input = resolved.primary;
+    normalized.link_objects = resolved.link_objects;
+
+    BuildContext ctx = makeBuildContext(std::move(normalized));
+    try {
+        CompileResult result;
+        switch (ctx.input_kind) {
+            case InputKind::Xlang: {
+                const Program program = loadProgram(ctx.options.input);
+                result = compileXlangProgram(program, ctx);
+                break;
+            }
+            case InputKind::Object:
+                result = compileObjectInput(ctx);
+                break;
+            case InputKind::LlvmIr:
+                result = compileLlvmIrInput(ctx);
+                break;
+        }
+        cleanupBuildContext(ctx);
+        return result;
+    } catch (...) {
+        cleanupBuildContext(ctx);
+        throw;
+    }
 }
 
 RunResult runFile(const RunOptions& options) {
-    const std::filesystem::path work_dir = makeTempWorkDir();
+    const std::filesystem::path work_dir = makeBuildWorkDir();
     const std::filesystem::path executable = work_dir / "program";
 
     CompileOptions compile_options;
@@ -214,6 +402,8 @@ RunResult runFile(const RunOptions& options) {
     compile_options.clang = options.clang;
     compile_options.keep_ir = options.keep_artifacts;
     compile_options.build_kind = BuildKind::Exe;
+    compile_options.work_dir = work_dir;
+    compile_options.runtime_override = options.runtime_override;
 
     RunResult result;
     result.work_dir = work_dir;

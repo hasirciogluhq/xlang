@@ -1,0 +1,5 @@
+declare external fn zamazokka(arg)
+
+fn main() {
+    zamazokka(1978)
+}

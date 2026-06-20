@@ -1,154 +1,167 @@
 #include "xlang/build.h"
 #include "xlang/compiler.h"
 #include "xlang/error.h"
+#include "xlang/input.h"
 #include "xlang/module.h"
 
+#include <CLI/CLI.hpp>
+
 #include <filesystem>
-#include <fstream>
 #include <iostream>
+#include <optional>
 #include <string>
+#include <vector>
 
 namespace {
 
-void printUsage() {
-    std::cerr
-        << "xlank — xlang compiler (source -> LLVM IR -> executable)\n\n"
-        << "Usage:\n"
-        << "  xlank build <input.xlang> [-o output] [--build=exe|lib] [--emit-ir] [--keep-ir] [--clang path]\n"
-        << "  xlank run   <input.xlang> [--keep-artifacts] [--clang path]\n"
-        << "  xlank parse <input.xlang>\n";
+xlang::BuildKind parseBuildKind(const std::string& kind) {
+    if (kind == "exe") {
+        return xlang::BuildKind::Exe;
+    }
+    if (kind == "lib") {
+        return xlang::BuildKind::Lib;
+    }
+    throw xlang::XlangError("unknown build kind `" + kind + "` (use exe or lib)");
 }
 
-int runBuild(int argc, char** argv) {
-    if (argc < 3) {
-        printUsage();
-        return 1;
-    }
+void fillCompileOptions(xlang::CompileOptions& options, const std::string& build_kind,
+                        const std::optional<std::filesystem::path>& runtime_override,
+                        bool skip_runtime) {
+    options.build_kind = parseBuildKind(build_kind);
+    options.runtime_override = runtime_override;
+    options.skip_runtime = skip_runtime;
+    options.clang = xlang::defaultClang();
+}
+
+xlang::CompileOptions makeCompileOptions(const std::vector<std::filesystem::path>& inputs,
+                                         const std::filesystem::path& output,
+                                         const std::string& build_kind, bool emit_ir,
+                                         bool keep_ir,
+                                         const std::optional<std::filesystem::path>& runtime_override,
+                                         bool skip_runtime, const std::string& clang) {
+    const xlang::ResolvedBuildInputs resolved = xlang::resolveBuildInputs(inputs);
 
     xlang::CompileOptions options;
-    options.input = std::filesystem::path(argv[2]);
-    options.clang = xlang::defaultClang();
-
-    for (int i = 3; i < argc; ++i) {
-        const std::string arg = argv[i];
-        if (arg == "-o" && i + 1 < argc) {
-            options.output = std::filesystem::path(argv[++i]);
-        } else if (arg.rfind("--build=", 0) == 0) {
-            const std::string kind = arg.substr(8);
-            if (kind == "exe") {
-                options.build_kind = xlang::BuildKind::Exe;
-            } else if (kind == "lib") {
-                options.build_kind = xlang::BuildKind::Lib;
-            } else {
-                std::cerr << "unknown build kind: " << kind << " (use exe or lib)\n";
-                return 1;
-            }
-        } else if (arg == "--emit-ir") {
-            options.emit_ir = true;
-        } else if (arg == "--keep-ir") {
-            options.keep_ir = true;
-        } else if (arg == "--clang" && i + 1 < argc) {
-            options.clang = argv[++i];
-        } else {
-            std::cerr << "unknown argument: " << arg << '\n';
-            return 1;
-        }
+    options.input = resolved.primary;
+    options.link_objects = resolved.link_objects;
+    options.output = output;
+    options.emit_ir = emit_ir;
+    options.keep_ir = keep_ir;
+    fillCompileOptions(options, build_kind, runtime_override, skip_runtime);
+    if (!clang.empty()) {
+        options.clang = clang;
     }
-
-    const xlang::CompileResult result = xlang::compileFile(options);
-
-    if (options.emit_ir) {
-        std::cerr << "IR written to " << result.executable << '\n';
-    } else {
-        std::cerr << "Built " << result.executable << '\n';
-        if (result.has_ir) {
-            std::cerr << "IR kept at " << result.ir_path << '\n';
-        }
-    }
-
-    return 0;
-}
-
-int runRun(int argc, char** argv) {
-    if (argc < 3) {
-        printUsage();
-        return 1;
-    }
-
-    xlang::RunOptions options;
-    options.input = std::filesystem::path(argv[2]);
-    options.clang = xlang::defaultClang();
-
-    for (int i = 3; i < argc; ++i) {
-        const std::string arg = argv[i];
-        if (arg == "--keep-artifacts") {
-            options.keep_artifacts = true;
-        } else if (arg == "--clang" && i + 1 < argc) {
-            options.clang = argv[++i];
-        } else {
-            std::cerr << "unknown argument: " << arg << '\n';
-            return 1;
-        }
-    }
-
-    const xlang::RunResult result = xlang::runFile(options);
-
-    if (result.kept_artifacts) {
-        std::cerr << "Artifacts kept at " << result.work_dir << '\n';
-    }
-
-    return result.exit_code;
-}
-
-int runParse(int argc, char** argv) {
-    if (argc < 3) {
-        printUsage();
-        return 1;
-    }
-
-    const xlang::Program program = xlang::loadProgram(argv[2]);
-
-    std::cout << "globals: " << program.globals.size() << '\n';
-    for (const xlang::GlobalVar& global : program.globals) {
-        std::cout << "  " << global.name
-                  << (global.exported ? " export" : "")
-                  << (global.external ? " external" : "") << '\n';
-    }
-    std::cout << "functions: " << program.functions.size() << '\n';
-    for (const xlang::Function& fn : program.functions) {
-        std::cout << "  fn " << fn.name << " params=" << fn.params.size()
-                  << " stmts=" << fn.body.statements.size()
-                  << (fn.exported ? " export" : "")
-                  << (fn.external ? " external" : "")
-                  << (fn.body.statements.empty() ? " declare" : "") << '\n';
-    }
-
-    return 0;
+    return options;
 }
 
 }  // namespace
 
 int main(int argc, char** argv) {
-    if (argc < 2) {
-        printUsage();
-        return 1;
-    }
+    CLI::App app{"xlank — xlang compiler (.xlang / .o / .ll -> executable or object)"};
+    app.require_subcommand(1);
 
-    const std::string command = argv[1];
+    std::vector<std::filesystem::path> inputs;
+    std::filesystem::path output;
+    std::string build_kind = "exe";
+    std::optional<std::filesystem::path> runtime_override;
+    bool emit_ir = false;
+    bool keep_ir = false;
+    bool skip_runtime = false;
+    std::string clang;
+
+    auto* build = app.add_subcommand("build", "Compile or link input files");
+    build->add_option("inputs", inputs,
+                      "Primary .xlang/.ll/.o plus optional .o files to link")
+        ->required()
+        ->expected(-1)
+        ->check(CLI::ExistingFile);
+    build->add_option("-o,--output", output, "Output path");
+    build->add_option("--build", build_kind, "Output kind: exe or lib")
+        ->check(CLI::IsMember({"exe", "lib"}));
+    build->add_option("--runtime", runtime_override, "Custom runtime .xlang (+ imports)")
+        ->check(CLI::ExistingFile);
+    build->add_flag("--skip-runtime", skip_runtime, "Do not link runtime");
+    build->add_flag("--emit-ir", emit_ir, "Emit LLVM IR only");
+    build->add_flag("--keep-ir", keep_ir, "Keep intermediate LLVM IR");
+    build->add_option("--clang", clang, "Clang binary path");
+
+    bool keep_artifacts = false;
+    std::filesystem::path run_input;
+    auto* run = app.add_subcommand("run", "Compile and run a .xlang program");
+    run->add_option("input", run_input, "xlang source file")->required()->check(CLI::ExistingFile);
+    run->add_option("--runtime", runtime_override, "Custom runtime .xlang (+ imports)")
+        ->check(CLI::ExistingFile);
+    run->add_flag("--skip-runtime", skip_runtime, "Do not link runtime");
+    run->add_flag("--keep-artifacts", keep_artifacts, "Keep temp build directory");
+    run->add_option("--clang", clang, "Clang binary path");
+
+    std::filesystem::path parse_input;
+    auto* parse = app.add_subcommand("parse", "Parse and summarize a .xlang file");
+    parse->add_option("input", parse_input, "xlang source file")->required()->check(CLI::ExistingFile);
+
+    CLI11_PARSE(app, argc, argv);
 
     try {
-        if (command == "build") {
-            return runBuild(argc, argv);
-        }
-        if (command == "run") {
-            return runRun(argc, argv);
-        }
-        if (command == "parse") {
-            return runParse(argc, argv);
+        if (build->parsed()) {
+            const xlang::CompileOptions options =
+                makeCompileOptions(inputs, output, build_kind, emit_ir, keep_ir, runtime_override,
+                                   skip_runtime, clang);
+
+            const xlang::CompileResult result = xlang::compileFile(options);
+
+            if (emit_ir) {
+                std::cerr << "IR written to " << result.executable << '\n';
+            } else {
+                std::cerr << "Built " << result.executable << '\n';
+                if (result.has_ir) {
+                    std::cerr << "IR kept at " << result.ir_path << '\n';
+                }
+            }
+            return 0;
         }
 
-        printUsage();
-        return 1;
+        if (run->parsed()) {
+            if (xlang::detectInputKind(run_input) != xlang::InputKind::Xlang) {
+                throw xlang::XlangError("run only supports .xlang inputs");
+            }
+
+            xlang::RunOptions options;
+            options.input = run_input;
+            options.keep_artifacts = keep_artifacts;
+            options.runtime_override = runtime_override;
+            if (!clang.empty()) {
+                options.clang = clang;
+            }
+            if (skip_runtime) {
+                throw xlang::XlangError("run requires runtime (remove --skip-runtime)");
+            }
+
+            const xlang::RunResult result = xlang::runFile(options);
+            if (result.kept_artifacts) {
+                std::cerr << "Artifacts kept at " << result.work_dir << '\n';
+            }
+            return result.exit_code;
+        }
+
+        if (parse->parsed()) {
+            const xlang::Program program = xlang::loadProgram(parse_input);
+
+            std::cout << "globals: " << program.globals.size() << '\n';
+            for (const xlang::GlobalVar& global : program.globals) {
+                std::cout << "  " << global.name
+                          << (global.exported ? " export" : "")
+                          << (global.external ? " external" : "") << '\n';
+            }
+            std::cout << "functions: " << program.functions.size() << '\n';
+            for (const xlang::Function& fn : program.functions) {
+                std::cout << "  fn " << fn.name << " params=" << fn.params.size()
+                          << " stmts=" << fn.body.statements.size()
+                          << (fn.exported ? " export" : "")
+                          << (fn.external ? " external" : "")
+                          << (fn.body.statements.empty() ? " declare" : "") << '\n';
+            }
+            return 0;
+        }
     } catch (const xlang::XlangError& error) {
         std::cerr << "error: " << error.what() << '\n';
         return 1;
@@ -156,4 +169,6 @@ int main(int argc, char** argv) {
         std::cerr << "error: " << error.what() << '\n';
         return 1;
     }
+
+    return 1;
 }

@@ -65,7 +65,7 @@ void Codegen::emitPrelude(const Program& program) {
 }
 
 void Codegen::emitRuntimeDeclares(const Program& program) {
-    if (!options_.link_runtime) {
+    if (options_.runtime_exports.empty()) {
         return;
     }
 
