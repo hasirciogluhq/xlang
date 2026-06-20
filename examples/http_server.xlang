@@ -1,5 +1,4 @@
 import * as http from http
-import * as file from file
 
 struct User {
     name: string
@@ -17,7 +16,7 @@ fn auth_middleware(ctx: Context) {
 }
 
 fn handle_index(ctx: Context) {
-    local html = file.ReadAll("examples/index.html")
+    local html = ReadAll("examples/index.html")
     if str_len(html) == 0 {
         ctx.String(404, "examples/index.html not found")
         return 0
