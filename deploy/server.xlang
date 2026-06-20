@@ -1,0 +1,65 @@
+// Production HTTP server — Railway / Docker.
+// Serves examples/welcome.html at /. Listens on 0.0.0.0:$PORT.
+
+import * as http from http
+
+fn str_to_int(s: string): int32 {
+    local i = 0
+    local n = 0
+    local len = str_len(s)
+    while i < len {
+        local b = str_byte(s, i)
+        if b < 48 || b > 57 {
+            return 0
+        }
+        n = n * 10 + (b - 48)
+        i = i + 1
+    }
+    return n
+}
+
+fn listen_port(): int32 {
+    local raw = env_get("PORT")
+    if str_len(raw) == 0 {
+        return 8080
+    }
+    local port = str_to_int(raw)
+    if port == 0 {
+        return 8080
+    }
+    return port
+}
+
+fn on_listen(info: ServerInfo) {
+    return 0
+}
+
+fn handle_welcome(ctx: Context) {
+    local html = ReadAll("examples/welcome.html")
+    if str_len(html) == 0 {
+        ctx.String(404, "welcome.html not found")
+        return 0
+    }
+    ctx.HTML(200, html)
+    return 0
+}
+
+fn handle_ping(ctx: Context) {
+    ctx.String(200, "pong")
+    return 0
+}
+
+fn handle_api_info(ctx: Context) {
+    ctx.JSON(200, "{\"name\":\"xlang\",\"runtime\":\"native\",\"ok\":true}")
+    return 0
+}
+
+fn main() {
+    local r = http.NewRouter()
+    r.Get("/", handle_welcome)
+    r.Get("/ping", handle_ping)
+    r.Get("/api/info", handle_api_info)
+    local port = listen_port()
+    r.ListenAndServe("0.0.0.0", port, on_listen)
+    return 0
+}

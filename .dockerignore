@@ -1,0 +1,10 @@
+.git
+.gitignore
+.cursor
+build
+**/node_modules
+vscode/out
+vscode/*.vsix
+*.o
+*.ll
+.DS_Store
