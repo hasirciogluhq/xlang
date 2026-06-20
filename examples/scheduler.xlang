@@ -2,7 +2,7 @@
 declare syscall sleep_ms(ms)
 declare syscall random_range(min, max)
 declare syscall print_done(job_id)
-declare syscall start_thread(entry, arg)
+declare syscall start_thread(entry: int64, arg: int32)
 declare syscall wait_all_jobs()
 
 fn job_worker(job_id) {

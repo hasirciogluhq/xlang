@@ -4,6 +4,7 @@
 
 #include <cstddef>
 #include <string>
+#include <vector>
 
 namespace xlang {
 
@@ -41,6 +42,10 @@ struct Type {
 
 [[nodiscard]] Type defaultType();
 [[nodiscard]] std::string typeToString(const Type& type);
+[[nodiscard]] std::string typeMangleComponent(const Type& type);
+[[nodiscard]] std::string mangleFunctionName(const std::string& name,
+                                             const std::vector<Type>& param_types);
+[[nodiscard]] bool typesEqual(const Type& left, const Type& right);
 [[nodiscard]] std::string llvmTypeName(const Type& type);
 [[nodiscard]] std::size_t llvmTypeAlign(const Type& type);
 

@@ -1,6 +1,7 @@
 #include "xlang/module.h"
 
 #include "xlang/error.h"
+#include "xlang/types.h"
 #include "xlang/parser.h"
 
 #include <fstream>
@@ -117,6 +118,34 @@ Function cloneFunction(const Function& function) {
     return false;
 }
 
+[[nodiscard]] bool hasFunctionOverload(const Program& program, const Function& function) {
+    std::vector<Type> signature;
+    signature.reserve(function.params.size());
+    for (const TypedName& param : function.params) {
+        signature.push_back(param.type);
+    }
+
+    for (const Function& existing : program.functions) {
+        if (existing.name != function.name) {
+            continue;
+        }
+        if (existing.params.size() != function.params.size()) {
+            continue;
+        }
+        bool same = true;
+        for (std::size_t i = 0; i < existing.params.size(); ++i) {
+            if (!typesEqual(existing.params[i].type, function.params[i].type)) {
+                same = false;
+                break;
+            }
+        }
+        if (same) {
+            return true;
+        }
+    }
+    return false;
+}
+
 [[nodiscard]] bool hasSymbol(const Program& program, const std::string& name) {
     return hasGlobal(program, name) || hasFunction(program, name);
 }
@@ -133,7 +162,9 @@ void addGlobal(Program& into, GlobalVar global) {
 }
 
 void addFunction(Program& into, Function function) {
-    ensureUnique(into, function.name);
+    if (hasFunctionOverload(into, function)) {
+        throw XlangError("duplicate function overload: " + function.name);
+    }
     into.functions.push_back(std::move(function));
 }
 

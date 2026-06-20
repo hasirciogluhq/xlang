@@ -1,5 +1,7 @@
 #include "xlang/types.h"
 
+#include "xlang/error.h"
+
 namespace xlang {
 
 bool Type::isInteger() const {
@@ -69,6 +71,60 @@ Type Type::parse(const std::string& name) {
 
 Type defaultType() {
     return Type{TypeKind::Int32};
+}
+
+std::string typeMangleComponent(const Type& type) {
+    switch (type.kind) {
+        case TypeKind::Void:
+            return "void";
+        case TypeKind::Int32:
+            return "i32";
+        case TypeKind::Int64:
+            return "i64";
+        case TypeKind::BigInt:
+            return "i128";
+        case TypeKind::Float:
+            return "f32";
+        case TypeKind::Double:
+            return "f64";
+        case TypeKind::Bool:
+            return "bool";
+        case TypeKind::Char:
+            return "char";
+        case TypeKind::String:
+            return "str";
+        case TypeKind::Struct:
+            return "S" + type.struct_name;
+        case TypeKind::Pointer: {
+            Type inner;
+            inner.kind = type.pointer_to;
+            inner.struct_name = type.pointer_struct_name;
+            return "P" + typeMangleComponent(inner);
+        }
+    }
+    return "unknown";
+}
+
+std::string mangleFunctionName(const std::string& name, const std::vector<Type>& param_types) {
+    std::string result = name;
+    for (const Type& param_type : param_types) {
+        result += "$" + typeMangleComponent(param_type);
+    }
+    return result;
+}
+
+bool typesEqual(const Type& left, const Type& right) {
+    if (left.kind != right.kind) {
+        return false;
+    }
+    if (left.kind == TypeKind::Struct) {
+        return left.struct_name == right.struct_name;
+    }
+    if (left.kind == TypeKind::Pointer) {
+        return left.pointer_to == right.pointer_to &&
+               left.pointer_struct_name == right.pointer_struct_name;
+    }
+    return true;
 }
 
 std::string typeToString(const Type& type) {

@@ -5,6 +5,7 @@
 #include "xlang/types.h"
 
 #include <cstdint>
+#include <optional>
 #include <string>
 #include <unordered_map>
 #include <unordered_set>
@@ -58,7 +59,10 @@ private:
     std::pair<Type, std::string> emitExpr(const Expr& expr,
                                           const std::unordered_map<std::string, std::string>& locals);
 
-    [[nodiscard]] bool definesFunction(const Program& program, const std::string& name) const;
+    [[nodiscard]] bool definesFunction(const Program& program, const std::string& name,
+                                       const std::vector<Type>& param_types) const;
+    [[nodiscard]] std::optional<FunctionSignature> resolveFunctionCall(
+        const std::string& name, const std::vector<Type>& arg_types) const;
     [[nodiscard]] const StructDecl* findStruct(const std::string& name) const;
     [[nodiscard]] Type resolveVarType(const std::string& name,
                                       const std::unordered_map<std::string, std::string>& locals) const;

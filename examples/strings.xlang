@@ -1,5 +1,7 @@
 fn main() {
     print("hello world")
     print("count: " + 42)
+    print("User: %s", "ahmet")
+    print("score: %d", 100)
     return 0
 }

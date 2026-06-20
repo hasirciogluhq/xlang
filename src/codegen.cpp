@@ -8,6 +8,121 @@
 
 namespace xlang {
 
+namespace {
+
+std::vector<Type> paramTypes(const std::vector<TypedName>& params) {
+    std::vector<Type> types;
+    types.reserve(params.size());
+    for (const TypedName& param : params) {
+        types.push_back(param.type);
+    }
+    return types;
+}
+
+bool paramTypesMatch(const std::vector<Type>& expected, const std::vector<Type>& actual) {
+    if (expected.size() != actual.size()) {
+        return false;
+    }
+    for (std::size_t i = 0; i < expected.size(); ++i) {
+        if (!typesEqual(expected[i], actual[i])) {
+            return false;
+        }
+    }
+    return true;
+}
+
+std::optional<FunctionSignature> findMatchingFunction(
+    const std::string& name, const std::vector<Type>& arg_types,
+    const std::vector<FunctionSignature>& candidates) {
+    const FunctionSignature* match = nullptr;
+    for (const FunctionSignature& candidate : candidates) {
+        if (candidate.name != name) {
+            continue;
+        }
+        const std::vector<Type> expected = paramTypes(candidate.params);
+        if (!paramTypesMatch(expected, arg_types)) {
+            continue;
+        }
+        if (match != nullptr) {
+            throw XlangError("ambiguous call to `" + name + "`");
+        }
+        match = &candidate;
+    }
+    if (match == nullptr) {
+        return std::nullopt;
+    }
+    return *match;
+}
+
+std::vector<FunctionSignature> collectDefinedFunctions(const Program& program) {
+    std::vector<FunctionSignature> functions;
+    for (const Function& function : program.functions) {
+        if (function.syscall) {
+            FunctionSignature signature;
+            signature.name = function.name;
+            signature.params = function.params;
+            signature.return_type = function.return_type;
+            functions.push_back(std::move(signature));
+            continue;
+        }
+        if (function.body.statements.empty() && !function.external) {
+            continue;
+        }
+        FunctionSignature signature;
+        signature.name = function.name;
+        signature.params = function.params;
+        signature.return_type = function.return_type;
+        functions.push_back(std::move(signature));
+    }
+    return functions;
+}
+
+const Function* findFunctionDefinition(const Program& program, const std::string& name,
+                                       const std::vector<Type>& param_types) {
+    for (const Function& function : program.functions) {
+        if (function.name != name) {
+            continue;
+        }
+        if (!paramTypesMatch(paramTypes(function.params), param_types)) {
+            continue;
+        }
+        return &function;
+    }
+    return nullptr;
+}
+
+const Function* findUniqueFunctionByName(const Program& program, const std::string& name) {
+    const Function* match = nullptr;
+    for (const Function& function : program.functions) {
+        if (function.name != name || function.syscall) {
+            continue;
+        }
+        if (function.body.statements.empty() && !function.external) {
+            continue;
+        }
+        if (match != nullptr) {
+            throw XlangError("ambiguous function reference `" + name + "`");
+        }
+        match = &function;
+    }
+    return match;
+}
+
+std::string functionPointerType(const Function& function) {
+    std::ostringstream type;
+    type << llvmTypeName(function.return_type) << " (";
+    for (std::size_t i = 0; i < function.params.size(); ++i) {
+        if (i > 0) {
+            type << ", ";
+        }
+        type << llvmTypeName(function.params[i].type);
+    }
+    type << ")*";
+    return type.str();
+}
+
+}  // namespace
+
 bool exprUsesString(const Expr& expr) {
     if (expr.kind == Expr::Kind::StringLiteral) {
         return true;
@@ -152,7 +267,8 @@ CodegenResult Codegen::generate(const Program& program, const CodegenOptions& op
         if (function.external) {
             cg.emitDeclareFunction(function);
         } else if (!function.body.statements.empty()) {
-            cg.defined_functions_.insert(function.name);
+            const std::vector<Type> types = paramTypes(function.params);
+            cg.defined_functions_.insert(mangleFunctionName(function.name, types));
             cg.emitFunction(function);
         }
     }
@@ -193,7 +309,8 @@ void Codegen::emitPrelude(const Program& program) {
 
     for (const Function& function : program.functions) {
         if (function.external) {
-            defined_functions_.insert(function.name);
+            const std::vector<Type> types = paramTypes(function.params);
+            defined_functions_.insert(mangleFunctionName(function.name, types));
         }
     }
 
@@ -368,23 +485,41 @@ void Codegen::emitRuntimeDeclares(const Program& program) {
     }
 
     for (const FunctionSignature& runtime_fn : options_.runtime_exports) {
-        if (definesFunction(program, runtime_fn.name)) {
+        if (definesFunction(program, runtime_fn.name, paramTypes(runtime_fn.params))) {
             continue;
         }
         emitDeclareFunction(runtime_fn);
     }
 }
 
-bool Codegen::definesFunction(const Program& program, const std::string& name) const {
-    if (defined_functions_.find(name) != defined_functions_.end()) {
+bool Codegen::definesFunction(const Program& program, const std::string& name,
+                              const std::vector<Type>& param_types) const {
+    const std::string mangled = mangleFunctionName(name, param_types);
+    if (defined_functions_.find(mangled) != defined_functions_.end()) {
         return true;
     }
     for (const Function& function : program.functions) {
-        if (function.name == name && !function.body.statements.empty()) {
+        if (function.name != name || function.body.statements.empty()) {
+            continue;
+        }
+        if (paramTypesMatch(paramTypes(function.params), param_types)) {
             return true;
         }
     }
     return false;
+}
+
+std::optional<FunctionSignature> Codegen::resolveFunctionCall(
+    const std::string& name, const std::vector<Type>& arg_types) const {
+    const std::vector<FunctionSignature> defined = collectDefinedFunctions(*program_);
+    if (const std::optional<FunctionSignature> match = findMatchingFunction(name, arg_types, defined)) {
+        return match;
+    }
+    if (const std::optional<FunctionSignature> match =
+            findMatchingFunction(name, arg_types, options_.runtime_exports)) {
+        return match;
+    }
+    return std::nullopt;
 }
 
 const StructDecl* Codegen::findStruct(const std::string& name) const {
@@ -514,6 +649,8 @@ void Codegen::emitGlobalInit(const Program& program) {
 }
 
 void Codegen::emitDeclareFunction(const FunctionSignature& function) {
+    const std::vector<Type> param_type_list = paramTypes(function.params);
+    const std::string llvm_name = mangleFunctionName(function.name, param_type_list);
     std::ostringstream params;
     for (std::size_t i = 0; i < function.params.size(); ++i) {
         if (i > 0) {
@@ -521,12 +658,14 @@ void Codegen::emitDeclareFunction(const FunctionSignature& function) {
         }
         params << llvmTypeName(function.params[i].type);
     }
-    writeln("declare " + llvmTypeName(function.return_type) + " @" + function.name + "(" +
+    writeln("declare " + llvmTypeName(function.return_type) + " @" + llvm_name + "(" +
             params.str() + ")");
     writeln("");
 }
 
 void Codegen::emitDeclareFunction(const Function& function) {
+    const std::vector<Type> param_type_list = paramTypes(function.params);
+    const std::string llvm_name = mangleFunctionName(function.name, param_type_list);
     std::ostringstream params;
     for (std::size_t i = 0; i < function.params.size(); ++i) {
         if (i > 0) {
@@ -534,12 +673,14 @@ void Codegen::emitDeclareFunction(const Function& function) {
         }
         params << llvmTypeName(function.params[i].type);
     }
-    writeln("declare " + llvmTypeName(function.return_type) + " @" + function.name + "(" +
+    writeln("declare " + llvmTypeName(function.return_type) + " @" + llvm_name + "(" +
             params.str() + ")");
     writeln("");
 }
 
 void Codegen::emitFunction(const Function& function) {
+    const std::vector<Type> param_type_list = paramTypes(function.params);
+    const std::string llvm_name = mangleFunctionName(function.name, param_type_list);
     std::ostringstream params;
     for (std::size_t i = 0; i < function.params.size(); ++i) {
         if (i > 0) {
@@ -549,7 +690,7 @@ void Codegen::emitFunction(const Function& function) {
     }
 
     writeln("define " + fnLinkage(function) + llvmTypeName(function.return_type) + " @" +
-            function.name + "(" + params.str() + ") {");
+            llvm_name + "(" + params.str() + ") {");
 
     std::unordered_map<std::string, std::string> locals;
     local_types_.clear();
@@ -738,8 +879,15 @@ std::pair<Type, std::string> Codegen::emitExpr(
             return loadValue(var_type, resolveVar(expr.name, locals), locals);
         }
         case Expr::Kind::FunctionRef: {
+            const Function* function = findUniqueFunctionByName(*program_, expr.name);
+            if (function == nullptr) {
+                throw XlangError("unknown function reference `" + expr.name + "`");
+            }
+            const std::string llvm_name =
+                mangleFunctionName(function->name, paramTypes(function->params));
             const std::string tmp = freshTmp();
-            writeln("  " + tmp + " = ptrtoint i32 (i32)* @" + expr.name + " to i64");
+            writeln("  " + tmp + " = ptrtoint " + functionPointerType(*function) + " @" +
+                    llvm_name + " to i64");
             return {Type{TypeKind::Int64}, tmp};
         }
         case Expr::Kind::FieldAccess: {
@@ -830,28 +978,44 @@ std::pair<Type, std::string> Codegen::emitExpr(
             return {result_ty, tmp};
         }
         case Expr::Kind::Call: {
-            if (expr.name == "print" && expr.args.size() == 1) {
-                const auto [arg_ty, arg_val] = emitExpr(*expr.args[0], locals);
-                const std::string tmp = freshTmp();
-                if (isStringType(arg_ty)) {
-                    writeln("  " + tmp + " = call i32 @print_str(i8* " + arg_val + ")");
-                } else {
-                    writeln("  " + tmp + " = call i32 @print(i32 " + arg_val + ")");
-                }
-                return {Type{TypeKind::Int32}, tmp};
-            }
-
+            std::vector<Type> arg_types;
             std::ostringstream args;
             for (std::size_t i = 0; i < expr.args.size(); ++i) {
                 if (i > 0) {
                     args << ", ";
                 }
                 const auto [ty, val] = emitExpr(*expr.args[i], locals);
+                arg_types.push_back(ty);
                 args << llvmTypeName(ty) << " " << val;
             }
+
+            const std::optional<FunctionSignature> resolved =
+                resolveFunctionCall(expr.name, arg_types);
+            if (!resolved) {
+                std::ostringstream message;
+                message << "no matching overload for `" << expr.name << "(";
+                for (std::size_t i = 0; i < arg_types.size(); ++i) {
+                    if (i > 0) {
+                        message << ", ";
+                    }
+                    message << typeToString(arg_types[i]);
+                }
+                message << ")`";
+                throw XlangError(message.str());
+            }
+
+            const std::string llvm_name = [&]() {
+                if (const Function* definition =
+                        findFunctionDefinition(*program_, resolved->name, arg_types);
+                    definition != nullptr && definition->syscall) {
+                    return definition->name;
+                }
+                return mangleFunctionName(resolved->name, paramTypes(resolved->params));
+            }();
             const std::string tmp = freshTmp();
-            writeln("  " + tmp + " = call i32 @" + expr.name + "(" + args.str() + ")");
-            return {Type{TypeKind::Int32}, tmp};
+            writeln("  " + tmp + " = call " + llvmTypeName(resolved->return_type) + " @" +
+                    llvm_name + "(" + args.str() + ")");
+            return {resolved->return_type, tmp};
         }
     }
     throw XlangError("invalid expression");

@@ -5,9 +5,9 @@
 namespace xlang {
 
 bool isKnownSyscall(const std::string& name) {
-    return name == "print_int" || name == "print_cstr" || name == "start_thread" ||
-           name == "sleep_ms" || name == "random_range" || name == "print_done" ||
-           name == "wait_all_jobs";
+    return name == "print_int" || name == "print_cstr" || name == "print_fmt_str" ||
+           name == "print_fmt_int" || name == "start_thread" || name == "sleep_ms" ||
+           name == "random_range" || name == "print_done" || name == "wait_all_jobs";
 }
 
 namespace {
@@ -88,6 +88,8 @@ void emitSyscallDefinitions(std::string& output, const std::unordered_set<std::s
                                syscalls.find("wait_all_jobs") != syscalls.end();
     const bool needs_printf = syscalls.find("print_int") != syscalls.end() ||
                               syscalls.find("print_cstr") != syscalls.end() ||
+                              syscalls.find("print_fmt_str") != syscalls.end() ||
+                              syscalls.find("print_fmt_int") != syscalls.end() ||
                               syscalls.find("print_done") != syscalls.end();
 
     if (needs_printf) {
@@ -110,6 +112,28 @@ void emitSyscallDefinitions(std::string& output, const std::unordered_set<std::s
         output += "define weak i32 @print_cstr(i8* %s) {\n";
         output += "  call i32 (i8*, ...) @printf(i8* getelementptr inbounds "
                   "([4 x i8], [4 x i8]* @__xlang_syscall_strfmt, i32 0, i32 0), i8* %s)\n";
+        output += "  ret i32 0\n";
+        output += "}\n\n";
+    }
+
+    if (syscalls.find("print_fmt_str") != syscalls.end()) {
+        output += "; xlang syscall: print_fmt_str\n";
+        output += "@__xlang_nl = private unnamed_addr constant [2 x i8] c\"\\0A\\00\"\n";
+        output += "define weak i32 @print_fmt_str(i8* %fmt, i8* %arg) {\n";
+        output += "  call i32 (i8*, ...) @printf(i8* %fmt, i8* %arg)\n";
+        output += "  call i32 (i8*, ...) @printf(i8* getelementptr inbounds "
+                  "([2 x i8], [2 x i8]* @__xlang_nl, i32 0, i32 0))\n";
+        output += "  ret i32 0\n";
+        output += "}\n\n";
+    }
+
+    if (syscalls.find("print_fmt_int") != syscalls.end()) {
+        output += "; xlang syscall: print_fmt_int\n";
+        output += "@__xlang_nl_i = private unnamed_addr constant [2 x i8] c\"\\0A\\00\"\n";
+        output += "define weak i32 @print_fmt_int(i8* %fmt, i32 %arg) {\n";
+        output += "  call i32 (i8*, ...) @printf(i8* %fmt, i32 %arg)\n";
+        output += "  call i32 (i8*, ...) @printf(i8* getelementptr inbounds "
+                  "([2 x i8], [2 x i8]* @__xlang_nl_i, i32 0, i32 0))\n";
         output += "  ret i32 0\n";
         output += "}\n\n";
     }
