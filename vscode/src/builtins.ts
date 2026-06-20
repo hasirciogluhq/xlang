@@ -127,6 +127,21 @@ export const RUNTIME_TYPES: CatalogEntry[] = [
     documentation: `Extendable error struct with Message(). ${GLOBAL_RUNTIME_NOTE}`,
     kind: vscode.CompletionItemKind.Struct,
   },
+  {
+    label: "Time",
+    detail: "type (runtime)",
+    documentation: `Wall-clock instant (Date-like). Use Now(), Format(t), ElapsedMs(a, b). ${GLOBAL_RUNTIME_NOTE}`,
+    kind: vscode.CompletionItemKind.Struct,
+  },
+];
+
+export const TIME_RUNTIME: CatalogEntry[] = [
+  { label: "Now", detail: "Now() → Time", documentation: `Current wall-clock time. ${GLOBAL_RUNTIME_NOTE}`, insertText: "Now()" },
+  { label: "FromMs", detail: "FromMs(ms: int64) → Time", documentation: `Time from unix milliseconds. ${GLOBAL_RUNTIME_NOTE}`, insertText: "FromMs(${1:ms})" },
+  { label: "UnixMs", detail: "UnixMs(t: Time) → int64", documentation: "Unix epoch milliseconds.", insertText: "UnixMs(${1:t})" },
+  { label: "Format", detail: "Format(t: Time) → string", documentation: "Format as `YYYY/MM/DD - HH:MM:SS.mmm`.", insertText: "Format(${1:t})" },
+  { label: "ElapsedMs", detail: "ElapsedMs(from, to) → int32", documentation: "Milliseconds between two Time values.", insertText: "ElapsedMs(${1:start}, ${2:end})" },
+  { label: "ElapsedText", detail: "ElapsedText(from, to) → string", documentation: "Elapsed duration as `Nms` string.", insertText: "ElapsedText(${1:start}, ${2:end})" },
 ];
 
 export const ERROR_RUNTIME: CatalogEntry[] = [
@@ -321,6 +336,7 @@ export const KNOWN_MODULES: CatalogEntry[] = [
   { label: "net", detail: "module (runtime, global)", documentation: "Auto-linked — fetch available globally." },
   { label: "file", detail: "module (runtime, global)", documentation: "Auto-linked — ReadAll, Write, OpenRead, … available globally." },
   { label: "errors", detail: "module (runtime, global)", documentation: "Auto-linked — newError, tryRun, BaseError available globally." },
+  { label: "time", detail: "module (runtime, global)", documentation: "Auto-linked — Now, Format, ElapsedMs (Date-like API)." },
 ];
 
 /** All runtime functions available globally without import. */
@@ -328,6 +344,7 @@ export const GLOBAL_RUNTIME_FUNCTIONS: CatalogEntry[] = [
   ...RUNTIME_BUILTINS,
   ...FILE_FUNCTIONS,
   ...SYNC_FACTORIES,
+  ...TIME_RUNTIME,
   ...ERROR_RUNTIME,
 ];
 

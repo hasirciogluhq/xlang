@@ -12,8 +12,6 @@
 import server from http/server
 
 declare syscall env_get(key: string): string
-declare syscall now_ms(): int64
-declare syscall log_timestamp(): string
 
 struct RouteDef {
     method: string
@@ -118,20 +116,16 @@ fn method_badge(method: string): string {
     return "\e[100m\e[97m" + label + "\e[0m"
 }
 
-fn latency_text(start: int64, finished: int64): string {
-    local elapsed: int32 = finished - start
-    if elapsed < 0 {
-        elapsed = 0
-    }
-    return str_from_int(elapsed) + "ms"
+fn latency_text(start_ms: int64, finished_ms: int64): string {
+    return ElapsedText(FromMs(start_ms), FromMs(finished_ms))
 }
 
-fn log_request(r: Router, ctx: Context, start: int64, finished: int64): int32 {
+fn log_request(r: Router, ctx: Context, start_ms: int64, finished_ms: int64): int32 {
     if r.access_log == 0 {
         return 0
     }
-    local ts = log_timestamp()
-    local line = "[Router] | " + ts + " | " + status_badge(ctx.status) + " | " + latency_text(start, finished) + " | 127.0.0.1 | " + method_badge(ctx.method) + " \"" + ctx.path + "\""
+    local ts = Format(FromMs(finished_ms))
+    local line = "[Router] | " + ts + " | " + status_badge(ctx.status) + " | " + latency_text(start_ms, finished_ms) + " | 127.0.0.1 | " + method_badge(ctx.method) + " \"" + ctx.path + "\""
     print(line)
     return 0
 }
@@ -487,7 +481,7 @@ export fn HandleConn(r: Router, conn: Conn): int32 {
     if str_len(raw) == 0 {
         return 0
     }
-    local start = now_ms()
+    local start_ms = UnixMs(Now())
     if parse_request_line(raw) == 0 {
         local bad = FormatResponse(400, "bad request", "text/plain")
         server.Write(conn, bad)
@@ -495,7 +489,7 @@ export fn HandleConn(r: Router, conn: Conn): int32 {
         bad_ctx.status = 400
         bad_ctx.content_type = "text/plain"
         bad_ctx.body = "bad request"
-        log_request(r, bad_ctx, start, now_ms())
+        log_request(r, bad_ctx, start_ms, UnixMs(Now()))
         return 0
     }
     local method = request_method(raw)
@@ -503,7 +497,7 @@ export fn HandleConn(r: Router, conn: Conn): int32 {
     local ctx = DispatchRequest(r, method, path)
     local out = FormatResponse(ctx.status, ctx.body, ctx.content_type)
     server.Write(conn, out)
-    log_request(r, ctx, start, now_ms())
+    log_request(r, ctx, start_ms, UnixMs(Now()))
     return 0
 }
 

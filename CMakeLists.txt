@@ -46,12 +46,13 @@ add_custom_target(embedded_libs DEPENDS "${EMBEDDED_LIBS_CPP}")
 
 find_package(OpenSSL REQUIRED)
 
-add_library(xlang_net_server STATIC src/net_server.c)
-add_library(xlang_panic_bridge STATIC src/panic_bridge.c)
-add_library(xlang_process_bridge STATIC src/process_bridge.c)
-add_library(xlang_file_bridge STATIC src/file_bridge.cpp)
+add_library(xlang_net_server STATIC src/bridge/net_server.c)
+add_library(xlang_panic_bridge STATIC src/bridge/panic_bridge.c)
+add_library(xlang_process_bridge STATIC src/bridge/process_bridge.c)
+add_library(xlang_time_bridge STATIC src/bridge/time_bridge.c)
+add_library(xlang_file_bridge STATIC src/bridge/file_bridge.cpp)
 
-add_library(xlang_tls_bridge STATIC src/tls_bridge.c)
+add_library(xlang_tls_bridge STATIC src/bridge/tls_bridge.c)
 target_include_directories(xlang_tls_bridge PRIVATE ${OPENSSL_INCLUDE_DIR})
 target_link_libraries(xlang_tls_bridge PUBLIC OpenSSL::SSL OpenSSL::Crypto)
 
@@ -84,9 +85,10 @@ target_compile_definitions(xlank PRIVATE
     "XLANG_NET_SERVER=\"$<TARGET_FILE:xlang_net_server>\""
     "XLANG_PANIC_BRIDGE=\"$<TARGET_FILE:xlang_panic_bridge>\""
     "XLANG_PROCESS_BRIDGE=\"$<TARGET_FILE:xlang_process_bridge>\""
+    "XLANG_TIME_BRIDGE=\"$<TARGET_FILE:xlang_time_bridge>\""
     "XLANG_FILE_BRIDGE=\"$<TARGET_FILE:xlang_file_bridge>\""
 )
 target_link_libraries(xlank PRIVATE CLI11::CLI11)
-add_dependencies(xlank xlang_tls_bridge xlang_net_server xlang_panic_bridge xlang_process_bridge xlang_file_bridge)
+add_dependencies(xlank xlang_tls_bridge xlang_net_server xlang_panic_bridge xlang_process_bridge xlang_time_bridge xlang_file_bridge)
 
 install(TARGETS xlank RUNTIME DESTINATION bin)

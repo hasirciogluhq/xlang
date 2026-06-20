@@ -513,6 +513,7 @@ CodegenResult Codegen::generate(const Program& program, const CodegenOptions& op
     result.needs_panic_link = syscallsNeedPanicLink(result.syscalls);
     result.needs_process_link = syscallsNeedProcessLink(result.syscalls);
     result.needs_file_link = syscallsNeedFileLink(result.syscalls);
+    result.needs_time_link = syscallsNeedTimeLink(result.syscalls);
     return result;
 }
 

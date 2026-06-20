@@ -150,6 +150,18 @@ bool programNeedsFileLink(const Program& program) {
     return false;
 }
 
+bool programNeedsTimeLink(const Program& program) {
+    for (const Function& function : program.functions) {
+        if (!function.syscall) {
+            continue;
+        }
+        if (function.name == "time_format") {
+            return true;
+        }
+    }
+    return false;
+}
+
 std::filesystem::path runtimeEntryFromSourceTree() {
     if (std::string(XLANG_RUNTIME_DIR).empty()) {
         return {};
@@ -233,6 +245,7 @@ RuntimeBundle loadRuntimeExports(const RuntimeOptions& options) {
     bundle.needs_panic_link = programNeedsPanicLink(program);
     bundle.needs_process_link = programNeedsProcessLink(program);
     bundle.needs_file_link = programNeedsFileLink(program);
+    bundle.needs_time_link = programNeedsTimeLink(program);
     return bundle;
 }
 
@@ -257,6 +270,7 @@ RuntimeBundle ensureRuntime(const RuntimeOptions& options) {
     bundle.needs_panic_link = programNeedsPanicLink(program);
     bundle.needs_process_link = programNeedsProcessLink(program);
     bundle.needs_file_link = programNeedsFileLink(program);
+    bundle.needs_time_link = programNeedsTimeLink(program);
     return bundle;
 }
 

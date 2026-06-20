@@ -23,7 +23,8 @@ bool isKnownSyscall(const std::string& name) {
            name == "atomic_compare_exchange" ||
            name == "panic" || name == "recover" || name == "try_invoke0" ||
            name == "env_get" || name == "run_capture" || name == "capture_stdout" ||
-           name == "env_set" || name == "cwd" || name == "chdir" || name == "log_timestamp" ||
+           name == "env_set" || name == "cwd" || name == "chdir" ||
+           name == "time_format" ||
            name == "proc_fork" || name == "proc_exec" || name == "proc_wait" ||
            name == "proc_exit" || name == "proc_kill" || name == "pipe_create" ||
            name == "pipe_read_fd" || name == "pipe_write_fd" ||
@@ -176,6 +177,15 @@ void emitSyncSupport(std::string& output) {
     output += "  %c = inttoptr i64 %cond_handle to i8*\n";
     output += "  call i32 @pthread_cond_broadcast(i8* %c)\n";
     output += "  ret i32 0\n";
+    output += "}\n\n";
+}
+
+void emitTimeFormatSupport(std::string& output) {
+    output += "; xlang time_format bridge\n";
+    output += "declare i8* @xlang_time_format(i64)\n";
+    output += "define weak i8* @time_format(i64 %ms) {\n";
+    output += "  %ts = call i8* @xlang_time_format(i64 %ms)\n";
+    output += "  ret i8* %ts\n";
     output += "}\n\n";
 }
 
@@ -432,7 +442,6 @@ void emitProcessSupport(std::string& output) {
     output += "declare i8* @xlang_env_get(i8*)\n";
     output += "declare i32 @xlang_env_set(i8*, i8*)\n";
     output += "declare i8* @xlang_cwd_get()\n";
-    output += "declare i8* @xlang_log_timestamp()\n";
     output += "declare i32 @xlang_chdir(i8*)\n";
     output += "declare i32 @xlang_proc_fork()\n";
     output += "declare i32 @xlang_proc_exec(i8*, i8*)\n";
@@ -470,11 +479,6 @@ void emitProcessSupport(std::string& output) {
     output += "define weak i8* @cwd() {\n";
     output += "  %path = call i8* @xlang_cwd_get()\n";
     output += "  ret i8* %path\n";
-    output += "}\n\n";
-
-    output += "define weak i8* @log_timestamp() {\n";
-    output += "  %ts = call i8* @xlang_log_timestamp()\n";
-    output += "  ret i8* %ts\n";
     output += "}\n\n";
 
     output += "define weak i32 @chdir(i8* %path) {\n";
@@ -684,6 +688,11 @@ void emitSyscallDefinitions(std::string& output, const std::unordered_set<std::s
         emitSyncSupport(output);
     }
 
+    const bool needs_time_format = syscalls.find("time_format") != syscalls.end();
+    if (needs_time_format) {
+        emitTimeFormatSupport(output);
+    }
+
     if (needs_now_ms) {
         emitNowMsSupport(output);
     }
@@ -725,7 +734,6 @@ void emitSyscallDefinitions(std::string& output, const std::unordered_set<std::s
 
     const bool needs_process =
         syscalls.find("env_get") != syscalls.end() ||
-        syscalls.find("log_timestamp") != syscalls.end() ||
         syscalls.find("run_capture") != syscalls.end() ||
         syscalls.find("capture_stdout") != syscalls.end() ||
         syscalls.find("proc_fork") != syscalls.end() ||
@@ -797,6 +805,10 @@ bool syscallsNeedProcessLink(const std::unordered_set<std::string>& syscalls) {
         }
     }
     return false;
+}
+
+bool syscallsNeedTimeLink(const std::unordered_set<std::string>& syscalls) {
+    return syscalls.find("time_format") != syscalls.end();
 }
 
 bool syscallsNeedFileLink(const std::unordered_set<std::string>& syscalls) {

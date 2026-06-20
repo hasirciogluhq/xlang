@@ -5,14 +5,11 @@
 #include <string.h>
 #include <signal.h>
 #include <sys/wait.h>
-#include <sys/time.h>
-#include <time.h>
 #include <unistd.h>
 
 static __thread char capture_buffer[1024 * 1024];
 static __thread char io_buffer[1024 * 1024];
 static __thread char cwd_buffer[4096];
-static __thread char log_timestamp_buffer[32];
 static __thread int capture_len;
 
 static void reset_capture(void) {
@@ -180,27 +177,6 @@ const char* xlang_cwd_get(void) {
         cwd_buffer[0] = '\0';
     }
     return cwd_buffer;
-}
-
-const char* xlang_log_timestamp(void) {
-    struct timeval tv;
-    if (gettimeofday(&tv, NULL) != 0) {
-        log_timestamp_buffer[0] = '\0';
-        return log_timestamp_buffer;
-    }
-    struct tm* tm_info = localtime(&tv.tv_sec);
-    if (tm_info == NULL) {
-        log_timestamp_buffer[0] = '\0';
-        return log_timestamp_buffer;
-    }
-    const size_t n = strftime(log_timestamp_buffer, sizeof(log_timestamp_buffer), "%Y/%m/%d - %H:%M:%S", tm_info);
-    if (n == 0) {
-        log_timestamp_buffer[0] = '\0';
-        return log_timestamp_buffer;
-    }
-    const int ms = (int)(tv.tv_usec / 1000);
-    snprintf(log_timestamp_buffer + n, sizeof(log_timestamp_buffer) - n, ".%03d", ms);
-    return log_timestamp_buffer;
 }
 
 int32_t xlang_chdir(const char* path) {

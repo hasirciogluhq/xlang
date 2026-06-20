@@ -31,6 +31,7 @@ struct CodegenResult {
     bool needs_panic_link{false};
     bool needs_process_link{false};
     bool needs_file_link{false};
+    bool needs_time_link{false};
 };
 
 class Codegen {

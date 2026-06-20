@@ -1,0 +1,39 @@
+// Wall-clock time — Date-like API, globally linked (no import required).
+//   local t = Now()
+//   print("%s", Format(t))
+//   print("%dms", ElapsedMs(start, Now()))
+
+declare syscall now_ms(): int64
+declare syscall time_format(ms: int64): string
+
+export struct Time {
+    unix_ms: int64
+}
+
+export fn Now(): Time {
+    return new Time { unix_ms = now_ms() }
+}
+
+export fn FromMs(ms: int64): Time {
+    return new Time { unix_ms = ms }
+}
+
+export fn UnixMs(t: Time): int64 {
+    return t.unix_ms
+}
+
+export fn Format(t: Time): string {
+    return time_format(t.unix_ms)
+}
+
+export fn ElapsedMs(start_t: Time, end_t: Time): int32 {
+    local diff: int32 = end_t.unix_ms - start_t.unix_ms
+    if diff < 0 {
+        diff = 0
+    }
+return diff
+}
+
+export fn ElapsedText(start_t: Time, end_t: Time): string {
+    return str_from_int(ElapsedMs(start_t, end_t)) + "ms"
+}
