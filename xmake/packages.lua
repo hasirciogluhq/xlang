@@ -25,9 +25,24 @@ end
 -- TLS bridge. Cross builds must not use the host system openssl.
 add_requires("openssl", {system = not cross})
 
--- Host targets that consume LLVM. xmake's system llvm component list still
--- omits LLVMTargetParser, where llvm::Triple lives (LLVM 15+).
+-- Host targets that consume LLVM. xmake's system llvm component list lags
+-- newer LLVM splits: TargetParser (15+), CGData / CodeGenTypes /
+-- DebugInfoDWARFLowLevel (19–22), and Homebrew LLVM needs zstd.
 function xlang_ctx.add_llvm()
     add_packages("cli11", "llvm")
-    add_links("LLVMTargetParser")
+    add_links(
+        "LLVMTargetParser",
+        "LLVMCGData",
+        "LLVMCodeGenTypes",
+        "LLVMDebugInfoDWARFLowLevel"
+    )
+    if is_plat("macosx", "linux") then
+        local brew = os.getenv("HOMEBREW_PREFIX")
+        if brew then
+            add_linkdirs(path.join(brew, "lib"))
+        elseif is_plat("macosx") then
+            add_linkdirs("/opt/homebrew/lib", "/usr/local/lib")
+        end
+        add_syslinks("zstd")
+    end
 end

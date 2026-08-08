@@ -18,21 +18,3 @@ includes("xmake/toolchains.lua")
 includes("xmake/packages.lua")
 includes("xmake/bridges.lua")
 includes("xmake/compiler.lua")
-
-
-
-target("xamine")
-    set_kind("binary")
-    set_basename("xamine")
-    set_default(not cross)
-    set_enabled(not cross)
-    add_files(
-        "$(projectdir)/xamine.cpp"
-    )
-    xlang_ctx.add_llvm()
-
-    if is_plat("linux") then
-        add_syslinks("ncurses", "z", "pthread", "dl", "m")
-    elseif is_plat("macosx") then
-        add_syslinks("z", "curses", "xml2")
-    end
