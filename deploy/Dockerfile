@@ -5,18 +5,21 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential \
     ca-certificates \
     clang \
-    cmake \
+    curl \
     git \
-    libssl-dev \
+    unzip \
     && rm -rf /var/lib/apt/lists/*
+
+RUN curl -fsSL https://xmake.io/shget.text | bash
+ENV PATH="/root/.local/bin:${PATH}"
 
 WORKDIR /src
 COPY . .
 
-RUN cmake -B build -DCMAKE_BUILD_TYPE=Release \
-    && cmake --build build -j"$(nproc)"
-
-RUN ./build/xlang build deploy/server.xlang -o /out/server
+RUN mkdir -p /out \
+    && xmake f -y -m release \
+    && xmake -y \
+    && ./build/xlang build deploy/server.xlang -o /out/server
 
 FROM debian:bookworm-slim AS runner
 

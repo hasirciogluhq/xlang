@@ -34,16 +34,16 @@ VS Code extension (IntelliSense, hover, diagnostics): **[vscode/README.md](vscod
 
 ## Requirements
 
-- **CMake** ≥ 3.16
+- [xmake](https://xmake.io) ≥ 2.8
 - **C++17** compiler (Clang or GCC)
 - **Clang** (for LLVM IR → object → executable linking; `clang` must be on PATH)
 
 ## Build
 
 ```bash
-mkdir -p build && cd build
-cmake ..
-make -j4
+xmake
+# optional: xmake f -m debug && xmake
+# install: xmake install -o /usr/local
 ```
 
 Compiler binary: `./build/xlang`
@@ -155,7 +155,8 @@ xlang/
 ├── examples/         # Sample programs
 ├── test/xlang/       # *.test.xlang suite
 ├── vscode/           # VS Code extension (IntelliSense, hover, diagnostics)
-├── cmake/            # Embed scripts (runtime + libs)
+├── xmake.lua         # Build (xmake)
+├── xmake/            # Embed helpers (runtime + libs)
 └── docs/LANGUAGE.md
 ```
 

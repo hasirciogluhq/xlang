@@ -183,14 +183,53 @@ export async function resolveCompilerPath(): Promise<string | undefined> {
   const folders = vscode.workspace.workspaceFolders ?? [];
   for (const folder of folders) {
     for (const base of [folder.uri.fsPath, path.join(folder.uri.fsPath, "..")]) {
-      const candidate = path.normalize(path.join(base, "build", "xlang"));
-      if (fs.existsSync(candidate)) {
-        return candidate;
+      const found = findBuiltXlang(base);
+      if (found) {
+        return found;
       }
     }
   }
 
   return "xlang";
+}
+
+/** Prefer build/xlang; fall back to xmake's build/<plat>/<arch>/<mode>/xlang. */
+function findBuiltXlang(root: string): string | undefined {
+  const direct = path.normalize(path.join(root, "build", "xlang"));
+  if (fs.existsSync(direct)) {
+    return direct;
+  }
+
+  const buildDir = path.join(root, "build");
+  if (!fs.existsSync(buildDir)) {
+    return undefined;
+  }
+
+  try {
+    for (const plat of fs.readdirSync(buildDir, { withFileTypes: true })) {
+      if (!plat.isDirectory() || plat.name.startsWith(".")) {
+        continue;
+      }
+      const platDir = path.join(buildDir, plat.name);
+      for (const arch of fs.readdirSync(platDir, { withFileTypes: true })) {
+        if (!arch.isDirectory()) {
+          continue;
+        }
+        for (const mode of ["release", "debug"]) {
+          const candidate = path.normalize(
+            path.join(platDir, arch.name, mode, "xlang")
+          );
+          if (fs.existsSync(candidate)) {
+            return candidate;
+          }
+        }
+      }
+    }
+  } catch {
+    return undefined;
+  }
+
+  return undefined;
 }
 
 export { buildEnv, collectModuleSearchPaths } from "./paths";

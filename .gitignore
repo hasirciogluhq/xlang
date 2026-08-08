@@ -1,6 +1,6 @@
 # Build
 /build/
-/cmake-build-*/
+.xmake/
 compile_commands.json
 
 # Compiled objects & binaries
@@ -30,12 +30,6 @@ examples/math
 .vscode/
 *.swp
 *~
-
-# CMake
-CMakeCache.txt
-CMakeFiles/
-cmake_install.cmake
-Makefile
 
 # Debug
 *.dSYM/

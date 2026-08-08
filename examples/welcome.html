@@ -255,7 +255,7 @@ fn main() {
       </table>
     </div>
     <p class="mt-4 text-xs text-[var(--color-muted)]">
-      Requires CMake &ge; 3.16, C++17, Clang on PATH, OpenSSL dev headers.
+      Requires xmake, C++17, Clang on PATH.
       Env: <code>XLANG_RUNTIME_DIR</code>, <code>XLANG_PATH</code>, <code>XLANG_CLANG</code>
     </p>
   </section>
@@ -267,9 +267,8 @@ fn main() {
       <p class="mt-2 text-sm text-[var(--color-muted)]">Clone, build, run.</p>
       <div class="mt-6 max-w-xl overflow-hidden rounded-lg border border-[var(--color-border)] bg-white">
         <pre class="overflow-x-auto p-4 text-[13px] leading-7 text-[var(--color-ink)]"><code>git clone https://github.com/hasirciogluhq/xlang
-cd xlang && mkdir build && cd build
-cmake .. && cmake --build . -j$(nproc)
-./xlang run ../examples/hello.xlang</code></pre>
+cd xlang && xmake
+./build/xlang run examples/hello.xlang</code></pre>
       </div>
       <p class="mt-6 text-xs text-[var(--color-muted)]">
         This page is served by <code>deploy/server.xlang</code> —
