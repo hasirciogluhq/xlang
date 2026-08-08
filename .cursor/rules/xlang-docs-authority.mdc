@@ -1,0 +1,13 @@
+---
+description: Docs are source of truth; user intent overrides code/README; no speculative futures
+alwaysApply: true
+---
+
+# xlang Documentation Authority
+
+- `docs/` describes how the system **works now**. Write and implement against that reality.
+- When the user contradicts existing code, README, or older docs, **the user’s rules win**. Ignore past implementation and README unless the user did not cover that topic.
+- Do **not** add “future of development” notes unless the user explicitly allows that topic. Exception already documented: package manager server/backend only (`docs/PUBLISHING.md`).
+- Do **not** mention monorepos in docs or design discussion for this project.
+- Package/toolchain docs are English. Keep them present-tense (“does / aborts”), not “will / should someday”.
+- When coding to match the package system, iterate until behavior matches `docs/PACKAGE_MANAGER.md` and related docs — docs win over current code.

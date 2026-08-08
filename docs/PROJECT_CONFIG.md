@@ -96,8 +96,9 @@ publisher/name@version
 |-------|-------------|
 | `dependencies` | List of package identities required to build |
 | `static` | Optional boolean or list marking which deps use static delivery |
+| lock / hash | `add` / `install` record the verified content hash per dependency; compile and link re-check it |
 
-`xlang add` / `xlang remove` mutate these declarations. `xlang install` with no arguments installs everything listed here into the user registry by default ([Installing](INSTALLING.md)).
+`xlang add` / `xlang remove` mutate these declarations. `xlang install` with no arguments installs everything listed here into the user registry by default ([Installing](INSTALLING.md)). Hash mismatch at any of install, compile, or link aborts.
 
 ---
 

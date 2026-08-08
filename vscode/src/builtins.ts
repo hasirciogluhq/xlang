@@ -310,9 +310,15 @@ export const FILE_FUNCTIONS: CatalogEntry[] = [
   { label: "OpenWrite", detail: "OpenWrite(path) → File", documentation: `Open file for writing (truncate). ${GLOBAL_RUNTIME_NOTE}`, insertText: 'OpenWrite("${1:path}")' },
   { label: "OpenAppend", detail: "OpenAppend(path) → File", documentation: `Open file for append. ${GLOBAL_RUNTIME_NOTE}`, insertText: 'OpenAppend("${1:path}")' },
   { label: "Close", detail: "Close(f) → int32", documentation: `Close open file handle. ${GLOBAL_RUNTIME_NOTE}`, insertText: "Close(${1:f})" },
-  { label: "Read", detail: "Read(f) → string", documentation: `Read from open handle. ${GLOBAL_RUNTIME_NOTE}`, insertText: "Read(${1:f})" },
+  { label: "Read", detail: "Read(f, max) → string", documentation: `Read up to max bytes from open handle. ${GLOBAL_RUNTIME_NOTE}`, insertText: "Read(${1:f}, ${2:4096})" },
+  { label: "ReadStream", detail: "ReadStream(f) → string", documentation: `Read remaining stream from handle. ${GLOBAL_RUNTIME_NOTE}`, insertText: "ReadStream(${1:f})" },
   { label: "WriteStream", detail: "WriteStream(f, data) → int32", documentation: `Write to open handle. ${GLOBAL_RUNTIME_NOTE}`, insertText: 'WriteStream(${1:f}, "${2:data}")' },
   { label: "IsOpen", detail: "IsOpen(f) → int32", documentation: `Returns 1 when handle is valid. ${GLOBAL_RUNTIME_NOTE}`, insertText: "IsOpen(${1:f})" },
+  { label: "Mkdir", detail: "Mkdir(path) → int32", documentation: `Create directory. ${GLOBAL_RUNTIME_NOTE}`, insertText: 'Mkdir("${1:path}")' },
+  { label: "MkdirAll", detail: "MkdirAll(path) → int32", documentation: `Create directory tree. ${GLOBAL_RUNTIME_NOTE}`, insertText: 'MkdirAll("${1:path}")' },
+  { label: "Remove", detail: "Remove(path) → int32", documentation: `Unlink file. ${GLOBAL_RUNTIME_NOTE}`, insertText: 'Remove("${1:path}")' },
+  { label: "ReadDir", detail: "ReadDir(path) → string", documentation: `Newline-separated directory listing. ${GLOBAL_RUNTIME_NOTE}`, insertText: 'ReadDir("${1:path}")' },
+  { label: "Errno", detail: "Errno() → int32", documentation: `Last filesystem errno (0 if ok). ${GLOBAL_RUNTIME_NOTE}`, insertText: "Errno()" },
 ];
 
 export const CONN_METHODS: CatalogEntry[] = [
@@ -334,7 +340,7 @@ export const KNOWN_MODULES: CatalogEntry[] = [
   { label: "sync", detail: "module (runtime, global)", documentation: "Auto-linked — NewLock, AtomicInt, … available globally; import optional for namespacing." },
   { label: "scheduler", detail: "module (runtime, global)", documentation: "Auto-linked — spawn, wait_all, cpu available globally." },
   { label: "net", detail: "module (runtime, global)", documentation: "Auto-linked — fetch available globally." },
-  { label: "file", detail: "module (runtime, global)", documentation: "Auto-linked — ReadAll, Write, OpenRead, … available globally." },
+  { label: "filesystem", detail: "module (runtime, global)", documentation: "Auto-linked — ReadAll, Write, OpenRead, Mkdir, ReadDir, … available globally." },
   { label: "errors", detail: "module (runtime, global)", documentation: "Auto-linked — newError, tryRun, BaseError available globally." },
   { label: "time", detail: "module (runtime, global)", documentation: "Auto-linked — Now, Format, ElapsedMs (Date-like API)." },
 ];

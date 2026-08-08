@@ -53,15 +53,6 @@ static const char* fs_empty(void) {
     return g_io_buffer;
 }
 
-static void fs_copy_buffer(const char* data, size_t n) {
-    const size_t cap = sizeof(g_io_buffer) - 1;
-    const size_t copy = n < cap ? n : cap;
-    if (copy > 0 && data != NULL) {
-        memcpy(g_io_buffer, data, copy);
-    }
-    g_io_buffer[copy] = '\0';
-}
-
 static FILE* fs_fp(int64_t handle) {
     if (handle <= 0 || handle > FS_MAX_HANDLES) {
         return NULL;

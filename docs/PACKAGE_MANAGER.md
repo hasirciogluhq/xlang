@@ -9,6 +9,7 @@ This document is the **source of truth** for the xlang package manager CLI. Othe
 - [Overview](#overview)
 - [Scopes](#scopes)
 - [Identity and naming](#identity-and-naming)
+- [Integrity](#integrity)
 - [Command reference](#command-reference)
   - [add](#add)
   - [remove](#remove)
@@ -71,6 +72,20 @@ If two publishers ship the same unqualified name, the compiler reports a conflic
 
 ---
 
+# Integrity
+
+Artifacts are identified by content **hash / checksum** as well as `publisher/name@version`. Full rules live in [Installing](INSTALLING.md#integrity-hash--checksum). Short form:
+
+```text
+check → install
+check → compile
+check → link
+```
+
+Any failed check **aborts**. `add` (when it installs) and `install` never register a package that fails verification. `build` / `compile` never compile from a failed artifact. The linker never links a failed `.o` / `.a`.
+
+---
+
 # Command reference
 
 All examples below use the `xlang` binary. This is how the CLI works.
@@ -87,8 +102,8 @@ xlang add <publisher/name[@version]> --root
 
 | Behavior | Detail |
 |----------|--------|
-| Project record | Records the dependency in the project configuration / lock |
-| Missing package | Installs it automatically (user scope by default) |
+| Project record | Records the dependency and its content hash in the project configuration / lock |
+| Missing package | Checks checksum, then installs (user scope by default); abort on hash mismatch |
 | `--static` | Prefer / cache a static library artifact for linking; see [Static Library](STATIC_LIBRARY.md) |
 | `--root` / `--global` | Install into the root registry if the package is not already available |
 
@@ -119,6 +134,7 @@ xlang install                          # install all project dependencies
 | Default scope | User registry |
 | `--root` / `--global` | Root registry |
 | No arguments | Resolve and install every dependency declared by the project |
+| Integrity | Checksum verified before any registry write; abort on mismatch |
 
 Libraries are **built/compiled** before they are installed as static artifacts. See [Installing](INSTALLING.md).
 
@@ -140,7 +156,7 @@ xlang uninstall <publisher/name[@version]> --root
 
 ## info
 
-Show metadata for a package (identity, versions, description, artifacts, install location).
+Show metadata for a package (identity, versions, description, artifacts, content hash, install location).
 
 ```sh
 xlang info <publisher/name[@version]>
@@ -167,7 +183,7 @@ xlang publish
 xlang publish <package-name>
 ```
 
-Publishing rules, versioning, and artifact layout are defined in [Publishing](PUBLISHING.md). The command surface here is the source of truth for invocation.
+Publishing rules, versioning, immutability (version + git hash permanent), and artifact layout are defined in [Publishing](PUBLISHING.md). The command surface here is the source of truth for invocation.
 
 ## build / compile
 
@@ -191,7 +207,7 @@ xlang build <path> --build=lib -o lib.a   # static library
 | Object | `--build=lib` (or equivalent object mode) with `.o` output | Object file for later link / `run` |
 | Static library | lib/static delivery into `.a` (or platform equivalent) | Archive for install / link |
 
-Defaults for entry selection come from [Project Config](PROJECT_CONFIG.md). Linking details live in [Linking](LINKING.md).
+Before compile and before link, dependency artifacts are checksum-checked; failure aborts ([Installing](INSTALLING.md#integrity-hash--checksum)). Defaults for entry selection come from [Project Config](PROJECT_CONFIG.md). Linking details live in [Linking](LINKING.md).
 
 ## run
 
@@ -257,7 +273,7 @@ If both a dependency’s source and a prebuilt static library are available to a
 | Document | Role |
 |----------|------|
 | [Project Config](PROJECT_CONFIG.md) | Project file, packages, entries, overrides |
-| [Installing](INSTALLING.md) | User/root install and uninstall behavior |
+| [Installing](INSTALLING.md) | User/root registries and hash checks |
 | [Publishing](PUBLISHING.md) | How packages leave the machine |
 | [Static Library](STATIC_LIBRARY.md) | Static `.a` artifacts and `--static` |
 | [Linking](LINKING.md) | Compiler/linker pipeline for dependencies |

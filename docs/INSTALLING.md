@@ -8,6 +8,7 @@ This document is the source of truth for **registry scopes**, install locations,
 
 - [Overview](#overview)
 - [Scopes and locations](#scopes-and-locations)
+- [Integrity (hash / checksum)](#integrity-hash--checksum)
 - [install](#install)
 - [uninstall](#uninstall)
 - [Relationship to add and remove](#relationship-to-add-and-remove)
@@ -47,6 +48,27 @@ Do not hard-code absolute install paths in source; use package identities and th
 
 ---
 
+# Integrity (hash / checksum)
+
+Every packaged artifact carries a **content hash** (checksum). The package manager, compiler, and linker verify that hash before they proceed. Mismatch or missing expected hash → **abort** with an error. No install, no compile, no link of untrusted or corrupted bytes.
+
+| Stage | When | On failure |
+|-------|------|------------|
+| **Install** | Before writing into the user/root registry or project cache | Abort; nothing is registered |
+| **Compile** | Before `build` / `compile` consumes dependency source or artifacts | Abort; no codegen |
+| **Link** | Before the linker attaches `.o` / `.a` from a dependency | Abort; no executable |
+
+Expected hashes come from:
+
+1. The published package metadata ([Publishing](PUBLISHING.md))
+2. The project lock / dependency record written by `add` / `install`
+
+`add` and `install` always **check first, then install**. `build` / `compile` always **check first, then compile**. Executable link always **check first, then link**.
+
+Verification covers the artifact actually used (source tree archive, static library, or locked object). Tampered cache entries fail the same way as a bad download.
+
+---
+
 # install
 
 Install places a package into a registry so compilers and linkers can find it.
@@ -59,10 +81,11 @@ Install places a package into a registry so compilers and linkers can find it.
 
 Rules:
 
-1. Prefer an already-satisfying version in the target scope; otherwise fetch and materialize.
-2. Static library packages are **compiled** (`build` / `compile`) before their `.a` (or equivalent) artifact is registered. Source-only packages install without a prior local build.
-3. `install` does not add a dependency line to the project. Use `add` when the project declares the package.
-4. After install, imports and automatic linking can resolve the package according to [Linking](LINKING.md).
+1. **Check** the artifact checksum against the expected hash; abort on mismatch.
+2. Prefer an already-satisfying version in the target scope whose hash still matches; otherwise fetch, **check**, then materialize.
+3. Static library packages are **compiled** (`build` / `compile`) before their `.a` (or equivalent) artifact is registered. Source-only packages install without a prior local build (still checksum-checked).
+4. `install` does not add a dependency line to the project. Use `add` when the project declares the package.
+5. After install, imports and automatic linking resolve the package according to [Linking](LINKING.md), with the same hash checks at compile and link.
 
 ---
 

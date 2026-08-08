@@ -27,14 +27,13 @@ target("xlang")
     )
     add_includedirs("$(projectdir)/include")
     xlang_ctx.add_llvm()
-    -- Ensure bridge ABIs are built alongside the compiler; do not link them in.
     add_deps(
-        "xlang_net_bridge",
-        "xlang_panic_bridge",
-        "xlang_process_bridge",
-        "xlang_time_bridge",
-        "xlang_file_bridge",
-        "xlang_tls_bridge",
+        "filesystem",
+        "net",
+        "tls",
+        "process",
+        "time",
+        "panic",
         {inherit = false}
     )
     if is_plat("linux") then

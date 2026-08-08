@@ -13,7 +13,7 @@ void emitSyscallDefinitions(std::string& output, const std::unordered_set<std::s
 [[nodiscard]] bool syscallsNeedServerLink(const std::unordered_set<std::string>& syscalls);
 [[nodiscard]] bool syscallsNeedPanicLink(const std::unordered_set<std::string>& syscalls);
 [[nodiscard]] bool syscallsNeedProcessLink(const std::unordered_set<std::string>& syscalls);
-[[nodiscard]] bool syscallsNeedFileLink(const std::unordered_set<std::string>& syscalls);
+[[nodiscard]] bool syscallsNeedFilesystemLink(const std::unordered_set<std::string>& syscalls);
 [[nodiscard]] bool syscallsNeedTimeLink(const std::unordered_set<std::string>& syscalls);
 
 } // namespace xlang

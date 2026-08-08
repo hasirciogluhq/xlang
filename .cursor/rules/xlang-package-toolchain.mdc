@@ -1,0 +1,44 @@
+---
+description: Package manager, install scopes, integrity, publish immutability, build/compile
+alwaysApply: true
+---
+
+# xlang Package / Toolchain Rules
+
+Source of truth: `docs/PACKAGE_MANAGER.md`, `INSTALLING.md`, `PUBLISHING.md`, `LINKING.md`, `STATIC_LIBRARY.md`, `PROJECT_CONFIG.md`.
+
+## Language posture
+
+- xlang is extremely **low-level**. Optional **high-level APIs** (`net`/`http`, DB, …) are packages you import — not the language core.
+
+## CLI
+
+- Commands: `add`, `remove`, `install`, `uninstall`, `info`, `search`, `publish`, `build`, `run`, `parse`, `test`.
+- `build` ≡ `compile`. Output is object **or** executable (or static `.a`), like a normal compiler.
+- Default install scope is **user**. Root (`--root` / `--global`) is optional write; root packages are still searchable/usable.
+- Lookup order: project cache/lock → user registry → root registry.
+
+## Project shape
+
+- `xlang.conf` is project config. Multiple packages = different **entries** sharing one codebase (`cmd/`-style). Not separate products; never call this a monorepo.
+
+## Integrity
+
+```text
+check → install
+check → compile
+check → link
+```
+
+Hash/checksum mismatch or missing expected hash → **abort**. No install, no compile, no link of bad artifacts. `add`/`install` record verified hashes in the lock.
+
+## Publish immutability
+
+- Published `publisher/name@version` + **git hash** are permanent. No overwrite, no silent mutate, no normal undeploy/delete.
+- Delete only via special email/formal request process.
+- Same version republish is an error; ship fixes as a new version.
+- Package manager **server/backend** is future work (only that); client rules above still apply.
+
+## Prefer source
+
+- If both source and static lib exist → **source wins** by default (override in project config).

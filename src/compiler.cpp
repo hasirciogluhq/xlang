@@ -73,14 +73,6 @@ void copyFile(const std::filesystem::path& from, const std::filesystem::path& to
     }
 }
 
-void appendCppStdlibLink(std::ostringstream& cmd) {
-#if defined(__APPLE__)
-    cmd << " -lc++";
-#else
-    cmd << " -lstdc++";
-#endif
-}
-
 void appendLibraryIfFound(std::ostringstream& cmd, const std::string& name) {
     if (const auto path = findLibrary(name)) {
         cmd << " \"" << path->string() << "\"";
@@ -88,29 +80,28 @@ void appendLibraryIfFound(std::ostringstream& cmd, const std::string& name) {
 }
 
 void appendLinkFlags(std::ostringstream& cmd, bool needs_pthread, bool needs_ssl, bool needs_server,
-                     bool needs_panic, bool needs_process, bool needs_file, bool needs_time) {
+                     bool needs_panic, bool needs_process, bool needs_filesystem, bool needs_time) {
     if (needs_pthread) {
         cmd << " -pthread";
     }
     if (needs_ssl) {
-        appendLibraryIfFound(cmd, "xlang_tls_bridge");
+        appendLibraryIfFound(cmd, "tls");
         cmd << " -lssl -lcrypto";
     }
     if (needs_server) {
-        appendLibraryIfFound(cmd, "xlang_net_bridge");
+        appendLibraryIfFound(cmd, "net");
     }
     if (needs_panic) {
-        appendLibraryIfFound(cmd, "xlang_panic_bridge");
+        appendLibraryIfFound(cmd, "panic");
     }
     if (needs_process) {
-        appendLibraryIfFound(cmd, "xlang_process_bridge");
+        appendLibraryIfFound(cmd, "process");
     }
-    if (needs_file) {
-        appendLibraryIfFound(cmd, "xlang_file_bridge");
-        appendCppStdlibLink(cmd);
+    if (needs_filesystem) {
+        appendLibraryIfFound(cmd, "filesystem");
     }
     if (needs_time) {
-        appendLibraryIfFound(cmd, "xlang_time_bridge");
+        appendLibraryIfFound(cmd, "time");
     }
 }
 
@@ -132,7 +123,7 @@ void compileLlvmIrToObject(const std::string& clang, const std::filesystem::path
 
 void linkObjects(const std::string& clang, const std::vector<std::filesystem::path>& objects,
                  const std::filesystem::path& output, bool needs_pthread, bool needs_ssl,
-                 bool needs_server, bool needs_panic, bool needs_process, bool needs_file,
+                 bool needs_server, bool needs_panic, bool needs_process, bool needs_filesystem,
                  bool needs_time) {
     ensureParentDir(output);
 
@@ -143,7 +134,7 @@ void linkObjects(const std::string& clang, const std::vector<std::filesystem::pa
     }
     cmd << " -o \"" << output.string() << "\"";
     appendLinkFlags(cmd, needs_pthread, needs_ssl, needs_server, needs_panic, needs_process,
-                    needs_file, needs_time);
+                    needs_filesystem, needs_time);
 
     const int status = runCommand(cmd.str());
     if (status != 0) {
@@ -265,7 +256,7 @@ CompileResult compileXlangProgram(const Program& program, BuildContext& ctx) {
                 generated.needs_server_link || runtime.needs_server_link,
                 generated.needs_panic_link || runtime.needs_panic_link,
                 generated.needs_process_link || runtime.needs_process_link,
-                generated.needs_file_link || runtime.needs_file_link,
+                generated.needs_filesystem_link || runtime.needs_filesystem_link,
                 generated.needs_time_link || runtime.needs_time_link);
 
     if (!ctx.options.keep_ir) {
@@ -316,7 +307,7 @@ CompileResult compileObjectInput(BuildContext& ctx) {
     }
     linkObjects(ctx.options.clang, link_inputs, output, runtime.needs_thread_link,
                 runtime.needs_ssl_link, runtime.needs_server_link, runtime.needs_panic_link,
-                runtime.needs_process_link, runtime.needs_file_link, runtime.needs_time_link);
+                runtime.needs_process_link, runtime.needs_filesystem_link, runtime.needs_time_link);
     result.executable = output;
     return result;
 }
@@ -369,7 +360,7 @@ CompileResult compileLlvmIrInput(BuildContext& ctx) {
     }
     linkObjects(ctx.options.clang, link_inputs, output, runtime.needs_thread_link,
                 runtime.needs_ssl_link, runtime.needs_server_link, runtime.needs_panic_link,
-                runtime.needs_process_link, runtime.needs_file_link, runtime.needs_time_link);
+                runtime.needs_process_link, runtime.needs_filesystem_link, runtime.needs_time_link);
     result.executable = output;
     return result;
 }

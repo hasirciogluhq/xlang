@@ -8,6 +8,7 @@ This document is the source of truth for how the **linker** attaches objects, st
 
 - [Overview](#overview)
 - [Pipeline](#pipeline)
+- [Integrity before compile and link](#integrity-before-compile-and-link)
 - [What gets linked](#what-gets-linked)
 - [External symbols](#external-symbols)
 - [Static libraries](#static-libraries)
@@ -45,6 +46,19 @@ sources → parse/check → codegen → object (.o) / .a
 | Parse / check / codegen | Compiler (`parse`, `build` / `compile`, `test`) |
 | Registry / dependency materialization | Package manager (`add`, `install`, …) |
 | Symbol resolution and final image | Linker (executable `build` / `compile` and `run`) |
+
+---
+
+# Integrity before compile and link
+
+Dependency inputs are verified by content hash before they enter the pipeline ([Installing](INSTALLING.md#integrity-hash--checksum)):
+
+```text
+check → compile
+check → link
+```
+
+A failed checksum aborts the build. The compiler does not codegen from a bad artifact; the linker does not attach a bad `.o` / `.a`.
 
 ---
 

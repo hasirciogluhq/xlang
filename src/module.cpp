@@ -345,6 +345,21 @@ Program ModuleLoader::loadPackage(const std::filesystem::path& dir) {
         }
         files.push_back(entry.path());
     }
+    // Domain convention: also merge <dir>/<name>/<name>.xlang so runtime can
+    // live in folders while staying auto-linked (http/ and other nested
+    // packages are NOT pulled in — only the matching basename file).
+    for (const std::filesystem::directory_entry& entry :
+         std::filesystem::directory_iterator(absolute)) {
+        if (!entry.is_directory()) {
+            continue;
+        }
+        const std::filesystem::path main =
+            entry.path() / (entry.path().filename().string() + ".xlang");
+        std::error_code exists_ec;
+        if (std::filesystem::is_regular_file(main, exists_ec)) {
+            files.push_back(main);
+        }
+    }
     std::sort(files.begin(), files.end());
 
     for (const std::filesystem::path& file : files) {

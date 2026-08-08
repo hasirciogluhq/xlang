@@ -1,0 +1,19 @@
+---
+description: Ownership split and doc conflict resolution for package/compiler/linker
+globs: docs/**/*.md
+alwaysApply: false
+---
+
+# xlang Docs Structure
+
+| Doc | Owns |
+|-----|------|
+| `PACKAGE_MANAGER.md` | CLI names, flags, defaults |
+| `PROJECT_CONFIG.md` | `xlang.conf`, packages/entries, prefer_source/static |
+| `INSTALLING.md` | User/root registries, hash checks |
+| `PUBLISHING.md` | Artifacts, git hash, immutability, PM server future note |
+| `LINKING.md` | Link pipeline, search paths |
+| `STATIC_LIBRARY.md` | Static artifact semantics |
+| `LANGUAGE.md` | Language syntax/runtime |
+
+On conflict: CLI surface → package manager doc; registry/hash → installing; publish permanence → publishing; link order → linking; project shape → project config.

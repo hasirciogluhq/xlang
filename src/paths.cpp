@@ -88,15 +88,32 @@ std::vector<std::filesystem::path> defaultModuleSearchPaths(bool include_runtime
     std::vector<std::filesystem::path> paths = defaultLibSearchPaths();
     (void)include_runtime;
 
+    auto pushFrontendTree = [&](const std::filesystem::path& frontend) {
+        std::error_code ec;
+        if (!std::filesystem::is_directory(frontend, ec)) {
+            return;
+        }
+        pushUnique(paths, frontend);
+        // Domain folders (net/, filesystem/, …) are also roots so nested
+        // packages like net/http resolve as `http` globally.
+        for (const std::filesystem::directory_entry& entry :
+             std::filesystem::directory_iterator(frontend, ec)) {
+            if (ec) {
+                break;
+            }
+            if (entry.is_directory()) {
+                pushUnique(paths, entry.path());
+            }
+        }
+    };
+
     auto pushFrontend = [&](const std::filesystem::path& root) {
         if (root.empty()) {
             return;
         }
-        // In-tree: src/runtime/frontend
-        pushUnique(paths, root / "src" / "runtime" / "frontend");
-        // Installed / packaged layouts
-        pushUnique(paths, root / "runtime" / "frontend");
-        pushUnique(paths, root / "frontend");
+        pushFrontendTree(root / "src" / "runtime" / "frontend");
+        pushFrontendTree(root / "runtime" / "frontend");
+        pushFrontendTree(root / "frontend");
     };
 
     std::error_code ec;

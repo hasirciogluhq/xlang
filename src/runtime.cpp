@@ -77,7 +77,7 @@ RuntimeBundle fillBundleFromProgram(const Program& program) {
     bundle.needs_server_link = syscallsNeedServerLink(syscall_names);
     bundle.needs_panic_link = syscallsNeedPanicLink(syscall_names);
     bundle.needs_process_link = syscallsNeedProcessLink(syscall_names);
-    bundle.needs_file_link = syscallsNeedFileLink(syscall_names);
+    bundle.needs_filesystem_link = syscallsNeedFilesystemLink(syscall_names);
     bundle.needs_time_link = syscallsNeedTimeLink(syscall_names);
     return bundle;
 }

@@ -62,14 +62,37 @@ bool isKnownSyscall(std::string_view name) {
         "fd_read",
         "fd_write",
         "fd_dup2",
-        "file_open",
-        "file_close",
-        "file_read_path",
-        "file_write_path",
-        "file_exists",
-        "file_size",
-        "file_read_handle",
-        "file_write_handle",
+        "filesystem_errno",
+        "filesystem_open",
+        "filesystem_close",
+        "filesystem_read",
+        "filesystem_write",
+        "filesystem_seek",
+        "filesystem_tell",
+        "filesystem_flush",
+        "filesystem_truncate",
+        "filesystem_read_all",
+        "filesystem_write_all",
+        "filesystem_append_all",
+        "filesystem_exists",
+        "filesystem_is_file",
+        "filesystem_is_dir",
+        "filesystem_is_symlink",
+        "filesystem_size",
+        "filesystem_mtime",
+        "filesystem_mkdir",
+        "filesystem_mkdir_all",
+        "filesystem_remove",
+        "filesystem_rmdir",
+        "filesystem_rename",
+        "filesystem_copy",
+        "filesystem_chmod",
+        "filesystem_cwd",
+        "filesystem_chdir",
+        "filesystem_realpath",
+        "filesystem_read_dir",
+        "filesystem_read_handle",
+        "filesystem_write_handle",
         "net_tcp_connect",
         "net_send",
         "net_recv",
@@ -521,57 +544,39 @@ void emitProcessSupport(std::string& output) {
     output += "}\n\n";
 }
 
-void emitFileSupport(std::string& output) {
-    output += "; xlang file bridge (C++ fstream)\n";
-    output += "declare i64 @xlang_file_open(i8*, i32)\n";
-    output += "declare i32 @xlang_file_close(i64)\n";
-    output += "declare i8* @xlang_file_read_path(i8*)\n";
-    output += "declare i32 @xlang_file_write_path(i8*, i8*, i32)\n";
-    output += "declare i32 @xlang_file_exists(i8*)\n";
-    output += "declare i64 @xlang_file_size(i8*)\n";
-    output += "declare i8* @xlang_file_read_handle(i64)\n";
-    output += "declare i32 @xlang_file_write_handle(i64, i8*)\n\n";
-
-    output += "define weak i64 @file_open(i8* %path, i32 %mode) {\n";
-    output += "  %h = call i64 @xlang_file_open(i8* %path, i32 %mode)\n";
-    output += "  ret i64 %h\n";
-    output += "}\n\n";
-
-    output += "define weak i32 @file_close(i64 %handle) {\n";
-    output += "  %rc = call i32 @xlang_file_close(i64 %handle)\n";
-    output += "  ret i32 %rc\n";
-    output += "}\n\n";
-
-    output += "define weak i8* @file_read_path(i8* %path) {\n";
-    output += "  %buf = call i8* @xlang_file_read_path(i8* %path)\n";
-    output += "  ret i8* %buf\n";
-    output += "}\n\n";
-
-    output += "define weak i32 @file_write_path(i8* %path, i8* %data, i32 %append) {\n";
-    output += "  %rc = call i32 @xlang_file_write_path(i8* %path, i8* %data, i32 "
-              "%append)\n";
-    output += "  ret i32 %rc\n";
-    output += "}\n\n";
-
-    output += "define weak i32 @file_exists(i8* %path) {\n";
-    output += "  %ok = call i32 @xlang_file_exists(i8* %path)\n";
-    output += "  ret i32 %ok\n";
-    output += "}\n\n";
-
-    output += "define weak i64 @file_size(i8* %path) {\n";
-    output += "  %sz = call i64 @xlang_file_size(i8* %path)\n";
-    output += "  ret i64 %sz\n";
-    output += "}\n\n";
-
-    output += "define weak i8* @file_read_handle(i64 %handle) {\n";
-    output += "  %buf = call i8* @xlang_file_read_handle(i64 %handle)\n";
-    output += "  ret i8* %buf\n";
-    output += "}\n\n";
-
-    output += "define weak i32 @file_write_handle(i64 %handle, i8* %data) {\n";
-    output += "  %rc = call i32 @xlang_file_write_handle(i64 %handle, i8* %data)\n";
-    output += "  ret i32 %rc\n";
-    output += "}\n\n";
+void emitFilesystemSupport(std::string& output) {
+    output += "; filesystem bridge (C POSIX)\n";
+    output += "declare i32 @filesystem_errno()\n";
+    output += "declare i64 @filesystem_open(i8*, i32)\n";
+    output += "declare i32 @filesystem_close(i64)\n";
+    output += "declare i8* @filesystem_read(i64, i32)\n";
+    output += "declare i32 @filesystem_write(i64, i8*)\n";
+    output += "declare i64 @filesystem_seek(i64, i64, i32)\n";
+    output += "declare i64 @filesystem_tell(i64)\n";
+    output += "declare i32 @filesystem_flush(i64)\n";
+    output += "declare i32 @filesystem_truncate(i64, i64)\n";
+    output += "declare i8* @filesystem_read_all(i8*)\n";
+    output += "declare i32 @filesystem_write_all(i8*, i8*)\n";
+    output += "declare i32 @filesystem_append_all(i8*, i8*)\n";
+    output += "declare i32 @filesystem_exists(i8*)\n";
+    output += "declare i32 @filesystem_is_file(i8*)\n";
+    output += "declare i32 @filesystem_is_dir(i8*)\n";
+    output += "declare i32 @filesystem_is_symlink(i8*)\n";
+    output += "declare i64 @filesystem_size(i8*)\n";
+    output += "declare i64 @filesystem_mtime(i8*)\n";
+    output += "declare i32 @filesystem_mkdir(i8*)\n";
+    output += "declare i32 @filesystem_mkdir_all(i8*)\n";
+    output += "declare i32 @filesystem_remove(i8*)\n";
+    output += "declare i32 @filesystem_rmdir(i8*)\n";
+    output += "declare i32 @filesystem_rename(i8*, i8*)\n";
+    output += "declare i32 @filesystem_copy(i8*, i8*)\n";
+    output += "declare i32 @filesystem_chmod(i8*, i32)\n";
+    output += "declare i8* @filesystem_cwd()\n";
+    output += "declare i32 @filesystem_chdir(i8*)\n";
+    output += "declare i8* @filesystem_realpath(i8*)\n";
+    output += "declare i8* @filesystem_read_dir(i8*)\n";
+    output += "declare i8* @filesystem_read_handle(i64)\n";
+    output += "declare i32 @filesystem_write_handle(i64, i8*)\n\n";
 }
 
 } // namespace
@@ -710,13 +715,25 @@ void emitSyscallDefinitions(std::string& output, const std::unordered_set<std::s
         emitProcessSupport(output);
     }
 
-    const bool needs_file =
-        syscalls.contains("file_open") || syscalls.contains("file_close") ||
-        syscalls.contains("file_read_path") || syscalls.contains("file_write_path") ||
-        syscalls.contains("file_exists") || syscalls.contains("file_size") ||
-        syscalls.contains("file_read_handle") || syscalls.contains("file_write_handle");
-    if (needs_file) {
-        emitFileSupport(output);
+    const bool needs_filesystem =
+        syscalls.contains("filesystem_errno") || syscalls.contains("filesystem_open") ||
+        syscalls.contains("filesystem_close") || syscalls.contains("filesystem_read") ||
+        syscalls.contains("filesystem_write") || syscalls.contains("filesystem_seek") ||
+        syscalls.contains("filesystem_tell") || syscalls.contains("filesystem_flush") ||
+        syscalls.contains("filesystem_truncate") || syscalls.contains("filesystem_read_all") ||
+        syscalls.contains("filesystem_write_all") || syscalls.contains("filesystem_append_all") ||
+        syscalls.contains("filesystem_exists") || syscalls.contains("filesystem_is_file") ||
+        syscalls.contains("filesystem_is_dir") || syscalls.contains("filesystem_is_symlink") ||
+        syscalls.contains("filesystem_size") || syscalls.contains("filesystem_mtime") ||
+        syscalls.contains("filesystem_mkdir") || syscalls.contains("filesystem_mkdir_all") ||
+        syscalls.contains("filesystem_remove") || syscalls.contains("filesystem_rmdir") ||
+        syscalls.contains("filesystem_rename") || syscalls.contains("filesystem_copy") ||
+        syscalls.contains("filesystem_chmod") || syscalls.contains("filesystem_cwd") ||
+        syscalls.contains("filesystem_chdir") || syscalls.contains("filesystem_realpath") ||
+        syscalls.contains("filesystem_read_dir") || syscalls.contains("filesystem_read_handle") ||
+        syscalls.contains("filesystem_write_handle");
+    if (needs_filesystem) {
+        emitFilesystemSupport(output);
     }
 
     for (const std::string& name : syscalls) {
@@ -777,18 +794,41 @@ bool syscallsNeedTimeLink(const std::unordered_set<std::string>& syscalls) {
     return setContainsAny(syscalls, "time_format", "now_ms");
 }
 
-bool syscallsNeedFileLink(const std::unordered_set<std::string>& syscalls) {
-    static constexpr std::string_view kFileSyscalls[] = {
-        "file_open",
-        "file_close",
-        "file_read_path",
-        "file_write_path",
-        "file_exists",
-        "file_size",
-        "file_read_handle",
-        "file_write_handle",
+bool syscallsNeedFilesystemLink(const std::unordered_set<std::string>& syscalls) {
+    static constexpr std::string_view kFilesystemSyscalls[] = {
+        "filesystem_errno",
+        "filesystem_open",
+        "filesystem_close",
+        "filesystem_read",
+        "filesystem_write",
+        "filesystem_seek",
+        "filesystem_tell",
+        "filesystem_flush",
+        "filesystem_truncate",
+        "filesystem_read_all",
+        "filesystem_write_all",
+        "filesystem_append_all",
+        "filesystem_exists",
+        "filesystem_is_file",
+        "filesystem_is_dir",
+        "filesystem_is_symlink",
+        "filesystem_size",
+        "filesystem_mtime",
+        "filesystem_mkdir",
+        "filesystem_mkdir_all",
+        "filesystem_remove",
+        "filesystem_rmdir",
+        "filesystem_rename",
+        "filesystem_copy",
+        "filesystem_chmod",
+        "filesystem_cwd",
+        "filesystem_chdir",
+        "filesystem_realpath",
+        "filesystem_read_dir",
+        "filesystem_read_handle",
+        "filesystem_write_handle",
     };
-    for (const std::string_view name : kFileSyscalls) {
+    for (const std::string_view name : kFilesystemSyscalls) {
         if (setContains(syscalls, name)) {
             return true;
         }
