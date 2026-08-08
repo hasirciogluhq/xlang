@@ -18,7 +18,7 @@ todos:
     content: Runtime embed in compiler; VERSION files; GitHub fetch; docs+rule
     status: pending
   - id: cli-overrides
-    content: "--bridge= / --runtime= per-override; extract embed to temp/build"
+    content: "--runtime/--bridge/--no-*; build=executable|static|shared|object"
     status: pending
   - id: bootstrap-embed
     content: "Two-phase bootstrap - compile runtime with stage1 xlang then re-embed"
@@ -44,12 +44,28 @@ isProject: false
 
 - **Syscall / call paths (both required):**
   1. **Blind declare/call** — `declare external` / `declare syscall` → LLVM `declare`+`call`. No whitelist. `pthread_create`, `xl_thread_start`, user stubs… all the same: blind. Link/embed resolves symbols.
-  2. **CPU-native syscall** — user can reach the **kernel directly** without runtime/system ABI. Codegen emits the native opcode for the target arch (`x86_64` → `syscall`, `aarch64` → `svc`, …). Number + args come from the user; the compiler does not validate or memorize OS syscall tables. Works with `--no-runtime`.
+  2. **CPU-native syscall** — user can reach the **kernel directly** without runtime/system ABI. Codegen emits the native opcode for the target arch (`x86_64` → `syscall`, `aarch64` → `svc`, …). Number + args come from the user; the compiler does not validate or memorize OS syscall tables. Works with `--no-runtime` and/or `--no-bridge`.
 - **Bridge ABI naming (mandatory, xl helpers only):** `xl_<object>_<action>` — `xl_thread_start`, `xl_socket_connect`. Raw native syscalls and foreign symbols are not under this rule.
 - **Codegen:** `AST → CommonIrBuilder → LLVM Module → TargetMachine(triple) → object`. No separate PlatformIrBuilder (does not emit OS IR). Platform tooling lives in `src/host` + `platform/*`; OS APIs live in runtime bridges.
 - **OS work (bridges):** `bridge/linux|macosx|windows/`, with `thread.cpp` etc. and `#if` / arch defines for x86/x64. The same `xl_*` names are implemented on every OS.
 - **Compiler:** Blindly compiles `declare`/`export`/`external`; **no** known-syscall list and **no** bridge `needs_*_link`. Link keeps: (1) target OS **baseline syslib flags**, (2) runtime/bridge material (default from **embedded** payload, or user override).
-- **CLI overrides (main binary):** User may point at custom pieces individually, e.g. `--bridge=...` and/or `--runtime=...` (path to their own bridge and/or runtime). Defaults use what shipped inside the compiler; overrides replace only the named piece.
+- **CLI overrides (main binary):** `--runtime=...` / `--bridge=...` replace that piece only. **`--no-runtime`** (must be set at build time): do **not** link/embed the xlang runtime; **default bridges still link** unless also disabled. **`--no-bridge`**: do not link default bridges either (raw compile—user supplies symbols/objects). Defaults extract embedded payloads to temp/build when not overridden/disabled.
+- **Defaults for `xlang build name.xlang` (no extra flags):**
+  | Setting | Default |
+  |---------|---------|
+  | Build type | `executable` (linked program) |
+  | Runtime | **on** — extract/embed default runtime and link it |
+  | Bridge | **on** — extract/embed default bridges and link them |
+  | OS baseline syslibs | **on** for the target (e.g. `-pthread`) when linking an executable |
+  | `--runtime=` / `--bridge=` | unset — use embedded (or in-tree/dev) defaults |
+  | `--no-runtime` / `--no-bridge` | off — must be passed explicitly to strip that layer |
+  | `--build=` | `executable` if omitted |
+- **Output / build types:** Align with and extend [PACKAGE_MANAGER.md](docs/PACKAGE_MANAGER.md) / [LINKING.md](docs/LINKING.md):
+  - **`executable`** (or `binary`) — linked program (**default**).
+  - **`static`** — static library (`.a` / platform equivalent); first-class, full support.
+  - **`shared`** — shared library (`.so` / `.dylib` / `.dll`); **experimental / limited support** (document constraints; not required to match static quality).
+  - **`object`** — single object file (`.o` / platform equivalent); first-class type (not overloaded onto `lib`).
+  Prefer an explicit build-type flag (e.g. `--build=executable|static|shared|object`) rather than inferring only from output extension. Compiler stays compatible; user owns anything beyond the requested type.
 - **Release embed → extract → link:** At **compiler release** build, default bridge + runtime artifacts are **embedded into the `xlang` binary**. At user compile time the compiler **extracts** them into a temp or build directory, then links the user program against that material so it runs. Bridges (C) embed cleanly; **xlang frontend runtime needs a bootstrap dance** (below).
 - **Bootstrap (the comedy):** You cannot embed `.xlang` runtime until something can compile it. So release build is two-phase: (1) build a normal stage-1 `xlang` without the final runtime embed → use it to compile the xlang runtime to `.o`/archive; (2) **throw away / rebuild** `xlang` from scratch with that runtime object **embedded** ready for extract-and-link. Bridges skip the joke (plain C). Document this as mandatory release procedure, not optional folklore.
 - **Link policy:** Prefer **static embedding** into the **user program** (extracted runtime + `xl_*` bridges + user `.a`). **External/shared link only for OS syslibs**. Non-OS `.so`/`.dylib` not default.
@@ -115,7 +131,7 @@ Same table goes into docs + a cursor rule.
 - `x86_64`: `syscall` · `aarch64`: `svc #0` · other archs in the target table.
 - LLVM: inline asm or arch intrinsic — **CommonIrBuilder** takes the request; **Target/arch** picks the opcode (CPU trap, not OS-thread IR).
 - Number/ABI contract is the user’s (Linux x86_64 numbers ≠ Windows). Compiler does not memorize them.
-- Runtime embed is **optional** (`--no-runtime`); object + baseline syslibs if needed.
+- Runtime / bridge link is **optional** (`--no-runtime`, `--no-bridge`); object + baseline syslibs if needed for an exe.
 
 Removed old model: [`syscalls.cpp`](src/syscalls.cpp) whitelist + emitting pthread bodies in IR.
 
@@ -134,9 +150,10 @@ Docs/rule: “declare = blind call · native syscall = CPU trap → kernel · `x
 | windows | CRT / Win32 import libs in the platform table (`kernel32`, etc. as needed) |
 
 - Tables live under `platform/{linux,macosx,windows}`; the compiler only asks `host/resolve` for “this target’s syslib flag list” and appends it to the link line.
-- **Embed:** runtime package + bridge `.a` → **static** link into the executable. Shipped binary is as self-contained as possible; only OS syslibs remain external.
+- **Embed:** when runtime/bridges are enabled, static-link extracted defaults (or overrides) into the **executable** (and into **static** libs when that mode links members as documented). **shared** is experimental. **object** stops before final image link per [LINKING.md](docs/LINKING.md).
 - User may pass extra `.o`/`.a` (also static). Non-OS shared libs are not supported/encouraged by default.
-- `--no-runtime` remains an escape hatch; baseline OS flags for the target still apply.
+- **`--no-runtime`:** must be set at that build — runtime not linked; **bridges still link** unless `--no-bridge`. Baseline OS flags still apply when producing an executable.
+- **`--no-bridge`:** no default bridge link; raw compile — user supplies the rest.
 
 ---
 
@@ -144,7 +161,7 @@ Docs/rule: “declare = blind call · native syscall = CPU trap → kernel · `x
 
 - Build runtime (frontend + OS bridges) to static archives / objects.
 - Tarball root plaintext: `RUNTIME_VERSION`, `SUPPORTED_COMPILERS` (ranges/lines as already specified).
-- **User compile:** resolve runtime/bridge from (highest wins) `--runtime=` / `--bridge=` → else extract **embedded** defaults into temp/build dir → static link + OS baseline flags.
+- **User compile:** resolve from (highest wins) `--runtime=` / `--bridge=` → else extract **embedded** defaults (unless `--no-runtime` / `--no-bridge`) → link per output mode + OS baseline flags when linking an exe.
 - **Release embed bootstrap (required):**
   1. Stage-1: compile `xlang` **without** final xlang-runtime embed (bridges may already embed).
   2. Stage-1 `xlang` compiles `src/runtime/frontend` → runtime `.o` / archive.
@@ -226,7 +243,8 @@ Thread: `xl_thread_start` / `xl_thread_join` / … on every OS — no pthread in
 
 ## 9) CLI / xmake
 
-- Flags: `--target`, `--arch`, `--runtime=`, `--bridge=` (per-piece override), `--runtime-version`, `--no-runtime`, GitHub repo override.
+- Flags: `--target`, `--arch`, `--runtime=`, `--bridge=`, `--no-runtime`, `--no-bridge`, `--runtime-version`, `--build=executable|static|shared|object` (default `executable`; shared = experimental), GitHub repo override.
+- Default `xlang build foo.xlang`: executable + runtime + bridges + OS baseline syslibs.
 - xmake: development (in-tree) vs release (two-phase embed bootstrap + publish).
 - Targets: `xlang` (single CLI app) + runtime package target(s).
 
