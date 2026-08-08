@@ -9,10 +9,9 @@ compile_commands.json
 *.a
 *.so
 *.dylib
-xlang
-hello
-examples/hello
-examples/math
+build
+output
+out
 
 # Runtime build cache (user-program link of frontend)
 /src/runtime/frontend/runtime.o
