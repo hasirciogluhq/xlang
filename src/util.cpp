@@ -10,4 +10,4 @@ int runCommand(std::string_view command) {
     return std::system(owned.c_str());
 }
 
-}  // namespace xlang
+} // namespace xlang

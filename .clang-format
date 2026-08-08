@@ -1,12 +1,19 @@
 BasedOnStyle: LLVM
 
 ColumnLimit: 100
-IndentWidth: 2
+IndentWidth: 4
+ContinuationIndentWidth: 4
 
-BreakBeforeBraces: Allman
-
-AllowShortFunctionsOnASingleLine: false
-AllowShortIfStatementsOnASingleLine: false
+BreakBeforeBraces: Attach
+AllowShortFunctionsOnASingleLine: Inline
+AllowShortIfStatementsOnASingleLine: Never
 
 BinPackArguments: false
 BinPackParameters: false
+
+PointerAlignment: Left
+ReferenceAlignment: Left
+SpaceAfterTemplateKeyword: true
+
+IncludeBlocks: Preserve
+SortIncludes: CaseSensitive

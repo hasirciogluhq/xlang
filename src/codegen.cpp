@@ -3,8 +3,11 @@
 #include "xlang/error.h"
 #include "xlang/syscalls.h"
 
+#include <format>
 #include <sstream>
-#include <unordered_map>
+#include <string>
+#include <utility>
+#include <vector>
 
 namespace xlang {
 
@@ -92,7 +95,7 @@ std::optional<FunctionSignature> findMatchingFunctionImpl(
             continue;
         }
         if (match != nullptr) {
-            throw XlangError("ambiguous call to `" + name + "`");
+            throw XlangError(std::format("ambiguous call to `{}`", name));
         }
         match = &candidate;
     }
@@ -161,7 +164,7 @@ const Function* findUniqueFunctionByName(const Program& program, const std::stri
             continue;
         }
         if (match != nullptr) {
-            throw XlangError("ambiguous function reference `" + name + "`");
+            throw XlangError(std::format("ambiguous function reference `{}`", name));
         }
         match = &function;
     }
@@ -748,7 +751,7 @@ std::string Codegen::emitSpawnEntry(const Expr& arg,
     if (arg.kind == Expr::Kind::FunctionRef) {
         const Function* function = findUniqueFunctionByName(*program_, arg.name);
         if (function == nullptr) {
-            throw XlangError("unknown function `" + arg.name + "` for spawn");
+            throw XlangError(std::format("unknown function `{}` for spawn", arg.name));
         }
         if (!function->params.empty()) {
             throw XlangError("spawn requires a bound call such as spawn(worker(1, 2))");
@@ -775,7 +778,7 @@ std::string Codegen::emitSpawnEntry(const Expr& arg,
     const std::optional<FunctionSignature> resolved =
         resolveFunctionCall(arg.name, arg_types);
     if (!resolved) {
-        throw XlangError("no matching function for spawn target `" + arg.name + "`");
+        throw XlangError(std::format("no matching function for spawn target `{}`", arg.name));
     }
 
     const std::string inner_llvm =
@@ -951,7 +954,7 @@ std::size_t Codegen::typeSizeBytes(const Type& type) const {
     if (type.kind == TypeKind::Struct) {
         const StructDecl* decl = findStruct(type.struct_name);
         if (decl == nullptr) {
-            throw XlangError("unknown struct `" + type.struct_name + "`");
+            throw XlangError(std::format("unknown struct `{}`", type.struct_name));
         }
         return structSizeBytes(*decl);
     }
@@ -997,7 +1000,7 @@ std::string Codegen::stringLiteralGlobalName(const std::string& text) const {
 }
 
 void Codegen::ensureStringLiteralGlobal(const std::string& text) {
-    if (string_literal_globals_.find(text) != string_literal_globals_.end()) {
+    if (string_literal_globals_.contains(text)) {
         return;
     }
 
@@ -1158,7 +1161,7 @@ void Codegen::emitStructTypes(const Program& program) {
         emitted.insert(decl.name);
     }
     for (const StructDecl& decl : options_.runtime_structs) {
-        if (emitted.find(decl.name) != emitted.end()) {
+        if (emitted.contains(decl.name)) {
             continue;
         }
         emitOne(decl);
@@ -1185,7 +1188,7 @@ void Codegen::emitRuntimeDeclares(const Program& program) {
 bool Codegen::definesFunction(const Program& program, const std::string& name,
                               const std::vector<Type>& param_types) const {
     const std::string mangled = mangleFunctionName(name, param_types);
-    if (defined_functions_.find(mangled) != defined_functions_.end()) {
+    if (defined_functions_.contains(mangled)) {
         return true;
     }
     for (const Function& function : program.functions) {
@@ -1261,7 +1264,7 @@ std::optional<FunctionSignature> Codegen::resolveMethodCall(
             continue;
         }
         if (match != nullptr) {
-            throw XlangError("ambiguous method call `" + name + "`");
+            throw XlangError(std::format("ambiguous method call `{}`", name));
         }
         match = &candidate;
     }
@@ -1304,7 +1307,7 @@ std::size_t Codegen::structFieldIndex(const StructDecl& decl, const std::string&
             return i;
         }
     }
-    throw XlangError("unknown field `" + field + "` on struct `" + decl.name + "`");
+    throw XlangError(std::format("unknown field `{}` on struct `{}`", field, decl.name));
 }
 
 std::size_t Codegen::structSizeBytes(const StructDecl& decl) const {
@@ -1610,7 +1613,7 @@ bool Codegen::emitStatement(const Stmt& stmt, std::unordered_map<std::string, st
             }
             const StructDecl* decl = findStruct(obj_ty.struct_name);
             if (decl == nullptr) {
-                throw XlangError("unknown struct `" + obj_ty.struct_name + "`");
+                throw XlangError(std::format("unknown struct `{}`", obj_ty.struct_name));
             }
             const std::size_t index = structFieldIndex(*decl, stmt.field);
             const Type field_type = decl->fields[index].type;
@@ -1780,7 +1783,7 @@ std::pair<Type, std::string> Codegen::emitExpr(
         case Expr::Kind::FunctionRef: {
             const Function* function = findUniqueFunctionByName(*program_, expr.name);
             if (function == nullptr) {
-                throw XlangError("unknown function reference `" + expr.name + "`");
+                throw XlangError(std::format("unknown function reference `{}`", expr.name));
             }
             const std::string llvm_name =
                 mangleFunctionName(function->name, paramTypes(function->params));
@@ -1796,7 +1799,7 @@ std::pair<Type, std::string> Codegen::emitExpr(
             }
             const StructDecl* decl = findStruct(obj_ty.struct_name);
             if (decl == nullptr) {
-                throw XlangError("unknown struct `" + obj_ty.struct_name + "`");
+                throw XlangError(std::format("unknown struct `{}`", obj_ty.struct_name));
             }
             const std::size_t index = structFieldIndex(*decl, expr.name);
             const Type field_type = decl->fields[index].type;
@@ -1816,7 +1819,7 @@ std::pair<Type, std::string> Codegen::emitExpr(
             }
 
             if (expr.object->kind == Expr::Kind::Variable &&
-                import_aliases_.find(expr.object->name) != import_aliases_.end()) {
+                import_aliases_.contains(expr.object->name)) {
                 const std::string alias = import_aliases_.at(expr.object->name);
                 const std::string fn_name = importPrefixedName(alias, expr.name);
                 std::optional<FunctionSignature> resolved =
@@ -1825,7 +1828,7 @@ std::pair<Type, std::string> Codegen::emitExpr(
                     resolved = resolveFunctionCall(expr.name, arg_types);
                 }
                 if (!resolved) {
-                    throw XlangError("unknown import call `" + alias + "." + expr.name + "`");
+                    throw XlangError(std::format("unknown import call `{}.{}`", alias, expr.name));
                 }
                 const std::string llvm_name = mangleFunctionName(resolved->name,
                                                                   paramTypes(resolved->params),
@@ -1855,8 +1858,8 @@ std::pair<Type, std::string> Codegen::emitExpr(
             const std::optional<FunctionSignature> resolved =
                 resolveMethodCall(expr.name, recv_ty, arg_types);
             if (!resolved) {
-                throw XlangError("no matching method `" + expr.name + "` for `" +
-                                 typeToString(recv_ty) + "`");
+                throw XlangError(std::format("no matching method `{}` for `{}`", expr.name,
+                                             typeToString(recv_ty)));
             }
 
             std::ostringstream args;
@@ -1883,7 +1886,7 @@ std::pair<Type, std::string> Codegen::emitExpr(
         case Expr::Kind::New: {
             const StructDecl* decl = findStruct(expr.name);
             if (decl == nullptr) {
-                throw XlangError("unknown struct `" + expr.name + "`");
+                throw XlangError(std::format("unknown struct `{}`", expr.name));
             }
             const std::size_t size = structSizeBytes(*decl);
             const std::string raw = freshTmp();
@@ -1952,8 +1955,8 @@ std::pair<Type, std::string> Codegen::emitExpr(
                         structTypeName(target.struct_name));
                 return {target, ptr};
             }
-            throw XlangError("unsupported cast from `" + typeToString(from_ty) + "` to `" +
-                             typeToString(target) + "`");
+            throw XlangError(std::format("unsupported cast from `{}` to `{}`",
+                                         typeToString(from_ty), typeToString(target)));
         }
         case Expr::Kind::Index: {
             const auto [arr_ty, arr] = emitExpr(*expr.object, locals);
@@ -2329,16 +2332,15 @@ std::pair<Type, std::string> Codegen::emitExpr(
             const std::optional<FunctionSignature> resolved =
                 resolveFunctionCall(expr.name, arg_types);
             if (!resolved) {
-                std::ostringstream message;
-                message << "no matching overload for `" << expr.name << "(";
+                std::string args_list;
                 for (std::size_t i = 0; i < arg_types.size(); ++i) {
                     if (i > 0) {
-                        message << ", ";
+                        args_list += ", ";
                     }
-                    message << typeToString(arg_types[i]);
+                    args_list += typeToString(arg_types[i]);
                 }
-                message << ")`";
-                throw XlangError(message.str());
+                throw XlangError(
+                    std::format("no matching overload for `{}({})`", expr.name, args_list));
             }
 
             const std::string llvm_name = [&]() {
@@ -2407,10 +2409,10 @@ std::string Codegen::resolveVar(const std::string& name,
     if (it != locals.end()) {
         return it->second;
     }
-    if (globals_.find(name) != globals_.end()) {
+    if (globals_.contains(name)) {
         return globalName(name);
     }
-    throw XlangError("undefined variable `" + name + "`");
+    throw XlangError(std::format("undefined variable `{}`", name));
 }
 
 std::string Codegen::freshTmp() {

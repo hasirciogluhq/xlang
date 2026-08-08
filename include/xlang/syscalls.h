@@ -1,11 +1,12 @@
 #pragma once
 
 #include <string>
+#include <string_view>
 #include <unordered_set>
 
 namespace xlang {
 
-[[nodiscard]] bool isKnownSyscall(const std::string& name);
+[[nodiscard]] bool isKnownSyscall(std::string_view name);
 void emitSyscallDefinitions(std::string& output, const std::unordered_set<std::string>& syscalls);
 [[nodiscard]] bool syscallsNeedThreadLink(const std::unordered_set<std::string>& syscalls);
 [[nodiscard]] bool syscallsNeedSslLink(const std::unordered_set<std::string>& syscalls);
@@ -15,4 +16,4 @@ void emitSyscallDefinitions(std::string& output, const std::unordered_set<std::s
 [[nodiscard]] bool syscallsNeedFileLink(const std::unordered_set<std::string>& syscalls);
 [[nodiscard]] bool syscallsNeedTimeLink(const std::unordered_set<std::string>& syscalls);
 
-}  // namespace xlang
+} // namespace xlang

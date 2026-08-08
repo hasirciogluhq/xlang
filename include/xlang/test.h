@@ -5,6 +5,7 @@
 #include <filesystem>
 #include <optional>
 #include <string>
+#include <string_view>
 #include <vector>
 
 namespace xlang {
@@ -28,13 +29,14 @@ struct TestSuiteResult {
 
 [[nodiscard]] TestSuiteResult runTestSuite(const TestOptions& options);
 [[nodiscard]] bool isTestFileName(const std::filesystem::path& path);
-[[nodiscard]] bool isTestFunctionName(const std::string& name);
+[[nodiscard]] bool isTestFunctionName(std::string_view name);
 [[nodiscard]] std::vector<std::string> collectTestFunctions(const Program& program);
-[[nodiscard]] Program withTestHarness(const Program& program, const std::vector<std::string>& tests,
-                                      bool parallel, const std::string& file_label);
-[[nodiscard]] std::vector<std::filesystem::path> materializeModuleSearchPaths(
-    const std::filesystem::path& work_dir, bool skip_runtime);
+[[nodiscard]] Program withTestHarness(const Program& program,
+                                      const std::vector<std::string>& tests,
+                                      bool parallel,
+                                      const std::string& file_label);
+[[nodiscard]] std::vector<std::filesystem::path> defaultTestModuleSearchPaths(bool skip_runtime);
 
 void rejectTestFileForBuildRun(const std::filesystem::path& path);
 
-}  // namespace xlang
+} // namespace xlang

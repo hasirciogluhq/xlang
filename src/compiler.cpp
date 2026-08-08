@@ -1,28 +1,25 @@
 #include "xlang/compiler.h"
 
 #include "xlang/codegen.h"
-#include "xlang/embedded_runtime.h"
-#include "xlang/embedded_libs.h"
 #include "xlang/error.h"
 #include "xlang/input.h"
 #include "xlang/module.h"
 #include "xlang/parser.h"
+#include "xlang/paths.h"
 #include "xlang/runtime.h"
 #include "xlang/test.h"
 #include "xlang/util.h"
 
+#include <cstdio>
 #include <cstdlib>
+#include <format>
 #include <fstream>
 #include <random>
 #include <sstream>
-#include <cstdio>
-#include <unordered_map>
+#include <string>
 #include <sys/wait.h>
 #include <unistd.h>
-
-#ifndef XLANG_RUNTIME_DIR
-#define XLANG_RUNTIME_DIR ""
-#endif
+#include <unordered_map>
 
 namespace xlang {
 
@@ -72,34 +69,9 @@ void copyFile(const std::filesystem::path& from, const std::filesystem::path& to
     std::error_code ec;
     std::filesystem::copy_file(from, to, std::filesystem::copy_options::overwrite_existing, ec);
     if (ec) {
-        throw XlangError("failed to copy `" + from.string() + "` to `" + to.string() + "`");
+        throw XlangError(std::format("failed to copy `{}` to `{}`", from.string(), to.string()));
     }
 }
-
-#ifndef XLANG_TLS_BRIDGE
-#define XLANG_TLS_BRIDGE ""
-#endif
-#ifndef XLANG_OPENSSL_SSL
-#define XLANG_OPENSSL_SSL ""
-#endif
-#ifndef XLANG_OPENSSL_CRYPTO
-#define XLANG_OPENSSL_CRYPTO ""
-#endif
-#ifndef XLANG_NET_SERVER
-#define XLANG_NET_SERVER ""
-#endif
-#ifndef XLANG_PANIC_BRIDGE
-#define XLANG_PANIC_BRIDGE ""
-#endif
-#ifndef XLANG_PROCESS_BRIDGE
-#define XLANG_PROCESS_BRIDGE ""
-#endif
-#ifndef XLANG_FILE_BRIDGE
-#define XLANG_FILE_BRIDGE ""
-#endif
-#ifndef XLANG_TIME_BRIDGE
-#define XLANG_TIME_BRIDGE ""
-#endif
 
 void appendCppStdlibLink(std::ostringstream& cmd) {
 #if defined(__APPLE__)
@@ -109,47 +81,36 @@ void appendCppStdlibLink(std::ostringstream& cmd) {
 #endif
 }
 
+void appendLibraryIfFound(std::ostringstream& cmd, const std::string& name) {
+    if (const auto path = findLibrary(name)) {
+        cmd << " \"" << path->string() << "\"";
+    }
+}
+
 void appendLinkFlags(std::ostringstream& cmd, bool needs_pthread, bool needs_ssl, bool needs_server,
                      bool needs_panic, bool needs_process, bool needs_file, bool needs_time) {
     if (needs_pthread) {
         cmd << " -pthread";
     }
     if (needs_ssl) {
-        if (XLANG_TLS_BRIDGE[0] != '\0') {
-            cmd << " \"" << XLANG_TLS_BRIDGE << "\"";
-        }
-        if (XLANG_OPENSSL_SSL[0] != '\0') {
-            cmd << " \"" << XLANG_OPENSSL_SSL << "\"";
-        }
-        if (XLANG_OPENSSL_CRYPTO[0] != '\0') {
-            cmd << " \"" << XLANG_OPENSSL_CRYPTO << "\"";
-        }
+        appendLibraryIfFound(cmd, "xlang_tls_bridge");
+        cmd << " -lssl -lcrypto";
     }
     if (needs_server) {
-        if (XLANG_NET_SERVER[0] != '\0') {
-            cmd << " \"" << XLANG_NET_SERVER << "\"";
-        }
+        appendLibraryIfFound(cmd, "xlang_net_server");
     }
     if (needs_panic) {
-        if (XLANG_PANIC_BRIDGE[0] != '\0') {
-            cmd << " \"" << XLANG_PANIC_BRIDGE << "\"";
-        }
+        appendLibraryIfFound(cmd, "xlang_panic_bridge");
     }
     if (needs_process) {
-        if (XLANG_PROCESS_BRIDGE[0] != '\0') {
-            cmd << " \"" << XLANG_PROCESS_BRIDGE << "\"";
-        }
+        appendLibraryIfFound(cmd, "xlang_process_bridge");
     }
     if (needs_file) {
-        if (XLANG_FILE_BRIDGE[0] != '\0') {
-            cmd << " \"" << XLANG_FILE_BRIDGE << "\"";
-        }
+        appendLibraryIfFound(cmd, "xlang_file_bridge");
         appendCppStdlibLink(cmd);
     }
     if (needs_time) {
-        if (XLANG_TIME_BRIDGE[0] != '\0') {
-            cmd << " \"" << XLANG_TIME_BRIDGE << "\"";
-        }
+        appendLibraryIfFound(cmd, "xlang_time_bridge");
     }
 }
 
@@ -256,7 +217,7 @@ CompileResult compileXlangProgram(const Program& program, BuildContext& ctx) {
     {
         std::ofstream out(ir_path);
         if (!out) {
-            throw XlangError("failed to write IR: " + ir_path.string());
+            throw XlangError(std::format("failed to write IR: {}", ir_path.string()));
         }
         out << generated.ir;
     }
@@ -514,29 +475,8 @@ CompileResult compileFile(const CompileOptions& options) {
         CompileResult result;
         switch (ctx.input_kind) {
             case InputKind::Xlang: {
-                std::vector<std::filesystem::path> module_search_paths;
-                if (!ctx.options.skip_runtime) {
-                    const std::filesystem::path embedded_libs =
-                        ctx.work_dir / "embedded-libs";
-                    materializeEmbeddedLibs(embedded_libs);
-                    module_search_paths.push_back(embedded_libs);
-                    const std::filesystem::path embedded_dir =
-                        ctx.work_dir / "embedded-runtime";
-                    materializeEmbeddedRuntime(embedded_dir);
-                    module_search_paths.push_back(embedded_dir);
-                }
-#ifndef XLANG_RUNTIME_DIR
-#define XLANG_RUNTIME_DIR ""
-#endif
-                if (XLANG_RUNTIME_DIR[0] != '\0') {
-                    module_search_paths.emplace_back(XLANG_RUNTIME_DIR);
-                }
-#ifndef XLANG_LIBS_DIR
-#define XLANG_LIBS_DIR ""
-#endif
-                if (XLANG_LIBS_DIR[0] != '\0') {
-                    module_search_paths.emplace_back(XLANG_LIBS_DIR);
-                }
+                const std::vector<std::filesystem::path> module_search_paths =
+                    defaultModuleSearchPaths(!ctx.options.skip_runtime);
                 const Program program =
                     loadProgram(ctx.options.input, module_search_paths);
                 result = compileXlangProgram(program, ctx);

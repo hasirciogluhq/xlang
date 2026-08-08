@@ -1,6 +1,12 @@
 #include "xlang/syscalls.h"
 
 #include "xlang/error.h"
+#include "xlang/util.h"
+
+#include <format>
+#include <string>
+#include <string_view>
+#include <unordered_set>
 
 #if defined(__linux__)
 constexpr int kScNprocessorsOnln = 84;
@@ -10,529 +16,562 @@ constexpr int kScNprocessorsOnln = 58;
 constexpr int kScNprocessorsOnln = 58;
 #endif
 
-namespace xlang
-{
+namespace xlang {
 
-bool isKnownSyscall(const std::string &name)
-{
-  return name == "start_thread" || name == "sleep_ms" || name == "random_range" ||
-         name == "print_done" || name == "wait_all_jobs" || name == "cpu_count" ||
-         name == "mutex_init" || name == "mutex_lock" || name == "mutex_trylock" ||
-         name == "mutex_unlock" || name == "cond_init" || name == "cond_wait" ||
-         name == "cond_signal" || name == "cond_broadcast" || name == "now_ms" ||
-         name == "atomic_alloc" || name == "atomic_load" || name == "atomic_store" ||
-         name == "atomic_fetch_add" || name == "atomic_compare_exchange" || name == "panic" ||
-         name == "recover" || name == "try_invoke0" || name == "env_get" || name == "run_capture" ||
-         name == "capture_stdout" || name == "env_set" || name == "cwd" || name == "chdir" ||
-         name == "time_format" || name == "proc_fork" || name == "proc_exec" ||
-         name == "proc_wait" || name == "proc_exit" || name == "proc_kill" ||
-         name == "pipe_create" || name == "pipe_read_fd" || name == "pipe_write_fd" ||
-         name == "fd_close" || name == "fd_read" || name == "fd_write" || name == "fd_dup2" ||
-         name == "file_open" || name == "file_close" || name == "file_read_path" ||
-         name == "file_write_path" || name == "file_exists" || name == "file_size" ||
-         name == "file_read_handle" || name == "file_write_handle" || name == "net_tcp_connect" ||
-         name == "net_send" || name == "net_recv" || name == "net_close" ||
-         name == "net_tcp_listen" || name == "net_tcp_accept" || name == "net_tls_connect" ||
-         name == "net_tls_send" || name == "net_tls_recv" || name == "net_tls_close";
+bool isKnownSyscall(std::string_view name) {
+    static constexpr std::string_view kKnown[] = {
+        "start_thread",
+        "sleep_ms",
+        "random_range",
+        "print_done",
+        "wait_all_jobs",
+        "cpu_count",
+        "mutex_init",
+        "mutex_lock",
+        "mutex_trylock",
+        "mutex_unlock",
+        "cond_init",
+        "cond_wait",
+        "cond_signal",
+        "cond_broadcast",
+        "now_ms",
+        "atomic_alloc",
+        "atomic_load",
+        "atomic_store",
+        "atomic_fetch_add",
+        "atomic_compare_exchange",
+        "panic",
+        "recover",
+        "try_invoke0",
+        "env_get",
+        "run_capture",
+        "capture_stdout",
+        "env_set",
+        "cwd",
+        "chdir",
+        "time_format",
+        "proc_fork",
+        "proc_exec",
+        "proc_wait",
+        "proc_exit",
+        "proc_kill",
+        "pipe_create",
+        "pipe_read_fd",
+        "pipe_write_fd",
+        "fd_close",
+        "fd_read",
+        "fd_write",
+        "fd_dup2",
+        "file_open",
+        "file_close",
+        "file_read_path",
+        "file_write_path",
+        "file_exists",
+        "file_size",
+        "file_read_handle",
+        "file_write_handle",
+        "net_tcp_connect",
+        "net_send",
+        "net_recv",
+        "net_close",
+        "net_tcp_listen",
+        "net_tcp_accept",
+        "net_tls_connect",
+        "net_tls_send",
+        "net_tls_recv",
+        "net_tls_close",
+    };
+    for (const std::string_view known : kKnown) {
+        if (known == name) {
+            return true;
+        }
+    }
+    return false;
 }
 
-namespace
-{
+namespace {
 
-void emitThreadSupport(std::string &output)
-{
-  output += "; xlang thread pool (pthread backend)\n";
-  output += "declare i32 @pthread_create(i64*, i8*, i8* (i8*)*, i8*)\n";
-  output += "declare i32 @pthread_join(i64, i8**)\n";
-  output += "%__xlang_thread_ctx = type { i32 (i32)*, i32 }\n";
-  output += "@__xlang_thread_slots = weak global [64 x i64] zeroinitializer\n";
-  output += "@__xlang_thread_len = weak global i32 0\n";
-  output += "define internal i8* @__xlang_thread_bootstrap(i8* %ctx) {\n";
-  output += "  %pair = bitcast i8* %ctx to %__xlang_thread_ctx*\n";
-  output += "  %fn_ptr = getelementptr %__xlang_thread_ctx, "
-            "%__xlang_thread_ctx* %pair, i32 0, i32 0\n";
-  output += "  %fn = load i32 (i32)*, i32 (i32)** %fn_ptr\n";
-  output += "  %arg_ptr = getelementptr %__xlang_thread_ctx, "
-            "%__xlang_thread_ctx* %pair, i32 0, i32 1\n";
-  output += "  %arg = load i32, i32* %arg_ptr\n";
-  output += "  call i32 %fn(i32 %arg)\n";
-  output += "  call void @free(i8* %ctx)\n";
-  output += "  ret i8* null\n";
-  output += "}\n\n";
+void emitThreadSupport(std::string& output) {
+    output += "; xlang thread pool (pthread backend)\n";
+    output += "declare i32 @pthread_create(i64*, i8*, i8* (i8*)*, i8*)\n";
+    output += "declare i32 @pthread_join(i64, i8**)\n";
+    output += "%__xlang_thread_ctx = type { i32 (i32)*, i32 }\n";
+    output += "@__xlang_thread_slots = weak global [64 x i64] zeroinitializer\n";
+    output += "@__xlang_thread_len = weak global i32 0\n";
+    output += "define internal i8* @__xlang_thread_bootstrap(i8* %ctx) {\n";
+    output += "  %pair = bitcast i8* %ctx to %__xlang_thread_ctx*\n";
+    output += "  %fn_ptr = getelementptr %__xlang_thread_ctx, "
+              "%__xlang_thread_ctx* %pair, i32 0, i32 0\n";
+    output += "  %fn = load i32 (i32)*, i32 (i32)** %fn_ptr\n";
+    output += "  %arg_ptr = getelementptr %__xlang_thread_ctx, "
+              "%__xlang_thread_ctx* %pair, i32 0, i32 1\n";
+    output += "  %arg = load i32, i32* %arg_ptr\n";
+    output += "  call i32 %fn(i32 %arg)\n";
+    output += "  call void @free(i8* %ctx)\n";
+    output += "  ret i8* null\n";
+    output += "}\n\n";
 }
 
-void emitStartThread(std::string &output)
-{
-  output += "; xlang syscall: start_thread\n";
-  output += "define weak i32 @start_thread(i64 %entry_ptr, i32 %arg) {\n";
-  output += "entry:\n";
-  output += "  %fn = inttoptr i64 %entry_ptr to i32 (i32)*\n";
-  output += "  %ctx = call i8* @malloc(i64 16)\n";
-  output += "  %pair = bitcast i8* %ctx to %__xlang_thread_ctx*\n";
-  output += "  %fn_ptr = getelementptr %__xlang_thread_ctx, "
-            "%__xlang_thread_ctx* %pair, i32 0, i32 0\n";
-  output += "  store i32 (i32)* %fn, i32 (i32)** %fn_ptr\n";
-  output += "  %arg_ptr = getelementptr %__xlang_thread_ctx, "
-            "%__xlang_thread_ctx* %pair, i32 0, i32 1\n";
-  output += "  store i32 %arg, i32* %arg_ptr\n";
-  output += "  %tid = alloca i64, align 8\n";
-  output += "  %rc = call i32 @pthread_create(i64* %tid, i8* null, "
-            "i8* (i8*)* @__xlang_thread_bootstrap, i8* %ctx)\n";
-  output += "  %len = load i32, i32* @__xlang_thread_len\n";
-  output += "  %slot = getelementptr [64 x i64], [64 x i64]* "
-            "@__xlang_thread_slots, i32 0, i32 %len\n";
-  output += "  %tid_val = load i64, i64* %tid\n";
-  output += "  store i64 %tid_val, i64* %slot\n";
-  output += "  %next = add i32 %len, 1\n";
-  output += "  store i32 %next, i32* @__xlang_thread_len\n";
-  output += "  ret i32 %rc\n";
-  output += "}\n\n";
+void emitStartThread(std::string& output) {
+    output += "; xlang syscall: start_thread\n";
+    output += "define weak i32 @start_thread(i64 %entry_ptr, i32 %arg) {\n";
+    output += "entry:\n";
+    output += "  %fn = inttoptr i64 %entry_ptr to i32 (i32)*\n";
+    output += "  %ctx = call i8* @malloc(i64 16)\n";
+    output += "  %pair = bitcast i8* %ctx to %__xlang_thread_ctx*\n";
+    output += "  %fn_ptr = getelementptr %__xlang_thread_ctx, "
+              "%__xlang_thread_ctx* %pair, i32 0, i32 0\n";
+    output += "  store i32 (i32)* %fn, i32 (i32)** %fn_ptr\n";
+    output += "  %arg_ptr = getelementptr %__xlang_thread_ctx, "
+              "%__xlang_thread_ctx* %pair, i32 0, i32 1\n";
+    output += "  store i32 %arg, i32* %arg_ptr\n";
+    output += "  %tid = alloca i64, align 8\n";
+    output += "  %rc = call i32 @pthread_create(i64* %tid, i8* null, "
+              "i8* (i8*)* @__xlang_thread_bootstrap, i8* %ctx)\n";
+    output += "  %len = load i32, i32* @__xlang_thread_len\n";
+    output += "  %slot = getelementptr [64 x i64], [64 x i64]* "
+              "@__xlang_thread_slots, i32 0, i32 %len\n";
+    output += "  %tid_val = load i64, i64* %tid\n";
+    output += "  store i64 %tid_val, i64* %slot\n";
+    output += "  %next = add i32 %len, 1\n";
+    output += "  store i32 %next, i32* @__xlang_thread_len\n";
+    output += "  ret i32 %rc\n";
+    output += "}\n\n";
 }
 
-void emitWaitAllJobs(std::string &output)
-{
-  output += "; xlang syscall: wait_all_jobs\n";
-  output += "define weak i32 @wait_all_jobs() {\n";
-  output += "entry:\n";
-  output += "  %len = load i32, i32* @__xlang_thread_len\n";
-  output += "  br label %loop\n";
-  output += "loop:\n";
-  output += "  %i = phi i32 [ 0, %entry ], [ %next, %body ]\n";
-  output += "  %done = icmp uge i32 %i, %len\n";
-  output += "  br i1 %done, label %exit, label %body\n";
-  output += "body:\n";
-  output += "  %slot = getelementptr [64 x i64], [64 x i64]* "
-            "@__xlang_thread_slots, i32 0, i32 %i\n";
-  output += "  %tid = load i64, i64* %slot\n";
-  output += "  call i32 @pthread_join(i64 %tid, i8** null)\n";
-  output += "  %next = add i32 %i, 1\n";
-  output += "  br label %loop\n";
-  output += "exit:\n";
-  output += "  store i32 0, i32* @__xlang_thread_len\n";
-  output += "  ret i32 0\n";
-  output += "}\n\n";
+void emitWaitAllJobs(std::string& output) {
+    output += "; xlang syscall: wait_all_jobs\n";
+    output += "define weak i32 @wait_all_jobs() {\n";
+    output += "entry:\n";
+    output += "  %len = load i32, i32* @__xlang_thread_len\n";
+    output += "  br label %loop\n";
+    output += "loop:\n";
+    output += "  %i = phi i32 [ 0, %entry ], [ %next, %body ]\n";
+    output += "  %done = icmp uge i32 %i, %len\n";
+    output += "  br i1 %done, label %exit, label %body\n";
+    output += "body:\n";
+    output += "  %slot = getelementptr [64 x i64], [64 x i64]* "
+              "@__xlang_thread_slots, i32 0, i32 %i\n";
+    output += "  %tid = load i64, i64* %slot\n";
+    output += "  call i32 @pthread_join(i64 %tid, i8** null)\n";
+    output += "  %next = add i32 %i, 1\n";
+    output += "  br label %loop\n";
+    output += "exit:\n";
+    output += "  store i32 0, i32* @__xlang_thread_len\n";
+    output += "  ret i32 0\n";
+    output += "}\n\n";
 }
 
-void emitSyncSupport(std::string &output)
-{
-  output += "; xlang OS bridge syscalls (cpu + pthread sync)\n";
-  output += "declare i64 @sysconf(i64)\n";
-  output += "declare i32 @pthread_mutex_init(i8*, i8*)\n";
-  output += "declare i32 @pthread_mutex_lock(i8*)\n";
-  output += "declare i32 @pthread_mutex_trylock(i8*)\n";
-  output += "declare i32 @pthread_mutex_unlock(i8*)\n";
-  output += "declare i32 @pthread_cond_init(i8*, i8*)\n";
-  output += "declare i32 @pthread_cond_wait(i8*, i8*)\n";
-  output += "declare i32 @pthread_cond_signal(i8*)\n";
-  output += "declare i32 @pthread_cond_broadcast(i8*)\n\n";
+void emitSyncSupport(std::string& output) {
+    output += "; xlang OS bridge syscalls (cpu + pthread sync)\n";
+    output += "declare i64 @sysconf(i64)\n";
+    output += "declare i32 @pthread_mutex_init(i8*, i8*)\n";
+    output += "declare i32 @pthread_mutex_lock(i8*)\n";
+    output += "declare i32 @pthread_mutex_trylock(i8*)\n";
+    output += "declare i32 @pthread_mutex_unlock(i8*)\n";
+    output += "declare i32 @pthread_cond_init(i8*, i8*)\n";
+    output += "declare i32 @pthread_cond_wait(i8*, i8*)\n";
+    output += "declare i32 @pthread_cond_signal(i8*)\n";
+    output += "declare i32 @pthread_cond_broadcast(i8*)\n\n";
 
-  output += "define weak i32 @cpu_count() {\n";
-  output += "  %cpus = call i64 @sysconf(i64 " + std::to_string(kScNprocessorsOnln) + ")\n";
-  output += "  %cpus32 = trunc i64 %cpus to i32\n";
-  output += "  %bad = icmp slt i32 %cpus32, 1\n";
-  output += "  %result = select i1 %bad, i32 1, i32 %cpus32\n";
-  output += "  ret i32 %result\n";
-  output += "}\n\n";
+    output += "define weak i32 @cpu_count() {\n";
+    output += "  %cpus = call i64 @sysconf(i64 " + std::to_string(kScNprocessorsOnln) + ")\n";
+    output += "  %cpus32 = trunc i64 %cpus to i32\n";
+    output += "  %bad = icmp slt i32 %cpus32, 1\n";
+    output += "  %result = select i1 %bad, i32 1, i32 %cpus32\n";
+    output += "  ret i32 %result\n";
+    output += "}\n\n";
 
-  output += "define weak i64 @mutex_init() {\n";
-  output += "  %m = call i8* @malloc(i64 64)\n";
-  output += "  call i32 @pthread_mutex_init(i8* %m, i8* null)\n";
-  output += "  %h = ptrtoint i8* %m to i64\n";
-  output += "  ret i64 %h\n";
-  output += "}\n\n";
+    output += "define weak i64 @mutex_init() {\n";
+    output += "  %m = call i8* @malloc(i64 64)\n";
+    output += "  call i32 @pthread_mutex_init(i8* %m, i8* null)\n";
+    output += "  %h = ptrtoint i8* %m to i64\n";
+    output += "  ret i64 %h\n";
+    output += "}\n\n";
 
-  output += "define weak i32 @mutex_lock(i64 %handle) {\n";
-  output += "  %m = inttoptr i64 %handle to i8*\n";
-  output += "  call i32 @pthread_mutex_lock(i8* %m)\n";
-  output += "  ret i32 0\n";
-  output += "}\n\n";
+    output += "define weak i32 @mutex_lock(i64 %handle) {\n";
+    output += "  %m = inttoptr i64 %handle to i8*\n";
+    output += "  call i32 @pthread_mutex_lock(i8* %m)\n";
+    output += "  ret i32 0\n";
+    output += "}\n\n";
 
-  output += "define weak i32 @mutex_unlock(i64 %handle) {\n";
-  output += "  %m = inttoptr i64 %handle to i8*\n";
-  output += "  call i32 @pthread_mutex_unlock(i8* %m)\n";
-  output += "  ret i32 0\n";
-  output += "}\n\n";
+    output += "define weak i32 @mutex_unlock(i64 %handle) {\n";
+    output += "  %m = inttoptr i64 %handle to i8*\n";
+    output += "  call i32 @pthread_mutex_unlock(i8* %m)\n";
+    output += "  ret i32 0\n";
+    output += "}\n\n";
 
-  output += "define weak i32 @mutex_trylock(i64 %handle) {\n";
-  output += "  %m = inttoptr i64 %handle to i8*\n";
-  output += "  %rc = call i32 @pthread_mutex_trylock(i8* %m)\n";
-  output += "  %ok = icmp eq i32 %rc, 0\n";
-  output += "  %ret = select i1 %ok, i32 1, i32 0\n";
-  output += "  ret i32 %ret\n";
-  output += "}\n\n";
+    output += "define weak i32 @mutex_trylock(i64 %handle) {\n";
+    output += "  %m = inttoptr i64 %handle to i8*\n";
+    output += "  %rc = call i32 @pthread_mutex_trylock(i8* %m)\n";
+    output += "  %ok = icmp eq i32 %rc, 0\n";
+    output += "  %ret = select i1 %ok, i32 1, i32 0\n";
+    output += "  ret i32 %ret\n";
+    output += "}\n\n";
 
-  output += "define weak i64 @cond_init() {\n";
-  output += "  %c = call i8* @malloc(i64 64)\n";
-  output += "  call i32 @pthread_cond_init(i8* %c, i8* null)\n";
-  output += "  %h = ptrtoint i8* %c to i64\n";
-  output += "  ret i64 %h\n";
-  output += "}\n\n";
+    output += "define weak i64 @cond_init() {\n";
+    output += "  %c = call i8* @malloc(i64 64)\n";
+    output += "  call i32 @pthread_cond_init(i8* %c, i8* null)\n";
+    output += "  %h = ptrtoint i8* %c to i64\n";
+    output += "  ret i64 %h\n";
+    output += "}\n\n";
 
-  output += "define weak i32 @cond_wait(i64 %cond_handle, i64 %mutex_handle) {\n";
-  output += "  %c = inttoptr i64 %cond_handle to i8*\n";
-  output += "  %m = inttoptr i64 %mutex_handle to i8*\n";
-  output += "  call i32 @pthread_cond_wait(i8* %c, i8* %m)\n";
-  output += "  ret i32 0\n";
-  output += "}\n\n";
+    output += "define weak i32 @cond_wait(i64 %cond_handle, i64 %mutex_handle) {\n";
+    output += "  %c = inttoptr i64 %cond_handle to i8*\n";
+    output += "  %m = inttoptr i64 %mutex_handle to i8*\n";
+    output += "  call i32 @pthread_cond_wait(i8* %c, i8* %m)\n";
+    output += "  ret i32 0\n";
+    output += "}\n\n";
 
-  output += "define weak i32 @cond_signal(i64 %cond_handle) {\n";
-  output += "  %c = inttoptr i64 %cond_handle to i8*\n";
-  output += "  call i32 @pthread_cond_signal(i8* %c)\n";
-  output += "  ret i32 0\n";
-  output += "}\n\n";
+    output += "define weak i32 @cond_signal(i64 %cond_handle) {\n";
+    output += "  %c = inttoptr i64 %cond_handle to i8*\n";
+    output += "  call i32 @pthread_cond_signal(i8* %c)\n";
+    output += "  ret i32 0\n";
+    output += "}\n\n";
 
-  output += "define weak i32 @cond_broadcast(i64 %cond_handle) {\n";
-  output += "  %c = inttoptr i64 %cond_handle to i8*\n";
-  output += "  call i32 @pthread_cond_broadcast(i8* %c)\n";
-  output += "  ret i32 0\n";
-  output += "}\n\n";
+    output += "define weak i32 @cond_broadcast(i64 %cond_handle) {\n";
+    output += "  %c = inttoptr i64 %cond_handle to i8*\n";
+    output += "  call i32 @pthread_cond_broadcast(i8* %c)\n";
+    output += "  ret i32 0\n";
+    output += "}\n\n";
 }
 
-void emitTimeFormatSupport(std::string &output)
-{
-  output += "; xlang time_format bridge\n";
-  output += "declare i8* @xlang_time_format(i64)\n";
-  output += "define weak i8* @time_format(i64 %ms) {\n";
-  output += "  %ts = call i8* @xlang_time_format(i64 %ms)\n";
-  output += "  ret i8* %ts\n";
-  output += "}\n\n";
+void emitTimeFormatSupport(std::string& output) {
+    output += "; xlang time_format bridge\n";
+    output += "declare i8* @xlang_time_format(i64)\n";
+    output += "define weak i8* @time_format(i64 %ms) {\n";
+    output += "  %ts = call i8* @xlang_time_format(i64 %ms)\n";
+    output += "  ret i8* %ts\n";
+    output += "}\n\n";
 }
 
-void emitNowMsSupport(std::string &output)
-{
-  output += "; xlang now_ms bridge\n";
-  output += "declare i64 @xlang_now_ms()\n";
-  output += "define weak i64 @now_ms() {\n";
-  output += "  %ms = call i64 @xlang_now_ms()\n";
-  output += "  ret i64 %ms\n";
-  output += "}\n\n";
+void emitNowMsSupport(std::string& output) {
+    output += "; xlang now_ms bridge\n";
+    output += "declare i64 @xlang_now_ms()\n";
+    output += "define weak i64 @now_ms() {\n";
+    output += "  %ms = call i64 @xlang_now_ms()\n";
+    output += "  ret i64 %ms\n";
+    output += "}\n\n";
 }
 
-void emitAtomicSupport(std::string &output)
-{
-  output += "; xlang atomic syscalls (LLVM atomicrmw / cmpxchg)\n";
-  output += "define weak i64 @atomic_alloc() {\n";
-  output += "  %p = call i8* @malloc(i64 8)\n";
-  output += "  %q = bitcast i8* %p to i64*\n";
-  output += "  store atomic i64 0, i64* %q monotonic, align 8\n";
-  output += "  %h = ptrtoint i8* %p to i64\n";
-  output += "  ret i64 %h\n";
-  output += "}\n\n";
+void emitAtomicSupport(std::string& output) {
+    output += "; xlang atomic syscalls (LLVM atomicrmw / cmpxchg)\n";
+    output += "define weak i64 @atomic_alloc() {\n";
+    output += "  %p = call i8* @malloc(i64 8)\n";
+    output += "  %q = bitcast i8* %p to i64*\n";
+    output += "  store atomic i64 0, i64* %q monotonic, align 8\n";
+    output += "  %h = ptrtoint i8* %p to i64\n";
+    output += "  ret i64 %h\n";
+    output += "}\n\n";
 
-  output += "define weak i64 @atomic_load(i64 %handle) {\n";
-  output += "  %p = inttoptr i64 %handle to i64*\n";
-  output += "  %v = load atomic i64, i64* %p monotonic, align 8\n";
-  output += "  ret i64 %v\n";
-  output += "}\n\n";
+    output += "define weak i64 @atomic_load(i64 %handle) {\n";
+    output += "  %p = inttoptr i64 %handle to i64*\n";
+    output += "  %v = load atomic i64, i64* %p monotonic, align 8\n";
+    output += "  ret i64 %v\n";
+    output += "}\n\n";
 
-  output += "define weak i32 @atomic_store(i64 %handle, i64 %val) {\n";
-  output += "  %p = inttoptr i64 %handle to i64*\n";
-  output += "  store atomic i64 %val, i64* %p monotonic, align 8\n";
-  output += "  ret i32 0\n";
-  output += "}\n\n";
+    output += "define weak i32 @atomic_store(i64 %handle, i64 %val) {\n";
+    output += "  %p = inttoptr i64 %handle to i64*\n";
+    output += "  store atomic i64 %val, i64* %p monotonic, align 8\n";
+    output += "  ret i32 0\n";
+    output += "}\n\n";
 
-  output += "define weak i64 @atomic_fetch_add(i64 %handle, i64 %delta) {\n";
-  output += "  %p = inttoptr i64 %handle to i64*\n";
-  output += "  %old = atomicrmw add i64* %p, i64 %delta monotonic\n";
-  output += "  ret i64 %old\n";
-  output += "}\n\n";
+    output += "define weak i64 @atomic_fetch_add(i64 %handle, i64 %delta) {\n";
+    output += "  %p = inttoptr i64 %handle to i64*\n";
+    output += "  %old = atomicrmw add i64* %p, i64 %delta monotonic\n";
+    output += "  ret i64 %old\n";
+    output += "}\n\n";
 
-  output += "define weak i32 @atomic_compare_exchange(i64 %handle, i64 "
-            "%expected, i64 %desired) {\n";
-  output += "  %p = inttoptr i64 %handle to i64*\n";
-  output += "  %pair = cmpxchg i64* %p, i64 %expected, i64 %desired acq_rel "
-            "acquire\n";
-  output += "  %ok = extractvalue { i64, i1 } %pair, 1\n";
-  output += "  %ret = select i1 %ok, i32 1, i32 0\n";
-  output += "  ret i32 %ret\n";
-  output += "}\n\n";
+    output += "define weak i32 @atomic_compare_exchange(i64 %handle, i64 "
+              "%expected, i64 %desired) {\n";
+    output += "  %p = inttoptr i64 %handle to i64*\n";
+    output += "  %pair = cmpxchg i64* %p, i64 %expected, i64 %desired acq_rel "
+              "acquire\n";
+    output += "  %ok = extractvalue { i64, i1 } %pair, 1\n";
+    output += "  %ret = select i1 %ok, i32 1, i32 0\n";
+    output += "  ret i32 %ret\n";
+    output += "}\n\n";
 }
 
-void emitNetSupport(std::string &output)
-{
-  output += "; xlang OS bridge syscalls (TCP send/recv/close)\n";
-  output += "declare i32 @close(i32)\n";
-  output += "declare i64 @send(i32, i8*, i64, i32)\n";
-  output += "declare i64 @recv(i32, i8*, i64, i32)\n\n";
+void emitNetSupport(std::string& output) {
+    output += "; xlang OS bridge syscalls (TCP send/recv/close)\n";
+    output += "declare i32 @close(i32)\n";
+    output += "declare i64 @send(i32, i8*, i64, i32)\n";
+    output += "declare i64 @recv(i32, i8*, i64, i32)\n\n";
 
-  output += "define weak i32 @net_send(i64 %fd, i8* %data) {\n";
-  output += "  %fd32 = trunc i64 %fd to i32\n";
-  output += "  %len = call i64 @strlen(i8* %data)\n";
-  output += "  %sent = call i64 @send(i32 %fd32, i8* %data, i64 %len, i32 0)\n";
-  output += "  %sent32 = trunc i64 %sent to i32\n";
-  output += "  ret i32 %sent32\n";
-  output += "}\n\n";
+    output += "define weak i32 @net_send(i64 %fd, i8* %data) {\n";
+    output += "  %fd32 = trunc i64 %fd to i32\n";
+    output += "  %len = call i64 @strlen(i8* %data)\n";
+    output += "  %sent = call i64 @send(i32 %fd32, i8* %data, i64 %len, i32 0)\n";
+    output += "  %sent32 = trunc i64 %sent to i32\n";
+    output += "  ret i32 %sent32\n";
+    output += "}\n\n";
 
-  output += "define weak i8* @net_recv(i64 %fd, i32 %max) {\n";
-  output += "entry:\n";
-  output += "  %max64 = sext i32 %max to i64\n";
-  output += "  %buf = call i8* @malloc(i64 %max64)\n";
-  output += "  %fd32 = trunc i64 %fd to i32\n";
-  output += "  %n = call i64 @recv(i32 %fd32, i8* %buf, i64 %max64, i32 0)\n";
-  output += "  %bad = icmp sle i64 %n, 0\n";
-  output += "  br i1 %bad, label %empty, label %term\n";
-  output += "empty:\n";
-  output += "  call void @free(i8* %buf)\n";
-  output += "  %z = call i8* @malloc(i64 1)\n";
-  output += "  store i8 0, i8* %z\n";
-  output += "  ret i8* %z\n";
-  output += "term:\n";
-  output += "  %n1 = add i64 %n, 1\n";
-  output += "  %buf2 = call i8* @realloc(i8* %buf, i64 %n1)\n";
-  output += "  %end = getelementptr i8, i8* %buf2, i64 %n\n";
-  output += "  store i8 0, i8* %end\n";
-  output += "  ret i8* %buf2\n";
-  output += "}\n\n";
+    output += "define weak i8* @net_recv(i64 %fd, i32 %max) {\n";
+    output += "entry:\n";
+    output += "  %max64 = sext i32 %max to i64\n";
+    output += "  %buf = call i8* @malloc(i64 %max64)\n";
+    output += "  %fd32 = trunc i64 %fd to i32\n";
+    output += "  %n = call i64 @recv(i32 %fd32, i8* %buf, i64 %max64, i32 0)\n";
+    output += "  %bad = icmp sle i64 %n, 0\n";
+    output += "  br i1 %bad, label %empty, label %term\n";
+    output += "empty:\n";
+    output += "  call void @free(i8* %buf)\n";
+    output += "  %z = call i8* @malloc(i64 1)\n";
+    output += "  store i8 0, i8* %z\n";
+    output += "  ret i8* %z\n";
+    output += "term:\n";
+    output += "  %n1 = add i64 %n, 1\n";
+    output += "  %buf2 = call i8* @realloc(i8* %buf, i64 %n1)\n";
+    output += "  %end = getelementptr i8, i8* %buf2, i64 %n\n";
+    output += "  store i8 0, i8* %end\n";
+    output += "  ret i8* %buf2\n";
+    output += "}\n\n";
 
-  output += "define weak i32 @net_close(i64 %fd) {\n";
-  output += "  %fd32 = trunc i64 %fd to i32\n";
-  output += "  %rc = call i32 @close(i32 %fd32)\n";
-  output += "  ret i32 %rc\n";
-  output += "}\n\n";
+    output += "define weak i32 @net_close(i64 %fd) {\n";
+    output += "  %fd32 = trunc i64 %fd to i32\n";
+    output += "  %rc = call i32 @close(i32 %fd32)\n";
+    output += "  ret i32 %rc\n";
+    output += "}\n\n";
 }
 
-void emitNetServerSupport(std::string &output)
-{
-  output += "; xlang OS bridge syscalls (TCP connect/listen/accept)\n";
-  output += "declare i64 @xlang_net_tcp_connect(i8*, i32)\n";
-  output += "declare i64 @xlang_net_tcp_listen(i8*, i32)\n";
-  output += "declare i64 @xlang_net_tcp_accept(i64)\n\n";
+void emitNetServerSupport(std::string& output) {
+    output += "; xlang OS bridge syscalls (TCP connect/listen/accept)\n";
+    output += "declare i64 @xlang_net_tcp_connect(i8*, i32)\n";
+    output += "declare i64 @xlang_net_tcp_listen(i8*, i32)\n";
+    output += "declare i64 @xlang_net_tcp_accept(i64)\n\n";
 
-  output += "define weak i64 @net_tcp_connect(i8* %host, i32 %port) {\n";
-  output += "  %fd = call i64 @xlang_net_tcp_connect(i8* %host, i32 %port)\n";
-  output += "  ret i64 %fd\n";
-  output += "}\n\n";
+    output += "define weak i64 @net_tcp_connect(i8* %host, i32 %port) {\n";
+    output += "  %fd = call i64 @xlang_net_tcp_connect(i8* %host, i32 %port)\n";
+    output += "  ret i64 %fd\n";
+    output += "}\n\n";
 
-  output += "define weak i64 @net_tcp_listen(i8* %host, i32 %port) {\n";
-  output += "  %fd = call i64 @xlang_net_tcp_listen(i8* %host, i32 %port)\n";
-  output += "  ret i64 %fd\n";
-  output += "}\n\n";
+    output += "define weak i64 @net_tcp_listen(i8* %host, i32 %port) {\n";
+    output += "  %fd = call i64 @xlang_net_tcp_listen(i8* %host, i32 %port)\n";
+    output += "  ret i64 %fd\n";
+    output += "}\n\n";
 
-  output += "define weak i64 @net_tcp_accept(i64 %listen_fd) {\n";
-  output += "  %fd = call i64 @xlang_net_tcp_accept(i64 %listen_fd)\n";
-  output += "  ret i64 %fd\n";
-  output += "}\n\n";
+    output += "define weak i64 @net_tcp_accept(i64 %listen_fd) {\n";
+    output += "  %fd = call i64 @xlang_net_tcp_accept(i64 %listen_fd)\n";
+    output += "  ret i64 %fd\n";
+    output += "}\n\n";
 }
 
-void emitTlsSupport(std::string &output)
-{
-  output += "; xlang OS bridge syscalls (TLS via OpenSSL)\n";
-  output += "declare i64 @xlang_tls_connect(i8*, i32)\n";
-  output += "declare i32 @xlang_tls_send(i64, i8*)\n";
-  output += "declare i8* @xlang_tls_recv(i64, i32)\n";
-  output += "declare i32 @xlang_tls_close(i64)\n\n";
+void emitTlsSupport(std::string& output) {
+    output += "; xlang OS bridge syscalls (TLS via OpenSSL)\n";
+    output += "declare i64 @xlang_tls_connect(i8*, i32)\n";
+    output += "declare i32 @xlang_tls_send(i64, i8*)\n";
+    output += "declare i8* @xlang_tls_recv(i64, i32)\n";
+    output += "declare i32 @xlang_tls_close(i64)\n\n";
 
-  output += "define weak i64 @net_tls_connect(i8* %host, i32 %port) {\n";
-  output += "  %fd = call i64 @xlang_tls_connect(i8* %host, i32 %port)\n";
-  output += "  ret i64 %fd\n";
-  output += "}\n\n";
+    output += "define weak i64 @net_tls_connect(i8* %host, i32 %port) {\n";
+    output += "  %fd = call i64 @xlang_tls_connect(i8* %host, i32 %port)\n";
+    output += "  ret i64 %fd\n";
+    output += "}\n\n";
 
-  output += "define weak i32 @net_tls_send(i64 %fd, i8* %data) {\n";
-  output += "  %n = call i32 @xlang_tls_send(i64 %fd, i8* %data)\n";
-  output += "  ret i32 %n\n";
-  output += "}\n\n";
+    output += "define weak i32 @net_tls_send(i64 %fd, i8* %data) {\n";
+    output += "  %n = call i32 @xlang_tls_send(i64 %fd, i8* %data)\n";
+    output += "  ret i32 %n\n";
+    output += "}\n\n";
 
-  output += "define weak i8* @net_tls_recv(i64 %fd, i32 %max) {\n";
-  output += "  %buf = call i8* @xlang_tls_recv(i64 %fd, i32 %max)\n";
-  output += "  ret i8* %buf\n";
-  output += "}\n\n";
+    output += "define weak i8* @net_tls_recv(i64 %fd, i32 %max) {\n";
+    output += "  %buf = call i8* @xlang_tls_recv(i64 %fd, i32 %max)\n";
+    output += "  ret i8* %buf\n";
+    output += "}\n\n";
 
-  output += "define weak i32 @net_tls_close(i64 %fd) {\n";
-  output += "  %rc = call i32 @xlang_tls_close(i64 %fd)\n";
-  output += "  ret i32 %rc\n";
-  output += "}\n\n";
+    output += "define weak i32 @net_tls_close(i64 %fd) {\n";
+    output += "  %rc = call i32 @xlang_tls_close(i64 %fd)\n";
+    output += "  ret i32 %rc\n";
+    output += "}\n\n";
 }
 
-void emitPanicSupport(std::string &output)
-{
-  output += "; xlang panic/recover bridge\n";
-  output += "declare void @xlang_panic(i8*)\n";
-  output += "declare i32 @xlang_try_enter()\n";
-  output += "declare void @xlang_try_leave()\n";
-  output += "declare i8* @xlang_recover_message()\n";
-  output += "declare i32 @xlang_try_invoke0(i64)\n\n";
+void emitPanicSupport(std::string& output) {
+    output += "; xlang panic/recover bridge\n";
+    output += "declare void @xlang_panic(i8*)\n";
+    output += "declare i32 @xlang_try_enter()\n";
+    output += "declare void @xlang_try_leave()\n";
+    output += "declare i8* @xlang_recover_message()\n";
+    output += "declare i32 @xlang_try_invoke0(i64)\n\n";
 
-  output += "define weak i32 @panic(i8* %msg) {\n";
-  output += "  call void @xlang_panic(i8* %msg)\n";
-  output += "  ret i32 0\n";
-  output += "}\n\n";
+    output += "define weak i32 @panic(i8* %msg) {\n";
+    output += "  call void @xlang_panic(i8* %msg)\n";
+    output += "  ret i32 0\n";
+    output += "}\n\n";
 
-  output += "define weak i8* @recover() {\n";
-  output += "  %msg = call i8* @xlang_recover_message()\n";
-  output += "  ret i8* %msg\n";
-  output += "}\n\n";
+    output += "define weak i8* @recover() {\n";
+    output += "  %msg = call i8* @xlang_recover_message()\n";
+    output += "  ret i8* %msg\n";
+    output += "}\n\n";
 
-  output += "define weak i32 @try_invoke0(i64 %entry) {\n";
-  output += "  %rc = call i32 @xlang_try_invoke0(i64 %entry)\n";
-  output += "  ret i32 %rc\n";
-  output += "}\n\n";
+    output += "define weak i32 @try_invoke0(i64 %entry) {\n";
+    output += "  %rc = call i32 @xlang_try_invoke0(i64 %entry)\n";
+    output += "  ret i32 %rc\n";
+    output += "}\n\n";
 }
 
-void emitProcessSupport(std::string &output)
-{
-  output += "; xlang process bridge\n";
-  output += "declare i32 @xlang_run_capture(i8*, i8*)\n";
-  output += "declare i8* @xlang_capture_stdout()\n";
-  output += "declare i8* @xlang_env_get(i8*)\n";
-  output += "declare i32 @xlang_env_set(i8*, i8*)\n";
-  output += "declare i8* @xlang_cwd_get()\n";
-  output += "declare i32 @xlang_chdir(i8*)\n";
-  output += "declare i32 @xlang_proc_fork()\n";
-  output += "declare i32 @xlang_proc_exec(i8*, i8*)\n";
-  output += "declare i32 @xlang_proc_wait(i32)\n";
-  output += "declare void @xlang_proc_exit(i32)\n";
-  output += "declare i32 @xlang_proc_kill(i32, i32)\n";
-  output += "declare i64 @xlang_pipe_create()\n";
-  output += "declare i32 @xlang_pipe_read_fd(i64)\n";
-  output += "declare i32 @xlang_pipe_write_fd(i64)\n";
-  output += "declare i32 @xlang_fd_close(i32)\n";
-  output += "declare i8* @xlang_fd_read(i32, i32)\n";
-  output += "declare i32 @xlang_fd_write(i32, i8*)\n";
-  output += "declare i32 @xlang_fd_dup2(i32, i32)\n\n";
+void emitProcessSupport(std::string& output) {
+    output += "; xlang process bridge\n";
+    output += "declare i32 @xlang_run_capture(i8*, i8*)\n";
+    output += "declare i8* @xlang_capture_stdout()\n";
+    output += "declare i8* @xlang_env_get(i8*)\n";
+    output += "declare i32 @xlang_env_set(i8*, i8*)\n";
+    output += "declare i8* @xlang_cwd_get()\n";
+    output += "declare i32 @xlang_chdir(i8*)\n";
+    output += "declare i32 @xlang_proc_fork()\n";
+    output += "declare i32 @xlang_proc_exec(i8*, i8*)\n";
+    output += "declare i32 @xlang_proc_wait(i32)\n";
+    output += "declare void @xlang_proc_exit(i32)\n";
+    output += "declare i32 @xlang_proc_kill(i32, i32)\n";
+    output += "declare i64 @xlang_pipe_create()\n";
+    output += "declare i32 @xlang_pipe_read_fd(i64)\n";
+    output += "declare i32 @xlang_pipe_write_fd(i64)\n";
+    output += "declare i32 @xlang_fd_close(i32)\n";
+    output += "declare i8* @xlang_fd_read(i32, i32)\n";
+    output += "declare i32 @xlang_fd_write(i32, i8*)\n";
+    output += "declare i32 @xlang_fd_dup2(i32, i32)\n\n";
 
-  output += "define weak i32 @run_capture(i8* %path, i8* %args) {\n";
-  output += "  %rc = call i32 @xlang_run_capture(i8* %path, i8* %args)\n";
-  output += "  ret i32 %rc\n";
-  output += "}\n\n";
+    output += "define weak i32 @run_capture(i8* %path, i8* %args) {\n";
+    output += "  %rc = call i32 @xlang_run_capture(i8* %path, i8* %args)\n";
+    output += "  ret i32 %rc\n";
+    output += "}\n\n";
 
-  output += "define weak i8* @capture_stdout() {\n";
-  output += "  %out = call i8* @xlang_capture_stdout()\n";
-  output += "  ret i8* %out\n";
-  output += "}\n\n";
+    output += "define weak i8* @capture_stdout() {\n";
+    output += "  %out = call i8* @xlang_capture_stdout()\n";
+    output += "  ret i8* %out\n";
+    output += "}\n\n";
 
-  output += "define weak i8* @env_get(i8* %key) {\n";
-  output += "  %val = call i8* @xlang_env_get(i8* %key)\n";
-  output += "  ret i8* %val\n";
-  output += "}\n\n";
+    output += "define weak i8* @env_get(i8* %key) {\n";
+    output += "  %val = call i8* @xlang_env_get(i8* %key)\n";
+    output += "  ret i8* %val\n";
+    output += "}\n\n";
 
-  output += "define weak i32 @env_set(i8* %key, i8* %value) {\n";
-  output += "  %rc = call i32 @xlang_env_set(i8* %key, i8* %value)\n";
-  output += "  ret i32 %rc\n";
-  output += "}\n\n";
+    output += "define weak i32 @env_set(i8* %key, i8* %value) {\n";
+    output += "  %rc = call i32 @xlang_env_set(i8* %key, i8* %value)\n";
+    output += "  ret i32 %rc\n";
+    output += "}\n\n";
 
-  output += "define weak i8* @cwd() {\n";
-  output += "  %path = call i8* @xlang_cwd_get()\n";
-  output += "  ret i8* %path\n";
-  output += "}\n\n";
+    output += "define weak i8* @cwd() {\n";
+    output += "  %path = call i8* @xlang_cwd_get()\n";
+    output += "  ret i8* %path\n";
+    output += "}\n\n";
 
-  output += "define weak i32 @chdir(i8* %path) {\n";
-  output += "  %rc = call i32 @xlang_chdir(i8* %path)\n";
-  output += "  ret i32 %rc\n";
-  output += "}\n\n";
+    output += "define weak i32 @chdir(i8* %path) {\n";
+    output += "  %rc = call i32 @xlang_chdir(i8* %path)\n";
+    output += "  ret i32 %rc\n";
+    output += "}\n\n";
 
-  output += "define weak i32 @proc_fork() {\n";
-  output += "  %pid = call i32 @xlang_proc_fork()\n";
-  output += "  ret i32 %pid\n";
-  output += "}\n\n";
+    output += "define weak i32 @proc_fork() {\n";
+    output += "  %pid = call i32 @xlang_proc_fork()\n";
+    output += "  ret i32 %pid\n";
+    output += "}\n\n";
 
-  output += "define weak i32 @proc_exec(i8* %path, i8* %args) {\n";
-  output += "  %rc = call i32 @xlang_proc_exec(i8* %path, i8* %args)\n";
-  output += "  ret i32 %rc\n";
-  output += "}\n\n";
+    output += "define weak i32 @proc_exec(i8* %path, i8* %args) {\n";
+    output += "  %rc = call i32 @xlang_proc_exec(i8* %path, i8* %args)\n";
+    output += "  ret i32 %rc\n";
+    output += "}\n\n";
 
-  output += "define weak i32 @proc_wait(i32 %pid) {\n";
-  output += "  %rc = call i32 @xlang_proc_wait(i32 %pid)\n";
-  output += "  ret i32 %rc\n";
-  output += "}\n\n";
+    output += "define weak i32 @proc_wait(i32 %pid) {\n";
+    output += "  %rc = call i32 @xlang_proc_wait(i32 %pid)\n";
+    output += "  ret i32 %rc\n";
+    output += "}\n\n";
 
-  output += "define weak i32 @proc_exit(i32 %code) {\n";
-  output += "  call void @xlang_proc_exit(i32 %code)\n";
-  output += "  ret i32 0\n";
-  output += "}\n\n";
+    output += "define weak i32 @proc_exit(i32 %code) {\n";
+    output += "  call void @xlang_proc_exit(i32 %code)\n";
+    output += "  ret i32 0\n";
+    output += "}\n\n";
 
-  output += "define weak i32 @proc_kill(i32 %pid, i32 %sig) {\n";
-  output += "  %rc = call i32 @xlang_proc_kill(i32 %pid, i32 %sig)\n";
-  output += "  ret i32 %rc\n";
-  output += "}\n\n";
+    output += "define weak i32 @proc_kill(i32 %pid, i32 %sig) {\n";
+    output += "  %rc = call i32 @xlang_proc_kill(i32 %pid, i32 %sig)\n";
+    output += "  ret i32 %rc\n";
+    output += "}\n\n";
 
-  output += "define weak i64 @pipe_create() {\n";
-  output += "  %fds = call i64 @xlang_pipe_create()\n";
-  output += "  ret i64 %fds\n";
-  output += "}\n\n";
+    output += "define weak i64 @pipe_create() {\n";
+    output += "  %fds = call i64 @xlang_pipe_create()\n";
+    output += "  ret i64 %fds\n";
+    output += "}\n\n";
 
-  output += "define weak i32 @pipe_read_fd(i64 %h) {\n";
-  output += "  %fd = call i32 @xlang_pipe_read_fd(i64 %h)\n";
-  output += "  ret i32 %fd\n";
-  output += "}\n\n";
+    output += "define weak i32 @pipe_read_fd(i64 %h) {\n";
+    output += "  %fd = call i32 @xlang_pipe_read_fd(i64 %h)\n";
+    output += "  ret i32 %fd\n";
+    output += "}\n\n";
 
-  output += "define weak i32 @pipe_write_fd(i64 %h) {\n";
-  output += "  %fd = call i32 @xlang_pipe_write_fd(i64 %h)\n";
-  output += "  ret i32 %fd\n";
-  output += "}\n\n";
+    output += "define weak i32 @pipe_write_fd(i64 %h) {\n";
+    output += "  %fd = call i32 @xlang_pipe_write_fd(i64 %h)\n";
+    output += "  ret i32 %fd\n";
+    output += "}\n\n";
 
-  output += "define weak i32 @fd_close(i32 %fd) {\n";
-  output += "  %rc = call i32 @xlang_fd_close(i32 %fd)\n";
-  output += "  ret i32 %rc\n";
-  output += "}\n\n";
+    output += "define weak i32 @fd_close(i32 %fd) {\n";
+    output += "  %rc = call i32 @xlang_fd_close(i32 %fd)\n";
+    output += "  ret i32 %rc\n";
+    output += "}\n\n";
 
-  output += "define weak i8* @fd_read(i32 %fd, i32 %max) {\n";
-  output += "  %buf = call i8* @xlang_fd_read(i32 %fd, i32 %max)\n";
-  output += "  ret i8* %buf\n";
-  output += "}\n\n";
+    output += "define weak i8* @fd_read(i32 %fd, i32 %max) {\n";
+    output += "  %buf = call i8* @xlang_fd_read(i32 %fd, i32 %max)\n";
+    output += "  ret i8* %buf\n";
+    output += "}\n\n";
 
-  output += "define weak i32 @fd_write(i32 %fd, i8* %data) {\n";
-  output += "  %n = call i32 @xlang_fd_write(i32 %fd, i8* %data)\n";
-  output += "  ret i32 %n\n";
-  output += "}\n\n";
+    output += "define weak i32 @fd_write(i32 %fd, i8* %data) {\n";
+    output += "  %n = call i32 @xlang_fd_write(i32 %fd, i8* %data)\n";
+    output += "  ret i32 %n\n";
+    output += "}\n\n";
 
-  output += "define weak i32 @fd_dup2(i32 %old_fd, i32 %new_fd) {\n";
-  output += "  %rc = call i32 @xlang_fd_dup2(i32 %old_fd, i32 %new_fd)\n";
-  output += "  ret i32 %rc\n";
-  output += "}\n\n";
+    output += "define weak i32 @fd_dup2(i32 %old_fd, i32 %new_fd) {\n";
+    output += "  %rc = call i32 @xlang_fd_dup2(i32 %old_fd, i32 %new_fd)\n";
+    output += "  ret i32 %rc\n";
+    output += "}\n\n";
 }
 
-void emitFileSupport(std::string &output)
-{
-  output += "; xlang file bridge (C++ fstream)\n";
-  output += "declare i64 @xlang_file_open(i8*, i32)\n";
-  output += "declare i32 @xlang_file_close(i64)\n";
-  output += "declare i8* @xlang_file_read_path(i8*)\n";
-  output += "declare i32 @xlang_file_write_path(i8*, i8*, i32)\n";
-  output += "declare i32 @xlang_file_exists(i8*)\n";
-  output += "declare i64 @xlang_file_size(i8*)\n";
-  output += "declare i8* @xlang_file_read_handle(i64)\n";
-  output += "declare i32 @xlang_file_write_handle(i64, i8*)\n\n";
+void emitFileSupport(std::string& output) {
+    output += "; xlang file bridge (C++ fstream)\n";
+    output += "declare i64 @xlang_file_open(i8*, i32)\n";
+    output += "declare i32 @xlang_file_close(i64)\n";
+    output += "declare i8* @xlang_file_read_path(i8*)\n";
+    output += "declare i32 @xlang_file_write_path(i8*, i8*, i32)\n";
+    output += "declare i32 @xlang_file_exists(i8*)\n";
+    output += "declare i64 @xlang_file_size(i8*)\n";
+    output += "declare i8* @xlang_file_read_handle(i64)\n";
+    output += "declare i32 @xlang_file_write_handle(i64, i8*)\n\n";
 
-  output += "define weak i64 @file_open(i8* %path, i32 %mode) {\n";
-  output += "  %h = call i64 @xlang_file_open(i8* %path, i32 %mode)\n";
-  output += "  ret i64 %h\n";
-  output += "}\n\n";
+    output += "define weak i64 @file_open(i8* %path, i32 %mode) {\n";
+    output += "  %h = call i64 @xlang_file_open(i8* %path, i32 %mode)\n";
+    output += "  ret i64 %h\n";
+    output += "}\n\n";
 
-  output += "define weak i32 @file_close(i64 %handle) {\n";
-  output += "  %rc = call i32 @xlang_file_close(i64 %handle)\n";
-  output += "  ret i32 %rc\n";
-  output += "}\n\n";
+    output += "define weak i32 @file_close(i64 %handle) {\n";
+    output += "  %rc = call i32 @xlang_file_close(i64 %handle)\n";
+    output += "  ret i32 %rc\n";
+    output += "}\n\n";
 
-  output += "define weak i8* @file_read_path(i8* %path) {\n";
-  output += "  %buf = call i8* @xlang_file_read_path(i8* %path)\n";
-  output += "  ret i8* %buf\n";
-  output += "}\n\n";
+    output += "define weak i8* @file_read_path(i8* %path) {\n";
+    output += "  %buf = call i8* @xlang_file_read_path(i8* %path)\n";
+    output += "  ret i8* %buf\n";
+    output += "}\n\n";
 
-  output += "define weak i32 @file_write_path(i8* %path, i8* %data, i32 %append) {\n";
-  output += "  %rc = call i32 @xlang_file_write_path(i8* %path, i8* %data, i32 "
-            "%append)\n";
-  output += "  ret i32 %rc\n";
-  output += "}\n\n";
+    output += "define weak i32 @file_write_path(i8* %path, i8* %data, i32 %append) {\n";
+    output += "  %rc = call i32 @xlang_file_write_path(i8* %path, i8* %data, i32 "
+              "%append)\n";
+    output += "  ret i32 %rc\n";
+    output += "}\n\n";
 
-  output += "define weak i32 @file_exists(i8* %path) {\n";
-  output += "  %ok = call i32 @xlang_file_exists(i8* %path)\n";
-  output += "  ret i32 %ok\n";
-  output += "}\n\n";
+    output += "define weak i32 @file_exists(i8* %path) {\n";
+    output += "  %ok = call i32 @xlang_file_exists(i8* %path)\n";
+    output += "  ret i32 %ok\n";
+    output += "}\n\n";
 
-  output += "define weak i64 @file_size(i8* %path) {\n";
-  output += "  %sz = call i64 @xlang_file_size(i8* %path)\n";
-  output += "  ret i64 %sz\n";
-  output += "}\n\n";
+    output += "define weak i64 @file_size(i8* %path) {\n";
+    output += "  %sz = call i64 @xlang_file_size(i8* %path)\n";
+    output += "  ret i64 %sz\n";
+    output += "}\n\n";
 
-  output += "define weak i8* @file_read_handle(i64 %handle) {\n";
-  output += "  %buf = call i8* @xlang_file_read_handle(i64 %handle)\n";
-  output += "  ret i8* %buf\n";
-  output += "}\n\n";
+    output += "define weak i8* @file_read_handle(i64 %handle) {\n";
+    output += "  %buf = call i8* @xlang_file_read_handle(i64 %handle)\n";
+    output += "  ret i8* %buf\n";
+    output += "}\n\n";
 
-  output += "define weak i32 @file_write_handle(i64 %handle, i8* %data) {\n";
-  output += "  %rc = call i32 @xlang_file_write_handle(i64 %handle, i8* %data)\n";
-  output += "  ret i32 %rc\n";
-  output += "}\n\n";
+    output += "define weak i32 @file_write_handle(i64 %handle, i8* %data) {\n";
+    output += "  %rc = call i32 @xlang_file_write_handle(i64 %handle, i8* %data)\n";
+    output += "  ret i32 %rc\n";
+    output += "}\n\n";
 }
 
 } // namespace
@@ -540,277 +579,221 @@ void emitFileSupport(std::string &output)
 // Compiler backend: xlang `declare syscall` primitiflerini LLVM IR'ye indirger.
 // Kullanıcı kodu OS/pthread API görmez — sadece xlang syscall isimlerini
 // kullanır.
-void emitSyscallDefinitions(std::string &output, const std::unordered_set<std::string> &syscalls)
-{
-  const bool needs_sync = syscalls.find("cpu_count") != syscalls.end() ||
-                          syscalls.find("mutex_init") != syscalls.end() ||
-                          syscalls.find("mutex_lock") != syscalls.end() ||
-                          syscalls.find("mutex_trylock") != syscalls.end() ||
-                          syscalls.find("mutex_unlock") != syscalls.end() ||
-                          syscalls.find("cond_init") != syscalls.end() ||
-                          syscalls.find("cond_wait") != syscalls.end() ||
-                          syscalls.find("cond_signal") != syscalls.end() ||
-                          syscalls.find("cond_broadcast") != syscalls.end();
-  const bool needs_now_ms = syscalls.find("now_ms") != syscalls.end();
-  const bool needs_atomic = syscalls.find("atomic_alloc") != syscalls.end() ||
-                            syscalls.find("atomic_load") != syscalls.end() ||
-                            syscalls.find("atomic_store") != syscalls.end() ||
-                            syscalls.find("atomic_fetch_add") != syscalls.end() ||
-                            syscalls.find("atomic_compare_exchange") != syscalls.end();
-  const bool needs_threads = syscalls.find("start_thread") != syscalls.end() ||
-                             syscalls.find("wait_all_jobs") != syscalls.end() || needs_sync;
-  const bool needs_printf = false;
+void emitSyscallDefinitions(std::string& output, const std::unordered_set<std::string>& syscalls) {
+    const bool needs_sync = syscalls.contains("cpu_count") || syscalls.contains("mutex_init") ||
+                            syscalls.contains("mutex_lock") || syscalls.contains("mutex_trylock") ||
+                            syscalls.contains("mutex_unlock") || syscalls.contains("cond_init") ||
+                            syscalls.contains("cond_wait") || syscalls.contains("cond_signal") ||
+                            syscalls.contains("cond_broadcast");
+    const bool needs_now_ms = syscalls.contains("now_ms");
+    const bool needs_atomic =
+        syscalls.contains("atomic_alloc") || syscalls.contains("atomic_load") ||
+        syscalls.contains("atomic_store") || syscalls.contains("atomic_fetch_add") ||
+        syscalls.contains("atomic_compare_exchange");
+    const bool needs_threads =
+        syscalls.contains("start_thread") || syscalls.contains("wait_all_jobs") || needs_sync;
+    const bool needs_printf = false;
 
-  if (needs_printf)
-  {
-    output += "declare i32 @printf(i8*, ...)\n\n";
-  }
-
-  if (syscalls.find("sleep_ms") != syscalls.end())
-  {
-    output += "; xlang syscall: sleep_ms\n";
-    output += "declare i32 @usleep(i32)\n";
-    output += "define weak i32 @sleep_ms(i32 %ms) {\n";
-    output += "  %us = mul i32 %ms, 1000\n";
-    output += "  call i32 @usleep(i32 %us)\n";
-    output += "  ret i32 0\n";
-    output += "}\n\n";
-  }
-
-  if (syscalls.find("random_range") != syscalls.end())
-  {
-    output += "; xlang syscall: random_range\n";
-    output += "declare i32 @rand()\n";
-    output += "declare void @srand(i32)\n";
-    output += "declare i64 @time(i8*)\n";
-    output += "@__xlang_rand_seeded = weak global i1 false\n";
-    output += "define weak i32 @random_range(i32 %min, i32 %max) {\n";
-    output += "entry:\n";
-    output += "  %seeded = load i1, i1* @__xlang_rand_seeded\n";
-    output += "  br i1 %seeded, label %pick, label %seed\n";
-    output += "seed:\n";
-    output += "  %now = call i64 @time(i8* null)\n";
-    output += "  %seed32 = trunc i64 %now to i32\n";
-    output += "  call void @srand(i32 %seed32)\n";
-    output += "  store i1 true, i1* @__xlang_rand_seeded\n";
-    output += "  br label %pick\n";
-    output += "pick:\n";
-    output += "  %span = sub i32 %max, %min\n";
-    output += "  %width = add i32 %span, 1\n";
-    output += "  %raw = call i32 @rand()\n";
-    output += "  %mod = srem i32 %raw, %width\n";
-    output += "  %val = add i32 %min, %mod\n";
-    output += "  ret i32 %val\n";
-    output += "}\n\n";
-  }
-
-  if (syscalls.find("print_done") != syscalls.end())
-  {
-    output += "; xlang syscall: print_done\n";
-    output += "@__xlang_done_fmt = private unnamed_addr constant [16 x i8] "
-              "c\"[job %d] bitti\\0A\\00\"\n";
-    output += "define weak i32 @print_done(i32 %job_id) {\n";
-    output += "  call i32 (i8*, ...) @printf(i8* getelementptr inbounds "
-              "([16 x i8], [16 x i8]* @__xlang_done_fmt, i32 0, i32 0), i32 "
-              "%job_id)\n";
-    output += "  ret i32 0\n";
-    output += "}\n\n";
-  }
-
-  if (needs_threads)
-  {
-    emitThreadSupport(output);
-    if (syscalls.find("start_thread") != syscalls.end())
-    {
-      emitStartThread(output);
+    if (needs_printf) {
+        output += "declare i32 @printf(i8*, ...)\n\n";
     }
-    if (syscalls.find("wait_all_jobs") != syscalls.end())
-    {
-      emitWaitAllJobs(output);
+
+    if (syscalls.contains("sleep_ms")) {
+        output += "; xlang syscall: sleep_ms\n";
+        output += "declare i32 @usleep(i32)\n";
+        output += "define weak i32 @sleep_ms(i32 %ms) {\n";
+        output += "  %us = mul i32 %ms, 1000\n";
+        output += "  call i32 @usleep(i32 %us)\n";
+        output += "  ret i32 0\n";
+        output += "}\n\n";
     }
-  }
 
-  if (needs_sync)
-  {
-    emitSyncSupport(output);
-  }
-
-  const bool needs_time_format = syscalls.find("time_format") != syscalls.end();
-  if (needs_time_format)
-  {
-    emitTimeFormatSupport(output);
-  }
-
-  if (needs_now_ms)
-  {
-    emitNowMsSupport(output);
-  }
-
-  if (needs_atomic)
-  {
-    emitAtomicSupport(output);
-  }
-
-  const bool needs_net = syscalls.find("net_tcp_connect") != syscalls.end() ||
-                         syscalls.find("net_send") != syscalls.end() ||
-                         syscalls.find("net_recv") != syscalls.end() ||
-                         syscalls.find("net_close") != syscalls.end() ||
-                         syscalls.find("net_tcp_listen") != syscalls.end() ||
-                         syscalls.find("net_tcp_accept") != syscalls.end();
-  if (needs_net)
-  {
-    emitNetSupport(output);
-  }
-
-  const bool needs_server = syscalls.find("net_tcp_connect") != syscalls.end() ||
-                            syscalls.find("net_tcp_listen") != syscalls.end() ||
-                            syscalls.find("net_tcp_accept") != syscalls.end();
-  if (needs_server)
-  {
-    emitNetServerSupport(output);
-  }
-
-  const bool needs_tls = syscalls.find("net_tls_connect") != syscalls.end() ||
-                         syscalls.find("net_tls_send") != syscalls.end() ||
-                         syscalls.find("net_tls_recv") != syscalls.end() ||
-                         syscalls.find("net_tls_close") != syscalls.end();
-  if (needs_tls)
-  {
-    emitTlsSupport(output);
-  }
-
-  const bool needs_panic = syscalls.find("panic") != syscalls.end() ||
-                           syscalls.find("recover") != syscalls.end() ||
-                           syscalls.find("try_invoke0") != syscalls.end();
-  if (needs_panic)
-  {
-    emitPanicSupport(output);
-  }
-
-  const bool needs_process = syscalls.find("env_get") != syscalls.end() ||
-                             syscalls.find("run_capture") != syscalls.end() ||
-                             syscalls.find("capture_stdout") != syscalls.end() ||
-                             syscalls.find("proc_fork") != syscalls.end() ||
-                             syscalls.find("proc_exec") != syscalls.end() ||
-                             syscalls.find("proc_wait") != syscalls.end() ||
-                             syscalls.find("proc_exit") != syscalls.end() ||
-                             syscalls.find("pipe_create") != syscalls.end() ||
-                             syscalls.find("fd_close") != syscalls.end();
-  if (needs_process)
-  {
-    emitProcessSupport(output);
-  }
-
-  const bool needs_file = syscalls.find("file_open") != syscalls.end() ||
-                          syscalls.find("file_close") != syscalls.end() ||
-                          syscalls.find("file_read_path") != syscalls.end() ||
-                          syscalls.find("file_write_path") != syscalls.end() ||
-                          syscalls.find("file_exists") != syscalls.end() ||
-                          syscalls.find("file_size") != syscalls.end() ||
-                          syscalls.find("file_read_handle") != syscalls.end() ||
-                          syscalls.find("file_write_handle") != syscalls.end();
-  if (needs_file)
-  {
-    emitFileSupport(output);
-  }
-
-  for (const std::string &name : syscalls)
-  {
-    if (!isKnownSyscall(name))
-    {
-      throw XlangError("unknown xlang syscall: " + name);
+    if (syscalls.contains("random_range")) {
+        output += "; xlang syscall: random_range\n";
+        output += "declare i32 @rand()\n";
+        output += "declare void @srand(i32)\n";
+        output += "declare i64 @time(i8*)\n";
+        output += "@__xlang_rand_seeded = weak global i1 false\n";
+        output += "define weak i32 @random_range(i32 %min, i32 %max) {\n";
+        output += "entry:\n";
+        output += "  %seeded = load i1, i1* @__xlang_rand_seeded\n";
+        output += "  br i1 %seeded, label %pick, label %seed\n";
+        output += "seed:\n";
+        output += "  %now = call i64 @time(i8* null)\n";
+        output += "  %seed32 = trunc i64 %now to i32\n";
+        output += "  call void @srand(i32 %seed32)\n";
+        output += "  store i1 true, i1* @__xlang_rand_seeded\n";
+        output += "  br label %pick\n";
+        output += "pick:\n";
+        output += "  %span = sub i32 %max, %min\n";
+        output += "  %width = add i32 %span, 1\n";
+        output += "  %raw = call i32 @rand()\n";
+        output += "  %mod = srem i32 %raw, %width\n";
+        output += "  %val = add i32 %min, %mod\n";
+        output += "  ret i32 %val\n";
+        output += "}\n\n";
     }
-  }
-}
 
-bool syscallsNeedThreadLink(const std::unordered_set<std::string> &syscalls)
-{
-  return syscalls.find("start_thread") != syscalls.end() ||
-         syscalls.find("wait_all_jobs") != syscalls.end() ||
-         syscalls.find("mutex_init") != syscalls.end() ||
-         syscalls.find("mutex_trylock") != syscalls.end() ||
-         syscalls.find("cond_init") != syscalls.end();
-}
-
-bool syscallsNeedSslLink(const std::unordered_set<std::string> &syscalls)
-{
-  return syscalls.find("net_tls_connect") != syscalls.end() ||
-         syscalls.find("net_tls_send") != syscalls.end() ||
-         syscalls.find("net_tls_recv") != syscalls.end() ||
-         syscalls.find("net_tls_close") != syscalls.end();
-}
-
-bool syscallsNeedServerLink(const std::unordered_set<std::string> &syscalls)
-{
-  return syscalls.find("net_tcp_connect") != syscalls.end() ||
-         syscalls.find("net_tcp_listen") != syscalls.end() ||
-         syscalls.find("net_tcp_accept") != syscalls.end();
-}
-
-bool syscallsNeedPanicLink(const std::unordered_set<std::string> &syscalls)
-{
-  return syscalls.find("panic") != syscalls.end() || syscalls.find("recover") != syscalls.end() ||
-         syscalls.find("try_invoke0") != syscalls.end();
-}
-
-bool syscallsNeedProcessLink(const std::unordered_set<std::string> &syscalls)
-{
-  static const char *kProcessSyscalls[] = {
-      "env_get",
-      "env_set",
-      "cwd",
-      "chdir",
-      "run_capture",
-      "capture_stdout",
-      "proc_fork",
-      "proc_exec",
-      "proc_wait",
-      "proc_exit",
-      "proc_kill",
-      "pipe_create",
-      "pipe_read_fd",
-      "pipe_write_fd",
-      "fd_close",
-      "fd_read",
-      "fd_write",
-      "fd_dup2",
-  };
-  for (const char *name : kProcessSyscalls)
-  {
-    if (syscalls.find(name) != syscalls.end())
-    {
-      return true;
+    if (syscalls.contains("print_done")) {
+        output += "; xlang syscall: print_done\n";
+        output += "@__xlang_done_fmt = private unnamed_addr constant [16 x i8] "
+                  "c\"[job %d] bitti\\0A\\00\"\n";
+        output += "define weak i32 @print_done(i32 %job_id) {\n";
+        output += "  call i32 (i8*, ...) @printf(i8* getelementptr inbounds "
+                  "([16 x i8], [16 x i8]* @__xlang_done_fmt, i32 0, i32 0), i32 "
+                  "%job_id)\n";
+        output += "  ret i32 0\n";
+        output += "}\n\n";
     }
-  }
-  return false;
-}
 
-bool syscallsNeedTimeLink(const std::unordered_set<std::string> &syscalls)
-{
-  return syscalls.find("time_format") != syscalls.end() ||
-         syscalls.find("now_ms") != syscalls.end();
-}
-
-bool syscallsNeedFileLink(const std::unordered_set<std::string> &syscalls)
-{
-  static const char *kFileSyscalls[] = {
-      "file_open",
-      "file_close",
-      "file_read_path",
-      "file_write_path",
-      "file_exists",
-      "file_size",
-      "file_read_handle",
-      "file_write_handle",
-  };
-  for (const char *name : kFileSyscalls)
-  {
-    if (syscalls.find(name) != syscalls.end())
-    {
-      return true;
+    if (needs_threads) {
+        emitThreadSupport(output);
+        if (syscalls.contains("start_thread")) {
+            emitStartThread(output);
+        }
+        if (syscalls.contains("wait_all_jobs")) {
+            emitWaitAllJobs(output);
+        }
     }
-  }
-  return false;
+
+    if (needs_sync) {
+        emitSyncSupport(output);
+    }
+
+    const bool needs_time_format = syscalls.contains("time_format");
+    if (needs_time_format) {
+        emitTimeFormatSupport(output);
+    }
+
+    if (needs_now_ms) {
+        emitNowMsSupport(output);
+    }
+
+    if (needs_atomic) {
+        emitAtomicSupport(output);
+    }
+
+    const bool needs_net = syscalls.contains("net_tcp_connect") || syscalls.contains("net_send") ||
+                           syscalls.contains("net_recv") || syscalls.contains("net_close") ||
+                           syscalls.contains("net_tcp_listen") ||
+                           syscalls.contains("net_tcp_accept");
+    if (needs_net) {
+        emitNetSupport(output);
+    }
+
+    const bool needs_server = syscalls.contains("net_tcp_connect") ||
+                              syscalls.contains("net_tcp_listen") ||
+                              syscalls.contains("net_tcp_accept");
+    if (needs_server) {
+        emitNetServerSupport(output);
+    }
+
+    const bool needs_tls = syscalls.contains("net_tls_connect") ||
+                           syscalls.contains("net_tls_send") || syscalls.contains("net_tls_recv") ||
+                           syscalls.contains("net_tls_close");
+    if (needs_tls) {
+        emitTlsSupport(output);
+    }
+
+    const bool needs_panic = syscalls.contains("panic") || syscalls.contains("recover") ||
+                             syscalls.contains("try_invoke0");
+    if (needs_panic) {
+        emitPanicSupport(output);
+    }
+
+    const bool needs_process = syscalls.contains("env_get") || syscalls.contains("run_capture") ||
+                               syscalls.contains("capture_stdout") ||
+                               syscalls.contains("proc_fork") || syscalls.contains("proc_exec") ||
+                               syscalls.contains("proc_wait") || syscalls.contains("proc_exit") ||
+                               syscalls.contains("pipe_create") || syscalls.contains("fd_close");
+    if (needs_process) {
+        emitProcessSupport(output);
+    }
+
+    const bool needs_file =
+        syscalls.contains("file_open") || syscalls.contains("file_close") ||
+        syscalls.contains("file_read_path") || syscalls.contains("file_write_path") ||
+        syscalls.contains("file_exists") || syscalls.contains("file_size") ||
+        syscalls.contains("file_read_handle") || syscalls.contains("file_write_handle");
+    if (needs_file) {
+        emitFileSupport(output);
+    }
+
+    for (const std::string& name : syscalls) {
+        if (!isKnownSyscall(name)) {
+            throw XlangError(std::format("unknown xlang syscall: {}", name));
+        }
+    }
+}
+
+bool syscallsNeedThreadLink(const std::unordered_set<std::string>& syscalls) {
+    return setContainsAny(
+        syscalls, "start_thread", "wait_all_jobs", "mutex_init", "mutex_trylock", "cond_init");
+}
+
+bool syscallsNeedSslLink(const std::unordered_set<std::string>& syscalls) {
+    return setContainsAny(
+        syscalls, "net_tls_connect", "net_tls_send", "net_tls_recv", "net_tls_close");
+}
+
+bool syscallsNeedServerLink(const std::unordered_set<std::string>& syscalls) {
+    return setContainsAny(syscalls, "net_tcp_connect", "net_tcp_listen", "net_tcp_accept");
+}
+
+bool syscallsNeedPanicLink(const std::unordered_set<std::string>& syscalls) {
+    return setContainsAny(syscalls, "panic", "recover", "try_invoke0");
+}
+
+bool syscallsNeedProcessLink(const std::unordered_set<std::string>& syscalls) {
+    static constexpr std::string_view kProcessSyscalls[] = {
+        "env_get",
+        "env_set",
+        "cwd",
+        "chdir",
+        "run_capture",
+        "capture_stdout",
+        "proc_fork",
+        "proc_exec",
+        "proc_wait",
+        "proc_exit",
+        "proc_kill",
+        "pipe_create",
+        "pipe_read_fd",
+        "pipe_write_fd",
+        "fd_close",
+        "fd_read",
+        "fd_write",
+        "fd_dup2",
+    };
+    for (const std::string_view name : kProcessSyscalls) {
+        if (setContains(syscalls, name)) {
+            return true;
+        }
+    }
+    return false;
+}
+
+bool syscallsNeedTimeLink(const std::unordered_set<std::string>& syscalls) {
+    return setContainsAny(syscalls, "time_format", "now_ms");
+}
+
+bool syscallsNeedFileLink(const std::unordered_set<std::string>& syscalls) {
+    static constexpr std::string_view kFileSyscalls[] = {
+        "file_open",
+        "file_close",
+        "file_read_path",
+        "file_write_path",
+        "file_exists",
+        "file_size",
+        "file_read_handle",
+        "file_write_handle",
+    };
+    for (const std::string_view name : kFileSyscalls) {
+        if (setContains(syscalls, name)) {
+            return true;
+        }
+    }
+    return false;
 }
 
 } // namespace xlang

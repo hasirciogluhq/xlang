@@ -6,6 +6,7 @@
 
 #include <memory>
 #include <string>
+#include <string_view>
 #include <unordered_map>
 #include <unordered_set>
 #include <vector>
@@ -22,14 +23,14 @@ Program parseSource(const std::string& source, const std::vector<StructDecl>& pr
 std::vector<ImportDecl> parseImportDecls(const std::string& source);
 
 class Parser {
-public:
+  public:
     explicit Parser(std::vector<Token> tokens);
 
     Program parseProgram();
     void seedStructs(const std::vector<StructDecl>& decls);
     [[nodiscard]] static std::vector<ImportDecl> scanImports(const std::string& source);
 
-private:
+  private:
     [[nodiscard]] const Token& peek() const;
     [[nodiscard]] const Token& previous() const;
     [[nodiscard]] bool isAtEnd() const;
@@ -75,13 +76,13 @@ private:
     [[nodiscard]] Type parseOptionalTypeAfterName(const Type& fallback);
 
     [[nodiscard]] Span currentSpan() const;
-    [[nodiscard]] bool isFunctionName(const std::string& name) const;
+    [[nodiscard]] bool isFunctionName(std::string_view name) const;
     void registerFunction(const std::string& name);
     void registerStruct(const StructDecl& decl);
     void registerInterface(const InterfaceDecl& decl);
-    [[nodiscard]] const StructDecl* findStruct(const std::string& name) const;
-    [[nodiscard]] const InterfaceDecl* findInterface(const std::string& name) const;
-    [[nodiscard]] ParseError error(const std::string& message) const;
+    [[nodiscard]] const StructDecl* findStruct(std::string_view name) const;
+    [[nodiscard]] const InterfaceDecl* findInterface(std::string_view name) const;
+    [[nodiscard]] ParseError error(std::string_view message) const;
 
     std::vector<Token> tokens_;
     std::size_t pos_{0};
@@ -90,4 +91,4 @@ private:
     std::unordered_map<std::string, InterfaceDecl> interface_defs_;
 };
 
-}  // namespace xlang
+} // namespace xlang

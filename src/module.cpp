@@ -1,15 +1,17 @@
 #include "xlang/module.h"
 
 #include "xlang/error.h"
-#include "xlang/types.h"
 #include "xlang/parser.h"
+#include "xlang/types.h"
 
-#include <fstream>
-#include <sstream>
-#include <unordered_set>
-#include <vector>
 #include <algorithm>
 #include <cctype>
+#include <format>
+#include <fstream>
+#include <sstream>
+#include <string>
+#include <unordered_set>
+#include <vector>
 
 namespace xlang {
 
@@ -202,7 +204,7 @@ Function cloneFunction(const Function& function) {
 
 void ensureUnique(const Program& into, const std::string& name) {
     if (hasSymbol(into, name)) {
-        throw XlangError("duplicate symbol: " + name);
+        throw XlangError(std::format("duplicate symbol: {}", name));
     }
 }
 
@@ -213,7 +215,7 @@ void addGlobal(Program& into, GlobalVar global) {
 
 void addFunction(Program& into, Function function) {
     if (hasFunctionOverload(into, function)) {
-        throw XlangError("duplicate function overload: " + function.name);
+        throw XlangError(std::format("duplicate function overload: {}", function.name));
     }
     into.functions.push_back(std::move(function));
 }
@@ -322,11 +324,11 @@ Program ModuleLoader::loadPackage(const std::filesystem::path& dir) {
     const std::filesystem::path absolute = std::filesystem::absolute(dir);
     const std::string key = absolute.string();
 
-    if (cache_.find(key) != cache_.end()) {
+    if (cache_.contains(key)) {
         return cloneProgramImpl(cache_.at(key));
     }
-    if (loading_.find(key) != loading_.end()) {
-        throw XlangError("circular import: " + key);
+    if (loading_.contains(key)) {
+        throw XlangError(std::format("circular import: {}", key));
     }
 
     loading_[key] = true;
@@ -359,11 +361,11 @@ Program ModuleLoader::loadFile(const std::filesystem::path& path) {
     const std::filesystem::path absolute = std::filesystem::absolute(path);
     const std::string key = absolute.string();
 
-    if (cache_.find(key) != cache_.end()) {
+    if (cache_.contains(key)) {
         return cloneProgramImpl(cache_.at(key));
     }
-    if (loading_.find(key) != loading_.end()) {
-        throw XlangError("circular import: " + key);
+    if (loading_.contains(key)) {
+        throw XlangError(std::format("circular import: {}", key));
     }
 
     if (isDirectoryModule(absolute)) {
@@ -374,7 +376,7 @@ Program ModuleLoader::loadFile(const std::filesystem::path& path) {
 
     std::ifstream in(absolute);
     if (!in) {
-        throw XlangError("failed to read module: " + absolute.string());
+        throw XlangError(std::format("failed to read module: {}", absolute.string()));
     }
 
     std::ostringstream buffer;
@@ -402,7 +404,7 @@ Program ModuleLoader::loadFile(const std::filesystem::path& path) {
         if (import.is_from) {
             mergeSelected(merged, dep_program, import);
         } else if (!import.alias.empty()) {
-            if (import.module.find('/') != std::string::npos) {
+            if (import.module.contains('/')) {
                 registerImportAlias(merged, import.alias);
                 mergePrefixed(merged, dep_program, import.alias);
             } else {
@@ -422,7 +424,7 @@ Program ModuleLoader::loadFile(const std::filesystem::path& path) {
     for (const StructDecl& decl : source.structs) {
         for (const StructDecl& existing : merged.structs) {
             if (existing.name == decl.name) {
-                throw XlangError("duplicate struct: " + decl.name);
+                throw XlangError(std::format("duplicate struct: {}", decl.name));
             }
         }
         merged.structs.push_back(decl);
@@ -431,7 +433,7 @@ Program ModuleLoader::loadFile(const std::filesystem::path& path) {
     for (const InterfaceDecl& decl : source.interfaces) {
         for (const InterfaceDecl& existing : merged.interfaces) {
             if (existing.name == decl.name) {
-                throw XlangError("duplicate interface: " + decl.name);
+                throw XlangError(std::format("duplicate interface: {}", decl.name));
             }
         }
         merged.interfaces.push_back(decl);
@@ -494,7 +496,7 @@ std::filesystem::path ModuleLoader::resolveModule(const std::filesystem::path& f
         }
     }
 
-    throw XlangError("module not found: " + name);
+    throw XlangError(std::format("module not found: {}", name));
 }
 
 std::optional<std::string> ModuleLoader::findSubmodulePath(const std::string& package,
@@ -757,8 +759,7 @@ void ModuleLoader::mergeFromClauses(Program& into, ImportDecl& import,
         const std::string target = spec.alias.empty() ? spec.name : spec.alias;
         if (const GlobalVar* global = findGlobal(dep_program, spec.name)) {
             if (!isImportableGlobal(*global)) {
-                throw XlangError("cannot import private symbol `" + spec.name + "` from `" +
-                                 import.module + "`");
+                throw XlangError(std::format("cannot import private symbol `{}` from `{}`", spec.name, import.module));
             }
             GlobalVar copy = cloneGlobal(*global);
             copy.name = target;
@@ -767,8 +768,7 @@ void ModuleLoader::mergeFromClauses(Program& into, ImportDecl& import,
         }
         if (const Function* function = findFunction(dep_program, spec.name)) {
             if (!isImportableSymbol(*function)) {
-                throw XlangError("cannot import private symbol `" + spec.name + "` from `" +
-                                 import.module + "`");
+                throw XlangError(std::format("cannot import private symbol `{}` from `{}`", spec.name, import.module));
             }
             if (target != spec.name) {
                 Function copy = cloneFunction(*function);
@@ -784,11 +784,11 @@ void ModuleLoader::mergeFromClauses(Program& into, ImportDecl& import,
                 copy.external = function->external;
                 addFunction(into, std::move(copy));
             } else if (!hasExportedFunctionNamed(dep_program, spec.name) && !function->syscall) {
-                throw XlangError("symbol not found in module `" + import.module + "`: " + spec.name);
+                throw XlangError(std::format("symbol not found in module `{}`: {}", import.module, spec.name));
             }
             continue;
         }
-        throw XlangError("symbol not found in module `" + import.module + "`: " + spec.name);
+        throw XlangError(std::format("symbol not found in module `{}`: {}", import.module, spec.name));
     }
 }
 
@@ -799,8 +799,7 @@ void ModuleLoader::mergeSelected(Program& into, const Program& from, const Impor
 
         if (const GlobalVar* global = findGlobal(from, spec.name)) {
             if (!isImportableGlobal(*global)) {
-                throw XlangError("cannot import private symbol `" + spec.name + "` from `" +
-                                 import.module + "`");
+                throw XlangError(std::format("cannot import private symbol `{}` from `{}`", spec.name, import.module));
             }
             GlobalVar copy = cloneGlobal(*global);
             copy.name = target;
@@ -809,8 +808,7 @@ void ModuleLoader::mergeSelected(Program& into, const Program& from, const Impor
         }
         if (const Function* function = findFunction(from, spec.name)) {
             if (!isImportableSymbol(*function)) {
-                throw XlangError("cannot import private symbol `" + spec.name + "` from `" +
-                                 import.module + "`");
+                throw XlangError(std::format("cannot import private symbol `{}` from `{}`", spec.name, import.module));
             }
             Function copy = cloneFunction(*function);
             copy.name = target;
@@ -819,7 +817,7 @@ void ModuleLoader::mergeSelected(Program& into, const Program& from, const Impor
             addFunction(into, std::move(copy));
             continue;
         }
-        throw XlangError("symbol not found in module `" + import.module + "`: " + spec.name);
+        throw XlangError(std::format("symbol not found in module `{}`: {}", import.module, spec.name));
     }
 }
 

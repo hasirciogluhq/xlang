@@ -8,21 +8,23 @@
 #include <CLI/CLI.hpp>
 
 #include <filesystem>
+#include <format>
 #include <iostream>
 #include <optional>
 #include <string>
+#include <string_view>
 #include <vector>
 
 namespace {
 
-xlang::BuildKind parseBuildKind(const std::string& kind) {
+xlang::BuildKind parseBuildKind(std::string_view kind) {
     if (kind == "exe") {
         return xlang::BuildKind::Exe;
     }
     if (kind == "lib") {
         return xlang::BuildKind::Lib;
     }
-    throw xlang::XlangError("unknown build kind `" + kind + "` (use exe or lib)");
+    throw xlang::XlangError(std::format("unknown build kind `{}` (use exe or lib)", kind));
 }
 
 void fillCompileOptions(xlang::CompileOptions& options, const std::string& build_kind,
@@ -173,14 +175,10 @@ int main(int argc, char** argv) {
         }
 
         if (parse->parsed()) {
-            const std::filesystem::path work_dir = xlang::makeBuildWorkDir();
             const std::vector<std::filesystem::path> module_search_paths =
-                xlang::materializeModuleSearchPaths(work_dir, false);
+                xlang::defaultTestModuleSearchPaths(false);
             const xlang::Program program =
                 xlang::loadProgram(parse_input, module_search_paths);
-
-            std::error_code ec;
-            std::filesystem::remove_all(work_dir, ec);
 
             std::cout << "globals: " << program.globals.size() << '\n';
             for (const xlang::GlobalVar& global : program.globals) {

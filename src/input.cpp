@@ -3,6 +3,7 @@
 #include "xlang/error.h"
 
 #include <algorithm>
+#include <format>
 
 namespace xlang {
 
@@ -10,12 +11,13 @@ namespace {
 
 std::string extensionLower(const std::filesystem::path& path) {
     std::string ext = path.extension().string();
-    std::transform(ext.begin(), ext.end(), ext.begin(),
-                   [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+    std::transform(ext.begin(), ext.end(), ext.begin(), [](unsigned char c) {
+        return static_cast<char>(std::tolower(c));
+    });
     return ext;
 }
 
-}  // namespace
+} // namespace
 
 InputKind detectInputKind(const std::filesystem::path& path) {
     const std::string ext = extensionLower(path);
@@ -28,8 +30,8 @@ InputKind detectInputKind(const std::filesystem::path& path) {
     if (ext == ".ll") {
         return InputKind::LlvmIr;
     }
-    throw XlangError("unsupported input extension `" + ext +
-                     "` (expected .xlang, .o, or .ll)");
+    throw XlangError(
+        std::format("unsupported input extension `{}` (expected .xlang, .o, or .ll)", ext));
 }
 
 BuildKind defaultBuildKind(const InputKind input_kind) {
@@ -40,7 +42,8 @@ BuildKind defaultBuildKind(const InputKind input_kind) {
 }
 
 std::filesystem::path defaultOutputPath(const std::filesystem::path& input,
-                                        const InputKind input_kind, const BuildKind build_kind) {
+                                        const InputKind input_kind,
+                                        const BuildKind build_kind) {
     const std::filesystem::path parent =
         input.has_parent_path() ? input.parent_path() : std::filesystem::path(".");
     const std::string stem = input.stem().string();
@@ -75,15 +78,15 @@ ResolvedBuildInputs resolveBuildInputs(const std::vector<std::filesystem::path>&
 
     for (const std::filesystem::path& input : inputs) {
         switch (detectInputKind(input)) {
-            case InputKind::Xlang:
-                xlang_inputs.push_back(input);
-                break;
-            case InputKind::Object:
-                object_inputs.push_back(input);
-                break;
-            case InputKind::LlvmIr:
-                llvm_inputs.push_back(input);
-                break;
+        case InputKind::Xlang:
+            xlang_inputs.push_back(input);
+            break;
+        case InputKind::Object:
+            object_inputs.push_back(input);
+            break;
+        case InputKind::LlvmIr:
+            llvm_inputs.push_back(input);
+            break;
         }
     }
 
@@ -114,7 +117,7 @@ ResolvedBuildInputs resolveBuildInputs(const std::vector<std::filesystem::path>&
     }
 
     if (object_inputs.empty()) {
-        throw XlangError("no valid build inputs");
+        throw XlangError(std::format("no valid build inputs"));
     }
 
     resolved.primary = object_inputs.front();
@@ -125,4 +128,4 @@ ResolvedBuildInputs resolveBuildInputs(const std::vector<std::filesystem::path>&
     return resolved;
 }
 
-}  // namespace xlang
+} // namespace xlang

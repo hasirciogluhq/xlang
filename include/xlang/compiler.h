@@ -6,6 +6,7 @@
 #include <filesystem>
 #include <optional>
 #include <string>
+#include <vector>
 
 namespace xlang {
 
@@ -53,4 +54,4 @@ RunResult runFile(const RunOptions& options);
 [[nodiscard]] std::string getClangTargetTriple(const std::string& clang);
 [[nodiscard]] std::filesystem::path makeBuildWorkDir();
 
-}  // namespace xlang
+} // namespace xlang

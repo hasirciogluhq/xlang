@@ -60,7 +60,7 @@ Type Type::arrayElementType() const {
     return element;
 }
 
-Type Type::parse(const std::string& name) {
+Type Type::parse(std::string_view name) {
     if (name == "void") {
         return Type{TypeKind::Void};
     }
@@ -88,7 +88,7 @@ Type Type::parse(const std::string& name) {
     if (name == "string") {
         return Type{TypeKind::String};
     }
-    return makeStruct(name);
+    return makeStruct(std::string(name));
 }
 
 Type defaultType() {
@@ -97,42 +97,42 @@ Type defaultType() {
 
 std::string typeMangleComponent(const Type& type) {
     switch (type.kind) {
-        case TypeKind::Void:
-            return "void";
-        case TypeKind::Int32:
-            return "i32";
-        case TypeKind::Int64:
-            return "i64";
-        case TypeKind::BigInt:
-            return "i128";
-        case TypeKind::Float:
-            return "f32";
-        case TypeKind::Double:
-            return "f64";
-        case TypeKind::Bool:
-            return "bool";
-        case TypeKind::Char:
-            return "char";
-        case TypeKind::String:
-            return "str";
-        case TypeKind::Struct:
-            return "S" + type.struct_name;
-        case TypeKind::Interface:
-            return "I" + type.struct_name;
-        case TypeKind::Pointer: {
-            Type inner;
-            inner.kind = type.pointer_to;
-            inner.struct_name = type.pointer_struct_name;
-            return "P" + typeMangleComponent(inner);
-        }
-        case TypeKind::Array:
-            return "A" + typeMangleComponent(type.arrayElementType());
+    case TypeKind::Void:
+        return "void";
+    case TypeKind::Int32:
+        return "i32";
+    case TypeKind::Int64:
+        return "i64";
+    case TypeKind::BigInt:
+        return "i128";
+    case TypeKind::Float:
+        return "f32";
+    case TypeKind::Double:
+        return "f64";
+    case TypeKind::Bool:
+        return "bool";
+    case TypeKind::Char:
+        return "char";
+    case TypeKind::String:
+        return "str";
+    case TypeKind::Struct:
+        return "S" + type.struct_name;
+    case TypeKind::Interface:
+        return "I" + type.struct_name;
+    case TypeKind::Pointer: {
+        Type inner;
+        inner.kind = type.pointer_to;
+        inner.struct_name = type.pointer_struct_name;
+        return "P" + typeMangleComponent(inner);
+    }
+    case TypeKind::Array:
+        return "A" + typeMangleComponent(type.arrayElementType());
     }
     return "unknown";
 }
 
-std::string mangleFunctionName(const std::string& name, const std::vector<Type>& param_types,
-                               bool variadic) {
+std::string
+mangleFunctionName(const std::string& name, const std::vector<Type>& param_types, bool variadic) {
     std::string result = name;
     for (const Type& param_type : param_types) {
         result += "$" + typeMangleComponent(param_type);
@@ -163,75 +163,75 @@ bool typesEqual(const Type& left, const Type& right) {
 
 std::string typeToString(const Type& type) {
     switch (type.kind) {
-        case TypeKind::Void:
-            return "void";
-        case TypeKind::Int32:
-            return "int32";
-        case TypeKind::Int64:
-            return "int64";
-        case TypeKind::BigInt:
-            return "bigint";
-        case TypeKind::Float:
-            return "float";
-        case TypeKind::Double:
-            return "double";
-        case TypeKind::Bool:
-            return "bool";
-        case TypeKind::Char:
-            return "char";
-        case TypeKind::String:
-            return "string";
-        case TypeKind::Struct:
-            return type.struct_name;
-        case TypeKind::Interface:
-            return type.struct_name;
-        case TypeKind::Pointer: {
-            Type inner;
-            inner.kind = type.pointer_to;
-            inner.struct_name = type.pointer_struct_name;
-            return typeToString(inner) + "*";
-        }
-        case TypeKind::Array:
-            return "array " + typeToString(type.arrayElementType());
+    case TypeKind::Void:
+        return "void";
+    case TypeKind::Int32:
+        return "int32";
+    case TypeKind::Int64:
+        return "int64";
+    case TypeKind::BigInt:
+        return "bigint";
+    case TypeKind::Float:
+        return "float";
+    case TypeKind::Double:
+        return "double";
+    case TypeKind::Bool:
+        return "bool";
+    case TypeKind::Char:
+        return "char";
+    case TypeKind::String:
+        return "string";
+    case TypeKind::Struct:
+        return type.struct_name;
+    case TypeKind::Interface:
+        return type.struct_name;
+    case TypeKind::Pointer: {
+        Type inner;
+        inner.kind = type.pointer_to;
+        inner.struct_name = type.pointer_struct_name;
+        return typeToString(inner) + "*";
+    }
+    case TypeKind::Array:
+        return "array " + typeToString(type.arrayElementType());
     }
     return "unknown";
 }
 
 std::string llvmTypeName(const Type& type) {
     switch (type.kind) {
-        case TypeKind::Void:
-            return "void";
-        case TypeKind::Int32:
-            return "i32";
-        case TypeKind::Int64:
-            return "i64";
-        case TypeKind::BigInt:
-            return "i128";
-        case TypeKind::Float:
-            return "float";
-        case TypeKind::Double:
-            return "double";
-        case TypeKind::Bool:
-            return "i8";
-        case TypeKind::Char:
-            return "i8";
-        case TypeKind::String:
-            return "i8*";
-        case TypeKind::Struct:
-            return "%struct." + type.struct_name + "*";
-        case TypeKind::Interface:
-            return "i8*";
-        case TypeKind::Pointer: {
-            Type inner;
-            inner.kind = type.pointer_to;
-            inner.struct_name = type.pointer_struct_name;
-            if (inner.kind == TypeKind::Struct) {
-                return "%struct." + inner.struct_name + "*";
-            }
-            return llvmTypeName(inner) + "*";
+    case TypeKind::Void:
+        return "void";
+    case TypeKind::Int32:
+        return "i32";
+    case TypeKind::Int64:
+        return "i64";
+    case TypeKind::BigInt:
+        return "i128";
+    case TypeKind::Float:
+        return "float";
+    case TypeKind::Double:
+        return "double";
+    case TypeKind::Bool:
+        return "i8";
+    case TypeKind::Char:
+        return "i8";
+    case TypeKind::String:
+        return "i8*";
+    case TypeKind::Struct:
+        return "%struct." + type.struct_name + "*";
+    case TypeKind::Interface:
+        return "i8*";
+    case TypeKind::Pointer: {
+        Type inner;
+        inner.kind = type.pointer_to;
+        inner.struct_name = type.pointer_struct_name;
+        if (inner.kind == TypeKind::Struct) {
+            return "%struct." + inner.struct_name + "*";
         }
-        case TypeKind::Array:
-            return "%array.hdr*";
+        return llvmTypeName(inner) + "*";
+    }
+    case TypeKind::Array:
+        return "%array.hdr*";
     }
     throw XlangError("invalid type for LLVM lowering");
 }
@@ -243,25 +243,25 @@ std::string arrayTypeName(const Type& element_type) {
 
 std::size_t llvmTypeAlign(const Type& type) {
     switch (type.kind) {
-        case TypeKind::Void:
-            return 1;
-        case TypeKind::Int32:
-        case TypeKind::Float:
-            return 4;
-        case TypeKind::Int64:
-        case TypeKind::Double:
-        case TypeKind::BigInt:
-        case TypeKind::String:
-        case TypeKind::Struct:
-        case TypeKind::Interface:
-        case TypeKind::Pointer:
-        case TypeKind::Array:
-            return 8;
-        case TypeKind::Bool:
-        case TypeKind::Char:
-            return 1;
+    case TypeKind::Void:
+        return 1;
+    case TypeKind::Int32:
+    case TypeKind::Float:
+        return 4;
+    case TypeKind::Int64:
+    case TypeKind::Double:
+    case TypeKind::BigInt:
+    case TypeKind::String:
+    case TypeKind::Struct:
+    case TypeKind::Interface:
+    case TypeKind::Pointer:
+    case TypeKind::Array:
+        return 8;
+    case TypeKind::Bool:
+    case TypeKind::Char:
+        return 1;
     }
     return 4;
 }
 
-}  // namespace xlang
+} // namespace xlang

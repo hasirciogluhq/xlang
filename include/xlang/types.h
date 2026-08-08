@@ -4,6 +4,7 @@
 
 #include <cstddef>
 #include <string>
+#include <string_view>
 #include <vector>
 
 namespace xlang {
@@ -45,7 +46,7 @@ struct Type {
     [[nodiscard]] static Type makePointer(Type inner);
     [[nodiscard]] static Type makeArray(Type element);
     [[nodiscard]] Type arrayElementType() const;
-    [[nodiscard]] static Type parse(const std::string& name);
+    [[nodiscard]] static Type parse(std::string_view name);
 };
 
 [[nodiscard]] Type defaultType();
@@ -59,4 +60,4 @@ struct Type {
 [[nodiscard]] std::string arrayTypeName(const Type& element_type);
 [[nodiscard]] std::size_t llvmTypeAlign(const Type& type);
 
-}  // namespace xlang
+} // namespace xlang

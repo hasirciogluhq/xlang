@@ -2,21 +2,18 @@
 
 #include "xlang/codegen.h"
 #include "xlang/compiler.h"
-#include "xlang/embedded_runtime.h"
 #include "xlang/error.h"
 #include "xlang/module.h"
 #include "xlang/parser.h"
+#include "xlang/paths.h"
 #include "xlang/syscalls.h"
 #include "xlang/util.h"
 
-#include <cstdlib>
+#include <format>
 #include <fstream>
 #include <sstream>
+#include <string>
 #include <unordered_set>
-
-#ifndef XLANG_RUNTIME_DIR
-#define XLANG_RUNTIME_DIR ""
-#endif
 
 namespace xlang {
 
@@ -85,41 +82,45 @@ RuntimeBundle fillBundleFromProgram(const Program& program) {
     return bundle;
 }
 
-std::filesystem::path runtimeEntryFromSourceTree() {
-    if (std::string(XLANG_RUNTIME_DIR).empty()) {
-        return {};
+std::filesystem::path findRuntimeEntry() {
+    for (const std::filesystem::path& root : defaultModuleSearchPaths(true)) {
+        std::error_code ec;
+        const std::filesystem::path as_dir = root;
+        if (std::filesystem::is_directory(as_dir, ec)) {
+            const std::filesystem::path package = as_dir / "runtime.xlang";
+            if (std::filesystem::is_regular_file(package, ec)) {
+                return as_dir;
+            }
+            if (as_dir.filename() == "runtime") {
+                return as_dir;
+            }
+        }
+        const std::filesystem::path as_file = root / "runtime.xlang";
+        if (std::filesystem::is_regular_file(as_file, ec)) {
+            return as_file;
+        }
     }
-    const std::filesystem::path runtime_dir = std::filesystem::path(XLANG_RUNTIME_DIR);
-    std::error_code ec;
-    if (std::filesystem::is_directory(runtime_dir, ec)) {
-        return runtime_dir;
-    }
-    return runtime_dir / "runtime.xlang";
+    return {};
 }
 
-Program loadEmbeddedRuntimeProgram(const RuntimeOptions& options) {
+Program loadRuntimeProgram(const RuntimeOptions& options) {
     if (options.override_path) {
         ModuleLoader loader(*options.override_path);
         return loader.load();
     }
 
-    const std::filesystem::path source_entry = runtimeEntryFromSourceTree();
-    if (!source_entry.empty() && std::filesystem::exists(source_entry)) {
-        ModuleLoader loader(source_entry);
-        return loader.load();
+    const std::filesystem::path entry = findRuntimeEntry();
+    if (entry.empty()) {
+        throw XlangError(
+            "runtime not found (set --runtime, or place runtime under lib search paths)");
     }
-
-    const std::filesystem::path work_dir =
-        options.work_dir.empty() ? std::filesystem::temp_directory_path() / "xlang-runtime"
-                                 : options.work_dir / "embedded-runtime";
-    const std::filesystem::path entry = materializeEmbeddedRuntime(work_dir);
     ModuleLoader loader(entry);
     return loader.load();
 }
 
 void compileProgramToObject(const Program& program, const std::string& clang,
                             const std::filesystem::path& work_dir,
-                            const std::filesystem::path& object_path, bool skip_runtime) {
+                            const std::filesystem::path& object_path) {
     CodegenOptions cg_options;
     cg_options.build_kind = BuildKind::Lib;
     cg_options.link_runtime = false;
@@ -131,7 +132,7 @@ void compileProgramToObject(const Program& program, const std::string& clang,
     {
         std::ofstream out(ir_path);
         if (!out) {
-            throw XlangError("failed to write IR: " + ir_path.string());
+            throw XlangError(std::format("failed to write IR: {}", ir_path.string()));
         }
         out << generated.ir;
     }
@@ -150,13 +151,12 @@ void compileProgramToObject(const Program& program, const std::string& clang,
 
     std::error_code ec;
     std::filesystem::remove(ir_path, ec);
-    (void)skip_runtime;
 }
 
 }  // namespace
 
 RuntimeBundle loadRuntimeExports(const RuntimeOptions& options) {
-    return fillBundleFromProgram(loadEmbeddedRuntimeProgram(options));
+    return fillBundleFromProgram(loadRuntimeProgram(options));
 }
 
 RuntimeBundle ensureRuntime(const RuntimeOptions& options) {
@@ -164,10 +164,22 @@ RuntimeBundle ensureRuntime(const RuntimeOptions& options) {
         throw XlangError("runtime build requires a work directory");
     }
 
-    const Program program = loadEmbeddedRuntimeProgram(options);
-    const std::filesystem::path object = options.work_dir / "runtime.o";
+    if (const auto prebuilt = findLibrary("runtime")) {
+        RuntimeBundle bundle;
+        if (options.override_path || !findRuntimeEntry().empty()) {
+            try {
+                bundle = fillBundleFromProgram(loadRuntimeProgram(options));
+            } catch (const XlangError&) {
+                // Prebuilt object is enough to link; exports may be incomplete.
+            }
+        }
+        bundle.object = *prebuilt;
+        return bundle;
+    }
 
-    compileProgramToObject(program, options.clang, options.work_dir, object, true);
+    const Program program = loadRuntimeProgram(options);
+    const std::filesystem::path object = options.work_dir / "runtime.o";
+    compileProgramToObject(program, options.clang, options.work_dir, object);
 
     RuntimeBundle bundle = fillBundleFromProgram(program);
     bundle.object = object;

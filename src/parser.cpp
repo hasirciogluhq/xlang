@@ -1,5 +1,11 @@
 #include "xlang/parser.h"
 
+#include <format>
+#include <string>
+#include <string_view>
+#include <utility>
+#include <vector>
+
 namespace xlang {
 
 Program parseSource(const std::string& source) {
@@ -182,7 +188,7 @@ ImportDecl Parser::parseImport() {
 
         if (match(TokenKind::From)) {
             decl.module = parseModulePath();
-            if (decl.module.find('/') != std::string::npos || first == decl.module) {
+            if (decl.module.contains('/') || first == decl.module) {
                 decl.alias = first;
                 consumeEndOfStatement();
                 return decl;
@@ -432,7 +438,7 @@ Type Parser::parseType() {
         if (findInterface(name.text) != nullptr) {
             type = Type::makeInterface(name.text);
         } else if (findStruct(name.text) == nullptr) {
-            throw error("unknown type `" + name.text + "`");
+            throw error(std::format("unknown type `{}`", name.text));
         }
     }
     while (match(TokenKind::Star)) {
@@ -821,7 +827,7 @@ std::unique_ptr<Expr> Parser::parseNewExpr(const Span& span) {
 
     const std::string struct_name = consume(TokenKind::Ident, "expected struct name").text;
     if (findStruct(struct_name) == nullptr) {
-        throw error("unknown struct `" + struct_name + "`");
+        throw error(std::format("unknown struct `{}`", struct_name));
     }
 
     std::vector<FieldInit> field_inits;
@@ -840,7 +846,7 @@ std::unique_ptr<Expr> Parser::parseNewExpr(const Span& span) {
 
         const StructDecl* decl = findStruct(struct_name);
         if (field_inits.size() > decl->fields.size()) {
-            throw error("too many arguments for struct `" + struct_name + "`");
+            throw error(std::format("too many arguments for struct `{}`", struct_name));
         }
         for (std::size_t i = 0; i < field_inits.size(); ++i) {
             field_inits[i].name = decl->fields[i].name;
@@ -931,27 +937,27 @@ void Parser::registerInterface(const InterfaceDecl& decl) {
     interface_defs_[decl.name] = decl;
 }
 
-const StructDecl* Parser::findStruct(const std::string& name) const {
-    const auto it = struct_defs_.find(name);
+const StructDecl* Parser::findStruct(std::string_view name) const {
+    const auto it = struct_defs_.find(std::string(name));
     if (it == struct_defs_.end()) {
         return nullptr;
     }
     return &it->second;
 }
 
-const InterfaceDecl* Parser::findInterface(const std::string& name) const {
-    const auto it = interface_defs_.find(name);
+const InterfaceDecl* Parser::findInterface(std::string_view name) const {
+    const auto it = interface_defs_.find(std::string(name));
     if (it == interface_defs_.end()) {
         return nullptr;
     }
     return &it->second;
 }
 
-bool Parser::isFunctionName(const std::string& name) const {
-    return function_names_.find(name) != function_names_.end();
+bool Parser::isFunctionName(std::string_view name) const {
+    return function_names_.contains(std::string(name));
 }
 
-ParseError Parser::error(const std::string& message) const {
+ParseError Parser::error(std::string_view message) const {
     return ParseError(peek().line, peek().column, message);
 }
 

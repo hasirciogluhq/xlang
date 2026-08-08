@@ -1,26 +1,21 @@
 #include "xlang/test.h"
 
 #include "xlang/compiler.h"
-#include "xlang/embedded_runtime.h"
-#include "xlang/embedded_libs.h"
 #include "xlang/error.h"
 #include "xlang/module.h"
+#include "xlang/paths.h"
 
 #include <algorithm>
 #include <cstdio>
+#include <format>
 #include <iostream>
 #include <regex>
 #include <sstream>
+#include <string>
+#include <string_view>
 #include <sys/wait.h>
 #include <unistd.h>
 #include <vector>
-
-#ifndef XLANG_RUNTIME_DIR
-#define XLANG_RUNTIME_DIR ""
-#endif
-#ifndef XLANG_LIBS_DIR
-#define XLANG_LIBS_DIR ""
-#endif
 
 namespace xlang {
 
@@ -125,8 +120,8 @@ std::vector<std::filesystem::path> discoverTestFiles(const std::filesystem::path
 void ensureNoMain(const Program& program, const std::filesystem::path& file) {
     for (const Function& function : program.functions) {
         if (function.name == "main" && !function.body.statements.empty()) {
-            throw XlangError("test file `" + file.string() +
-                             "` must not define `main`; use `Test*` functions");
+            throw XlangError(std::format(
+                "test file `{}` must not define `main`; use `Test*` functions", file.string()));
         }
     }
 }
@@ -149,7 +144,7 @@ std::string formatTestOutput(const std::string& output) {
     std::istringstream stream(output);
     std::string line;
     while (std::getline(stream, line)) {
-        if (line.rfind("@xlang-test", 0) == 0) {
+        if (line.starts_with("@xlang-test")) {
             continue;
         }
         formatted << line << '\n';
@@ -236,15 +231,15 @@ bool isTestFileName(const std::filesystem::path& path) {
     if (filename.size() <= suffix.size()) {
         return false;
     }
-    return filename.compare(filename.size() - suffix.size(), suffix.size(), suffix) == 0;
+    return filename.ends_with(suffix);
 }
 
-bool isTestFunctionName(const std::string& name) {
-    const std::string prefix = "Test";
+bool isTestFunctionName(std::string_view name) {
+    constexpr std::string_view prefix = "Test";
     if (name.size() <= prefix.size()) {
         return false;
     }
-    if (name.compare(0, prefix.size(), prefix) != 0) {
+    if (!name.starts_with(prefix)) {
         return false;
     }
     const unsigned char next = static_cast<unsigned char>(name[prefix.size()]);
@@ -320,27 +315,8 @@ Program withTestHarness(const Program& program, const std::vector<std::string>& 
     return copy;
 }
 
-std::vector<std::filesystem::path> materializeModuleSearchPaths(
-    const std::filesystem::path& work_dir, bool skip_runtime) {
-    std::vector<std::filesystem::path> paths;
-    const std::filesystem::path embedded_libs = work_dir / "embedded-libs";
-    (void)materializeEmbeddedLibs(embedded_libs);
-    paths.push_back(embedded_libs);
-    if (!skip_runtime) {
-        const std::filesystem::path embedded_runtime = work_dir / "embedded-runtime";
-        (void)materializeEmbeddedRuntime(embedded_runtime);
-        paths.push_back(embedded_runtime);
-    }
-#ifndef XLANG_RUNTIME_DIR
-#define XLANG_RUNTIME_DIR ""
-#endif
-    if (XLANG_RUNTIME_DIR[0] != '\0') {
-        paths.emplace_back(XLANG_RUNTIME_DIR);
-    }
-    if (XLANG_LIBS_DIR[0] != '\0') {
-        paths.emplace_back(XLANG_LIBS_DIR);
-    }
-    return paths;
+std::vector<std::filesystem::path> defaultTestModuleSearchPaths(bool skip_runtime) {
+    return defaultModuleSearchPaths(!skip_runtime);
 }
 
 struct FileTestResult {
@@ -356,13 +332,13 @@ static FileTestResult runSingleTestFile(const TestOptions& options,
 
     try {
         const std::vector<std::filesystem::path> module_search_paths =
-            materializeModuleSearchPaths(work_dir, false);
+            defaultTestModuleSearchPaths(false);
         const Program loaded = loadProgram(file, module_search_paths);
         ensureNoMain(loaded, file);
 
         const std::vector<std::string> tests = collectTestFunctions(loaded);
         if (tests.empty()) {
-            throw XlangError("no `Test*` functions found in `" + file.string() + "`");
+            throw XlangError(std::format("no `Test*` functions found in `{}`", file.string()));
         }
 
         const std::filesystem::path executable = work_dir / "test";
