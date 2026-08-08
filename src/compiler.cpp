@@ -9,6 +9,7 @@
 #include "xlang/parser.h"
 #include "xlang/runtime.h"
 #include "xlang/test.h"
+#include "xlang/util.h"
 
 #include <cstdlib>
 #include <fstream>
@@ -26,10 +27,6 @@
 namespace xlang {
 
 namespace {
-
-int runCommand(const std::string& command) {
-    return std::system(command.c_str());
-}
 
 int executeProgram(const std::filesystem::path& executable) {
     const pid_t pid = fork();

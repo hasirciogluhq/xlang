@@ -7,10 +7,12 @@
 #include "xlang/module.h"
 #include "xlang/parser.h"
 #include "xlang/syscalls.h"
+#include "xlang/util.h"
 
 #include <cstdlib>
 #include <fstream>
 #include <sstream>
+#include <unordered_set>
 
 #ifndef XLANG_RUNTIME_DIR
 #define XLANG_RUNTIME_DIR ""
@@ -19,10 +21,6 @@
 namespace xlang {
 
 namespace {
-
-int runCommand(const std::string& command) {
-    return std::system(command.c_str());
-}
 
 std::vector<FunctionSignature> collectExports(const Program& program) {
     std::vector<FunctionSignature> exports;
@@ -60,107 +58,31 @@ std::vector<StructDecl> collectStructs(const Program& program) {
     return program.structs;
 }
 
-bool programNeedsThreadLink(const Program& program) {
+std::unordered_set<std::string> collectSyscallNames(const Program& program) {
+    std::unordered_set<std::string> names;
     for (const Function& function : program.functions) {
-        if (!function.syscall) {
-            continue;
-        }
-        if (function.name == "start_thread" || function.name == "mutex_init" ||
-            function.name == "cond_init") {
-            return true;
+        if (function.syscall) {
+            names.insert(function.name);
         }
     }
-    return false;
+    return names;
 }
 
-bool programNeedsSslLink(const Program& program) {
-    for (const Function& function : program.functions) {
-        if (!function.syscall) {
-            continue;
-        }
-        if (function.name == "net_tls_connect" || function.name == "net_tls_send" ||
-            function.name == "net_tls_recv" || function.name == "net_tls_close") {
-            return true;
-        }
-    }
-    return false;
-}
+RuntimeBundle fillBundleFromProgram(const Program& program) {
+    const std::unordered_set<std::string> syscall_names = collectSyscallNames(program);
 
-bool programNeedsServerLink(const Program& program) {
-    for (const Function& function : program.functions) {
-        if (!function.syscall) {
-            continue;
-        }
-        if (function.name == "net_tcp_connect" || function.name == "net_tcp_listen" ||
-            function.name == "net_tcp_accept") {
-            return true;
-        }
-    }
-    return false;
-}
-
-bool programNeedsPanicLink(const Program& program) {
-    for (const Function& function : program.functions) {
-        if (!function.syscall) {
-            continue;
-        }
-        if (function.name == "panic" || function.name == "recover" ||
-            function.name == "try_invoke0") {
-            return true;
-        }
-    }
-    return false;
-}
-
-bool programNeedsProcessLink(const Program& program) {
-    static const char* kProcessSyscalls[] = {
-        "env_get",       "env_set",         "cwd",           "chdir",
-        "run_capture",   "capture_stdout",  "proc_fork",     "proc_exec",
-        "proc_wait",     "proc_exit",       "proc_kill",     "pipe_create",
-        "pipe_read_fd",  "pipe_write_fd",   "fd_close",      "fd_read",
-        "fd_write",      "fd_dup2",
-    };
-    for (const Function& function : program.functions) {
-        if (!function.syscall) {
-            continue;
-        }
-        for (const char* name : kProcessSyscalls) {
-            if (function.name == name) {
-                return true;
-            }
-        }
-    }
-    return false;
-}
-
-bool programNeedsFileLink(const Program& program) {
-    static const char* kFileSyscalls[] = {
-        "file_open",        "file_close",       "file_read_path",  "file_write_path",
-        "file_exists",      "file_size",        "file_read_handle", "file_write_handle",
-    };
-    for (const Function& function : program.functions) {
-        if (!function.syscall) {
-            continue;
-        }
-        for (const char* name : kFileSyscalls) {
-            if (function.name == name) {
-                return true;
-            }
-        }
-    }
-    return false;
-}
-
-bool programNeedsTimeLink(const Program& program) {
-    for (const Function& function : program.functions) {
-        if (!function.syscall) {
-            continue;
-        }
-        if (function.name == "time_format" || function.name == "now_ms") {
-            return true;
-        }
-    }
-    return false;
+    RuntimeBundle bundle;
+    bundle.exports = collectExports(program);
+    bundle.syscalls = collectSyscalls(program);
+    bundle.structs = collectStructs(program);
+    bundle.needs_thread_link = syscallsNeedThreadLink(syscall_names);
+    bundle.needs_ssl_link = syscallsNeedSslLink(syscall_names);
+    bundle.needs_server_link = syscallsNeedServerLink(syscall_names);
+    bundle.needs_panic_link = syscallsNeedPanicLink(syscall_names);
+    bundle.needs_process_link = syscallsNeedProcessLink(syscall_names);
+    bundle.needs_file_link = syscallsNeedFileLink(syscall_names);
+    bundle.needs_time_link = syscallsNeedTimeLink(syscall_names);
+    return bundle;
 }
 
 std::filesystem::path runtimeEntryFromSourceTree() {
@@ -234,20 +156,7 @@ void compileProgramToObject(const Program& program, const std::string& clang,
 }  // namespace
 
 RuntimeBundle loadRuntimeExports(const RuntimeOptions& options) {
-    const Program program = loadEmbeddedRuntimeProgram(options);
-
-    RuntimeBundle bundle;
-    bundle.exports = collectExports(program);
-    bundle.syscalls = collectSyscalls(program);
-    bundle.structs = collectStructs(program);
-    bundle.needs_thread_link = programNeedsThreadLink(program);
-    bundle.needs_ssl_link = programNeedsSslLink(program);
-    bundle.needs_server_link = programNeedsServerLink(program);
-    bundle.needs_panic_link = programNeedsPanicLink(program);
-    bundle.needs_process_link = programNeedsProcessLink(program);
-    bundle.needs_file_link = programNeedsFileLink(program);
-    bundle.needs_time_link = programNeedsTimeLink(program);
-    return bundle;
+    return fillBundleFromProgram(loadEmbeddedRuntimeProgram(options));
 }
 
 RuntimeBundle ensureRuntime(const RuntimeOptions& options) {
@@ -260,18 +169,8 @@ RuntimeBundle ensureRuntime(const RuntimeOptions& options) {
 
     compileProgramToObject(program, options.clang, options.work_dir, object, true);
 
-    RuntimeBundle bundle;
+    RuntimeBundle bundle = fillBundleFromProgram(program);
     bundle.object = object;
-    bundle.exports = collectExports(program);
-    bundle.syscalls = collectSyscalls(program);
-    bundle.structs = collectStructs(program);
-    bundle.needs_thread_link = programNeedsThreadLink(program);
-    bundle.needs_ssl_link = programNeedsSslLink(program);
-    bundle.needs_server_link = programNeedsServerLink(program);
-    bundle.needs_panic_link = programNeedsPanicLink(program);
-    bundle.needs_process_link = programNeedsProcessLink(program);
-    bundle.needs_file_link = programNeedsFileLink(program);
-    bundle.needs_time_link = programNeedsTimeLink(program);
     return bundle;
 }
 

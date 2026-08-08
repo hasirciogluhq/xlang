@@ -1,5 +1,7 @@
 #pragma once
 
+#include <cstddef>
+#include <format>
 #include <stdexcept>
 #include <string>
 
@@ -14,8 +16,7 @@ public:
 class LexError : public XlangError {
 public:
     LexError(std::size_t line, std::size_t column, const std::string& message)
-        : XlangError("lex error at line " + std::to_string(line) + ", column " +
-                     std::to_string(column) + ": " + message),
+        : XlangError(std::format("lex error at line {}, column {}: {}", line, column, message)),
           line_(line),
           column_(column) {}
 
@@ -30,8 +31,7 @@ private:
 class ParseError : public XlangError {
 public:
     ParseError(std::size_t line, std::size_t column, const std::string& message)
-        : XlangError("parse error at line " + std::to_string(line) + ", column " +
-                     std::to_string(column) + ": " + message),
+        : XlangError(std::format("parse error at line {}, column {}: {}", line, column, message)),
           line_(line),
           column_(column) {}
 

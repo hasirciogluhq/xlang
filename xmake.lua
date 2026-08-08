@@ -8,13 +8,30 @@ add_rules("mode.debug", "mode.release")
 add_rules("plugin.compile_commands.autoupdate", {outputdir = "build"})
 add_moduledirs("xmake")
 
-set_languages("c11", "c++17")
+set_languages("c11", "c++23")
 set_warnings("all")
 -- Flat output: build/xlang (+ bridge .a files) for tooling / Docker / VS Code
 set_targetdir("$(projectdir)/build")
 
 add_requires("cli11 2.4.2")
 add_requires("openssl")
+-- LLVM C++ API (IRBuilder, Module, Passes, …). Prefer system/Homebrew llvm-config.
+add_requires("llvm", {
+    kind = "library",
+    system = true,
+    configs = {
+        clang = false,
+        ["clang-tools-extra"] = false,
+        lld = false,
+        lldb = false,
+        mlir = false,
+        polly = false,
+        ["compiler-rt"] = false,
+        libunwind = false,
+        libcxx = false,
+        libcxxabi = false,
+    },
+})
 
 local BRIDGE_DEFINE = {
     xlang_net_server     = "XLANG_NET_SERVER",
@@ -99,10 +116,17 @@ target("xlang")
         "src/syscalls.cpp",
         "src/input.cpp",
         "src/types.cpp",
-        "src/test_runner.cpp"
+        "src/test_runner.cpp",
+        "src/util.cpp"
     )
     add_includedirs("include")
-    add_packages("cli11")
+    add_packages("cli11", "llvm")
+    -- LLVM Support pulls these via llvm-config --system-libs on many installs.
+    if is_plat("linux") then
+        add_syslinks("ncurses", "z", "pthread", "dl", "m")
+    elseif is_plat("macosx") then
+        add_syslinks("z", "curses", "xml2")
+    end
     -- Build bridges for path defines only; do not link them into the compiler.
     add_deps(
         "xlang_net_server",

@@ -29,7 +29,7 @@ std::unique_ptr<Expr> Expr::makeBool(bool value, Span span) {
 std::unique_ptr<Expr> Expr::makeString(std::string value, Span span) {
     auto expr = std::make_unique<Expr>();
     expr->kind = Kind::StringLiteral;
-    expr->name = std::move(value);
+    expr->string_value = std::move(value);
     expr->span = span;
     return expr;
 }
@@ -105,7 +105,7 @@ std::unique_ptr<Expr> Expr::makeNew(std::string struct_name, std::vector<FieldIn
     expr->kind = Kind::New;
     expr->name = std::move(struct_name);
     expr->field_inits = std::move(field_inits);
-    expr->new_type = Type::makeStruct(expr->name);
+    expr->type = Type::makeStruct(expr->name);
     expr->span = span;
     return expr;
 }
@@ -113,7 +113,7 @@ std::unique_ptr<Expr> Expr::makeNew(std::string struct_name, std::vector<FieldIn
 std::unique_ptr<Expr> Expr::makeNewArray(Type element_type, Span span) {
     auto expr = std::make_unique<Expr>();
     expr->kind = Kind::NewArray;
-    expr->new_type = std::move(element_type);
+    expr->type = std::move(element_type);
     expr->span = span;
     return expr;
 }
@@ -123,7 +123,7 @@ std::unique_ptr<Expr> Expr::makeIndex(std::unique_ptr<Expr> object, std::unique_
     auto expr = std::make_unique<Expr>();
     expr->kind = Kind::Index;
     expr->object = std::move(object);
-    expr->right = std::move(index);
+    expr->index = std::move(index);
     expr->span = span;
     return expr;
 }
@@ -132,7 +132,7 @@ std::unique_ptr<Expr> Expr::makeCast(std::unique_ptr<Expr> value, Type target_ty
     auto expr = std::make_unique<Expr>();
     expr->kind = Kind::Cast;
     expr->object = std::move(value);
-    expr->new_type = std::move(target_type);
+    expr->type = std::move(target_type);
     expr->span = span;
     return expr;
 }

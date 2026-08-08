@@ -4,7 +4,6 @@
 #include "xlang/build.h"
 #include "xlang/types.h"
 
-#include <cstdint>
 #include <optional>
 #include <string>
 #include <unordered_map>
@@ -69,7 +68,6 @@ private:
     bool emitStatement(const Stmt& stmt, std::unordered_map<std::string, std::string>& locals);
     void emitBlock(const Block& block, std::unordered_map<std::string, std::string>& locals,
                    bool& has_return);
-    [[nodiscard]] std::size_t elementSizeBytes(const Type& type) const;
     [[nodiscard]] std::string freshLabel();
     std::pair<Type, std::string> emitExpr(const Expr& expr,
                                           const std::unordered_map<std::string, std::string>& locals);
@@ -93,7 +91,7 @@ private:
     [[nodiscard]] std::string globalLinkage(const GlobalVar& global) const;
     [[nodiscard]] std::string structTypeName(const std::string& name) const;
     [[nodiscard]] std::string structValueTypeName(const std::string& name) const;
-    [[nodiscard]] int structFieldIndex(const StructDecl& decl, const std::string& field) const;
+    [[nodiscard]] std::size_t structFieldIndex(const StructDecl& decl, const std::string& field) const;
     [[nodiscard]] std::size_t structSizeBytes(const StructDecl& decl) const;
     [[nodiscard]] std::size_t typeSizeBytes(const Type& type) const;
 
@@ -119,7 +117,7 @@ private:
     CodegenOptions options_;
     const Program* program_{nullptr};
     std::string output_;
-    std::uint32_t tmp_counter_{0};
+    std::size_t tmp_counter_{0};
     std::unordered_set<std::string> globals_;
     std::unordered_map<std::string, Type> global_types_;
     std::unordered_set<std::string> defined_functions_;
@@ -130,11 +128,11 @@ private:
     bool needs_arrays_{false};
     bool array_hdr_type_emitted_{false};
     bool needs_printf_{false};
-    std::uint32_t spawn_thunk_counter_{0};
+    std::size_t spawn_thunk_counter_{0};
     std::vector<std::string> spawn_thunks_;
     std::vector<std::string> spawn_cap_globals_;
-    std::uint32_t string_literal_counter_{0};
-    std::uint32_t label_counter_{0};
+    std::size_t string_literal_counter_{0};
+    std::size_t label_counter_{0};
     std::unordered_map<std::string, std::string> string_literal_globals_;
     std::unordered_map<std::string, Type> local_types_;
     std::unordered_map<std::string, std::string> import_aliases_;

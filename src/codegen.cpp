@@ -210,6 +210,9 @@ bool exprUsesString(const Expr& expr) {
     if (expr.right && exprUsesString(*expr.right)) {
         return true;
     }
+    if (expr.index && exprUsesString(*expr.index)) {
+        return true;
+    }
     for (const auto& arg : expr.args) {
         if (exprUsesString(*arg)) {
             return true;
@@ -292,6 +295,9 @@ bool exprUsesHeap(const Expr& expr) {
     if (expr.right && exprUsesHeap(*expr.right)) {
         return true;
     }
+    if (expr.index && exprUsesHeap(*expr.index)) {
+        return true;
+    }
     for (const auto& arg : expr.args) {
         if (exprUsesHeap(*arg)) {
             return true;
@@ -358,6 +364,9 @@ bool exprHasArray(const Expr& expr) {
         return true;
     }
     if (expr.right && exprHasArray(*expr.right)) {
+        return true;
+    }
+    if (expr.index && exprHasArray(*expr.index)) {
         return true;
     }
     for (const auto& arg : expr.args) {
@@ -772,7 +781,7 @@ std::string Codegen::emitSpawnEntry(const Expr& arg,
     const std::string inner_llvm =
         mangleFunctionName(resolved->name, paramTypes(resolved->params), resolved->variadic);
 
-    const std::uint32_t id = spawn_thunk_counter_++;
+    const std::size_t id = spawn_thunk_counter_++;
     std::ostringstream thunk;
     std::vector<std::string> cap_globals;
     for (std::size_t i = 0; i < arg_values.size(); ++i) {
@@ -965,10 +974,6 @@ std::size_t Codegen::typeSizeBytes(const Type& type) const {
     }
 }
 
-std::size_t Codegen::elementSizeBytes(const Type& type) const {
-    return typeSizeBytes(type);
-}
-
 void Codegen::emitBlock(const Block& block, std::unordered_map<std::string, std::string>& locals,
                         bool& has_return) {
     for (const Stmt& stmt : block.statements) {
@@ -1028,7 +1033,7 @@ std::string Codegen::emitStringLiteral(const std::string& text) {
 
 void Codegen::collectStringLiteralsFromExpr(const Expr& expr) {
     if (expr.kind == Expr::Kind::StringLiteral) {
-        ensureStringLiteralGlobal(expr.name);
+        ensureStringLiteralGlobal(expr.string_value);
         return;
     }
     if (expr.object) {
@@ -1039,6 +1044,9 @@ void Codegen::collectStringLiteralsFromExpr(const Expr& expr) {
     }
     if (expr.right) {
         collectStringLiteralsFromExpr(*expr.right);
+    }
+    if (expr.index) {
+        collectStringLiteralsFromExpr(*expr.index);
     }
     for (const auto& arg : expr.args) {
         collectStringLiteralsFromExpr(*arg);
@@ -1290,10 +1298,10 @@ std::string Codegen::structValueTypeName(const std::string& name) const {
     return "%struct." + name;
 }
 
-int Codegen::structFieldIndex(const StructDecl& decl, const std::string& field) const {
+std::size_t Codegen::structFieldIndex(const StructDecl& decl, const std::string& field) const {
     for (std::size_t i = 0; i < decl.fields.size(); ++i) {
         if (decl.fields[i].name == field) {
-            return static_cast<int>(i);
+            return i;
         }
     }
     throw XlangError("unknown field `" + field + "` on struct `" + decl.name + "`");
@@ -1604,8 +1612,8 @@ bool Codegen::emitStatement(const Stmt& stmt, std::unordered_map<std::string, st
             if (decl == nullptr) {
                 throw XlangError("unknown struct `" + obj_ty.struct_name + "`");
             }
-            const int index = structFieldIndex(*decl, stmt.field);
-            const Type field_type = decl->fields[static_cast<std::size_t>(index)].type;
+            const std::size_t index = structFieldIndex(*decl, stmt.field);
+            const Type field_type = decl->fields[index].type;
             const auto [_, val] = emitExpr(*stmt.expr, locals);
             const std::string tmp = freshTmp();
             writeln("  " + tmp + " = getelementptr " + structValueTypeName(decl->name) + ", " +
@@ -1619,11 +1627,11 @@ bool Codegen::emitStatement(const Stmt& stmt, std::unordered_map<std::string, st
             if (!arr_ty.isArray()) {
                 throw XlangError("index assignment requires array");
             }
-            const auto [_, idx] = emitExpr(*stmt.index_target->right, locals);
+            const auto [_, idx] = emitExpr(*stmt.index_target->index, locals);
             const auto [val_ty, val] = emitExpr(*stmt.expr, locals);
             (void)val_ty;
             const Type elem = arr_ty.arrayElementType();
-            const std::size_t sz = elementSizeBytes(elem);
+            const std::size_t sz = typeSizeBytes(elem);
             const std::string idx64 = freshTmp();
             writeln("  " + idx64 + " = sext i32 " + idx + " to i64");
             const std::string head_p = freshTmp();
@@ -1762,7 +1770,7 @@ std::pair<Type, std::string> Codegen::emitExpr(
         case Expr::Kind::Null:
             return {Type{TypeKind::String}, "null"};
         case Expr::Kind::StringLiteral: {
-            const std::string ptr = emitStringLiteral(expr.name);
+            const std::string ptr = emitStringLiteral(expr.string_value);
             return {Type{TypeKind::String}, ptr};
         }
         case Expr::Kind::Variable: {
@@ -1790,8 +1798,8 @@ std::pair<Type, std::string> Codegen::emitExpr(
             if (decl == nullptr) {
                 throw XlangError("unknown struct `" + obj_ty.struct_name + "`");
             }
-            const int index = structFieldIndex(*decl, expr.name);
-            const Type field_type = decl->fields[static_cast<std::size_t>(index)].type;
+            const std::size_t index = structFieldIndex(*decl, expr.name);
+            const Type field_type = decl->fields[index].type;
             const std::string gep = freshTmp();
             writeln("  " + gep + " = getelementptr " + structValueTypeName(decl->name) + ", " +
                     structTypeName(decl->name) + " " + obj_val + ", i32 0, i32 " +
@@ -1886,8 +1894,8 @@ std::pair<Type, std::string> Codegen::emitExpr(
                     structTypeName(expr.name));
 
             for (const FieldInit& init : expr.field_inits) {
-                const int index = structFieldIndex(*decl, init.name);
-                const Type field_type = decl->fields[static_cast<std::size_t>(index)].type;
+                const std::size_t index = structFieldIndex(*decl, init.name);
+                const Type field_type = decl->fields[index].type;
                 const auto [_, val] = emitExpr(*init.value, locals);
                 const std::string gep = freshTmp();
                 writeln("  " + gep + " = getelementptr " + structValueTypeName(decl->name) +
@@ -1899,15 +1907,15 @@ std::pair<Type, std::string> Codegen::emitExpr(
             return {struct_type, typed};
         }
         case Expr::Kind::NewArray: {
-            const std::size_t elem_size = elementSizeBytes(expr.new_type);
+            const std::size_t elem_size = typeSizeBytes(expr.type);
             const std::string tmp = freshTmp();
             writeln("  " + tmp + " = call %array.hdr* @__xlang_array_new(i64 " +
                     std::to_string(elem_size) + ")");
-            return {Type::makeArray(expr.new_type), tmp};
+            return {Type::makeArray(expr.type), tmp};
         }
         case Expr::Kind::Cast: {
             const auto [from_ty, val] = emitExpr(*expr.object, locals);
-            const Type target = expr.new_type;
+            const Type target = expr.type;
             if (typesEqual(from_ty, target)) {
                 return {target, val};
             }
@@ -1952,9 +1960,9 @@ std::pair<Type, std::string> Codegen::emitExpr(
             if (!arr_ty.isArray()) {
                 throw XlangError("index access requires array");
             }
-            const auto [_, idx] = emitExpr(*expr.right, locals);
+            const auto [_, idx] = emitExpr(*expr.index, locals);
             const Type elem = arr_ty.arrayElementType();
-            const std::size_t sz = elementSizeBytes(elem);
+            const std::size_t sz = typeSizeBytes(elem);
             const std::string idx64 = freshTmp();
             writeln("  " + idx64 + " = sext i32 " + idx + " to i64");
             const std::string head_p = freshTmp();
@@ -2230,7 +2238,7 @@ std::pair<Type, std::string> Codegen::emitExpr(
             if (expr.name == "array_push" && expr.args.size() == 2) {
                 const auto [arr_ty, arr] = emitExpr(*expr.args[0], locals);
                 const auto [val_ty, val] = emitExpr(*expr.args[1], locals);
-                const std::size_t sz = elementSizeBytes(arr_ty.arrayElementType());
+                const std::size_t sz = typeSizeBytes(arr_ty.arrayElementType());
                 const std::string raw = freshTmp();
                 if (val_ty.kind == TypeKind::Struct) {
                     writeln("  " + raw + " = bitcast " + llvmTypeName(val_ty) + " " + val +
@@ -2253,7 +2261,7 @@ std::pair<Type, std::string> Codegen::emitExpr(
             if (expr.name == "array_pop_front" && expr.args.size() == 1) {
                 const auto [arr_ty, arr] = emitExpr(*expr.args[0], locals);
                 const Type elem = arr_ty.arrayElementType();
-                const std::size_t sz = elementSizeBytes(elem);
+                const std::size_t sz = typeSizeBytes(elem);
                 const std::string raw = freshTmp();
                 writeln("  " + raw + " = call i8* @__xlang_array_pop_front(%array.hdr* " + arr +
                         ", i64 " + std::to_string(sz) + ")");
@@ -2273,7 +2281,7 @@ std::pair<Type, std::string> Codegen::emitExpr(
                 const auto [arr_ty, arr] = emitExpr(*expr.args[0], locals);
                 const auto [_, idx] = emitExpr(*expr.args[1], locals);
                 const Type elem = arr_ty.arrayElementType();
-                const std::size_t sz = elementSizeBytes(elem);
+                const std::size_t sz = typeSizeBytes(elem);
                 const std::string idx64 = freshTmp();
                 writeln("  " + idx64 + " = sext i32 " + idx + " to i64");
                 const std::string raw = freshTmp();
@@ -2294,7 +2302,7 @@ std::pair<Type, std::string> Codegen::emitExpr(
             if (expr.name == "array_pop" && expr.args.size() == 1) {
                 const auto [arr_ty, arr] = emitExpr(*expr.args[0], locals);
                 const Type elem = arr_ty.arrayElementType();
-                const std::size_t sz = elementSizeBytes(elem);
+                const std::size_t sz = typeSizeBytes(elem);
                 const std::string raw = freshTmp();
                 writeln("  " + raw + " = call i8* @__xlang_array_pop_raw(%array.hdr* " + arr +
                         ", i64 " + std::to_string(sz) + ")");

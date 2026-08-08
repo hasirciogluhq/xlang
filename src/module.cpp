@@ -24,7 +24,7 @@ std::unique_ptr<Expr> cloneExpr(const Expr& expr) {
         case Expr::Kind::BoolLiteral:
             return Expr::makeBool(expr.bool_value, expr.span);
         case Expr::Kind::StringLiteral:
-            return Expr::makeString(expr.name, expr.span);
+            return Expr::makeString(expr.string_value, expr.span);
         case Expr::Kind::Null:
             return Expr::makeNull(expr.span);
         case Expr::Kind::Variable:
@@ -52,7 +52,7 @@ std::unique_ptr<Expr> cloneExpr(const Expr& expr) {
                                         expr.span);
         }
         case Expr::Kind::Cast:
-            return Expr::makeCast(cloneExpr(*expr.object), expr.new_type, expr.span);
+            return Expr::makeCast(cloneExpr(*expr.object), expr.type, expr.span);
         case Expr::Kind::New: {
             std::vector<FieldInit> inits;
             for (const FieldInit& init : expr.field_inits) {
@@ -66,9 +66,9 @@ std::unique_ptr<Expr> cloneExpr(const Expr& expr) {
             return Expr::makeNew(expr.name, std::move(inits), expr.span);
         }
         case Expr::Kind::NewArray:
-            return Expr::makeNewArray(expr.new_type, expr.span);
+            return Expr::makeNewArray(expr.type, expr.span);
         case Expr::Kind::Index:
-            return Expr::makeIndex(cloneExpr(*expr.object), cloneExpr(*expr.right), expr.span);
+            return Expr::makeIndex(cloneExpr(*expr.object), cloneExpr(*expr.index), expr.span);
     }
     throw XlangError("invalid expression clone");
 }

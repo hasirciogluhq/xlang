@@ -135,13 +135,15 @@ struct Expr {
     double float_value{};
     bool bool_value{};
     std::string name;
+    std::string string_value;
     BinOp bin_op{};
     std::unique_ptr<Expr> object;
     std::unique_ptr<Expr> left;
     std::unique_ptr<Expr> right;
+    std::unique_ptr<Expr> index;
     std::vector<std::unique_ptr<Expr>> args;
     std::vector<FieldInit> field_inits;
-    Type new_type{TypeKind::Struct};
+    Type type{TypeKind::Struct};
 
     static std::unique_ptr<Expr> makeInt(std::int64_t value, Span span);
     static std::unique_ptr<Expr> makeFloat(double value, Span span);

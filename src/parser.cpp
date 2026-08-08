@@ -272,9 +272,9 @@ InterfaceDecl Parser::parseInterface(const ItemModifiers& modifiers) {
         InterfaceMethod method;
         method.name = consume(TokenKind::Ident, "expected method name").text;
         consume(TokenKind::LParen, "expected '('");
-        bool variadic = false;
-        method.params = parseParams(&variadic);
-        (void)variadic;
+        const ParamList params = parseParams();
+        method.params = params.params;
+        (void)params.variadic;
         consume(TokenKind::RParen, "expected ')'");
         consume(TokenKind::Colon, "expected ':' after method params");
         method.return_type = parseType();
@@ -317,8 +317,9 @@ Function Parser::parseFunction(const ItemModifiers& modifiers) {
     consume(TokenKind::Fn, "expected 'fn'");
     const Token name = consume(TokenKind::Ident, "expected function name");
     consume(TokenKind::LParen, "expected '('");
-    bool variadic = false;
-    std::vector<TypedName> params = parseParams(&variadic);
+    const ParamList parsed = parseParams();
+    std::vector<TypedName> params = parsed.params;
+    const bool variadic = parsed.variadic;
     consume(TokenKind::RParen, "expected ')'");
     Type return_type = defaultType();
     if (match(TokenKind::Colon)) {
@@ -345,8 +346,9 @@ Function Parser::parseDeclareSyscall() {
     }
     const Token name = consume(TokenKind::Ident, "expected syscall name");
     consume(TokenKind::LParen, "expected '('");
-    bool variadic = false;
-    std::vector<TypedName> params = parseParams(&variadic);
+    const ParamList parsed = parseParams();
+    std::vector<TypedName> params = parsed.params;
+    const bool variadic = parsed.variadic;
     consume(TokenKind::RParen, "expected ')'");
     Type return_type = defaultType();
     if (match(TokenKind::Colon)) {
@@ -370,8 +372,9 @@ Function Parser::parseDeclareFunction(const ItemModifiers& modifiers) {
     consume(TokenKind::Fn, "expected 'fn'");
     const Token name = consume(TokenKind::Ident, "expected function name");
     consume(TokenKind::LParen, "expected '('");
-    bool variadic = false;
-    std::vector<TypedName> params = parseParams(&variadic);
+    const ParamList parsed = parseParams();
+    std::vector<TypedName> params = parsed.params;
+    const bool variadic = parsed.variadic;
     consume(TokenKind::RParen, "expected ')'");
     if (match(TokenKind::Colon)) {
         (void)parseType();
@@ -389,34 +392,29 @@ Function Parser::parseDeclareFunction(const ItemModifiers& modifiers) {
     return function;
 }
 
-std::vector<TypedName> Parser::parseParams(bool* variadic_out) {
-    std::vector<TypedName> params;
-    if (variadic_out != nullptr) {
-        *variadic_out = false;
-    }
+ParamList Parser::parseParams() {
+    ParamList result;
     if (check(TokenKind::RParen)) {
-        return params;
+        return result;
     }
 
     if (match(TokenKind::Ellipsis)) {
-        if (variadic_out != nullptr) {
-            *variadic_out = true;
-        }
-        return params;
+        result.variadic = true;
+        return result;
     }
 
     do {
         TypedName param;
         param.name = consume(TokenKind::Ident, "expected parameter name").text;
         param.type = parseOptionalTypeAfterName(defaultType());
-        params.push_back(std::move(param));
+        result.params.push_back(std::move(param));
     } while (match(TokenKind::Comma));
 
-    if (match(TokenKind::Ellipsis) && variadic_out != nullptr) {
-        *variadic_out = true;
+    if (match(TokenKind::Ellipsis)) {
+        result.variadic = true;
     }
 
-    return params;
+    return result;
 }
 
 Type Parser::parseType() {

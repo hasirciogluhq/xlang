@@ -18,10 +18,6 @@ examples/math
 /runtime/runtime.o
 /runtime/*.ll
 
-# Legacy C shim (removed)
-/runtime/rt.c
-/runtime/rt.o
-
 # macOS
 .DS_Store
 

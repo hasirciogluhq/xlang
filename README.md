@@ -35,7 +35,7 @@ VS Code extension (IntelliSense, hover, diagnostics): **[vscode/README.md](vscod
 ## Requirements
 
 - [xmake](https://xmake.io) ≥ 2.8
-- **C++17** compiler (Clang or GCC)
+- **C++23** compiler (Clang or GCC)
 - **Clang** (for LLVM IR → object → executable linking; `clang` must be on PATH)
 
 ## Build
