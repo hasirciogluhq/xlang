@@ -18,8 +18,9 @@ export function collectModuleSearchPaths(filePath?: string): string[] {
   if (filePath) {
     let dir = path.dirname(filePath);
     for (let i = 0; i < 12; i += 1) {
-      addDir(path.join(dir, "runtime"));
-      addDir(path.join(dir, "libs"));
+      addDir(path.join(dir, "src", "runtime", "frontend"));
+      addDir(path.join(dir, "runtime", "frontend"));
+      addDir(path.join(dir, "frontend"));
       addDir(dir);
       const parent = path.dirname(dir);
       if (parent === dir) {
@@ -31,10 +32,10 @@ export function collectModuleSearchPaths(filePath?: string): string[] {
 
   for (const folder of vscode.workspace.workspaceFolders ?? []) {
     const root = folder.uri.fsPath;
-    addDir(path.join(root, "runtime"));
-    addDir(path.join(root, "libs"));
-    addDir(path.join(root, "..", "runtime"));
-    addDir(path.join(root, "..", "libs"));
+    addDir(path.join(root, "src", "runtime", "frontend"));
+    addDir(path.join(root, "runtime", "frontend"));
+    addDir(path.join(root, "frontend"));
+    addDir(path.join(root, "..", "src", "runtime", "frontend"));
     addDir(root);
   }
 

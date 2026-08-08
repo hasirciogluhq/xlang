@@ -97,7 +97,7 @@ void appendLinkFlags(std::ostringstream& cmd, bool needs_pthread, bool needs_ssl
         cmd << " -lssl -lcrypto";
     }
     if (needs_server) {
-        appendLibraryIfFound(cmd, "xlang_net_server");
+        appendLibraryIfFound(cmd, "xlang_net_bridge");
     }
     if (needs_panic) {
         appendLibraryIfFound(cmd, "xlang_panic_bridge");

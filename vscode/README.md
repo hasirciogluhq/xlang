@@ -11,7 +11,7 @@ Built with **Bun** + TypeScript. Requires the [`xlang`](https://github.com/hasir
 | Feature | Description |
 |---------|-------------|
 | **Completion** | Keywords, types, global runtime (`print`, `fetch`, `ReadAll`, `NewLock`, …), compiler builtins, local symbols |
-| **Import-aware** | `http.NewRouter()`, `json.parse()` — completes from `libs/` after import |
+| **Import-aware** | `http.NewRouter()`, `json.parse()` — completes from `src/runtime/frontend/` after import |
 | **Global runtime** | `print`, `spawn`, `fetch`, `Now`, `Format`, `ReadAll`, `NewLock`, … — no import required |
 | **Member access** | `r.Get(`, `ctx.JSON(`, `lock.Lock(`, `a.FetchAdd(` — methods on known receiver types |
 | **Module picker** | Typing `import` suggests workspace modules (`http`, `json`, `http/router`, …) with export preview |
@@ -19,7 +19,7 @@ Built with **Bun** + TypeScript. Requires the [`xlang`](https://github.com/hasir
 | **Hover** | Markdown docs on builtins, exported functions, structs, and imported symbols |
 | **Go to definition** | Jump to the `.xlang` file where an imported symbol is defined |
 
-The extension parses `.xlang` sources locally (no LSP server). It scans `libs/` and `runtime/` in your workspace and resolves imports the same way as `xlang` (`XLANG_PATH`).
+The extension parses `.xlang` sources locally (no LSP server). It scans `src/runtime/frontend/` in your workspace and resolves imports the same way as `xlang` (`XLANG_PATH`).
 
 ### Diagnostics
 

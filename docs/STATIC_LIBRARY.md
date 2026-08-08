@@ -1,53 +1,76 @@
 # xlang Static Library Reference
 
-This document provides a professional overview of the static library system in the xlang programming language. It explains how to manage, install, and use static libraries efficiently in your xlang projects.
+This document provides a professional overview of the static library system in the xlang programming language. It explains how static library artifacts are produced, registered, and linked. Command names and install defaults are defined in the [Package Manager](PACKAGE_MANAGER.md) and [Installing](INSTALLING.md) documents; this document is the source of truth for **static-specific** rules.
 
 ---
 
 ## Table of Contents
 
-- [xlang Static Library Reference](#xlang-static-library-reference)
-  - [Table of Contents](#table-of-contents)
 - [Overview](#overview)
-- [Where to Place Static Libraries](#where-to-place-static-libraries)
-- [Compiler Rules and Configuration](#compiler-rules-and-configuration)
+- [Where static libraries live](#where-static-libraries-live)
+- [Adding a static dependency](#adding-a-static-dependency)
+- [Compiler and linker rules](#compiler-and-linker-rules)
+- [Related documents](#related-documents)
 
 ---
 
 # Overview
 
-The static library system in xlang follows principles similar to the static libraries found in languages like C. At compile time, the appropriate static libraries are linked based on the target platform, and cross-compilation is fully supported.
+The static library system in xlang follows principles similar to static libraries in C. At compile time, the appropriate static libraries are linked for the **target platform**, and cross-compilation is supported.
+
+A static library is an installable artifact (typically `.a` / platform equivalent) associated with a qualified package identity such as `john/network`. Build/compile the library before installing or publishing it as a static artifact.
 
 ---
 
-# Where to Place Static Libraries
+# Where static libraries live
 
-You do not need to manually place static libraries in specific directories. Instead, libraries are installed via the compiler, which registers them in your local library registry. There are two installation scopes:
+You do not manually place static libraries into ad-hoc project folders for normal use. The package manager registers them in a registry and/or the project cache.
 
-- **Global:** Libraries are installed to the root directory, making them available system-wide.
-- **Local:** Libraries are installed to the current user's home directory, making them available only to that user.
+| Scope | Role |
+|-------|------|
+| **User** (default) | Installs under the user registry (for example `~/.xlang/`) |
+| **Root** | System-wide registry; searchable and usable even when you install as user |
+| **Project cache** | Materialized copies for the current project’s builds |
 
-After installation, libraries can be imported directly into your project. During target compilation, the compiler will automatically link any required static libraries. 
+Resolution follows user-then-root order unless project configuration pins otherwise. See [Installing](INSTALLING.md).
 
-> **Note:** You must compile libraries before installing them.
-
-Naming conventions are important when creating new libraries. If there is a naming conflict (for example, two different publishers providing a library with the same name), you will receive a compile-time error. To avoid such conflicts, use qualified names like `john/network` or `zona/network`. The compiler will then be able to uniquely identify and link the correct library automatically.
+Naming matters. If two publishers provide the same unqualified name, you get a compile-time conflict. Use qualified names (`john/network`, `zona/network`) so the compiler and linker can pick the correct archive.
 
 ---
 
-# Compiler Rules and Configuration
-
-Compiler rules regarding static libraries may evolve over time. Always refer to the latest documentation for up-to-date guidance. Additionally, the settings described here are governed by your active project configuration.
-
-To add a static library to your project, use the following command:
+# Adding a static dependency
 
 ```sh
-xlang add <library/name@version> --static
+xlang add <publisher/name@version> --static
 ```
 
-- If the specified library is not already installed, the `add` command will automatically install it.
-- By default, the library is installed locally. You can override this behavior using the `--root` or `--global` flags to install globally.
-- The `--static` flag is required to ensure that the library is cached as a static library, provided that the package manager supports static libraries. These libraries will be stored in your project's cache directory and automatically linked during compilation.
-- For instructions on clearing your project's cache, refer to the package manager documentation.
+Behavior (see [Package Manager](PACKAGE_MANAGER.md)):
 
-If both a library and its source code are added to your project, the source code will take precedence by default, and the library will be compiled from scratch during the build process. You can override this behavior in your project's configuration file. Please consult the configuration documentation for additional details.
+- If the package is not installed, `add` installs it (**user scope by default**).
+- `--root` / `--global` writes the install to the root registry when needed.
+- `--static` requests static delivery: the archive is cached for the project and linked automatically during compilation when selected.
+- Clearing the project cache is a package-manager concern; after a clear, the next build/compile re-fetches or rebuilds as needed.
+
+If both library artifacts and source for the same dependency are available, **source takes precedence by default**. Override this in [project configuration](PROJECT_CONFIG.md).
+
+---
+
+# Compiler and linker rules
+
+- The compiler emits or selects platform-specific static archives when building a `lib` package for static delivery (`build` / `compile`).
+- Object-only output stops at `.o`; executable output links those archives as described in [Linking](LINKING.md).
+- Project configuration governs prefer-source vs prefer-static and cache location.
+- When documents disagree on CLI defaults, [Package Manager](PACKAGE_MANAGER.md) wins; on link order and symbol resolution, [Linking](LINKING.md) wins; this document wins on static-artifact semantics.
+
+---
+
+# Related documents
+
+| Document | Role |
+|----------|------|
+| [Package Manager](PACKAGE_MANAGER.md) | `add --static`, scopes, command surface |
+| [Installing](INSTALLING.md) | User/root registries |
+| [Linking](LINKING.md) | How `.a` files attach |
+| [Publishing](PUBLISHING.md) | Shipping static artifacts |
+| [Project Config](PROJECT_CONFIG.md) | prefer_source / prefer_static |
+| [Language Reference](LANGUAGE.md) | Imports and `declare external` |

@@ -14,9 +14,9 @@ hello
 examples/hello
 examples/math
 
-# Runtime build cache
-/runtime/runtime.o
-/runtime/*.ll
+# Runtime build cache (user-program link of frontend)
+/src/runtime/frontend/runtime.o
+/src/runtime/frontend/*.ll
 
 # macOS
 .DS_Store

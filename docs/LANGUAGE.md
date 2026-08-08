@@ -33,8 +33,11 @@ This document describes the syntax, types, module system, and runtime API of the
 
 ## Overview
 
-xlang is a statically typed language compiled with LLVM. Design goals:
+xlang is an extremely **low-level**, statically typed language compiled with LLVM. You can talk to the machine directly. It also ships optional **high-level APIs** (libraries such as `net` / `http`) so the same language can host REST services, database clients, and similar work without forcing that abstraction on everyone.
 
+Design goals:
+
+- **Low-level first** — direct control; high-level packages are opt-in imports, not the language core
 - **Self-hosting runtime** — scheduler, print, and queue logic are written in xlang
 - **Syscall = OS bridge** — scheduler logic is not a syscall; only pthread, sysconf, etc.
 - **Simple syntax** — C/Go blend; `fn`, `local`, `struct`, `import`
@@ -345,17 +348,18 @@ Array runtime is codegen'd by the compiler as `%array.hdr`.
 
 xlang resolves modules from:
 
-1. **`libs/`** — importable standard library (`json`, `http`, `process`, …)
-2. **`runtime/`** — linked automatically; also importable (`scheduler`, `net`)
-3. **Relative paths** — `import foo from ./foo`
-4. **`XLANG_PATH`** — colon-separated extra search directories
+1. **`src/runtime/frontend/`** — standard library + runtime (`json`, `http`, `net`, `sync`, …)
+2. **Relative paths** — `import foo from ./foo`
+3. **`XLANG_PATH`** — colon-separated extra search directories
+
+Bridge ABIs live in `src/runtime/bridge/` (C/C++ only) and are never imported as xlang modules.
 
 ### Directory packages
 
-A folder under `libs/` is a **package** — no barrel file required:
+A folder under the frontend root is a **package** — no barrel file required:
 
 ```
-libs/http/router.xlang
+src/runtime/frontend/http/router.xlang
 ```
 
 ```xlang
@@ -421,7 +425,7 @@ Implementation lowers to `printf` in the compiler; runtime `export fn print(...)
 
 ## Scheduler and spawn
 
-Go-routine-like concurrency. **All scheduling logic** lives in `runtime/scheduler.xlang`.
+Go-routine-like concurrency. **All scheduling logic** lives in `src/runtime/frontend/scheduler.xlang`.
 
 ### API (runtime export)
 
@@ -473,7 +477,7 @@ Syscalls only for: `cpu_count`, `mutex_*`, `cond_*`, `start_thread`.
 
 ## Concurrency and sync
 
-Mutex, reader-writer lock, and atomic types live in `runtime/sync.xlang`. Logic is pure xlang; only minimal OS/LLVM bridges are used (`mutex_*`, `cond_*`, `atomic_*`, `sleep_ms`).
+Mutex, reader-writer lock, and atomic types live in `src/runtime/frontend/sync.xlang`. Logic is pure xlang; only minimal OS/LLVM bridges are used (`mutex_*`, `cond_*`, `atomic_*`, `sleep_ms`).
 
 ```xlang
 import sync from sync
@@ -531,7 +535,7 @@ See `examples/sync_lock.xlang` for `go` + mutex + atomic counter.
 
 ---
 
-## HTTP server (libs/http)
+## HTTP server (frontend/http)
 
 Gin-inspired minimal router split into two modules:
 
@@ -602,7 +606,7 @@ Compiler: `ref(obj)` → int64, `handle as User` loads struct from handle.
 
 ## Networking and fetch
 
-HTTP/HTTPS client logic lives in `runtime/net.xlang`. Syscalls bridge TCP/TLS I/O to the OS (OpenSSL for HTTPS).
+HTTP/HTTPS client logic lives in `src/runtime/frontend/net.xlang`, built on the bridge socket/TLS ABI (not an HTTP bridge).
 
 | API | Description |
 |-----|-------------|
@@ -651,7 +655,7 @@ declare syscall net_tls_close(fd: int64): int32
 
 ## JSON parsing
 
-JSON helpers live in `libs/json.xlang` (pure xlang, no syscall). Parse once, then read fields via method-style accessors on the `Json` object.
+JSON helpers live in `src/runtime/frontend/json.xlang` (pure xlang, no syscall). Parse once, then read fields via method-style accessors on the `Json` object.
 
 | API | Description |
 |-----|-------------|
@@ -681,7 +685,7 @@ fn main() {
 
 ## File I/O
 
-High-level file operations live in `runtime/file.xlang`. Backed by C++ fstream syscalls — not exposed directly to user code.
+Optional file API lives in `src/runtime/frontend/file.xlang` (import when you want it). Backed by C++ fstream syscalls — those bridges are not the surface you have to use for all I/O.
 
 ```xlang
 import * as file from file
@@ -702,7 +706,7 @@ fn main() {
 }
 ```
 
-### API (runtime/file)
+### API (frontend/file)
 
 | Function | Description |
 |----------|-------------|
@@ -747,10 +751,10 @@ declare syscall bar(): int64
 
 ## External linking
 
-You can compile another xlang module as an object and link it.
+Compile another xlang module as an object and link it. `build` and `compile` are the same command; either produces an object or a direct executable.
 
 ```bash
-xlang build lib.xlang --build=lib -o lib.o
+xlang compile lib.xlang --build=lib -o lib.o
 xlang build main.xlang lib.o -o app
 xlang run main.xlang lib.o
 ```
@@ -830,7 +834,7 @@ import * as json from json
 
 Selective `import expect from test` pulls only the assertion API — not the whole test module.
 
-### Assertion API (`libs/test.xlang`)
+### Assertion API (`frontend/test.xlang`)
 
 | Function | Description |
 |----------|-------------|
@@ -901,4 +905,4 @@ Early version; known constraints:
        → clang link (+ runtime.o) → executable
 ```
 
-Runtime compilation: `runtime/runtime.xlang` is built as a separate `.o` and linked into user programs. Additional runtime modules (`scheduler`, `net`, `file`, `sync`) are resolved via import and linked as needed.
+Runtime compilation: `src/runtime/frontend/runtime.xlang` is compiled by `xlang` (not xmake) to a separate `.o` and linked into user programs. Additional frontend modules (`scheduler`, `net`, `http`, `file`, `sync`) are resolved via import and linked as needed.

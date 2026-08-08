@@ -1,6 +1,6 @@
 # xlang
 
-**xlang** is an LLVM-based programming language targeting self-hosting. The compiler binary (`xlang`) produces native executables or object files from `.xlang` source. The runtime (print, scheduler, spawn) is largely **written in xlang**; C++ only provides the compiler, OS bridge (syscall), and LLVM codegen layer.
+**xlang** is an extremely low-level, LLVM-based programming language targeting self-hosting. You can write close-to-the-metal code, or import optional high-level APIs (`net`/`http`, and similar) for REST, databases, and the like. The compiler binary (`xlang`) produces native executables or object files from `.xlang` source. The runtime (print, scheduler, spawn) is largely **written in xlang**; C++ only provides the compiler, OS bridge (syscall), and LLVM codegen layer.
 
 ```
 ┌─────────────────┐     ┌──────────────────┐     ┌─────────────┐
@@ -8,12 +8,12 @@
 └─────────────────┘     └──────────────────┘     └─────────────┘
                                │
                                ▼
-                        runtime/*.xlang
-                        (print, scheduler, spawn)
+                 src/runtime/frontend/*.xlang
+                 (net, http, sync, scheduler, …)
                                │
                                ▼
-                        syscall bridge
-                        (pthread, sysconf, …)
+                 src/runtime/bridge (C/C++ ABI)
+                 (socket, tls, file, thread, …)
 ```
 
 ## Features
@@ -22,7 +22,7 @@
 |------|---------|
 | Types | `int32`, `int64`, `float`, `double`, `bool`, `string`, struct, pointer, array |
 | Functions | Overload, variadic (`...`), `export` / `external` |
-| Modules | `import`, `import * as`, directory packages (`libs/http/`), `XLANG_PATH` |
+| Modules | `import`, `import * as`, directory packages (`http/`), `XLANG_PATH` |
 | Memory | `new` / `delete`, struct fields, heap |
 | Control flow | `if` / `else`, `while` |
 | Strings | Concat (`+`), `printf`-style formatted `print` |
@@ -48,7 +48,8 @@ xmake
 
 Compiler binary: `./build/xlang`
 
-Runtime sources live in `runtime/` and are embedded into the binary at build time. During development, set `XLANG_RUNTIME_DIR` to use the runtime from the source tree.
+xmake builds **C/C++ only** (compiler + bridge static libs). Frontend `.xlang` under
+`src/runtime/frontend` is compiled by `xlang` when you build user programs — never by xmake.
 
 ## Quick start
 
@@ -122,7 +123,7 @@ xlang test http               # pattern filter
 xlang test --parallel         # parallel Test* functions
 ```
 
-Test API (`libs/test.xlang`): `expect(actual).toEqual(expected)`, `expectFn(fn).toThrow()`, `Test*` functions.
+Test API (`src/runtime/frontend/test.xlang`): `expect(actual).toEqual(expected)`, `expectFn(fn).toThrow()`, `Test*` functions.
 
 ```xlang
 import test from test
@@ -147,17 +148,19 @@ fn handle_ping(ctx: Context) {
 
 ```
 xlang/
-├── src/              # xlang compiler (lexer, parser, codegen, linker)
-├── include/xlang/    # C++ headers
-├── runtime/          # Embedded runtime package (print, scheduler, net, errors)
-├── libs/             # Importable libraries (json, http/, test, process)
-│   └── http/         # Router + TCP server (router.xlang)
-├── examples/         # Sample programs
-├── test/xlang/       # *.test.xlang suite
-├── vscode/           # VS Code extension (IntelliSense, hover, diagnostics)
-├── xmake.lua         # Build (xmake)
-├── xmake/            # Embed helpers (runtime + libs)
-└── docs/LANGUAGE.md
+├── src/                      # Compiler (C++ only) + runtime
+│   ├── *.cpp                 # lexer, parser, codegen, linker, …
+│   └── runtime/
+│       ├── bridge/           # C/C++ ABI (socket, tls, file, process, …)
+│       └── frontend/         # xlang low/high-level APIs (net, http, sync, …)
+│           └── http/         # HTTP on top of net socket ABI
+├── include/xlang/            # C++ headers
+├── examples/
+├── test/xlang/
+├── vscode/
+├── xmake.lua
+├── xmake/
+└── docs/
 ```
 
 ## Architecture overview
@@ -167,24 +170,21 @@ xlang/
 1. **Lexer / Parser** — source → AST  
 2. **Module loader** — merges files via `import`  
 3. **Codegen** — AST → LLVM IR  
-4. **Syscall lowering** — `declare syscall` → OS/pthread bridge (C++ IR)  
-5. **Clang** — IR → `.o` → executable (+ runtime `.o`)
+4. **Syscall lowering** — `declare syscall` → bridge ABI  
+5. **Clang** — IR → `.o` → executable (+ frontend runtime `.o`)
 
-### Runtime
+### Runtime layout
 
-User programs are linked with the **runtime** by default (`runtime/` package):
+**Bridge** (`src/runtime/bridge`): C/C++ only — sockets, TLS, file, process, time, panic. No HTTP protocol.
 
-- **`print(...)`** — variadic formatted output
-- **`fetch(url)`** — HTTP/HTTPS GET (`runtime/net.xlang`)
-- **`spawn` / `wait_all` / `cpu` / `add_worker`** — scheduler (`runtime/scheduler.xlang`)
-- **`sync`** — `Lock`, `RWLock`, `AtomicInt` with method API (`l.Lock()`, `a.FetchAdd()`)
+**Frontend** (`src/runtime/frontend`): xlang modules. Low-level wrappers over bridge ABIs, plus optional higher-level APIs:
 
-Importable **libs** (embedded at compile time):
+- **`net`** — TCP/TLS + `fetch` (HTTP client built in xlang)
+- **`http`** — router / server on top of socket ABI (`net_tcp_listen` / `accept`)
+- **`sync` / `scheduler` / `file` / `time` / `errors`**
+- **`json` / `test` / `process`** — importable packages
 
-- **`json`** — parse + typed field access
-- **`http`** — Gin-style router (`Context`, `r.Use`, `ctx.JSON`, `r.ListenAndServe`)
-- **`test`** — Vitest-style `expect`
-- **`process`** — fork, pipe, fd, env, `file_read`
+xmake never compiles frontend `.xlang`; the `xlang` binary compiles them when building user programs.
 
 ### Library + external linking
 
@@ -211,8 +211,8 @@ fn main() {
 | Variable | Description |
 |----------|-------------|
 | `XLANG_PATH` | Colon-separated module search directories |
-| `XLANG_RUNTIME_DIR` | Override runtime source tree (development) |
-| `XLANG_LIBS_DIR` | Override libs source tree (development) |
+| `XLANG_LIB` | Colon-separated static library (`.a`) search paths |
+| `XLANG_HOME` | Install root (`frontend/`, `lib/`) |
 
 ## Status
 

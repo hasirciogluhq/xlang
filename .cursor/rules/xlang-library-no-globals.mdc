@@ -1,14 +1,16 @@
 ---
-description: xlang libs/ API design — no mutable module globals, instance/context methods
-globs: libs/**/*.xlang
+description: xlang frontend API design — no mutable module globals, instance/context methods
+globs: src/runtime/frontend/**/*.xlang
 alwaysApply: false
 ---
 
-# xlang Library API Rules
+# xlang Frontend Library API Rules
 
-Libraries under `libs/` are **not** syscall bridges. They must expose **instance/context APIs**.
+Libraries under `src/runtime/frontend/` wrap bridge ABIs and expose **instance/context APIs**.
+Bridge C/C++ only provides low-level OS primitives (socket, file, thread, …). HTTP and other
+protocols are built in xlang (`net` + `http`), not in the bridge.
 
-## Forbidden in `libs/`
+## Forbidden in frontend packages
 
 - Mutable module-level state (`req: Request`, `listen: ServerInfo`, …)
 - Handle-style module functions (`DispatchRequest(r, …)` from outside)

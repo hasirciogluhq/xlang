@@ -1,4 +1,6 @@
--- Bounded context: host xlang compiler binary (disabled when cross-compiling).
+-- Bounded context: host xlang compiler binary (C++ only).
+-- Does not compile or embed any .xlang sources.
+-- Bridge static libs are build-order deps only ({inherit=false}).
 
 local cross = xlang_ctx.is_cross()
 
@@ -25,8 +27,9 @@ target("xlang")
     )
     add_includedirs("$(projectdir)/include")
     xlang_ctx.add_llvm()
+    -- Ensure bridge ABIs are built alongside the compiler; do not link them in.
     add_deps(
-        "xlang_net_server",
+        "xlang_net_bridge",
         "xlang_panic_bridge",
         "xlang_process_bridge",
         "xlang_time_bridge",

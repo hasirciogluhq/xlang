@@ -209,9 +209,14 @@ export class LanguageIndex {
     };
 
     for (const folder of vscode.workspace.workspaceFolders ?? []) {
-      for (const sub of ["libs", "runtime"] as const) {
-        walk(path.join(folder.uri.fsPath, sub), "");
-        walk(path.join(folder.uri.fsPath, "..", sub), "");
+      const roots = [
+        path.join(folder.uri.fsPath, "src", "runtime", "frontend"),
+        path.join(folder.uri.fsPath, "runtime", "frontend"),
+        path.join(folder.uri.fsPath, "frontend"),
+        path.join(folder.uri.fsPath, "..", "src", "runtime", "frontend"),
+      ];
+      for (const root of roots) {
+        walk(root, "");
       }
     }
 

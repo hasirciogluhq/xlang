@@ -2,6 +2,8 @@
 -- Reference: https://xmake.io/llms.txt / https://xmake.io/llms-full.txt
 --
 -- Orchestrator only. Bounded contexts live under xmake/.
+-- Build compiles C/C++ only (compiler + src/runtime/bridge).
+-- Frontend .xlang under src/runtime/frontend is never compiled by xmake.
 
 set_project("xlang")
 set_version("0.1.0")

@@ -1,5 +1,5 @@
-// HTTP/HTTPS istemcisi — TCP/TLS/HTTP mantığı xlang içinde.
-// Syscall'lar sadece OS köprüsü.
+// Low-level net + HTTP/HTTPS client (fetch).
+// Bridge only exposes TCP/TLS socket ABI; HTTP framing lives here in xlang.
 
 declare syscall net_tcp_connect(host: string, port: int32): int64
 declare syscall net_send(fd: int64, data: string): int32

@@ -86,29 +86,32 @@ std::vector<std::filesystem::path> defaultLibSearchPaths() {
 
 std::vector<std::filesystem::path> defaultModuleSearchPaths(bool include_runtime) {
     std::vector<std::filesystem::path> paths = defaultLibSearchPaths();
+    (void)include_runtime;
+
+    auto pushFrontend = [&](const std::filesystem::path& root) {
+        if (root.empty()) {
+            return;
+        }
+        // In-tree: src/runtime/frontend
+        pushUnique(paths, root / "src" / "runtime" / "frontend");
+        // Installed / packaged layouts
+        pushUnique(paths, root / "runtime" / "frontend");
+        pushUnique(paths, root / "frontend");
+    };
 
     std::error_code ec;
     const std::filesystem::path cwd = std::filesystem::current_path(ec);
     if (!ec) {
-        pushUnique(paths, cwd / "libs");
-        if (include_runtime) {
-            pushUnique(paths, cwd / "runtime");
-        }
+        pushFrontend(cwd);
     }
 
     if (const char* home_env = std::getenv("XLANG_HOME")) {
-        pushUnique(paths, std::filesystem::path(home_env) / "libs");
-        if (include_runtime) {
-            pushUnique(paths, std::filesystem::path(home_env) / "runtime");
-        }
+        pushFrontend(home_env);
     }
 
     const std::filesystem::path home = homeDir();
     if (!home.empty()) {
-        pushUnique(paths, home / ".xlang" / "libs");
-        if (include_runtime) {
-            pushUnique(paths, home / ".xlang" / "runtime");
-        }
+        pushFrontend(home / ".xlang");
     }
 
     return paths;

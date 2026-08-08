@@ -1,4 +1,6 @@
--- Bounded context: OS bridge static libraries.
+-- Bounded context: C/C++ OS bridge static libraries (ABI only).
+-- Layout: src/runtime/bridge — sockets, tls, file, process, time, panic.
+-- No xlang sources here. Higher-level APIs live in src/runtime/frontend.
 -- Artifacts land in build/ and are discovered via compiler lib search paths.
 
 local tc = xlang_ctx.toolchain()
@@ -19,9 +21,11 @@ local function bridge(name, files, packages)
     target_end()
 end
 
-bridge("xlang_net_server", {"$(projectdir)/src/bridge/net_server.c"})
-bridge("xlang_panic_bridge", {"$(projectdir)/src/bridge/panic_bridge.c"})
-bridge("xlang_process_bridge", {"$(projectdir)/src/bridge/process_bridge.c"})
-bridge("xlang_time_bridge", {"$(projectdir)/src/bridge/time_bridge.c"})
-bridge("xlang_file_bridge", {"$(projectdir)/src/bridge/file_bridge.cpp"})
-bridge("xlang_tls_bridge", {"$(projectdir)/src/bridge/tls_bridge.c"}, {"openssl"})
+local bridge_dir = "$(projectdir)/src/runtime/bridge"
+
+bridge("xlang_net_bridge", {bridge_dir .. "/net_bridge.c"})
+bridge("xlang_panic_bridge", {bridge_dir .. "/panic_bridge.c"})
+bridge("xlang_process_bridge", {bridge_dir .. "/process_bridge.c"})
+bridge("xlang_time_bridge", {bridge_dir .. "/time_bridge.c"})
+bridge("xlang_file_bridge", {bridge_dir .. "/file_bridge.cpp"})
+bridge("xlang_tls_bridge", {bridge_dir .. "/tls_bridge.c"}, {"openssl"})

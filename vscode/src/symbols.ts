@@ -328,12 +328,13 @@ export function resolveModuleFile(modulePath: string, contextFile: string): stri
 
 export function moduleIdFromPath(filePath: string, searchRoot?: string): string {
   const normalized = path.normalize(filePath);
-  for (const marker of ["libs", "runtime"]) {
-    const parts = normalized.split(path.sep);
-    const idx = parts.indexOf(marker);
-    if (idx !== -1) {
-      return parts.slice(idx + 1).join("/").replace(/\.xlang$/, "");
-    }
+  const parts = normalized.split(path.sep);
+  const frontendIdx = parts.lastIndexOf("frontend");
+  if (frontendIdx !== -1 && parts[frontendIdx - 1] === "runtime") {
+    return parts.slice(frontendIdx + 1).join("/").replace(/\.xlang$/, "");
+  }
+  if (frontendIdx !== -1) {
+    return parts.slice(frontendIdx + 1).join("/").replace(/\.xlang$/, "");
   }
   if (searchRoot) {
     return path.relative(searchRoot, normalized).replace(/\.xlang$/, "").replace(/\\/g, "/");
