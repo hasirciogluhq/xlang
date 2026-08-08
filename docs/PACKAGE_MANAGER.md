@@ -196,17 +196,17 @@ xlang build
 xlang compile
 xlang build <package-or-path>
 xlang compile <package-or-path>
-xlang build <path> -o app                 # executable
-xlang compile <path> --build=lib -o lib.o # object
-xlang build <path> --build=lib -o lib.a   # static library
+xlang build <path> -o app                    # executable (default)
+xlang build <path> --build=object -o lib.o   # object
+xlang build <path> --build=static -o lib.a   # static library
 ```
 
 | Mode | Typical flags | Result |
 |------|---------------|--------|
-| Executable | default, or `-o <name>` without lib mode | Linked program |
-| Object | `--build=lib` (or equivalent object mode) with `.o` output | Object file for later link / `run` |
-| Static library | lib/static delivery into `.a` (or platform equivalent) | Archive for install / link |
-
+| Executable | default (`--build=executable`), or `-o <name>` | Linked program |
+| Object | `--build=object` (legacy alias: `lib`) with `.o` output | Object file for later link / `run` |
+| Static library | `--build=static` into `.a` (or platform equivalent) | Archive for install / link |
+| Shared | `--build=shared` | Experimental shared library |
 Before compile and before link, dependency artifacts are checksum-checked; failure aborts ([Installing](INSTALLING.md#integrity-hash--checksum)). Defaults for entry selection come from [Project Config](PROJECT_CONFIG.md). Linking details live in [Linking](LINKING.md).
 
 ## run

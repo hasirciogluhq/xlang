@@ -19,7 +19,7 @@ Built with **Bun** + TypeScript. Requires the [`xlang`](https://github.com/hasir
 | **Hover** | Markdown docs on builtins, exported functions, structs, and imported symbols |
 | **Go to definition** | Jump to the `.xlang` file where an imported symbol is defined |
 
-The extension parses `.xlang` sources locally (no LSP server). It scans `src/runtime/frontend/` in your workspace and resolves imports the same way as `xlang` (`XLANG_PATH`).
+The extension parses `.xlang` sources locally (no LSP server). It scans `src/runtime/frontend/` in your workspace and resolves imports alongside the compiler module roots (`XLANG_MODULE_PATH` for the `xlang` binary).
 
 ### Diagnostics
 
@@ -76,7 +76,7 @@ vscode/
 │   ├── symbols.ts        # .xlang symbol parser
 │   ├── languageIndex.ts  # import resolution + module cache
 │   ├── builtins.ts       # runtime/stdlib catalog + docs
-│   ├── paths.ts          # XLANG_PATH / libs resolution
+│   ├── paths.ts          # module / libs path helpers for the extension
 │   ├── diagnostics.ts    # xlang parse integration
 │   └── formatter.ts
 ├── syntaxes/             # TextMate grammar

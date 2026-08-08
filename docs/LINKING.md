@@ -19,35 +19,29 @@ This document is the source of truth for how the **linker** attaches objects, st
 
 ---
 
-Linking runs whenever `xlang build` produces an **executable** or **shared** library, and for `xlang run`. `--build=object` stops after codegen. `--build=static` archives members with `ar` (no dynamic link).
+# Overview
 
-Build kinds (`--build=`): `executable` (default) | `static` | `shared` (experimental) | `object`.
+Linking runs whenever `xlang build` / `xlang compile` produces an **executable** or **shared** library, and for `xlang run`. `--build=object` stops after codegen. `--build=static` archives members with `ar` (no dynamic link).
+
+Build kinds (`--build=`): `executable` (default; aliases `binary`, `exe`) | `static` | `shared` (experimental) | `object` (legacy alias `lib` → object).
 
 Default link stack for an executable:
 
 1. User object(s)
 2. Runtime (unless `--no-runtime`) — override / embedded extract / in-tree
 3. OS bridges (unless `--no-bridge`) — same resolve order
-4. Target OS **baseline syslibs** (e.g. `-pthread`; never derived from syscall use)
+4. Target OS **baseline syslibs** (e.g. `-pthread`; never derived from `declare` / syscall use)
 
 Prefer **static** embed of runtime + bridges into the user program. Non-OS shared libs are not default.
 
-See also [RUNTIME.md](RUNTIME.md) and [BRIDGE_ABI.md](BRIDGE_ABI.md).
-
----
-
-# Overview
-
-Linking runs whenever `xlang build` / `xlang compile` produces an executable (or static archive that needs members resolved), and for `xlang run`. Object-only output stops after codegen: no final executable link.
-
-The compiler emits objects (and optionally static archives). When linking, the linker resolves:
+The linker resolves:
 
 - Project objects for the selected entry
 - Runtime (linked by default for runnable programs)
 - Declared dependencies (source-built objects or static libraries)
-- Explicit extra objects passed on the command line
+- Explicit extra objects / archives on the command line
 
-Cross-compilation selects platform-appropriate static libraries when those artifacts exist.
+Cross-compilation selects platform-appropriate static libraries when those artifacts exist. See also [RUNTIME.md](RUNTIME.md) and [BRIDGE_ABI.md](BRIDGE_ABI.md).
 
 ---
 
@@ -107,7 +101,7 @@ The implementation must exist in another translation unit that is part of the li
 Manual object workflow:
 
 ```sh
-xlang compile lib.xlang --build=lib -o lib.o
+xlang build lib.xlang --build=object -o lib.o
 xlang build main.xlang lib.o -o app
 xlang run main.xlang lib.o
 ```
@@ -136,7 +130,7 @@ The linker and library resolver consult, in order consistent with install scopes
 2. Project cache / build outputs
 3. User registry (`~/.xlang/…`)
 4. Root / `XLANG_HOME` layouts
-5. Environment overrides such as `XLANG_LIB` / `XLANG_PATH` when set
+5. Environment overrides such as `XLANG_LIB_PATH` / `XLANG_MODULE_PATH` when set
 
 User-installed packages are preferred over root when both exist, matching [Installing](INSTALLING.md).
 
@@ -172,7 +166,7 @@ xlang compile server
 Object-only, then link into an executable:
 
 ```sh
-xlang compile lib.xlang --build=lib -o lib.o
+xlang build lib.xlang --build=object -o lib.o
 xlang build main.xlang lib.o -o app
 ```
 

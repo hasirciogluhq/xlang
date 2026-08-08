@@ -23,7 +23,7 @@ This document describes the syntax, types, module system, and runtime API of the
 15. [Networking and fetch](#networking-and-fetch)
 16. [JSON parsing](#json-parsing)
 17. [File I/O](#file-io)
-18. [Syscall](#syscall)
+18. [Declares: bridge vs CPU-native syscall](#declares-bridge-vs-cpu-native-syscall)
 19. [External linking](#external-linking)
 20. [Compiler builtins](#compiler-builtins)
 21. [Testing](#testing)
@@ -39,7 +39,7 @@ Design goals:
 
 - **Low-level first** — direct control; high-level packages are opt-in imports, not the language core
 - **Self-hosting runtime** — scheduler, print, and queue logic are written in xlang
-- **Syscall = OS bridge** — scheduler logic is not a syscall; only pthread, sysconf, etc.
+- **Bridge ≠ kernel** — `declare xl_*` links userspace C helpers; `declare syscall <n>` / `@syscall` emit CPU traps
 - **Simple syntax** — C/Go blend; `fn`, `local`, `struct`, `import`
 
 Every runnable program (by default) is linked with the runtime so `print`, `spawn`, and `wait_all` are available.
@@ -59,7 +59,8 @@ struct Point { x: int32, y: int32 } // struct definition
 counter = 0                          // global variable
 queue: array SpawnTask               // typed global (init optional)
 
-declare xl_sleep_ms(ms)         // OS bridge declaration
+declare xl_filesystem_open(path: string, mode: int32): int64  // bridge / C ABI
+declare syscall 1 write(fd: int64, buf: int64, n: int64): int64 // CPU-native
 declare external fn helper(x)        // external symbol (link time)
 
 export fn exported_fn() { ... }      // exported function
@@ -209,14 +210,16 @@ export fn print(...) {
 |----------|---------|
 | `export` | Importable from other modules |
 | `external` | Implementation in another `.o` file; declaration only |
-| `declare` | No definition (syscall or external prototype) |
+| `declare` | No definition — bridge/C ABI prototype (raw symbol) |
+| `declare syscall` | CPU-native trap wrapper (`declare syscall <number> name(...)`) |
 
 ```xlang
 export fn add(a, b) { return a + b }
 
 declare external fn zamazokka(x)
 
-declare xl_sleep_ms(ms)
+declare xl_thread_start(entry: int64, arg: int32): int64
+declare syscall 1 write(fd: int64, buf: int64, n: int64): int64
 ```
 
 ---
@@ -350,7 +353,7 @@ xlang resolves modules from:
 
 1. **`src/runtime/frontend/`** — standard library + runtime (`json`, `http`, `net`, `sync`, …)
 2. **Relative paths** — `import foo from ./foo`
-3. **`XLANG_PATH`** — colon-separated extra search directories
+3. **`XLANG_MODULE_PATH`** — extra module search directories (OS path-list separator)
 
 Bridge ABIs live in `src/runtime/bridge/` (C/C++ only) and are never imported as xlang modules.
 
@@ -471,13 +474,13 @@ The compiler automatically generates a **thunk** (parameterless `i32()` wrapper)
 - `worker_loop` — takes tasks from queue, runs `invoke0(entry)`
 - `init_scheduler()` — starts CPU-1 worker threads (min 1)
 
-Syscalls only for: `cpu_count`, `mutex_*`, `cond_*`, `start_thread`.
+Bridge declares used for: `cpu_count`, `mutex_*`, `cond_*`, `xl_thread_start` (and related). Prefer `xl_*` names for new bridges ([BRIDGE_ABI.md](BRIDGE_ABI.md)).
 
 ---
 
 ## Concurrency and sync
 
-Mutex, reader-writer lock, and atomic types live in `src/runtime/frontend/sync.xlang`. Logic is pure xlang; only minimal OS/LLVM bridges are used (`mutex_*`, `cond_*`, `atomic_*`, `sleep_ms`).
+Mutex, reader-writer lock, and atomic types live in `src/runtime/frontend/sync/sync.xlang`. Logic is pure xlang; OS helpers are plain `declare` bridges (`mutex_*`, `cond_*`, `atomic_*`, `sleep_ms`, `xl_now_ms`).
 
 ```xlang
 import sync from sync
@@ -529,7 +532,7 @@ fn main() {
 | `a.FetchAdd(delta)` | Fetch-and-add (`AtomicInt`) |
 | `a.CompareExchange(exp, des)` | CAS (`AtomicInt`) |
 
-Syscalls (internal bridge only): `atomic_*`, `mutex_*`, `cond_*`, `sleep_ms`.
+Internal bridge declares: `atomic_*`, `mutex_*`, `cond_*`, `sleep_ms`, `xl_now_ms`.
 
 See `examples/sync_lock.xlang` for `go` + mutex + atomic counter.
 
@@ -606,7 +609,7 @@ Compiler: `ref(obj)` → int64, `handle as User` loads struct from handle.
 
 ## Networking and fetch
 
-HTTP/HTTPS client logic lives in `src/runtime/frontend/net.xlang`, built on the bridge socket/TLS ABI (not an HTTP bridge).
+HTTP/HTTPS client logic lives in `src/runtime/frontend/net/`, built on the bridge socket/TLS ABI (not an HTTP bridge).
 
 | API | Description |
 |-----|-------------|
@@ -638,18 +641,20 @@ Supported URLs:
 | `https://host/path` | 443 |
 | `http://host:8080/path` | custom |
 
-Net syscalls (used internally by runtime, not directly by user code):
+Net bridge declares (used internally by runtime frontend; prefer high-level `net` / `http` APIs):
 
 ```xlang
-declare net_tcp_connect(host: string, port: int32): int64
-declare net_tls_connect(host: string, port: int32): int64
-declare net_send(fd: int64, data: string): int32
-declare net_tls_send(fd: int64, data: string): int32
-declare net_recv(fd: int64, max: int32): string
-declare net_tls_recv(fd: int64, max: int32): string
-declare net_close(fd: int64): int32
-declare net_tls_close(fd: int64): int32
+declare xl_net_tcp_connect(host: string, port: int32): int64
+declare xl_tls_connect(host: string, port: int32): int64
+declare xl_net_send(fd: int64, data: string): int32
+declare xl_tls_send(fd: int64, data: string): int32
+declare xl_net_recv(fd: int64, max: int32): string
+declare xl_tls_recv(fd: int64, max: int32): string
+declare xl_net_close(fd: int64): int32
+declare xl_tls_close(fd: int64): int32
 ```
+
+See [BRIDGE_ABI.md](BRIDGE_ABI.md).
 
 ---
 
@@ -685,10 +690,10 @@ fn main() {
 
 ## File I/O
 
-Optional file API lives in `src/runtime/frontend/file.xlang` (import when you want it). Backed by C++ fstream syscalls — those bridges are not the surface you have to use for all I/O.
+Optional file API lives in `src/runtime/frontend/filesystem/` (import when you want it). Backed by OS bridge `xl_filesystem_*` helpers — prefer the high-level API over calling bridges directly.
 
 ```xlang
-import * as file from file
+import * as file from filesystem
 
 fn main() {
     file.Write("out.txt", "hello")
@@ -706,7 +711,7 @@ fn main() {
 }
 ```
 
-### API (frontend/file)
+### API (frontend/filesystem)
 
 | Function | Description |
 |----------|-------------|
@@ -721,32 +726,34 @@ fn main() {
 | `Close(f)` | Close handle |
 | `IsOpen(f)` | 1 if handle is valid |
 
-Internal syscalls (bridge only): `file_open`, `file_close`, `file_read_path`, `file_write_path`, `file_exists`, `file_size`, `file_read_handle`, `file_write_handle`.
+Internal bridge declares (filesystem): `xl_filesystem_open`, `xl_filesystem_close`, `xl_filesystem_read_all`, … — see `src/runtime/frontend/filesystem/`.
 
 ---
 
-## Syscall
+## Declares: bridge vs CPU-native syscall
 
-Declaration for OS / kernel access. Implementation in C++ (`syscalls.cpp`) → LLVM IR.
+Two different mechanisms (do not mix them up):
+
+| Form | Meaning |
+|------|---------|
+| `declare xl_name(...)` / `declare fn name(...)` | Blind LLVM `declare` + `call`. Symbol resolved at link (OS bridge `.a`, user `.o`, …). |
+| `declare syscall <number> name(...)` | Compiler emits a wrapper that executes the **CPU trap** (`syscall` / `svc`). Not a bridge symbol. |
+| `@syscall(number, args...)` | Inline CPU-native trap expression. |
 
 ```xlang
-declare xl_sleep_ms(ms)
-declare random_range(min, max)
-declare cpu_count(): int32
-declare mutex_init(): int64
+declare xl_thread_start(entry: int64, arg: int32): int64   // bridge
+declare syscall 1 write(fd: int64, buf: int64, n: int64): int64  // native
+// local rc = @syscall(1, fd, buf, n)
 ```
 
-User code does not see pthread or libc directly; bridge helpers are plain `declare xl_*` names.
-CPU-native traps use `declare syscall <number> name(...)` or `@syscall(number, args...)`.
-
-Return type is optional:
+Return type is optional on plain `declare` (default `int32`):
 
 ```xlang
-declare foo()           // returns int32 (default)
+declare foo()
 declare bar(): int64
 ```
 
-**NOT syscalls:** scheduler logic (`spawn` queue, worker loop) — those live in the xlang runtime.
+Scheduler logic (`spawn` queue, worker loop) lives in xlang frontend runtime — not in the compiler. Bridge ABI naming: [BRIDGE_ABI.md](BRIDGE_ABI.md).
 
 ---
 
@@ -755,7 +762,7 @@ declare bar(): int64
 Compile another xlang module as an object and link it. `build` and `compile` are the same command; either produces an object or a direct executable.
 
 ```bash
-xlang compile lib.xlang --build=lib -o lib.o
+xlang build lib.xlang --build=object -o lib.o
 xlang build main.xlang lib.o -o app
 xlang run main.xlang lib.o
 ```
@@ -774,13 +781,13 @@ fn main() {
 }
 ```
 
-`declare external fn` — implementation in `lib.o`; must match the `export` symbol name.
+`declare external fn` — implementation in `lib.o`; must match the `export` symbol name. Build kinds: `executable` | `static` | `shared` | `object` (see [LINKING.md](LINKING.md)).
 
 ---
 
 ## Compiler builtins
 
-Not syscalls; codegen special cases:
+Not bridges and not CPU traps; codegen special cases:
 
 | Name | Description |
 |------|-------------|
@@ -900,10 +907,9 @@ Early version; known constraints:
 ```
 .xlang → tokenize → parse → AST
        → module merge (import)
-       → codegen → LLVM IR
-       → syscall IR inject
-       → clang -c → .o
-       → clang link (+ runtime.o) → executable
+       → CommonIrBuilder → llvm::Module
+       → TargetMachine → object (.o)
+       → link (+ runtime + bridges + OS baseline syslibs) → executable
 ```
 
-Runtime compilation: `src/runtime/frontend/runtime.xlang` is compiled by `xlang` (not xmake) to a separate `.o` and linked into user programs. Additional frontend modules (`scheduler`, `net`, `http`, `file`, `sync`) are resolved via import and linked as needed.
+Frontend runtime under `src/runtime/frontend/` is compiled by `xlang` (not xmake). OS bridges under `src/runtime/bridge/{linux,macosx,windows}/` are C static libs. Defaults and embed: [RUNTIME.md](RUNTIME.md). Declares: [BRIDGE_ABI.md](BRIDGE_ABI.md).

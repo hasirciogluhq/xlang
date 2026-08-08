@@ -1,19 +1,15 @@
 # xlang
 
-**xlang** is an extremely low-level, LLVM-based programming language targeting self-hosting. You can write close-to-the-metal code, or import optional high-level APIs (`net`/`http`, and similar) for REST, databases, and the like. The compiler binary (`xlang`) produces native executables or object files from `.xlang` source. The runtime (print, scheduler, spawn) is largely **written in xlang**; C++ only provides the compiler, OS bridge (syscall), and LLVM codegen layer.
+**xlang** is an extremely low-level, LLVM-based programming language. Optional high-level APIs (`net`/`http`, and similar) are importable packages — not the language core. The `xlang` CLI compiles `.xlang` to native objects / executables / static libraries. Frontend runtime is written in xlang; C++ owns the compiler, host tooling, and LLVM codegen. OS userspace helpers live in C bridges under `xl_*`.
 
 ```
-┌─────────────────┐     ┌──────────────────┐     ┌─────────────┐
-│  .xlang source  │ ──► │  xlang (C++/LLVM) │ ──► │  executable │
-└─────────────────┘     └──────────────────┘     └─────────────┘
+┌─────────────────┐     ┌──────────────────────────┐     ┌────────────────┐
+│  .xlang source  │ ──► │  xlang (C++ / LLVM API)   │ ──► │  .o / exe / .a │
+└─────────────────┘     └──────────────────────────┘     └────────────────┘
                                │
-                               ▼
-                 src/runtime/frontend/*.xlang
-                 (net, http, sync, scheduler, …)
+                CommonIrBuilder → Module → TargetMachine
                                │
-                               ▼
-                 src/runtime/bridge (C/C++ ABI)
-                 (socket, tls, file, thread, …)
+          runtime frontend (.xlang) + OS bridges (xl_* C)
 ```
 
 ## Features
@@ -21,144 +17,124 @@
 | Area | Support |
 |------|---------|
 | Types | `int32`, `int64`, `float`, `double`, `bool`, `string`, struct, pointer, array |
-| Functions | Overload, variadic (`...`), `export` / `external` |
-| Modules | `import`, `import * as`, directory packages (`http/`), `XLANG_PATH` |
+| Functions | Overload, variadic (`...`), `export` / `external` / `declare` |
+| Modules | `import`, `import * as`, directory packages (`http/`) |
 | Memory | `new` / `delete`, struct fields, heap |
 | Control flow | `if` / `else`, `while` |
 | Strings | Concat (`+`), `printf`-style formatted `print` |
-| Concurrency | `spawn` / `wait_all`, `sync` module (Lock, RWLock, AtomicInt) |
-| Linking | Link external `.o` files |
+| Concurrency | `spawn` / `wait_all`, `sync` / `scheduler` |
+| Native kernel | `declare syscall <n> name(...)` or `@syscall(n, args...)` |
+| Bridges | plain `declare xl_<object>_<action>(...)` → link OS bridge `.a` |
 
 Full language reference: **[docs/LANGUAGE.md](docs/LANGUAGE.md)**  
-VS Code extension (IntelliSense, hover, diagnostics): **[vscode/README.md](vscode/README.md)**
+Runtime / embed: **[docs/RUNTIME.md](docs/RUNTIME.md)** · Bridge ABI: **[docs/BRIDGE_ABI.md](docs/BRIDGE_ABI.md)** · Linking: **[docs/LINKING.md](docs/LINKING.md)**  
+VS Code extension: **[vscode/README.md](vscode/README.md)**
 
 ## Requirements
 
 - [xmake](https://xmake.io) ≥ 2.8
 - **C++23** compiler (Clang or GCC)
-- **Clang** (for LLVM IR → object → executable linking; `clang` must be on PATH)
+- **Clang** on `PATH` (used when linking the final image)
+- LLVM (via xmake package)
 
 ## Build
 
 ```bash
 xmake
 # optional: xmake f -m debug && xmake
-# install: xmake install -o /usr/local
 ```
 
 Compiler binary: `./build/xlang`
 
-xmake builds **C/C++ only** (compiler + bridge static libs). Frontend `.xlang` under
-`src/runtime/frontend` is compiled by `xlang` when you build user programs — never by xmake.
+xmake builds **C/C++ only** (compiler + host OS bridge static libs). Frontend `.xlang` under `src/runtime/frontend` is compiled by `xlang` itself (dev: in-tree; release: two-phase embed — see [RUNTIME.md](docs/RUNTIME.md)).
+
+Release embed dance:
+
+```bash
+xmake                          # stage-1 xlang
+xmake build_bridges_pack
+xmake bootstrap_embed          # compile frontend runtime + emit build/embed/*.c
+xmake -r xlang                 # stage-2 with XLANG_HAS_EMBEDDED_*
+```
 
 ## Quick start
 
 ```bash
-# Hello world
 ./build/xlang run examples/strings.xlang
-
-# Module import
 ./build/xlang run examples/hello.xlang
-
-# Struct + heap
 ./build/xlang run examples/types.xlang
-
-# HTTP server
 ./build/xlang run examples/http_server.xlang
 ```
 
-## VS Code extension
+## CLI
 
-IntelliSense, hover documentation, import-aware completions, diagnostics, and run/test commands:
+Defaults for `xlang build foo.xlang`: **executable** + runtime **on** + bridges **on** + OS baseline syslibs (e.g. `-pthread`).
+
+### `xlang build`
 
 ```bash
-cd vscode && bun install && bun run compile && bun run package
-code --install-extension xlang-1.0.0.vsix
+xlang build app.xlang                              # executable (default)
+xlang build app.xlang lib.o -o myapp
+xlang build app.xlang --build=object -o app.o
+xlang build app.xlang --build=static -o libapp.a
+xlang build app.xlang --build=shared               # experimental
+xlang build app.xlang --no-runtime                 # no frontend runtime; bridges still link
+xlang build app.xlang --no-bridge                  # raw; user supplies symbols
+xlang build app.xlang --runtime path/to/runtime.xlang
+xlang build app.xlang --bridge path/to/bridges.a
+xlang build app.xlang --target linux --arch x64
+xlang build app.xlang --emit-ir                    # dump Module IR
+xlang build app.xlang --keep-ir
 ```
 
-See [vscode/README.md](vscode/README.md) for details.
-
-## CLI
+`--build=` values: `executable` (aliases: `binary`, `exe`) | `static` | `shared` | `object` (legacy alias: `lib` → object).
 
 ### `xlang run`
 
-Compiles source, links with runtime, and runs the program.
-
 ```bash
 xlang run program.xlang
-xlang run main.xlang lib.o          # link additional object files
+xlang run main.xlang lib.o
 xlang run program.xlang --keep-artifacts
 xlang run program.xlang --runtime path/to/runtime.xlang
 ```
 
-### `xlang build`
-
-Produces an executable or object file.
-
-```bash
-xlang build app.xlang                        # → app (executable)
-xlang build app.xlang lib.o -o myapp         # link with lib.o
-xlang build lib.xlang --build=lib -o lib.o   # object library
-xlang build app.xlang --emit-ir              # write LLVM IR
-xlang build app.xlang --no-runtime          # no frontend runtime (bridges still link)
-xlang build app.xlang --no-bridge           # raw compile; user supplies symbols
-xlang build app.xlang --build=static        # static library
-xlang build app.xlang --build=object        # single object file
-
-xlang build app.xlang --keep-ir
-xlang build app.xlang -o output/path
-```
-
-### `xlang parse`
-
-Shows an AST summary (debug).
+### `xlang parse` / `xlang test`
 
 ```bash
 xlang parse examples/hello.xlang
+xlang test                         # default: test/xlang/
+xlang test http
+xlang test --parallel
 ```
 
-### `xlang test`
-
-Runs Vitest-style tests from `*.test.xlang` files (one process per file).
-
-```bash
-xlang test                    # default: test/xlang/
-xlang test http               # pattern filter
-xlang test --parallel         # parallel Test* functions
-```
-
-Test API (`src/runtime/frontend/test.xlang`): `expect(actual).toEqual(expected)`, `expectFn(fn).toThrow()`, `Test*` functions.
+## Declares (two paths)
 
 ```xlang
-import test from test
-import router from http/router
-
-fn TestPingRoute() {
-    local r = router.NewRouter()
-    r.Get("/ping", handle_ping)
-    local ctx = r.DispatchRequest("GET", "/ping")
-    expect(ctx.status).toEqual(200)
-    return 0
-}
-
-fn handle_ping(ctx: Context) {
-    ctx.String(200, "pong")
-    expect(1).toEqual(1)
-    return 0
-}
+declare xl_net_tcp_connect(host: string, port: int32): int64   // bridge / C ABI
+declare syscall 1 write(fd: int64, buf: int64, n: int64): int64 // CPU-native trap
+// or: @syscall(1, fd, buf, n)
 ```
 
----
+See [BRIDGE_ABI.md](docs/BRIDGE_ABI.md).
+
+## Tree
 
 ```
 xlang/
-├── src/                      # Compiler (C++ only) + runtime
-│   ├── *.cpp                 # lexer, parser, codegen, linker, …
+├── src/
+│   ├── cli/                 # main
+│   ├── lang/                # ast, lexer, parser, types
+│   ├── codegen/             # CommonIrBuilder, TargetMachine, lowering
+│   ├── compiler/            # compile / link / module / runtime / test
+│   ├── host/                # layout, resolve, fetch, embed
+│   ├── platform/            # linux | macosx | windows
+│   ├── util/
 │   └── runtime/
-│       ├── bridge/           # C/C++ ABI (socket, tls, file, process, …)
-│       └── frontend/         # xlang low/high-level APIs (net, http, sync, …)
-│           └── http/         # HTTP on top of net socket ABI
-├── include/xlang/            # C++ headers
+│       ├── RUNTIME_VERSION
+│       ├── SUPPORTED_COMPILERS
+│       ├── bridge/{linux,macosx,windows}/   # xl_* C ABI
+│       └── frontend/                        # .xlang packages
+├── include/xlang/
 ├── examples/
 ├── test/xlang/
 ├── vscode/
@@ -167,60 +143,27 @@ xlang/
 └── docs/
 ```
 
-## Architecture overview
+## Architecture
 
-### Compiler (`xlang`)
+1. **Lexer / parser** (`src/lang`) → AST  
+2. **Module loader** — `import` merge  
+3. **Codegen** (`src/codegen`) — AST → `CommonIrBuilder` → `llvm::Module` → `TargetMachine` → `.o`  
+4. **Link** — user objects + runtime (unless `--no-runtime`) + bridges (unless `--no-bridge`) + OS baseline syslibs  
 
-1. **Lexer / Parser** — source → AST  
-2. **Module loader** — merges files via `import`  
-3. **Codegen** — AST → LLVM IR  
-4. **Syscall lowering** — `declare syscall` → bridge ABI  
-5. **Clang** — IR → `.o` → executable (+ frontend runtime `.o`)
+Bridge ≠ kernel: bridges are userspace `xl_*` helpers. Kernel entry is only via `declare syscall` / `@syscall`.
 
-### Runtime layout
-
-**Bridge** (`src/runtime/bridge`): C/C++ only — sockets, TLS, file, process, time, panic. No HTTP protocol.
-
-**Frontend** (`src/runtime/frontend`): xlang modules. Low-level wrappers over bridge ABIs, plus optional higher-level APIs:
-
-- **`net`** — TCP/TLS + `fetch` (HTTP client built in xlang)
-- **`http`** — router / server on top of socket ABI (`net_tcp_listen` / `accept`)
-- **`sync` / `scheduler` / `file` / `time` / `errors`**
-- **`json` / `test` / `process`** — importable packages
-
-xmake never compiles frontend `.xlang`; the `xlang` binary compiles them when building user programs.
-
-### Library + external linking
-
-```bash
-# lib.xlang → lib.o
-xlang build test/lib.xlang --build=lib -o test/lib.o
-
-# main.xlang declares external function, lib.o is linked
-xlang run test/main.xlang test/lib.o
-```
-
-`test/main.xlang`:
-
-```xlang
-declare external fn zamazokka(str)
-
-fn main() {
-    zamazokka(1978)
-}
-```
-
-## Environment variables
+## Environment
 
 | Variable | Description |
 |----------|-------------|
-| `XLANG_PATH` | Colon-separated module search directories |
-| `XLANG_LIB` | Colon-separated static library (`.a`) search paths |
-| `XLANG_HOME` | Install root (`frontend/`, `lib/`) |
+| `XLANG_MODULE_PATH` | Module search directories (path list separator) |
+| `XLANG_LIB_PATH` | Static library (`.a`) search directories |
+| `XLANG_CLANG` | Clang binary override |
+| `XLANG_TARGET_OS` / `XLANG_TARGET_ARCH` / `XLANG_TARGET_TRIPLE` | Target overrides |
 
 ## Status
 
-xlang is an early-stage language (v0.1). APIs and syntax may change. See the **Limitations** section in [docs/LANGUAGE.md](docs/LANGUAGE.md) for known constraints.
+Early-stage (v0.1). APIs and syntax may change. See [docs/LANGUAGE.md](docs/LANGUAGE.md) limitations.
 
 ## License
 
