@@ -2,11 +2,11 @@
 //   import server from http/server
 //   server.Listen("127.0.0.1", 8080, on_listen, on_conn, 0)
 
-declare syscall net_tcp_listen(host: string, port: int32): int64
-declare syscall net_tcp_accept(listen_fd: int64): int64
-declare syscall net_send(fd: int64, data: string): int32
-declare syscall net_recv(fd: int64, max: int32): string
-declare syscall net_close(fd: int64): int32
+declare xl_net_tcp_listen(host: string, port: int32): int64
+declare xl_net_tcp_accept(listen_fd: int64): int64
+declare xl_net_send(fd: int64, data: string): int32
+declare xl_net_recv(fd: int64, max: int32): string
+declare xl_net_close(fd: int64): int32
 
 export struct Conn {
     fd: int64
@@ -40,22 +40,22 @@ export fn Port(info: ServerInfo): int32 {
 }
 
 export fn Read(c: Conn, max: int32): string {
-    return net_recv(c.fd, max)
+    return xl_net_recv(c.fd, max)
 }
 
 export fn Write(c: Conn, data: string): int32 {
-    return net_send(c.fd, data)
+    return xl_net_send(c.fd, data)
 }
 
 export fn Close(c: Conn): int32 {
-    return net_close(c.fd)
+    return xl_net_close(c.fd)
 }
 
 export fn ReadUntil(c: Conn, marker: string): string {
     local buf = ""
     local done = 0
     while done == 0 {
-        local part = net_recv(c.fd, 4096)
+        local part = xl_net_recv(c.fd, 4096)
         if str_len(part) == 0 {
             done = 1
         } else {
@@ -69,7 +69,7 @@ export fn ReadUntil(c: Conn, marker: string): string {
 }
 
 export fn Listen(host: string, port: int32, on_listen: int64, handler: int64, data: int64): int32 {
-    local listen_fd = net_tcp_listen(host, port)
+    local listen_fd = xl_net_tcp_listen(host, port)
     if listen_fd < 0 {
         print("listen failed on %s:%d", host, port)
         return 1
@@ -81,18 +81,18 @@ export fn Listen(host: string, port: int32, on_listen: int64, handler: int64, da
     }
     invoke1(on_listen, info)
     while true {
-        local client = net_tcp_accept(listen_fd)
+        local client = xl_net_tcp_accept(listen_fd)
         if client >= 0 {
             local conn = new Conn { fd = client, data = data }
             invoke1(handler, conn)
-            net_close(client)
+            xl_net_close(client)
         }
     }
     return 0
 }
 
 export fn AcceptOnce(host: string, port: int32, on_listen: int64, handler: int64, data: int64): int32 {
-    local listen_fd = net_tcp_listen(host, port)
+    local listen_fd = xl_net_tcp_listen(host, port)
     if listen_fd < 0 {
         return 1
     }
@@ -102,12 +102,12 @@ export fn AcceptOnce(host: string, port: int32, on_listen: int64, handler: int64
         port = port
     }
     invoke1(on_listen, info)
-    local client = net_tcp_accept(listen_fd)
+    local client = xl_net_tcp_accept(listen_fd)
     if client >= 0 {
         local conn = new Conn { fd = client, data = data }
         invoke1(handler, conn)
-        net_close(client)
+        xl_net_close(client)
     }
-    net_close(listen_fd)
+    xl_net_close(listen_fd)
     return 0
 }

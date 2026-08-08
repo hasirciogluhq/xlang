@@ -11,7 +11,7 @@
 
 import server from http/server
 
-declare syscall env_get(key: string): string
+declare xl_env_get(key: string): string
 
 struct RouteDef {
     method: string
@@ -57,7 +57,7 @@ export struct Router {
 
 export fn NewRouter(): Router {
     local access_log = 1
-    if str_eq(env_get("XLANG_ENV"), "production") != 0 {
+    if str_eq(xl_env_get("XLANG_ENV"), "production") != 0 {
         access_log = 0
     }
     return new Router {

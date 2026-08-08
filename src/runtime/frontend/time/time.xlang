@@ -3,15 +3,15 @@
 //   print("%s", Format(t))
 //   print("%dms", ElapsedMs(start, Now()))
 
-declare syscall now_ms(): int64
-declare syscall time_format(ms: int64): string
+declare xl_now_ms(): int64
+declare xl_time_format(ms: int64): string
 
 export struct Time {
     unix_ms: int64
 }
 
 export fn Now(): Time {
-    return new Time { unix_ms = now_ms() }
+    return new Time { unix_ms = xl_now_ms() }
 }
 
 export fn FromMs(ms: int64): Time {
@@ -23,7 +23,7 @@ export fn UnixMs(t: Time): int64 {
 }
 
 export fn Format(t: Time): string {
-    return time_format(t.unix_ms)
+    return xl_time_format(t.unix_ms)
 }
 
 export fn ElapsedMs(start_t: Time, end_t: Time): int32 {

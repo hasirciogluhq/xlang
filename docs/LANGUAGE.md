@@ -59,7 +59,7 @@ struct Point { x: int32, y: int32 } // struct definition
 counter = 0                          // global variable
 queue: array SpawnTask               // typed global (init optional)
 
-declare syscall sleep_ms(ms)         // OS bridge declaration
+declare xl_sleep_ms(ms)         // OS bridge declaration
 declare external fn helper(x)        // external symbol (link time)
 
 export fn exported_fn() { ... }      // exported function
@@ -216,7 +216,7 @@ export fn add(a, b) { return a + b }
 
 declare external fn zamazokka(x)
 
-declare syscall sleep_ms(ms)
+declare xl_sleep_ms(ms)
 ```
 
 ---
@@ -641,14 +641,14 @@ Supported URLs:
 Net syscalls (used internally by runtime, not directly by user code):
 
 ```xlang
-declare syscall net_tcp_connect(host: string, port: int32): int64
-declare syscall net_tls_connect(host: string, port: int32): int64
-declare syscall net_send(fd: int64, data: string): int32
-declare syscall net_tls_send(fd: int64, data: string): int32
-declare syscall net_recv(fd: int64, max: int32): string
-declare syscall net_tls_recv(fd: int64, max: int32): string
-declare syscall net_close(fd: int64): int32
-declare syscall net_tls_close(fd: int64): int32
+declare net_tcp_connect(host: string, port: int32): int64
+declare net_tls_connect(host: string, port: int32): int64
+declare net_send(fd: int64, data: string): int32
+declare net_tls_send(fd: int64, data: string): int32
+declare net_recv(fd: int64, max: int32): string
+declare net_tls_recv(fd: int64, max: int32): string
+declare net_close(fd: int64): int32
+declare net_tls_close(fd: int64): int32
 ```
 
 ---
@@ -730,19 +730,20 @@ Internal syscalls (bridge only): `file_open`, `file_close`, `file_read_path`, `f
 Declaration for OS / kernel access. Implementation in C++ (`syscalls.cpp`) → LLVM IR.
 
 ```xlang
-declare syscall sleep_ms(ms)
-declare syscall random_range(min, max)
-declare syscall cpu_count(): int32
-declare syscall mutex_init(): int64
+declare xl_sleep_ms(ms)
+declare random_range(min, max)
+declare cpu_count(): int32
+declare mutex_init(): int64
 ```
 
-User code does not see pthread or libc directly; only `declare syscall` names are used.
+User code does not see pthread or libc directly; bridge helpers are plain `declare xl_*` names.
+CPU-native traps use `declare syscall <number> name(...)` or `@syscall(number, args...)`.
 
 Return type is optional:
 
 ```xlang
-declare syscall foo()           // returns int32 (default)
-declare syscall bar(): int64
+declare foo()           // returns int32 (default)
+declare bar(): int64
 ```
 
 **NOT syscalls:** scheduler logic (`spawn` queue, worker loop) — those live in the xlang runtime.

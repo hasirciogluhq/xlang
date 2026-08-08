@@ -100,7 +100,11 @@ xlang build app.xlang                        # → app (executable)
 xlang build app.xlang lib.o -o myapp         # link with lib.o
 xlang build lib.xlang --build=lib -o lib.o   # object library
 xlang build app.xlang --emit-ir              # write LLVM IR
-xlang build app.xlang --skip-runtime         # no runtime (no print/spawn)
+xlang build app.xlang --no-runtime          # no frontend runtime (bridges still link)
+xlang build app.xlang --no-bridge           # raw compile; user supplies symbols
+xlang build app.xlang --build=static        # static library
+xlang build app.xlang --build=object        # single object file
+
 xlang build app.xlang --keep-ir
 xlang build app.xlang -o output/path
 ```

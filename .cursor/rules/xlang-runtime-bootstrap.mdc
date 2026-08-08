@@ -1,0 +1,13 @@
+---
+description: Runtime embed, VERSION files, and two-phase release bootstrap
+globs: src/runtime/**/*,src/host/**/*,xmake/**/*
+alwaysApply: false
+---
+
+# Runtime package & bootstrap
+
+- Tarball/package root: `RUNTIME_VERSION`, `SUPPORTED_COMPILERS`.
+- User resolve: `--runtime=`/`--bridge=` → else extract embed → else in-tree.
+- `--no-runtime` keeps bridges unless `--no-bridge`. Defaults: executable + runtime + bridges + OS syslibs.
+- Release embed is two-phase: stage-1 xlang → compile frontend runtime → rebuild xlang with embed (`xmake bootstrap_embed`). Bridges (C) embed without that dance.
+- Docs: `docs/RUNTIME.md`, `docs/BRIDGE_ABI.md`.

@@ -1,6 +1,8 @@
 // Vitest / bun:test tarzı test API — orchestration xlang içinde.
 // C++ yalnızca Test* fonksiyonlarını toplayıp synthetic main enjekte eder.
-// spawn / mutex / try_invoke0 runtime.xlang üzerinden scheduler + errors modüllerinden gelir.
+// spawn / mutex / xl_try_invoke0 — scheduler + errors / panic bridge.
+
+declare xl_try_invoke0(entry: int64): int32
 
 export struct Expect {
     kind: int32
@@ -126,7 +128,7 @@ export fn toBeFalse(e: Expect): Expect {
 }
 
 export fn toThrow(e: Expect): Expect {
-    local rc = try_invoke0(e.actual_i64)
+    local rc = xl_try_invoke0(e.actual_i64)
     local ok = 0
     if rc == 2 {
         ok = 1
@@ -144,7 +146,7 @@ export fn toThrow(e: Expect): Expect {
 }
 
 export fn toError(e: Expect): Expect {
-    local rc = try_invoke0(e.actual_i64)
+    local rc = xl_try_invoke0(e.actual_i64)
     local ok = 0
     if rc != 0 {
         ok = 1

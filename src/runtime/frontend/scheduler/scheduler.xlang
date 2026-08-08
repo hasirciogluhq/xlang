@@ -5,15 +5,15 @@ struct SpawnTask {
     entry: int64
 }
 
-declare syscall cpu_count(): int32
-declare syscall mutex_init(): int64
-declare syscall mutex_lock(m: int64): int32
-declare syscall mutex_unlock(m: int64): int32
-declare syscall cond_init(): int64
-declare syscall cond_wait(c: int64, m: int64): int32
-declare syscall cond_signal(c: int64): int32
-declare syscall cond_broadcast(c: int64): int32
-declare syscall start_thread(entry: int64, arg: int32): int32
+declare cpu_count(): int32
+declare mutex_init(): int64
+declare mutex_lock(m: int64): int32
+declare mutex_unlock(m: int64): int32
+declare cond_init(): int64
+declare cond_wait(c: int64, m: int64): int32
+declare cond_signal(c: int64): int32
+declare cond_broadcast(c: int64): int32
+declare xl_thread_start(entry: int64, arg: int32): int64
 
 spawn_queue: array SpawnTask
 queue_mu: int64
@@ -38,7 +38,7 @@ fn init_scheduler() {
     }
     local i = 0
     while i < workers {
-        start_thread(worker_loop, i)
+        xl_thread_start(worker_loop, i)
         worker_total = worker_total + 1
         i = i + 1
     }
@@ -90,7 +90,7 @@ export fn wait_all() {
 
 export fn add_worker() {
     init_scheduler()
-    start_thread(worker_loop, worker_total)
+    xl_thread_start(worker_loop, worker_total)
     worker_total = worker_total + 1
     return 0
 }

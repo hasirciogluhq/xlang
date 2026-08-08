@@ -1,15 +1,15 @@
 // Low-level net + HTTP/HTTPS client (fetch).
 // Bridge only exposes TCP/TLS socket ABI; HTTP framing lives here in xlang.
 
-declare syscall net_tcp_connect(host: string, port: int32): int64
-declare syscall net_send(fd: int64, data: string): int32
-declare syscall net_recv(fd: int64, max: int32): string
-declare syscall net_close(fd: int64): int32
+declare xl_net_tcp_connect(host: string, port: int32): int64
+declare xl_net_send(fd: int64, data: string): int32
+declare xl_net_recv(fd: int64, max: int32): string
+declare xl_net_close(fd: int64): int32
 
-declare syscall net_tls_connect(host: string, port: int32): int64
-declare syscall net_tls_send(fd: int64, data: string): int32
-declare syscall net_tls_recv(fd: int64, max: int32): string
-declare syscall net_tls_close(fd: int64): int32
+declare xl_tls_connect(host: string, port: int32): int64
+declare xl_tls_send(fd: int64, data: string): int32
+declare xl_tls_recv(fd: int64, max: int32): string
+declare xl_tls_close(fd: int64): int32
 
 struct UrlParts {
     host: string
@@ -131,30 +131,30 @@ fn parse_url(url: string): UrlParts {
 
 fn session_connect(parts: UrlParts): int64 {
     if parts.secure != 0 {
-        return net_tls_connect(parts.host, parts.port)
+        return xl_tls_connect(parts.host, parts.port)
     }
-    return net_tcp_connect(parts.host, parts.port)
+    return xl_net_tcp_connect(parts.host, parts.port)
 }
 
 fn session_send(fd: int64, data: string, secure: int32): int32 {
     if secure != 0 {
-        return net_tls_send(fd, data)
+        return xl_tls_send(fd, data)
     }
-    return net_send(fd, data)
+    return xl_net_send(fd, data)
 }
 
 fn session_recv(fd: int64, max: int32, secure: int32): string {
     if secure != 0 {
-        return net_tls_recv(fd, max)
+        return xl_tls_recv(fd, max)
     }
-    return net_recv(fd, max)
+    return xl_net_recv(fd, max)
 }
 
 fn session_close(fd: int64, secure: int32): int32 {
     if secure != 0 {
-        return net_tls_close(fd)
+        return xl_tls_close(fd)
     }
-    return net_close(fd)
+    return xl_net_close(fd)
 }
 
 fn build_get_request(path: string, host: string): string {

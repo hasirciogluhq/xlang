@@ -19,6 +19,23 @@ This document is the source of truth for how the **linker** attaches objects, st
 
 ---
 
+Linking runs whenever `xlang build` produces an **executable** or **shared** library, and for `xlang run`. `--build=object` stops after codegen. `--build=static` archives members with `ar` (no dynamic link).
+
+Build kinds (`--build=`): `executable` (default) | `static` | `shared` (experimental) | `object`.
+
+Default link stack for an executable:
+
+1. User object(s)
+2. Runtime (unless `--no-runtime`) — override / embedded extract / in-tree
+3. OS bridges (unless `--no-bridge`) — same resolve order
+4. Target OS **baseline syslibs** (e.g. `-pthread`; never derived from syscall use)
+
+Prefer **static** embed of runtime + bridges into the user program. Non-OS shared libs are not default.
+
+See also [RUNTIME.md](RUNTIME.md) and [BRIDGE_ABI.md](BRIDGE_ABI.md).
+
+---
+
 # Overview
 
 Linking runs whenever `xlang build` / `xlang compile` produces an executable (or static archive that needs members resolved), and for `xlang run`. Object-only output stops after codegen: no final executable link.

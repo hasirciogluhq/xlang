@@ -10,10 +10,10 @@ todos:
     status: pending
   - id: native-syscall
     content: CPU-native syscall emit (arch opcode); runtime/ABI not required
-    status: pending
+    status: completed
   - id: os-bridges
     content: OS bridge folders; xl_<obj>_<action> ABI (e.g. xl_thread_start)
-    status: pending
+    status: in_progress
   - id: runtime-pkg
     content: Runtime embed in compiler; VERSION files; GitHub fetch; docs+rule
     status: pending
@@ -21,17 +21,17 @@ todos:
     content: "--runtime/--bridge/--no-*; build=executable|static|shared|object"
     status: pending
   - id: bootstrap-embed
-    content: "Two-phase bootstrap - compile runtime with stage1 xlang then re-embed"
+    content: Two-phase bootstrap - compile runtime with stage1 xlang then re-embed
     status: pending
   - id: link-policy
     content: OS syslib flag table + static embed; no non-OS externals by default
     status: pending
   - id: codegen-irbuilder
     content: CommonIrBuilder + TargetMachine; remove string .ll; no PlatformIrBuilder
-    status: pending
+    status: in_progress
   - id: cross-cli
     content: target/arch override flags + xmake defines
-    status: pending
+    status: in_progress
   - id: simplify-ast-lexer
     content: Simplify AST/lexer; leave broken if needed
     status: pending
