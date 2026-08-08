@@ -1,6 +1,6 @@
 ---
 name: Compiler Runtime Rebuild
-overview: Decouple the compiler from syscall/link knowledge; AST → CommonIrBuilder → triple/TargetMachine → LLVM Module; ship runtime separately with OS/arch bridges via GitHub Releases; replace paths with a host/platform backbone under src/.
+overview: Decouple the compiler from syscall/link knowledge; CommonIrBuilder + TargetMachine; OS bridges with xl_* ABI; embed runtime/bridges in released xlang (two-phase bootstrap); --runtime=/--bridge= overrides; host/platform backbone.
 todos:
   - id: host-platform
     content: src/host + platform/{linux,macosx,windows}; remove paths
@@ -15,7 +15,13 @@ todos:
     content: OS bridge folders; xl_<obj>_<action> ABI (e.g. xl_thread_start)
     status: pending
   - id: runtime-pkg
-    content: Runtime static embed; VERSION files; GitHub fetch; docs+rule
+    content: Runtime embed in compiler; VERSION files; GitHub fetch; docs+rule
+    status: pending
+  - id: cli-overrides
+    content: "--bridge= / --runtime= per-override; extract embed to temp/build"
+    status: pending
+  - id: bootstrap-embed
+    content: "Two-phase bootstrap - compile runtime with stage1 xlang then re-embed"
     status: pending
   - id: link-policy
     content: OS syslib flag table + static embed; no non-OS externals by default
@@ -42,9 +48,12 @@ isProject: false
 - **Bridge ABI naming (mandatory, xl helpers only):** `xl_<object>_<action>` — `xl_thread_start`, `xl_socket_connect`. Raw native syscalls and foreign symbols are not under this rule.
 - **Codegen:** `AST → CommonIrBuilder → LLVM Module → TargetMachine(triple) → object`. No separate PlatformIrBuilder (does not emit OS IR). Platform tooling lives in `src/host` + `platform/*`; OS APIs live in runtime bridges.
 - **OS work (bridges):** `bridge/linux|macosx|windows/`, with `thread.cpp` etc. and `#if` / arch defines for x86/x64. The same `xl_*` names are implemented on every OS.
-- **Compiler:** Blindly compiles `declare`/`export`/`external`; **no** known-syscall list and **no** bridge `needs_*_link`. Link keeps two things: (1) target OS **baseline syslib flags** (`-lpthread`, etc.), (2) **static embed** of the runtime.
-- **Link policy:** Prefer **static embedding** into the program (runtime + `xl_*` bridges + user `.a`). **External/shared link only for OS-provided syslibs** (pthread, libc, Win32 import libs, macOS system frameworks when needed). No default `.so`/`.dylib` for non-OS third parties — static `.a` or object.
-- **Runtime:** Separate artifact; discovered automatically and **statically** linked. Tarball carries `RUNTIME_VERSION` + `SUPPORTED_COMPILERS`. Distribution: GitHub Releases (`os-arch-version`); package-manager CDN later.
+- **Compiler:** Blindly compiles `declare`/`export`/`external`; **no** known-syscall list and **no** bridge `needs_*_link`. Link keeps: (1) target OS **baseline syslib flags**, (2) runtime/bridge material (default from **embedded** payload, or user override).
+- **CLI overrides (main binary):** User may point at custom pieces individually, e.g. `--bridge=...` and/or `--runtime=...` (path to their own bridge and/or runtime). Defaults use what shipped inside the compiler; overrides replace only the named piece.
+- **Release embed → extract → link:** At **compiler release** build, default bridge + runtime artifacts are **embedded into the `xlang` binary**. At user compile time the compiler **extracts** them into a temp or build directory, then links the user program against that material so it runs. Bridges (C) embed cleanly; **xlang frontend runtime needs a bootstrap dance** (below).
+- **Bootstrap (the comedy):** You cannot embed `.xlang` runtime until something can compile it. So release build is two-phase: (1) build a normal stage-1 `xlang` without the final runtime embed → use it to compile the xlang runtime to `.o`/archive; (2) **throw away / rebuild** `xlang` from scratch with that runtime object **embedded** ready for extract-and-link. Bridges skip the joke (plain C). Document this as mandatory release procedure, not optional folklore.
+- **Link policy:** Prefer **static embedding** into the **user program** (extracted runtime + `xl_*` bridges + user `.a`). **External/shared link only for OS syslibs**. Non-OS `.so`/`.dylib` not default.
+- **Runtime:** Separate build artifact with `RUNTIME_VERSION` + `SUPPORTED_COMPILERS`; also the payload embedded in the released compiler. Distribution: GitHub Releases; PM CDN later. Compiler may still fetch/replace runtime when version policy says so—**user `--runtime=` always wins for that build**.
 - **Completion:** Nothing deferred to “later”; every item in this plan is implemented. Breakage is acceptable; compile-tests are not required.
 
 ```mermaid
@@ -131,25 +140,17 @@ Docs/rule: “declare = blind call · native syscall = CPU trap → kernel · `x
 
 ---
 
-## 3) Separate runtime build + version + static embed
+## 3) Runtime build, version, embed, bootstrap
 
-**New xmake target(s):** `runtime` (or `runtime-<os>-<arch>`) — compile frontend + relevant OS bridge `.a` → tarball/package (static archives inside).
-
-Plaintext at tarball root (UPPERCASE keys):
-
-```text
-RUNTIME_VERSION=0.1.0
-SUPPORTED_COMPILERS=
-0.1.0
-0.1.1
-0.2.0-0.3.0
-```
-
-- Local/dev: cwd `src/runtime`, flags / `XLANG_HOME`, xmake defines for override.
-- Release: GitHub `owner/repo` release asset `xlang-runtime-{os}-{arch}-v{ver}.tar.gz`; compiler downloads/installs a compatible runtime.
-- Link: compiler **statically embeds** the runtime artifact and adds target OS baseline syslib flags. It does not choose bridges via syscall analysis.
-
-Cursor rule + docs: `RUNTIME.md` + `.cursor/rules/` — version format, embed policy, OS-only externals.
+- Build runtime (frontend + OS bridges) to static archives / objects.
+- Tarball root plaintext: `RUNTIME_VERSION`, `SUPPORTED_COMPILERS` (ranges/lines as already specified).
+- **User compile:** resolve runtime/bridge from (highest wins) `--runtime=` / `--bridge=` → else extract **embedded** defaults into temp/build dir → static link + OS baseline flags.
+- **Release embed bootstrap (required):**
+  1. Stage-1: compile `xlang` **without** final xlang-runtime embed (bridges may already embed).
+  2. Stage-1 `xlang` compiles `src/runtime/frontend` → runtime `.o` / archive.
+  3. Stage-2: rebuild `xlang` from scratch with that runtime (and bridges) **embedded** for later extract-and-link.
+- Local/dev may skip embed and use in-tree paths; release mode must perform the two-phase dance.
+- Docs/rule: overrides, extract dir behavior, bootstrap comedy as official release steps.
 
 ---
 
@@ -225,19 +226,20 @@ Thread: `xl_thread_start` / `xl_thread_join` / … on every OS — no pthread in
 
 ## 9) CLI / xmake
 
-- Flags: `--target`, `--arch`, `--runtime`, `--runtime-version`, GitHub repo override.
-- xmake defines: development (in-tree runtime) vs release (fetch).
-- Separate targets: `xlang` (compiler C++ only) + `runtime` package.
+- Flags: `--target`, `--arch`, `--runtime=`, `--bridge=` (per-piece override), `--runtime-version`, `--no-runtime`, GitHub repo override.
+- xmake: development (in-tree) vs release (two-phase embed bootstrap + publish).
+- Targets: `xlang` (single CLI app) + runtime package target(s).
 
 ---
 
 ## Implementation order (single pass, no interrupt)
 
 1. Scaffold `src/host/` + `platform/{linux,macosx,windows}` (including syslib flag tables); migrate/remove `paths`.
-2. Blind declare→call; CPU-native syscall emit; OS baseline link + runtime static embed.
+2. Blind declare→call; CPU-native syscall emit; OS baseline link.
 3. Split bridges into OS folders; `xl_*` ABI; move thread/net I/O into bridges.
-4. Separate runtime xmake package + `RUNTIME_VERSION` / `SUPPORTED_COMPILERS` + docs/rule (embed policy).
-5. Codegen: CommonIrBuilder + TargetMachine; remove string `.ll`.
-6. Cross/override + GitHub runtime fetch.
-7. Simplify AST/lexer.
-8. Finalize xmake/docs/cursor rules.
+4. Runtime package + VERSION files; `--runtime=` / `--bridge=`; extract-to-temp/build link path.
+5. Release two-phase bootstrap: stage-1 xlang → compile runtime → rebuild xlang with embed.
+6. Codegen: CommonIrBuilder + TargetMachine; remove string `.ll`.
+7. Cross/override + GitHub runtime fetch when not using embed/override.
+8. Simplify AST/lexer.
+9. Finalize xmake/docs/cursor rules (overrides + bootstrap comedy).
