@@ -1,22 +1,17 @@
-// Paralel job scheduler — go fn(...) + wait_all()
-declare syscall sleep_ms(ms)
-declare syscall random_range(min, max)
-declare syscall print_done(job_id)
+// Parallel job scheduler — go fn(...) + wait_all()
+// wait_all / cpu / go come from the linked frontend runtime (scheduler package).
 
 fn job_worker(job_id: int32, name: string) {
-    local delay_ms = random_range(100, 300)
-    sleep_ms(delay_ms)
-    print_done(job_id)
-    print("job name was: %s", name)
+    print("job %d done: %s", job_id, name)
     return 0
 }
 
 fn main() {
     print("cpu: %d", cpu())
-    go job_worker(1, "sex")
-    go job_worker(2, "ask")
-    go job_worker(3, "ds")
-    go job_worker(4, "ff")
+    go job_worker(1, "alpha")
+    go job_worker(2, "beta")
+    go job_worker(3, "gamma")
+    go job_worker(4, "delta")
     wait_all()
     return 0
 }

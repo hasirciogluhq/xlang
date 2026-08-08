@@ -1,4 +1,4 @@
-// Mutex + atomik sayaç — struct içinde Lock gömme + go spawn örneği.
+// Mutex + atomic counter — embed Lock in a struct and spawn workers with go.
 import * as sync from sync
 
 struct SharedCounter {

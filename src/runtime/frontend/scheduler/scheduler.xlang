@@ -1,18 +1,18 @@
 // Go-routine benzeri scheduler — tüm mantık xlang içinde.
-// Syscall'lar sadece OS köprüsü: cpu, mutex, cond, thread.
+// Bridge declares: xl_cpu_count, mutex_*, cond_*, xl_thread_start.
 
 struct SpawnTask {
     entry: int64
 }
 
-declare cpu_count(): int32
-declare mutex_init(): int64
-declare mutex_lock(m: int64): int32
-declare mutex_unlock(m: int64): int32
-declare cond_init(): int64
-declare cond_wait(c: int64, m: int64): int32
-declare cond_signal(c: int64): int32
-declare cond_broadcast(c: int64): int32
+declare xl_cpu_count(): int32
+declare xl_mutex_init(): int64
+declare xl_mutex_lock(m: int64): int32
+declare xl_mutex_unlock(m: int64): int32
+declare xl_cond_init(): int64
+declare xl_cond_wait(c: int64, m: int64): int32
+declare xl_cond_signal(c: int64): int32
+declare xl_cond_broadcast(c: int64): int32
 declare xl_thread_start(entry: int64, arg: int32): int64
 
 spawn_queue: array SpawnTask
@@ -27,11 +27,11 @@ fn init_scheduler() {
     if initialized != 0 {
         return 0
     }
-    queue_mu = mutex_init()
-    queue_cv_work = cond_init()
-    queue_cv_done = cond_init()
+    queue_mu = xl_mutex_init()
+    queue_cv_work = xl_cond_init()
+    queue_cv_done = xl_cond_init()
     spawn_queue = new array SpawnTask
-    local cpus = cpu_count()
+    local cpus = xl_cpu_count()
     local workers = cpus - 1
     if workers < 1 {
         workers = 1
@@ -48,22 +48,22 @@ fn init_scheduler() {
 
 fn worker_loop(worker_id: int32) {
     while true {
-        mutex_lock(queue_mu)
+        xl_mutex_lock(queue_mu)
         while array_len(spawn_queue) == 0 {
-            cond_wait(queue_cv_work, queue_mu)
+            xl_cond_wait(queue_cv_work, queue_mu)
         }
         local task = array_pop_front(spawn_queue)
         inflight = inflight + 1
-        mutex_unlock(queue_mu)
+        xl_mutex_unlock(queue_mu)
         invoke0(task.entry)
-        mutex_lock(queue_mu)
+        xl_mutex_lock(queue_mu)
         inflight = inflight - 1
         if array_len(spawn_queue) == 0 {
             if inflight == 0 {
-                cond_broadcast(queue_cv_done)
+                xl_cond_broadcast(queue_cv_done)
             }
         }
-        mutex_unlock(queue_mu)
+        xl_mutex_unlock(queue_mu)
     }
     return 0
 }
@@ -71,20 +71,20 @@ fn worker_loop(worker_id: int32) {
 export fn spawn(entry: int64) {
     init_scheduler()
     local task: SpawnTask = new SpawnTask { entry = entry }
-    mutex_lock(queue_mu)
+    xl_mutex_lock(queue_mu)
     array_push(spawn_queue, task)
-    cond_signal(queue_cv_work)
-    mutex_unlock(queue_mu)
+    xl_cond_signal(queue_cv_work)
+    xl_mutex_unlock(queue_mu)
     return 0
 }
 
 export fn wait_all() {
     init_scheduler()
-    mutex_lock(queue_mu)
+    xl_mutex_lock(queue_mu)
     while array_len(spawn_queue) != 0 || inflight != 0 {
-        cond_wait(queue_cv_done, queue_mu)
+        xl_cond_wait(queue_cv_done, queue_mu)
     }
-    mutex_unlock(queue_mu)
+    xl_mutex_unlock(queue_mu)
     return 0
 }
 
@@ -96,5 +96,5 @@ export fn add_worker() {
 }
 
 export fn cpu() {
-    return cpu_count()
+    return xl_cpu_count()
 }

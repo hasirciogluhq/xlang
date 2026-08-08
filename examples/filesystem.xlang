@@ -1,0 +1,23 @@
+// Filesystem convenience API over xl_filesystem_* bridges.
+import * as filesystem from filesystem
+
+fn main() {
+    local path = "examples/_tmp_fs_demo.txt"
+    filesystem.Write(path, "hello from xlang\n")
+    filesystem.Append(path, "second line\n")
+
+    local body = filesystem.ReadAll(path)
+    print("%s", body)
+
+    if filesystem.Exists(path) != 0 {
+        print("size: %d", filesystem.Size(path))
+    }
+
+    local f = filesystem.OpenRead(path)
+    local chunk = filesystem.ReadStream(f)
+    filesystem.Close(f)
+    print("stream: %s", chunk)
+
+    filesystem.Remove(path)
+    return 0
+}

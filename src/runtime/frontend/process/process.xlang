@@ -1,4 +1,4 @@
-// Low-level process / IO syscalls (Go os/exec + Node child_process benzeri).
+// Low-level process / IO bridges (Go os/exec + Node child_process benzeri).
 //   import process from process
 //   local pid = process.fork()
 //

@@ -1,3 +1,4 @@
+// HTTP client — fetch is exported by the frontend net package (auto-linked runtime).
 import * as json from json
 
 fn main() {

@@ -15,6 +15,7 @@
 
 #include <cstdio>
 #include <cstdlib>
+#include <filesystem>
 #include <format>
 #include <fstream>
 #include <random>
@@ -82,6 +83,26 @@ void appendBaselineSyslibs(std::ostringstream& cmd, platform::Os os) {
     }
 }
 
+void appendOpenSslLinkFlags(std::ostringstream& cmd) {
+    // Homebrew / common prefixes (clang on macOS does not search these by default).
+    static constexpr const char* kLibDirs[] = {
+        "/opt/homebrew/opt/openssl@3/lib",
+        "/opt/homebrew/opt/openssl/lib",
+        "/usr/local/opt/openssl@3/lib",
+        "/usr/local/opt/openssl/lib",
+    };
+    for (const char* dir : kLibDirs) {
+        if (std::filesystem::exists(dir)) {
+            cmd << " -L\"" << dir << '"';
+            break;
+        }
+    }
+    if (const char* root = std::getenv("OPENSSL_ROOT_DIR"); root != nullptr && root[0] != '\0') {
+        cmd << " -L\"" << root << "/lib\"";
+    }
+    cmd << " -lssl -lcrypto";
+}
+
 void appendBridgeLibs(std::ostringstream& cmd, const std::vector<std::filesystem::path>& bridges) {
     for (const auto& path : bridges) {
         cmd << " \"" << path.string() << '"';
@@ -96,7 +117,7 @@ void appendBridgeLibs(std::ostringstream& cmd, const std::vector<std::filesystem
         }
     }
     if (has_tls) {
-        cmd << " -lssl -lcrypto";
+        appendOpenSslLinkFlags(cmd);
     }
 }
 
@@ -199,7 +220,24 @@ void cleanupBuildContext(const BuildContext& ctx) {
 }
 
 std::string resolveTriple(const BuildContext& ctx) {
-    if (!ctx.target.triple.empty() && ctx.target.triple.find("unknown-unknown") == std::string::npos) {
+    // Explicit --triple / XLANG_TARGET_TRIPLE.
+    if (ctx.options.target_triple && !ctx.options.target_triple->empty()) {
+        return *ctx.options.target_triple;
+    }
+    // Host build (no OS/arch override): prefer clang's versioned Darwin triple so
+    // Mach-O objects get LC_BUILD_VERSION (avoids ld "no platform load command").
+    if (!ctx.options.target_os && !ctx.options.target_arch) {
+        if (const char* env = std::getenv("XLANG_TARGET_TRIPLE");
+            env != nullptr && env[0] != '\0') {
+            return env;
+        }
+        const std::string clang_triple = getClangTargetTriple(ctx.options.clang);
+        if (!clang_triple.empty() && clang_triple.find("unknown") == std::string::npos) {
+            return clang_triple;
+        }
+    }
+    if (!ctx.target.triple.empty() &&
+        ctx.target.triple.find("unknown-unknown") == std::string::npos) {
         return ctx.target.triple;
     }
     return getClangTargetTriple(ctx.options.clang);

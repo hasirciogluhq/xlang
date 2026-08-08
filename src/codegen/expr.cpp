@@ -450,9 +450,12 @@ std::pair<Type, llvm::Value*> Codegen::emitExpr(const Expr& expr, const LocalMap
 
         std::string llvm_name =
             mangleFunctionName(resolved->name, paramTypes(resolved->params), resolved->variadic);
-        if (const Function* definition =
-                findFunctionDefinition(*program_, resolved->name, arg_types);
-            definition != nullptr && (definition->syscall || definition->external)) {
+        // Match declared params (not call arg types) — coercion can widen i32→i64.
+        if (const Function* definition = findFunctionDefinition(
+                *program_, resolved->name, paramTypes(resolved->params));
+            definition != nullptr &&
+            (definition->syscall || definition->external ||
+             definition->body.statements.empty())) {
             // Native-syscall wrappers and bridge/C symbols keep the raw name.
             llvm_name = definition->name;
         } else if (findMatchingFunction(resolved->name, paramTypes(resolved->params),

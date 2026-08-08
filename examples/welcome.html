@@ -218,7 +218,7 @@ fn main() {
     <div class="mx-auto max-w-6xl px-6">
       <h2 class="text-2xl font-semibold tracking-tight">Runtime</h2>
       <p class="mt-2 max-w-2xl text-sm text-[var(--color-muted)]">
-        Syscalls are an OS bridge only — pthread, sockets, files. Scheduling and protocol logic live in <code>runtime/*.xlang</code>.
+        Bridges are userspace <code>xl_*</code> helpers; CPU traps use <code>declare syscall</code>. Scheduling and protocol logic live in <code>src/runtime/frontend/</code>.
       </p>
       <div class="mt-8 overflow-hidden rounded-lg border border-[var(--color-border)] bg-white">
         <table class="ref-table">
@@ -229,7 +229,7 @@ fn main() {
             <tr><td><code>print</code></td><td>Formatted output (variadic)</td></tr>
             <tr><td><code>spawn</code> / <code>wait_all</code></td><td>Thread pool</td></tr>
             <tr><td><code>fetch</code></td><td>HTTP/HTTPS client</td></tr>
-            <tr><td><code>ReadAll</code> / <code>Write</code></td><td>File I/O</td></tr>
+            <tr><td><code>filesystem.ReadAll</code> / <code>Write</code></td><td>File I/O</td></tr>
             <tr><td><code>Now</code> / <code>Format</code> / <code>ElapsedMs</code></td><td>Time API</td></tr>
             <tr><td><code>NewLock</code> / <code>AtomicInt</code></td><td>Sync primitives</td></tr>
           </tbody>

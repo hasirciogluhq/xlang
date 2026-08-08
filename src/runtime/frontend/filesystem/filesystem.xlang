@@ -25,8 +25,8 @@ declare xl_filesystem_mkdir(path: string): int32
 declare xl_filesystem_mkdir_all(path: string): int32
 declare xl_filesystem_remove(path: string): int32
 declare xl_filesystem_rmdir(path: string): int32
-declare xl_filesystem_rename(from: string, to: string): int32
-declare xl_filesystem_copy(from: string, to: string): int32
+declare xl_filesystem_rename(src: string, dst: string): int32
+declare xl_filesystem_copy(src: string, dst: string): int32
 declare xl_filesystem_chmod(path: string, mode: int32): int32
 declare xl_filesystem_cwd(): string
 declare xl_filesystem_chdir(path: string): int32
@@ -201,12 +201,12 @@ export fn Rmdir(path: string): int32 {
     return xl_filesystem_rmdir(path)
 }
 
-export fn Rename(from: string, to: string): int32 {
-    return xl_filesystem_rename(from, to)
+export fn Rename(src: string, dst: string): int32 {
+    return xl_filesystem_rename(src, dst)
 }
 
-export fn Copy(from: string, to: string): int32 {
-    return xl_filesystem_copy(from, to)
+export fn Copy(src: string, dst: string): int32 {
+    return xl_filesystem_copy(src, dst)
 }
 
 export fn Chmod(path: string, mode: int32): int32 {

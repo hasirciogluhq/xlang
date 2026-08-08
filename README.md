@@ -63,6 +63,8 @@ xmake -r xlang                 # stage-2 with XLANG_HAS_EMBEDDED_*
 ./build/xlang run examples/strings.xlang
 ./build/xlang run examples/hello.xlang
 ./build/xlang run examples/types.xlang
+./build/xlang run examples/scheduler.xlang
+./build/xlang run examples/filesystem.xlang
 ./build/xlang run examples/http_server.xlang
 ```
 

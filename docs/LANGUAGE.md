@@ -403,7 +403,7 @@ Selective imports pull only the named exported symbols (and supporting structs/g
 | `http/server` | TCP transport — `Conn`, `ServerInfo`, `Listen`, `AcceptOnce` |
 | `test` | Vitest-style `expect`, `expectFn`, `fail` |
 | `process` | fork, pipe, fd, env, `file_read` |
-| `file` (runtime) | `ReadAll`, `Write`, `OpenRead`, `Exists`, stream I/O |
+| `filesystem` | `ReadAll`, `Write`, `OpenRead`, `Exists`, stream I/O |
 | `sync` (runtime) | `Lock`, `RWLock`, `AtomicInt` — method-style API |
 
 See [vscode/README.md](../vscode/README.md) for IDE completion of imported modules.
@@ -428,7 +428,7 @@ Implementation lowers to `printf` in the compiler; runtime `export fn print(...)
 
 ## Scheduler and spawn
 
-Go-routine-like concurrency. **All scheduling logic** lives in `src/runtime/frontend/scheduler.xlang`.
+Go-routine-like concurrency. **All scheduling logic** lives in `src/runtime/frontend/scheduler/scheduler.xlang`.
 
 ### API (runtime export)
 
@@ -542,7 +542,7 @@ See `examples/sync_lock.xlang` for `go` + mutex + atomic counter.
 
 Gin-inspired minimal router split into two modules:
 
-- **`http/router`** — routing, middleware, `Context`, HTTP parsing, `ListenAndServe`
+- **`http/router`** — routing, middleware, `Context`, HTTP parsing, `ListenAndServe` (`src/runtime/frontend/http/`)
 - **`http/server`** — raw TCP I/O (`Conn`, `ServerInfo`, `Listen`, `AcceptOnce`)
 
 Import the package namespace or submodules directly:
@@ -896,6 +896,7 @@ Early version; known constraints:
 | `examples/fetch.xlang` | fetch HTTP GET + json.parse |
 | `examples/http_server.xlang` | HTTP router + ListenAndServe |
 | `examples/sync_lock.xlang` | Lock + AtomicInt + go spawn |
+| `examples/filesystem.xlang` | filesystem ReadAll / Write / stream |
 | `examples/interfaces.xlang` | interface + struct + as cast |
 | `test/main.xlang` + `test/lib.xlang` | external link |
 | `test/xlang/*.test.xlang` | runtime tests (`xlang test`) |

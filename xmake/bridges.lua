@@ -53,4 +53,5 @@ if os_name then
     bridge("time", {root .. "/time.c"})
     bridge("panic", {root .. "/panic.c"})
     bridge("thread", {root .. "/thread.c"})
+    bridge("sync", {root .. "/sync.c"})
 end

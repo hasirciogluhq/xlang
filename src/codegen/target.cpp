@@ -14,6 +14,7 @@
 #include <llvm/Support/raw_ostream.h>
 #include <llvm/Target/TargetMachine.h>
 #include <llvm/Target/TargetOptions.h>
+#include <llvm/Support/VersionTuple.h>
 #include <llvm/TargetParser/Host.h>
 #include <llvm/TargetParser/Triple.h>
 
@@ -99,11 +100,41 @@ NativeSyscallAsm nativeSyscallAsmForTriple(std::string_view triple, std::size_t 
     return nativeSyscallAsm(archFromTriple(triple), arg_count);
 }
 
+std::string normalizeDarwinTriple(std::string triple) {
+    // Versionless `*-apple-darwin` omits LC_BUILD_VERSION → ld warns on modern Xcode.
+    llvm::Triple tt(triple);
+    if (!tt.isOSDarwin()) {
+        return triple;
+    }
+    if (tt.getOSVersion().getMajor() != 0) {
+        return triple;
+    }
+
+    const llvm::Triple host(llvm::sys::getDefaultTargetTriple());
+    if (!host.isOSDarwin()) {
+        return triple;
+    }
+    const llvm::VersionTuple host_ver = host.getOSVersion();
+    if (host_ver.getMajor() == 0) {
+        return host.str();
+    }
+
+    // Keep requested arch; transplant host Darwin version.
+    std::string arch = tt.getArchName().str();
+    if (arch.empty()) {
+        arch = host.getArchName().str();
+    }
+    const unsigned minor = host_ver.getMinor().value_or(0);
+    const unsigned micro = host_ver.getSubminor().value_or(0);
+    return std::format("{}-apple-darwin{}.{}.{}", arch, host_ver.getMajor(), minor, micro);
+}
+
 TargetEmit::TargetEmit(std::string triple) : triple_(std::move(triple)) {
     ensureLlvmTargetsInitialized();
     if (triple_.empty()) {
         triple_ = llvm::sys::getDefaultTargetTriple();
     }
+    triple_ = normalizeDarwinTriple(std::move(triple_));
 
     const llvm::Triple tt(triple_);
     std::string error;

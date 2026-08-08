@@ -164,7 +164,8 @@ llvm::GlobalVariable* CommonIrBuilder::createExternalGlobal(std::string_view nam
 }
 
 llvm::Value* CommonIrBuilder::createStringGlobal(std::string_view text, std::string_view name) {
-    return impl_->builder->CreateGlobalString(text, name);
+    // Pass Module explicitly — preemit runs before any insert point exists.
+    return impl_->builder->CreateGlobalString(text, name, /*AddressSpace=*/0, impl_->module.get());
 }
 
 llvm::AllocaInst* CommonIrBuilder::emitAlloca(llvm::Type* type, std::string_view name) {

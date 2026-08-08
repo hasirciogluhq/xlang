@@ -107,7 +107,7 @@ resolveBridgeArtifacts(const std::optional<std::filesystem::path>& override_path
 
     // Dev/in-tree: link individual bridge static libs when present.
     static constexpr const char* kBridges[] = {
-        "filesystem", "net", "tls", "process", "time", "panic", "thread",
+        "filesystem", "net", "tls", "process", "time", "panic", "thread", "sync",
     };
     std::vector<std::filesystem::path> out;
     for (const char* name : kBridges) {

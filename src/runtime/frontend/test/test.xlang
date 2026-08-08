@@ -176,7 +176,7 @@ export fn test_init_suite(parallel: int32, file_label: string): int32 {
     suite_file = file_label
     assert_failed = 0
     if parallel != 0 {
-        suite_mu = mutex_init()
+        suite_mu = xl_mutex_init()
     }
     return 0
 }
@@ -189,7 +189,7 @@ export fn test_run_one(name: string, entry: int64): int32 {
         failed = 1
     }
     if suite_parallel != 0 {
-        mutex_lock(suite_mu)
+        xl_mutex_lock(suite_mu)
     }
     if failed != 0 {
         print(" ✗ %s", name)
@@ -199,7 +199,7 @@ export fn test_run_one(name: string, entry: int64): int32 {
         suite_passed = suite_passed + 1
     }
     if suite_parallel != 0 {
-        mutex_unlock(suite_mu)
+        xl_mutex_unlock(suite_mu)
     }
     return failed
 }
