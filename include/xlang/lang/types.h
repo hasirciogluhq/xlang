@@ -3,6 +3,7 @@
 #include "xlang/error.h"
 
 #include <cstddef>
+#include <memory>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -28,10 +29,8 @@ enum class TypeKind {
 struct Type {
     TypeKind kind{TypeKind::Int32};
     std::string struct_name;
-    TypeKind pointer_to{TypeKind::Void};
-    std::string pointer_struct_name;
-    TypeKind array_element_kind{TypeKind::Int32};
-    std::string array_element_struct;
+    /// Pointee for Pointer; element type for Array. Nested `*T` / `array *T` keep full Type.
+    std::shared_ptr<Type> inner;
 
     [[nodiscard]] bool isVoid() const { return kind == TypeKind::Void; }
     [[nodiscard]] bool isArray() const { return kind == TypeKind::Array; }
@@ -39,6 +38,7 @@ struct Type {
     [[nodiscard]] bool isPointer() const { return kind == TypeKind::Pointer; }
     [[nodiscard]] bool isInteger() const;
     [[nodiscard]] bool isFloating() const;
+    [[nodiscard]] bool isPtrLike() const;
     [[nodiscard]] Type dereferenced() const;
 
     [[nodiscard]] static Type makeStruct(std::string name);
@@ -60,4 +60,4 @@ struct Type {
 [[nodiscard]] std::string arrayTypeName(const Type& element_type);
 [[nodiscard]] std::size_t llvmTypeAlign(const Type& type);
 
-} // namespace xlang
+}  // namespace xlang

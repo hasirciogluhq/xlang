@@ -130,6 +130,8 @@ struct Expr {
         Index,
         Null,
         Cast,
+        AddrOf,
+        Deref,
         NativeSyscall,
     } kind;
 
@@ -137,6 +139,8 @@ struct Expr {
     std::int64_t int_value{};
     double float_value{};
     bool bool_value{};
+    /// Kind::Cast: false = `as` (static-like), true = `reinterpret` (bit/pointer).
+    bool reinterpret_cast_{false};
     std::string name;
     std::string string_value;
     BinOp bin_op{};
@@ -168,7 +172,10 @@ struct Expr {
     static std::unique_ptr<Expr> makeNewArray(Type element_type, Span span);
     static std::unique_ptr<Expr> makeIndex(std::unique_ptr<Expr> object, std::unique_ptr<Expr> index,
                                            Span span);
-    static std::unique_ptr<Expr> makeCast(std::unique_ptr<Expr> value, Type target_type, Span span);
+    static std::unique_ptr<Expr> makeCast(std::unique_ptr<Expr> value, Type target_type, Span span,
+                                          bool reinterpret = false);
+    static std::unique_ptr<Expr> makeAddrOf(std::unique_ptr<Expr> value, Span span);
+    static std::unique_ptr<Expr> makeDeref(std::unique_ptr<Expr> value, Span span);
     /// `@syscall(number, args...)` — CPU-native trap; number in `left`, args in `args`.
     static std::unique_ptr<Expr> makeNativeSyscall(std::unique_ptr<Expr> number,
                                                    std::vector<std::unique_ptr<Expr>> args,
@@ -181,6 +188,7 @@ struct Stmt {
         Assign,
         MemberAssign,
         IndexAssign,
+        DerefAssign,
         Return,
         Expr,
         Delete,

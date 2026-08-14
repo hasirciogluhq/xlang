@@ -1,0 +1,26 @@
+// Pointers (*T), address-of (&), deref (*), and casts (as / reinterpret).
+
+fn bump(p: *int32) {
+    *p = *p + 1
+    return 0
+}
+
+fn main() {
+    local x: int32 = 10
+    local p: *int32 = &x
+    *p = 20
+    bump(p)
+    print("x=%d", x)
+
+    local wide = x as int64
+    print("wide=%d", wide as int32)
+
+    local raw = p reinterpret int64
+    local back = raw reinterpret *int32
+    print("via bits=%d", *back)
+
+    local q: *int32 = null
+    q = &x
+    print("q=%d", *q)
+    return 0
+}

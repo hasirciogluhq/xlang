@@ -67,6 +67,7 @@ class Parser {
     std::unique_ptr<Expr> parseAdditive();
     std::unique_ptr<Expr> parseMultiplicative();
     std::unique_ptr<Expr> parseCast();
+    std::unique_ptr<Expr> parseUnary();
     std::unique_ptr<Expr> parsePostfix(std::unique_ptr<Expr> expr);
     std::unique_ptr<Expr> parsePrimary();
     std::unique_ptr<Expr> parseNewExpr(const Span& span);

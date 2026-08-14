@@ -10,24 +10,25 @@ This document describes the syntax, types, module system, and runtime API of the
 2. [Program structure](#program-structure)
 3. [Types](#types)
 4. [Variables](#variables)
-5. [Functions](#functions)
-6. [Control flow](#control-flow)
-7. [Expressions and operators](#expressions-and-operators)
-8. [Struct and memory](#struct-and-memory)
-9. [Array](#array)
-10. [Modules and import](#modules-and-import)
-11. [Print](#print)
-12. [Scheduler and spawn](#scheduler-and-spawn)
-13. [Concurrency and sync](#concurrency-and-sync)
-14. [HTTP server](#http-server-libshttp)
-15. [Networking and fetch](#networking-and-fetch)
-16. [JSON parsing](#json-parsing)
-17. [File I/O](#file-io)
-18. [Declares: bridge vs CPU-native syscall](#declares-bridge-vs-cpu-native-syscall)
-19. [External linking](#external-linking)
-20. [Compiler builtins](#compiler-builtins)
-21. [Testing](#testing)
-22. [Limitations](#limitations)
+5. [Pointers and casts](#pointers-and-casts)
+6. [Functions](#functions)
+7. [Control flow](#control-flow)
+8. [Expressions and operators](#expressions-and-operators)
+9. [Struct and memory](#struct-and-memory)
+10. [Array](#array)
+11. [Modules and import](#modules-and-import)
+12. [Print](#print)
+13. [Scheduler and spawn](#scheduler-and-spawn)
+14. [Concurrency and sync](#concurrency-and-sync)
+15. [HTTP server](#http-server-libshttp)
+16. [Networking and fetch](#networking-and-fetch)
+17. [JSON parsing](#json-parsing)
+18. [File I/O](#file-io)
+19. [Declares: bridge vs CPU-native syscall](#declares-bridge-vs-cpu-native-syscall)
+20. [External linking](#external-linking)
+21. [Compiler builtins](#compiler-builtins)
+22. [Testing](#testing)
+23. [Limitations](#limitations)
 
 ---
 
@@ -99,6 +100,7 @@ Type annotation:
 local x: int32 = 10
 local name: string = "ali"
 local p: Point = new Point { x = 1, y = 2 }
+local ip: *int32 = &x
 ```
 
 If no annotation is given, the default type is **`int32`**.
@@ -131,6 +133,49 @@ Local variables are declared with `local` in a function body; type inference com
 counter = counter + 1
 p.x = 42
 arr[i] = value
+*ip = 7
+```
+
+---
+
+## Pointers and casts
+
+### Pointer type
+
+Prefix `*` on a type: `*int32`, `*Point`, `**int32` (nested).
+
+```xlang
+local x: int32 = 1
+local p: *int32 = &x   // address-of
+local v = *p           // dereference (load)
+*p = 42                // store through pointer
+```
+
+| Op | Meaning |
+|----|---------|
+| `&expr` | Address of lvalue (variable, field, or index) → `*T` |
+| `*ptr` | Load through `*T` |
+| `*ptr = value` | Store through `*T` |
+| `null` | Null pointer (assign to `*T` or `null as *T`) |
+
+`delete` accepts a pointer or struct handle.
+
+### Casts (`as` / `reinterpret`)
+
+C++ `static_cast` / `reinterpret_cast` ruhu — iki basit yüzey:
+
+| Form | Role | Typical uses |
+|------|------|----------------|
+| `expr as T` | static-like | int/float widen-narrow, `struct as Interface`, `handle as User` |
+| `expr reinterpret T` | bit / pointer | `*T` ↔ `*U`, `*T` ↔ `int64` |
+
+```xlang
+local n: int32 = 7
+local w = n as int64
+local p: *int32 = &n
+local bits = p reinterpret int64
+local q = bits reinterpret *int32
+local g = c as Greeter
 ```
 
 ---
@@ -898,6 +943,7 @@ Early version; known constraints:
 | `examples/sync_lock.xlang` | Lock + AtomicInt + go spawn |
 | `examples/filesystem.xlang` | filesystem ReadAll / Write / stream |
 | `examples/interfaces.xlang` | interface + struct + as cast |
+| `examples/pointers.xlang` | `*T`, `&` / `*`, `as` / `reinterpret` |
 | `test/main.xlang` + `test/lib.xlang` | external link |
 | `test/xlang/*.test.xlang` | runtime tests (`xlang test`) |
 

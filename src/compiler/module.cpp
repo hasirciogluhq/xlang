@@ -54,7 +54,12 @@ std::unique_ptr<Expr> cloneExpr(const Expr& expr) {
                                         expr.span);
         }
         case Expr::Kind::Cast:
-            return Expr::makeCast(cloneExpr(*expr.object), expr.type, expr.span);
+            return Expr::makeCast(cloneExpr(*expr.object), expr.type, expr.span,
+                                  expr.reinterpret_cast_);
+        case Expr::Kind::AddrOf:
+            return Expr::makeAddrOf(cloneExpr(*expr.object), expr.span);
+        case Expr::Kind::Deref:
+            return Expr::makeDeref(cloneExpr(*expr.object), expr.span);
         case Expr::Kind::NativeSyscall: {
             std::vector<std::unique_ptr<Expr>> args;
             for (const auto& arg : expr.args) {

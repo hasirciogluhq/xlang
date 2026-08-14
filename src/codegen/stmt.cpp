@@ -37,7 +37,15 @@ bool Codegen::emitStatement(const Stmt& stmt, LocalMap& locals) {
     case Stmt::Kind::Local: {
         const auto [ty, val] = emitExpr(*stmt.expr, locals);
         Type local_type = stmt.explicit_type ? stmt.type : ty;
+        if (stmt.expr->kind == Expr::Kind::Null && local_type.isPtrLike()) {
+            allocLocal(stmt.name, local_type, locals);
+            storeValue(local_type, b().constNullPtr(), locals.at(stmt.name));
+            return false;
+        }
         llvm::Value* stored_val = coerceInt(val, ty, local_type);
+        if (ty.isPtrLike() && local_type.isPtrLike() && !typesEqual(ty, local_type)) {
+            stored_val = b().emitBitCast(val, llvmType(local_type));
+        }
         allocLocal(stmt.name, local_type, locals);
         storeValue(local_type, stored_val, locals.at(stmt.name));
         return false;
@@ -45,7 +53,33 @@ bool Codegen::emitStatement(const Stmt& stmt, LocalMap& locals) {
     case Stmt::Kind::Assign: {
         const Type var_type = resolveVarType(stmt.name, locals);
         const auto [ty, val] = emitExpr(*stmt.expr, locals);
-        storeValue(var_type, coerceInt(val, ty, var_type), resolveVar(stmt.name, locals));
+        if (stmt.expr->kind == Expr::Kind::Null && var_type.isPtrLike()) {
+            storeValue(var_type, b().constNullPtr(), resolveVar(stmt.name, locals));
+            return false;
+        }
+        llvm::Value* stored = coerceInt(val, ty, var_type);
+        if (ty.isPtrLike() && var_type.isPtrLike() && !typesEqual(ty, var_type)) {
+            stored = b().emitBitCast(val, llvmType(var_type));
+        }
+        storeValue(var_type, stored, resolveVar(stmt.name, locals));
+        return false;
+    }
+    case Stmt::Kind::DerefAssign: {
+        // `*p = value` — target is Deref expr
+        if (!stmt.target || stmt.target->kind != Expr::Kind::Deref || !stmt.target->object) {
+            throw XlangError("deref assignment requires `*ptr` target");
+        }
+        const auto [ptr_ty, ptr] = emitExpr(*stmt.target->object, locals);
+        if (!ptr_ty.isPointer()) {
+            throw XlangError("deref assignment requires pointer");
+        }
+        const Type pointee = ptr_ty.dereferenced();
+        const auto [val_ty, val] = emitExpr(*stmt.expr, locals);
+        llvm::Value* stored = coerceInt(val, val_ty, pointee);
+        if (val_ty.isPtrLike() && pointee.isPtrLike() && !typesEqual(val_ty, pointee)) {
+            stored = b().emitBitCast(val, llvmType(pointee));
+        }
+        storeValue(pointee, stored, ptr);
         return false;
     }
     case Stmt::Kind::MemberAssign: {

@@ -13,14 +13,16 @@ bool Type::isFloating() const {
     return kind == TypeKind::Float || kind == TypeKind::Double;
 }
 
+bool Type::isPtrLike() const {
+    return kind == TypeKind::Pointer || kind == TypeKind::Struct || kind == TypeKind::Interface ||
+           kind == TypeKind::String || kind == TypeKind::Array;
+}
+
 Type Type::dereferenced() const {
-    if (kind != TypeKind::Pointer) {
+    if (kind != TypeKind::Pointer || !inner) {
         return *this;
     }
-    Type inner;
-    inner.kind = pointer_to;
-    inner.struct_name = pointer_struct_name;
-    return inner;
+    return *inner;
 }
 
 Type Type::makeStruct(std::string name) {
@@ -37,27 +39,25 @@ Type Type::makeInterface(std::string name) {
     return type;
 }
 
-Type Type::makePointer(Type inner) {
+Type Type::makePointer(Type pointee) {
     Type type;
     type.kind = TypeKind::Pointer;
-    type.pointer_to = inner.kind;
-    type.pointer_struct_name = inner.struct_name;
+    type.inner = std::make_shared<Type>(std::move(pointee));
     return type;
 }
 
 Type Type::makeArray(Type element) {
     Type type;
     type.kind = TypeKind::Array;
-    type.array_element_kind = element.kind;
-    type.array_element_struct = element.struct_name;
+    type.inner = std::make_shared<Type>(std::move(element));
     return type;
 }
 
 Type Type::arrayElementType() const {
-    Type element;
-    element.kind = array_element_kind;
-    element.struct_name = array_element_struct;
-    return element;
+    if (kind != TypeKind::Array || !inner) {
+        return Type{TypeKind::Int32};
+    }
+    return *inner;
 }
 
 Type Type::parse(std::string_view name) {
@@ -119,12 +119,8 @@ std::string typeMangleComponent(const Type& type) {
         return "S" + type.struct_name;
     case TypeKind::Interface:
         return "I" + type.struct_name;
-    case TypeKind::Pointer: {
-        Type inner;
-        inner.kind = type.pointer_to;
-        inner.struct_name = type.pointer_struct_name;
-        return "P" + typeMangleComponent(inner);
-    }
+    case TypeKind::Pointer:
+        return "P" + typeMangleComponent(type.dereferenced());
     case TypeKind::Array:
         return "A" + typeMangleComponent(type.arrayElementType());
     }
@@ -151,12 +147,16 @@ bool typesEqual(const Type& left, const Type& right) {
         return left.struct_name == right.struct_name;
     }
     if (left.kind == TypeKind::Pointer) {
-        return left.pointer_to == right.pointer_to &&
-               left.pointer_struct_name == right.pointer_struct_name;
+        if (!left.inner || !right.inner) {
+            return left.inner == right.inner;
+        }
+        return typesEqual(*left.inner, *right.inner);
     }
     if (left.kind == TypeKind::Array) {
-        return left.array_element_kind == right.array_element_kind &&
-               left.array_element_struct == right.array_element_struct;
+        if (!left.inner || !right.inner) {
+            return left.inner == right.inner;
+        }
+        return typesEqual(*left.inner, *right.inner);
     }
     return true;
 }
@@ -185,12 +185,8 @@ std::string typeToString(const Type& type) {
         return type.struct_name;
     case TypeKind::Interface:
         return type.struct_name;
-    case TypeKind::Pointer: {
-        Type inner;
-        inner.kind = type.pointer_to;
-        inner.struct_name = type.pointer_struct_name;
-        return typeToString(inner) + "*";
-    }
+    case TypeKind::Pointer:
+        return "*" + typeToString(type.dereferenced());
     case TypeKind::Array:
         return "array " + typeToString(type.arrayElementType());
     }
@@ -221,15 +217,8 @@ std::string llvmTypeName(const Type& type) {
         return "%struct." + type.struct_name + "*";
     case TypeKind::Interface:
         return "i8*";
-    case TypeKind::Pointer: {
-        Type inner;
-        inner.kind = type.pointer_to;
-        inner.struct_name = type.pointer_struct_name;
-        if (inner.kind == TypeKind::Struct) {
-            return "%struct." + inner.struct_name + "*";
-        }
-        return llvmTypeName(inner) + "*";
-    }
+    case TypeKind::Pointer:
+        return "ptr";
     case TypeKind::Array:
         return "%array.hdr*";
     }
@@ -264,4 +253,4 @@ std::size_t llvmTypeAlign(const Type& type) {
     return 4;
 }
 
-} // namespace xlang
+}  // namespace xlang

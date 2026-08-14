@@ -123,6 +123,10 @@ public:
     llvm::Value* emitSExt(llvm::Value* value, llvm::Type* dest);
     llvm::Value* emitZExt(llvm::Value* value, llvm::Type* dest);
     llvm::Value* emitTrunc(llvm::Value* value, llvm::Type* dest);
+    llvm::Value* emitSIToFP(llvm::Value* value, llvm::Type* dest);
+    llvm::Value* emitFPToSI(llvm::Value* value, llvm::Type* dest);
+    llvm::Value* emitFPExt(llvm::Value* value, llvm::Type* dest);
+    llvm::Value* emitFPTrunc(llvm::Value* value, llvm::Type* dest);
     llvm::Value* emitBitCast(llvm::Value* value, llvm::Type* dest);
     llvm::Value* emitPtrToInt(llvm::Value* value, llvm::Type* dest);
     llvm::Value* emitIntToPtr(llvm::Value* value, llvm::Type* dest);

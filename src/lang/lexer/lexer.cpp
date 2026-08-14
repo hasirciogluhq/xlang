@@ -17,6 +17,7 @@ namespace {
         {"import", TokenKind::Import},
         {"from", TokenKind::From},
         {"as", TokenKind::As},
+        {"reinterpret", TokenKind::Reinterpret},
         {"export", TokenKind::Export},
         {"external", TokenKind::External},
         {"syscall", TokenKind::Syscall},
@@ -309,7 +310,7 @@ void Lexer::tokenize() {
                 ++column;
                 tokens_.push_back(makeToken(TokenKind::AndAnd, start_line, start_column));
             } else {
-                throw LexError(start_line, start_column, "unexpected '&'");
+                tokens_.push_back(makeToken(TokenKind::Amp, start_line, start_column));
             }
             break;
         case '|':

@@ -32,7 +32,8 @@ std::pair<Type, llvm::Value*> Codegen::emitExpr(const Expr& expr, const LocalMap
     case Expr::Kind::BoolLiteral:
         return {Type{TypeKind::Bool}, b().constI8(expr.bool_value ? 1 : 0)};
     case Expr::Kind::Null:
-        return {Type{TypeKind::String}, b().constNullPtr()};
+        // Untyped null pointer; prefer `null as *T` or a typed pointer local.
+        return {Type::makePointer(Type{TypeKind::Void}), b().constNullPtr()};
     case Expr::Kind::StringLiteral:
         return {Type{TypeKind::String}, emitStringLiteral(expr.string_value)};
     case Expr::Kind::Variable: {
@@ -161,17 +162,81 @@ std::pair<Type, llvm::Value*> Codegen::emitExpr(const Expr& expr, const LocalMap
         return {Type::makeArray(expr.type), arr};
     }
     case Expr::Kind::Cast: {
+        // `x as T`          → static-like (numbers / floats / interface view)
+        // `x reinterpret T` → bit/pointer reinterpret (ptr↔ptr, int↔ptr)
         const auto [from_ty, val] = emitExpr(*expr.object, locals);
         const Type target = expr.type;
         if (typesEqual(from_ty, target)) {
             return {target, val};
         }
-        if (from_ty.kind == TypeKind::Int32 && target.kind == TypeKind::Int64) {
-            return {target, b().emitSExt(val, b().i64Ty())};
+        if (expr.object->kind == Expr::Kind::Null && target.isPtrLike()) {
+            return {target, b().constNullPtr()};
         }
-        if (from_ty.kind == TypeKind::Int64 && target.kind == TypeKind::Int32) {
-            return {target, b().emitTrunc(val, b().i32Ty())};
+
+        if (expr.reinterpret_cast_) {
+            if (from_ty.isPtrLike() && target.isPtrLike()) {
+                return {target, b().emitBitCast(val, llvmType(target))};
+            }
+            if (from_ty.kind == TypeKind::Int64 && target.isPtrLike()) {
+                return {target, b().emitIntToPtr(val, b().ptrTy())};
+            }
+            if (from_ty.isPtrLike() && target.kind == TypeKind::Int64) {
+                return {target, b().emitPtrToInt(val, b().i64Ty())};
+            }
+            if (from_ty.kind == TypeKind::Int32 && target.isPtrLike()) {
+                return {target,
+                        b().emitIntToPtr(b().emitSExt(val, b().i64Ty()), b().ptrTy())};
+            }
+            if (from_ty.isPtrLike() && target.kind == TypeKind::Int32) {
+                return {target,
+                        b().emitTrunc(b().emitPtrToInt(val, b().i64Ty()), b().i32Ty())};
+            }
+            throw XlangError(std::format("unsupported reinterpret from `{}` to `{}`",
+                                         typeToString(from_ty), typeToString(target)));
         }
+
+        // static-like
+        if (from_ty.isInteger() && target.isInteger()) {
+            llvm::Type* dest = llvmType(target);
+            if (from_ty.kind == TypeKind::Bool || from_ty.kind == TypeKind::Char) {
+                if (target.kind == TypeKind::Bool || target.kind == TypeKind::Char) {
+                    return {target, val};
+                }
+                return {target, b().emitZExt(val, dest)};
+            }
+            if (target.kind == TypeKind::Bool || target.kind == TypeKind::Char) {
+                return {target, b().emitTrunc(val, dest)};
+            }
+            const unsigned from_bits = from_ty.kind == TypeKind::BigInt   ? 128
+                                       : from_ty.kind == TypeKind::Int64 ? 64
+                                                                        : 32;
+            const unsigned to_bits = target.kind == TypeKind::BigInt   ? 128
+                                     : target.kind == TypeKind::Int64 ? 64
+                                                                      : 32;
+            if (from_bits < to_bits) {
+                return {target, b().emitSExt(val, dest)};
+            }
+            if (from_bits > to_bits) {
+                return {target, b().emitTrunc(val, dest)};
+            }
+            return {target, val};
+        }
+        if (from_ty.isFloating() && target.isFloating()) {
+            if (from_ty.kind == TypeKind::Float && target.kind == TypeKind::Double) {
+                return {target, b().emitFPExt(val, b().doubleTy())};
+            }
+            if (from_ty.kind == TypeKind::Double && target.kind == TypeKind::Float) {
+                return {target, b().emitFPTrunc(val, b().floatTy())};
+            }
+            return {target, val};
+        }
+        if (from_ty.isInteger() && target.isFloating()) {
+            return {target, b().emitSIToFP(val, llvmType(target))};
+        }
+        if (from_ty.isFloating() && target.isInteger()) {
+            return {target, b().emitFPToSI(val, llvmType(target))};
+        }
+        // Interface / struct view + legacy `handle as User` (int64 → struct).
         if ((from_ty.kind == TypeKind::Struct || from_ty.kind == TypeKind::Interface) &&
             (target.kind == TypeKind::Struct || target.kind == TypeKind::Interface)) {
             return {target, b().emitBitCast(val, llvmType(target))};
@@ -179,8 +244,61 @@ std::pair<Type, llvm::Value*> Codegen::emitExpr(const Expr& expr, const LocalMap
         if (from_ty.kind == TypeKind::Int64 && target.kind == TypeKind::Struct) {
             return {target, b().emitIntToPtr(val, b().ptrTy())};
         }
-        throw XlangError(std::format("unsupported cast from `{}` to `{}`", typeToString(from_ty),
-                                     typeToString(target)));
+
+        throw XlangError(std::format(
+            "unsupported cast from `{}` to `{}` (use `reinterpret` for pointer/bit casts)",
+            typeToString(from_ty), typeToString(target)));
+    }
+    case Expr::Kind::AddrOf: {
+        const Expr& inner = *expr.object;
+        if (inner.kind == Expr::Kind::Variable) {
+            const Type var_ty = resolveVarType(inner.name, locals);
+            llvm::Value* slot = resolveVar(inner.name, locals);
+            return {Type::makePointer(var_ty), slot};
+        }
+        if (inner.kind == Expr::Kind::FieldAccess) {
+            const auto [obj_ty, obj_ptr] = emitExpr(*inner.object, locals);
+            if (obj_ty.kind != TypeKind::Struct) {
+                throw XlangError("address-of field requires struct");
+            }
+            const StructDecl* decl = findStruct(obj_ty.struct_name);
+            if (decl == nullptr) {
+                throw XlangError(std::format("unknown struct `{}`", obj_ty.struct_name));
+            }
+            const std::size_t index = structFieldIndex(*decl, inner.name);
+            const Type field_ty = decl->fields[index].type;
+            llvm::Value* gep = b().emitStructGEP(structBodyType(decl->name), obj_ptr,
+                                                 static_cast<unsigned>(index));
+            return {Type::makePointer(field_ty), gep};
+        }
+        if (inner.kind == Expr::Kind::Index) {
+            const auto [arr_ty, arr] = emitExpr(*inner.object, locals);
+            if (!arr_ty.isArray()) {
+                throw XlangError("address-of index requires array");
+            }
+            const auto [_, idx] = emitExpr(*inner.index, locals);
+            const Type elem = arr_ty.arrayElementType();
+            const std::size_t sz = typeSizeBytes(elem);
+            llvm::Value* idx64 = b().emitSExt(idx, b().i64Ty());
+            llvm::Value* head =
+                b().emitLoad(b().i64Ty(), b().emitStructGEP(array_hdr_ty_, arr, 3));
+            llvm::Value* pos = b().emitAdd(head, idx64);
+            llvm::Value* data =
+                b().emitLoad(b().ptrTy(), b().emitStructGEP(array_hdr_ty_, arr, 0));
+            llvm::Value* off = b().emitMul(pos, b().constI64(static_cast<std::int64_t>(sz)));
+            llvm::Value* slot = b().emitGEP(b().i8Ty(), data, {off});
+            return {Type::makePointer(elem), slot};
+        }
+        throw XlangError("& expects a variable, field, or index lvalue");
+    }
+    case Expr::Kind::Deref: {
+        const auto [ptr_ty, ptr] = emitExpr(*expr.object, locals);
+        if (!ptr_ty.isPointer()) {
+            throw XlangError(std::format("dereference requires pointer, got `{}`",
+                                         typeToString(ptr_ty)));
+        }
+        const Type pointee = ptr_ty.dereferenced();
+        return loadValue(pointee, ptr);
     }
     case Expr::Kind::Index: {
         const auto [arr_ty, arr] = emitExpr(*expr.object, locals);

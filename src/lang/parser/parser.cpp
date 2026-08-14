@@ -580,8 +580,8 @@ Stmt Parser::parseStatement() {
         return stmt;
     }
 
-    if (check(TokenKind::Ident)) {
-        auto target = parsePostfix(parsePrimary());
+    if (check(TokenKind::Ident) || check(TokenKind::Star)) {
+        auto target = check(TokenKind::Star) ? parseUnary() : parsePostfix(parsePrimary());
         if (match(TokenKind::Eq)) {
             auto value = parseExpr();
             consumeEndOfStatement();
@@ -599,6 +599,9 @@ Stmt Parser::parseStatement() {
             } else if (target->kind == Expr::Kind::Variable) {
                 stmt.kind = Stmt::Kind::Assign;
                 stmt.name = target->name;
+            } else if (target->kind == Expr::Kind::Deref) {
+                stmt.kind = Stmt::Kind::DerefAssign;
+                stmt.target = std::move(target);
             } else {
                 throw error("invalid assignment target");
             }
@@ -630,12 +633,17 @@ void Parser::consumeEndOfStatement() {
     if (match(TokenKind::Semicolon)) {
         return;
     }
-    if (check(TokenKind::Fn) || check(TokenKind::Local) || check(TokenKind::Return) ||
-        check(TokenKind::Import) || check(TokenKind::From) || check(TokenKind::Ident) ||
-        check(TokenKind::Export) || check(TokenKind::External) || check(TokenKind::Syscall) ||
-        check(TokenKind::Declare) || check(TokenKind::Struct) || check(TokenKind::Delete) ||
-        check(TokenKind::New) || check(TokenKind::If) || check(TokenKind::While) ||
-        check(TokenKind::Go)) {
+    // Newline is whitespace — next stmt may start with unary `*` / `&` / `-`.
+    const TokenKind k = peek().kind;
+    if (k == TokenKind::Fn || k == TokenKind::Local || k == TokenKind::Return ||
+        k == TokenKind::Import || k == TokenKind::From || k == TokenKind::Ident ||
+        k == TokenKind::Export || k == TokenKind::External || k == TokenKind::Syscall ||
+        k == TokenKind::Declare || k == TokenKind::Struct || k == TokenKind::Delete ||
+        k == TokenKind::New || k == TokenKind::If || k == TokenKind::While ||
+        k == TokenKind::Go || k == TokenKind::Star || k == TokenKind::Amp ||
+        k == TokenKind::Minus || k == TokenKind::LParen || k == TokenKind::True ||
+        k == TokenKind::False || k == TokenKind::Null || k == TokenKind::Number ||
+        k == TokenKind::String || k == TokenKind::At) {
         return;
     }
     throw error("expected ';' or newline");
@@ -710,6 +718,9 @@ std::unique_ptr<Expr> Parser::parseComparison() {
 std::unique_ptr<Expr> Parser::parseAdditive() {
     auto left = parseMultiplicative();
     while (true) {
+        if (peek().line > left->span.line) {
+            break;
+        }
         if (match(TokenKind::Plus)) {
             const Span span = left->span;
             auto right = parseMultiplicative();
@@ -728,6 +739,10 @@ std::unique_ptr<Expr> Parser::parseAdditive() {
 std::unique_ptr<Expr> Parser::parseMultiplicative() {
     auto left = parseCast();
     while (true) {
+        // Newline before `*` / `/` → statement boundary (so `*p = …` is deref, not mul).
+        if (peek().line > left->span.line) {
+            break;
+        }
         if (match(TokenKind::Star)) {
             const Span span = left->span;
             auto right = parseCast();
@@ -744,13 +759,46 @@ std::unique_ptr<Expr> Parser::parseMultiplicative() {
 }
 
 std::unique_ptr<Expr> Parser::parseCast() {
-    auto expr = parsePostfix(parsePrimary());
-    while (match(TokenKind::As)) {
-        const Span span = expr->span;
-        const Type target_type = parseType();
-        expr = Expr::makeCast(std::move(expr), target_type, span);
+    auto expr = parseUnary();
+    while (true) {
+        if (match(TokenKind::As)) {
+            const Span span = expr->span;
+            const Type target_type = parseType();
+            expr = Expr::makeCast(std::move(expr), target_type, span, /*reinterpret=*/false);
+            continue;
+        }
+        if (match(TokenKind::Reinterpret)) {
+            const Span span = expr->span;
+            const Type target_type = parseType();
+            expr = Expr::makeCast(std::move(expr), target_type, span, /*reinterpret=*/true);
+            continue;
+        }
+        break;
     }
     return expr;
+}
+
+std::unique_ptr<Expr> Parser::parseUnary() {
+    if (check(TokenKind::Star)) {
+        const Span start = currentSpan();
+        advance();
+        auto inner = parseUnary();
+        return Expr::makeDeref(std::move(inner), start);
+    }
+    if (check(TokenKind::Amp)) {
+        const Span start = currentSpan();
+        advance();
+        auto inner = parseUnary();
+        return Expr::makeAddrOf(std::move(inner), start);
+    }
+    if (check(TokenKind::Minus)) {
+        const Span start = currentSpan();
+        advance();
+        auto inner = parseUnary();
+        auto zero = Expr::makeInt(0, start);
+        return Expr::makeBinary(BinOp::Sub, std::move(zero), std::move(inner), start);
+    }
+    return parsePostfix(parsePrimary());
 }
 
 std::unique_ptr<Expr> Parser::parsePostfix(std::unique_ptr<Expr> expr) {

@@ -128,11 +128,29 @@ std::unique_ptr<Expr> Expr::makeIndex(std::unique_ptr<Expr> object, std::unique_
     return expr;
 }
 
-std::unique_ptr<Expr> Expr::makeCast(std::unique_ptr<Expr> value, Type target_type, Span span) {
+std::unique_ptr<Expr> Expr::makeCast(std::unique_ptr<Expr> value, Type target_type, Span span,
+                                     bool reinterpret) {
     auto expr = std::make_unique<Expr>();
     expr->kind = Kind::Cast;
     expr->object = std::move(value);
     expr->type = std::move(target_type);
+    expr->reinterpret_cast_ = reinterpret;
+    expr->span = span;
+    return expr;
+}
+
+std::unique_ptr<Expr> Expr::makeAddrOf(std::unique_ptr<Expr> value, Span span) {
+    auto expr = std::make_unique<Expr>();
+    expr->kind = Kind::AddrOf;
+    expr->object = std::move(value);
+    expr->span = span;
+    return expr;
+}
+
+std::unique_ptr<Expr> Expr::makeDeref(std::unique_ptr<Expr> value, Span span) {
+    auto expr = std::make_unique<Expr>();
+    expr->kind = Kind::Deref;
+    expr->object = std::move(value);
     expr->span = span;
     return expr;
 }

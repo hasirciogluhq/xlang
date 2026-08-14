@@ -247,6 +247,22 @@ llvm::Value* CommonIrBuilder::emitTrunc(llvm::Value* value, llvm::Type* dest) {
     return impl_->builder->CreateTrunc(value, dest);
 }
 
+llvm::Value* CommonIrBuilder::emitSIToFP(llvm::Value* value, llvm::Type* dest) {
+    return impl_->builder->CreateSIToFP(value, dest);
+}
+
+llvm::Value* CommonIrBuilder::emitFPToSI(llvm::Value* value, llvm::Type* dest) {
+    return impl_->builder->CreateFPToSI(value, dest);
+}
+
+llvm::Value* CommonIrBuilder::emitFPExt(llvm::Value* value, llvm::Type* dest) {
+    return impl_->builder->CreateFPExt(value, dest);
+}
+
+llvm::Value* CommonIrBuilder::emitFPTrunc(llvm::Value* value, llvm::Type* dest) {
+    return impl_->builder->CreateFPTrunc(value, dest);
+}
+
 llvm::Value* CommonIrBuilder::emitBitCast(llvm::Value* value, llvm::Type* dest) {
     if (value->getType() == dest) {
         return value;
