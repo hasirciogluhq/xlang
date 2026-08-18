@@ -22,9 +22,6 @@ if not cross then
     })
 end
 
--- TLS bridge. Cross builds must not use the host system openssl.
-add_requires("openssl", {system = not cross})
-
 -- Host targets that consume LLVM. xmake's system llvm component list lags
 -- newer LLVM splits: TargetParser (15+), CGData / CodeGenTypes /
 -- DebugInfoDWARFLowLevel (19–22), and Homebrew LLVM needs zstd.

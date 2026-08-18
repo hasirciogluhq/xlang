@@ -69,14 +69,11 @@ std::vector<std::filesystem::path> defaultLibSearchPaths() {
     return paths;
 }
 
-std::vector<std::filesystem::path> defaultModuleSearchPaths(bool include_runtime) {
+std::vector<std::filesystem::path> defaultModuleSearchPaths() {
     std::vector<std::filesystem::path> paths;
     appendEnvPaths(paths, "XLANG_MODULE_PATH");
 
     const std::filesystem::path root = projectRootGuess();
-    if (include_runtime) {
-        pushUnique(paths, root / "src" / "runtime" / "frontend");
-    }
     pushUnique(paths, root / "src");
     pushUnique(paths, std::filesystem::current_path());
 
@@ -85,25 +82,6 @@ std::vector<std::filesystem::path> defaultModuleSearchPaths(bool include_runtime
         pushUnique(paths, home / ".xlang" / "modules");
     }
     return paths;
-}
-
-std::optional<std::filesystem::path> findLibrary(std::string_view name) {
-    const platform::Os os = platform::hostOs();
-    const std::string prefix = platform::staticLibPrefix(os);
-    const std::string suffix = platform::staticLibSuffix(os);
-    const std::string filename = prefix + std::string(name) + suffix;
-
-    for (const auto& dir : defaultLibSearchPaths()) {
-        const auto candidate = dir / filename;
-        if (std::filesystem::exists(candidate)) {
-            return candidate;
-        }
-        const auto bare = dir / (std::string(name) + suffix);
-        if (std::filesystem::exists(bare)) {
-            return bare;
-        }
-    }
-    return std::nullopt;
 }
 
 }  // namespace xlang

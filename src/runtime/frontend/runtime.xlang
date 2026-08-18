@@ -1,3 +1,0 @@
-export fn print(...) {
-    return 0
-}

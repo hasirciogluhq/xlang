@@ -2,14 +2,12 @@
 
 #include "xlang/codegen.h"
 #include "xlang/error.h"
-#include "xlang/host/embed.h"
 #include "xlang/host/layout.h"
 #include "xlang/host/platform.h"
 #include "xlang/host/resolve.h"
 #include "xlang/input.h"
 #include "xlang/module.h"
 #include "xlang/parser.h"
-#include "xlang/runtime.h"
 #include "xlang/test.h"
 #include "xlang/util.h"
 
@@ -83,47 +81,8 @@ void appendBaselineSyslibs(std::ostringstream& cmd, platform::Os os) {
     }
 }
 
-void appendOpenSslLinkFlags(std::ostringstream& cmd) {
-    // Homebrew / common prefixes (clang on macOS does not search these by default).
-    static constexpr const char* kLibDirs[] = {
-        "/opt/homebrew/opt/openssl@3/lib",
-        "/opt/homebrew/opt/openssl/lib",
-        "/usr/local/opt/openssl@3/lib",
-        "/usr/local/opt/openssl/lib",
-    };
-    for (const char* dir : kLibDirs) {
-        if (std::filesystem::exists(dir)) {
-            cmd << " -L\"" << dir << '"';
-            break;
-        }
-    }
-    if (const char* root = std::getenv("OPENSSL_ROOT_DIR"); root != nullptr && root[0] != '\0') {
-        cmd << " -L\"" << root << "/lib\"";
-    }
-    cmd << " -lssl -lcrypto";
-}
-
-void appendBridgeLibs(std::ostringstream& cmd, const std::vector<std::filesystem::path>& bridges) {
-    for (const auto& path : bridges) {
-        cmd << " \"" << path.string() << '"';
-    }
-    // OpenSSL for tls bridge when present (static embed prefers .a; syslibs for openssl).
-    bool has_tls = false;
-    for (const auto& path : bridges) {
-        const std::string name = path.filename().string();
-        if (name.find("tls") != std::string::npos) {
-            has_tls = true;
-            break;
-        }
-    }
-    if (has_tls) {
-        appendOpenSslLinkFlags(cmd);
-    }
-}
-
 void linkExecutable(const std::string& clang, const std::vector<std::filesystem::path>& objects,
-                    const std::filesystem::path& output, platform::Os os,
-                    const std::vector<std::filesystem::path>& bridges) {
+                    const std::filesystem::path& output, platform::Os os) {
     ensureParentDir(output);
 
     std::ostringstream cmd;
@@ -131,7 +90,6 @@ void linkExecutable(const std::string& clang, const std::vector<std::filesystem:
     for (const std::filesystem::path& object : objects) {
         cmd << " \"" << object.string() << '"';
     }
-    appendBridgeLibs(cmd, bridges);
     cmd << " -o \"" << output.string() << '"';
     appendBaselineSyslibs(cmd, os);
 
@@ -142,15 +100,13 @@ void linkExecutable(const std::string& clang, const std::vector<std::filesystem:
 }
 
 void linkShared(const std::string& clang, const std::vector<std::filesystem::path>& objects,
-                const std::filesystem::path& output, platform::Os os,
-                const std::vector<std::filesystem::path>& bridges) {
+                const std::filesystem::path& output, platform::Os os) {
     ensureParentDir(output);
     std::ostringstream cmd;
     cmd << clang << " -shared";
     for (const std::filesystem::path& object : objects) {
         cmd << " \"" << object.string() << '"';
     }
-    appendBridgeLibs(cmd, bridges);
     cmd << " -o \"" << output.string() << '"';
     appendBaselineSyslibs(cmd, os);
     const int status = runCommand(cmd.str());
@@ -243,36 +199,10 @@ std::string resolveTriple(const BuildContext& ctx) {
     return getClangTargetTriple(ctx.options.clang);
 }
 
-std::vector<std::filesystem::path> collectBridges(const BuildContext& ctx) {
-    return resolveBridgeArtifacts(ctx.options.bridge_override, ctx.options.skip_bridge,
-                                  ctx.work_dir);
-}
-
 CompileResult compileXlangProgram(const Program& program, BuildContext& ctx) {
     CodegenOptions cg_options;
     cg_options.build_kind = ctx.options.build_kind;
-    cg_options.link_runtime =
-        !ctx.options.skip_runtime && ctx.options.build_kind == BuildKind::Executable;
     cg_options.target_triple = resolveTriple(ctx);
-
-    RuntimeBundle runtime;
-    if (!ctx.options.skip_runtime) {
-        RuntimeOptions runtime_options;
-        runtime_options.override_path = ctx.options.runtime_override;
-        runtime_options.clang = ctx.options.clang;
-        runtime_options.work_dir = ctx.work_dir;
-        runtime_options.runtime_version = ctx.options.runtime_version;
-        runtime_options.github_repo = ctx.options.github_runtime_repo;
-
-        if (linksFinalImage(ctx.options.build_kind)) {
-            runtime = ensureRuntime(runtime_options);
-        } else {
-            runtime = loadRuntimeExports(runtime_options);
-        }
-        cg_options.runtime_exports = runtime.exports;
-        cg_options.runtime_syscalls = runtime.syscalls;
-        cg_options.runtime_structs = runtime.structs;
-    }
 
     const std::filesystem::path object_path = ctx.work_dir / (ctx.stem + ".o");
     if (!ctx.options.emit_ir) {
@@ -324,34 +254,20 @@ CompileResult compileXlangProgram(const Program& program, BuildContext& ctx) {
         link_inputs.push_back(extra);
     }
 
-    if (!ctx.options.skip_runtime && !runtime.object.empty()) {
-        link_inputs.push_back(runtime.object);
-    } else if (!ctx.options.skip_runtime) {
-        if (const auto art =
-                resolveRuntimeArtifact(ctx.options.runtime_override, false, ctx.work_dir)) {
-            link_inputs.push_back(*art);
-        }
-    }
-
-    const auto bridges = collectBridges(ctx);
-
     if (ctx.options.build_kind == BuildKind::Static) {
-        for (const auto& b : bridges) {
-            link_inputs.push_back(b);
-        }
         archiveStatic(link_inputs, output);
         result.executable = output;
         return result;
     }
 
     if (ctx.options.build_kind == BuildKind::Shared) {
-        linkShared(ctx.options.clang, link_inputs, output, ctx.target.os, bridges);
+        linkShared(ctx.options.clang, link_inputs, output, ctx.target.os);
         result.executable = output;
         return result;
     }
 
     // Executable (default)
-    linkExecutable(ctx.options.clang, link_inputs, output, ctx.target.os, bridges);
+    linkExecutable(ctx.options.clang, link_inputs, output, ctx.target.os);
 
     if (!ctx.options.keep_ir && result.has_ir) {
         std::error_code ec;
@@ -383,34 +299,16 @@ CompileResult compileObjectInput(BuildContext& ctx) {
         throw XlangError("cannot emit IR from object file input");
     }
 
-    RuntimeBundle runtime;
-    if (!ctx.options.skip_runtime && linksFinalImage(ctx.options.build_kind)) {
-        RuntimeOptions runtime_options;
-        runtime_options.override_path = ctx.options.runtime_override;
-        runtime_options.clang = ctx.options.clang;
-        runtime_options.work_dir = ctx.work_dir;
-        runtime = ensureRuntime(runtime_options);
-    }
-
     std::vector<std::filesystem::path> link_inputs = {ctx.options.input};
     for (const std::filesystem::path& extra : ctx.options.link_objects) {
         link_inputs.push_back(extra);
     }
-    if (!runtime.object.empty()) {
-        link_inputs.push_back(runtime.object);
-    }
-
-    const auto bridges = collectBridges(ctx);
-
     if (ctx.options.build_kind == BuildKind::Static) {
-        for (const auto& b : bridges) {
-            link_inputs.push_back(b);
-        }
         archiveStatic(link_inputs, output);
     } else if (ctx.options.build_kind == BuildKind::Shared) {
-        linkShared(ctx.options.clang, link_inputs, output, ctx.target.os, bridges);
+        linkShared(ctx.options.clang, link_inputs, output, ctx.target.os);
     } else {
-        linkExecutable(ctx.options.clang, link_inputs, output, ctx.target.os, bridges);
+        linkExecutable(ctx.options.clang, link_inputs, output, ctx.target.os);
     }
     result.executable = output;
     return result;
@@ -446,33 +344,16 @@ CompileResult compileLlvmIrInput(BuildContext& ctx) {
         return result;
     }
 
-    RuntimeBundle runtime;
-    if (!ctx.options.skip_runtime && linksFinalImage(ctx.options.build_kind)) {
-        RuntimeOptions runtime_options;
-        runtime_options.override_path = ctx.options.runtime_override;
-        runtime_options.clang = ctx.options.clang;
-        runtime_options.work_dir = ctx.work_dir;
-        runtime = ensureRuntime(runtime_options);
-    }
-
     std::vector<std::filesystem::path> link_inputs = {object_path};
     for (const std::filesystem::path& extra : ctx.options.link_objects) {
         link_inputs.push_back(extra);
     }
-    if (!runtime.object.empty()) {
-        link_inputs.push_back(runtime.object);
-    }
-
-    const auto bridges = collectBridges(ctx);
     if (ctx.options.build_kind == BuildKind::Static) {
-        for (const auto& b : bridges) {
-            link_inputs.push_back(b);
-        }
         archiveStatic(link_inputs, output);
     } else if (ctx.options.build_kind == BuildKind::Shared) {
-        linkShared(ctx.options.clang, link_inputs, output, ctx.target.os, bridges);
+        linkShared(ctx.options.clang, link_inputs, output, ctx.target.os);
     } else {
-        linkExecutable(ctx.options.clang, link_inputs, output, ctx.target.os, bridges);
+        linkExecutable(ctx.options.clang, link_inputs, output, ctx.target.os);
     }
     result.executable = output;
     return result;
@@ -580,7 +461,7 @@ CompileResult compileFile(const CompileOptions& options) {
         switch (ctx.input_kind) {
             case InputKind::Xlang: {
                 const std::vector<std::filesystem::path> module_search_paths =
-                    defaultModuleSearchPaths(!ctx.options.skip_runtime);
+                    defaultModuleSearchPaths();
                 const Program program =
                     loadProgram(ctx.options.input, module_search_paths);
                 result = compileXlangProgram(program, ctx);
@@ -616,9 +497,6 @@ RunResult runFile(const RunOptions& options) {
     compile_options.keep_ir = options.keep_artifacts;
     compile_options.build_kind = BuildKind::Executable;
     compile_options.work_dir = work_dir;
-    compile_options.runtime_override = options.runtime_override;
-    compile_options.bridge_override = options.bridge_override;
-
     RunResult result;
     result.work_dir = work_dir;
     result.kept_artifacts = options.keep_artifacts;

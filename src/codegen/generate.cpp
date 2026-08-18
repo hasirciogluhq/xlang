@@ -68,30 +68,20 @@ CodegenResult Codegen::generate(const Program& program, const CodegenOptions& op
         programUsesHeap(program) || programUsesStrings(program) || programUsesArrays(program);
     cg.needs_strings_ = programUsesStrings(program);
     cg.needs_arrays_ = programUsesArrays(program);
-    for (const StructDecl& decl : options.runtime_structs) {
-        if (structUsesArrayField(decl)) {
-            cg.needs_arrays_ = true;
-            break;
-        }
-    }
     cg.collectSyscalls(program);
     cg.emitPrelude(program);
     if (cg.needs_arrays_) {
         cg.emitArrayHeaderType();
     }
     cg.emitStructTypes(program);
-    if (cg.needs_arrays_) {
-        cg.emitArrayRuntimeSupport();
-    }
     if (cg.needs_strings_) {
-        cg.emitStringRuntimeSupport();
         cg.preemitStringLiterals(program);
     }
     cg.emitGlobals(program);
     cg.emitGlobalInit(program);
     for (const Function& function : program.functions) {
         // declare syscall <n> → CPU-native trap body
-        // declare / external / empty → blind LLVM declare (bridge / C ABI)
+        // declare / external / empty → blind LLVM declare (C ABI)
         if (function.syscall) {
             cg.emitNativeSyscallFunction(function);
             continue;

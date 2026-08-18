@@ -54,21 +54,6 @@ std::optional<FunctionSignature> Codegen::resolveFunctionCall(
             return match;
         }
     }
-    if (const std::optional<FunctionSignature> match =
-            findMatchingFunction(name, arg_types, options_.runtime_exports)) {
-        return match;
-    }
-    for (const auto& [alias, _] : import_aliases_) {
-        const std::string prefixed = importPrefixedName(alias, name);
-        if (const std::optional<FunctionSignature> match =
-                findMatchingFunction(prefixed, arg_types, options_.runtime_exports)) {
-            return match;
-        }
-    }
-    if (const std::optional<FunctionSignature> match =
-            findMatchingFunction(name, arg_types, options_.runtime_syscalls)) {
-        return match;
-    }
     return std::nullopt;
 }
 

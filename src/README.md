@@ -20,12 +20,11 @@ src/
     print.cpp          # print / spawn helpers
     resolve.cpp        # overload / method / var resolve
     detail/helpers.cpp # matching + use-analysis helpers
-  compiler/            # compile, link, module load, runtime package
+  compiler/            # compile, link, module load
     test/              # test runner
-  host/                # layout, resolve, fetch, embed, runtime_pkg
+  host/                # layout and target resolution
   platform/            # OS backends (linux|macosx|windows)
   util/
-  runtime/             # frontend .xlang + bridge C (not in compiler TU list)
 ```
 
 Headers mirror under `include/xlang/{lang,codegen,compiler,host,util}/` with thin facades at the old `include/xlang/*.h` paths.

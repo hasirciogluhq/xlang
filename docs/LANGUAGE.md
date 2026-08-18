@@ -1,6 +1,6 @@
 # xlang Language Reference
 
-This document describes the syntax, types, module system, and runtime API of the xlang programming language.
+This document describes the syntax, types, module system, and compiler-provided language features.
 
 ---
 
@@ -18,17 +18,10 @@ This document describes the syntax, types, module system, and runtime API of the
 10. [Array](#array)
 11. [Modules and import](#modules-and-import)
 12. [Print](#print)
-13. [Scheduler and spawn](#scheduler-and-spawn)
-14. [Concurrency and sync](#concurrency-and-sync)
-15. [HTTP server](#http-server-libshttp)
-16. [Networking and fetch](#networking-and-fetch)
-17. [JSON parsing](#json-parsing)
-18. [File I/O](#file-io)
-19. [Declares: bridge vs CPU-native syscall](#declares-bridge-vs-cpu-native-syscall)
-20. [External linking](#external-linking)
-21. [Compiler builtins](#compiler-builtins)
-22. [Testing](#testing)
-23. [Limitations](#limitations)
+13. [External linking](#external-linking)
+14. [Compiler builtins](#compiler-builtins)
+15. [Testing](#testing)
+16. [Limitations](#limitations)
 
 ---
 
@@ -39,11 +32,10 @@ xlang is an extremely **low-level**, statically typed language compiled with LLV
 Design goals:
 
 - **Low-level first** — direct control; high-level packages are opt-in imports, not the language core
-- **Self-hosting runtime** — scheduler, print, and queue logic are written in xlang
-- **Bridge ≠ kernel** — `declare xl_*` links userspace C helpers; `declare syscall <n>` / `@syscall` emit CPU traps
+- **Explicit linkage** — external declarations resolve only from user-provided objects and libraries
+- **Native syscalls** — `declare syscall <n>` / `@syscall` emit CPU traps
 - **Simple syntax** — C/Go blend; `fn`, `local`, `struct`, `import`
 
-Every runnable program (by default) is linked with the runtime so `print`, `spawn`, and `wait_all` are available.
 
 ---
 

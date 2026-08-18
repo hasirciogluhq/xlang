@@ -45,36 +45,13 @@ void Codegen::emitPrelude(const Program& program) {
 
     for (const Function& function : program.functions) {
         if (function.external) {
-            // Bridge / C ABI: raw symbol name.
+            // External C ABI: preserve the raw symbol name.
             defined_functions_.insert(function.name);
         }
     }
 
-    emitRuntimeDeclares(program);
 }
 
-void Codegen::emitRuntimeDeclares(const Program& program) {
-    for (const FunctionSignature& runtime_fn : options_.runtime_exports) {
-        if (definesFunction(program, runtime_fn.name, paramTypes(runtime_fn.params))) {
-            continue;
-        }
-        emitDeclareFunction(runtime_fn);
-    }
-
-    // Blind declare for runtime `declare name(...)` bridge/C symbols (bodies in bridges).
-    for (const FunctionSignature& runtime_fn : options_.runtime_syscalls) {
-        if (definesFunction(program, runtime_fn.name, paramTypes(runtime_fn.params))) {
-            continue;
-        }
-        std::vector<llvm::Type*> params;
-        for (const TypedName& p : runtime_fn.params) {
-            params.push_back(llvmType(p.type));
-        }
-        b().declareFunction(runtime_fn.name,
-                            b().functionType(llvmType(runtime_fn.return_type), params,
-                                             runtime_fn.variadic));
-    }
-}
 
 
 }  // namespace xlang

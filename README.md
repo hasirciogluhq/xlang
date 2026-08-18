@@ -1,6 +1,6 @@
 # xlang
 
-**xlang** is an extremely low-level, LLVM-based programming language. Optional high-level APIs (`net`/`http`, and similar) are importable packages — not the language core. The `xlang` CLI compiles `.xlang` to native objects / executables / static libraries. Frontend runtime is written in xlang; C++ owns the compiler, host tooling, and LLVM codegen. OS userspace helpers live in C bridges under `xl_*`.
+**xlang** is an extremely low-level, LLVM-based programming language. Optional high-level APIs (`net`/`http`, and similar) are importable packages — not the language core. The `xlang` CLI compiles `.xlang` to native objects / executables / static libraries. C++ owns the compiler, host tooling, and LLVM codegen.
 
 ```
 ┌─────────────────┐     ┌──────────────────────────┐     ┌────────────────┐
@@ -9,7 +9,7 @@
                                │
                 CommonIrBuilder → Module → TargetMachine
                                │
-          runtime frontend (.xlang) + OS bridges (xl_* C)
+          user declarations and linked objects
 ```
 
 ## Features
@@ -22,12 +22,11 @@
 | Memory | `new` / `delete`, struct fields, heap |
 | Control flow | `if` / `else`, `while` |
 | Strings | Concat (`+`), `printf`-style formatted `print` |
-| Concurrency | `spawn` / `wait_all`, `sync` / `scheduler` |
+| Concurrency | user-defined functions and linked objects |
 | Native kernel | `declare syscall <n> name(...)` or `@syscall(n, args...)` |
-| Bridges | plain `declare xl_<object>_<action>(...)` → link OS bridge `.a` |
+| External symbols | plain `declare name(...)` → resolve from user-provided objects |
 
-Full language reference: **[docs/LANGUAGE.md](docs/LANGUAGE.md)**  
-Runtime / embed: **[docs/RUNTIME.md](docs/RUNTIME.md)** · Bridge ABI: **[docs/BRIDGE_ABI.md](docs/BRIDGE_ABI.md)** · Linking: **[docs/LINKING.md](docs/LINKING.md)**  
+Full language reference: **[docs/LANGUAGE.md](docs/LANGUAGE.md)** · Linking: **[docs/LINKING.md](docs/LINKING.md)**  
 VS Code extension: **[vscode/README.md](vscode/README.md)**
 
 ## Requirements
@@ -46,16 +45,7 @@ xmake
 
 Compiler binary: `./build/xlang`
 
-xmake builds **C/C++ only** (compiler + host OS bridge static libs). Frontend `.xlang` under `src/runtime/frontend` is compiled by `xlang` itself (dev: in-tree; release: two-phase embed — see [RUNTIME.md](docs/RUNTIME.md)).
-
-Release embed dance:
-
-```bash
-xmake                          # stage-1 xlang
-xmake build_bridges_pack
-xmake bootstrap_embed          # compile frontend runtime + emit build/embed/*.c
-xmake -r xlang                 # stage-2 with XLANG_HAS_EMBEDDED_*
-```
+xmake builds the C/C++ compiler and host tooling only.
 
 ## Quick start
 
@@ -71,7 +61,7 @@ xmake -r xlang                 # stage-2 with XLANG_HAS_EMBEDDED_*
 
 ## CLI
 
-Defaults for `xlang build foo.xlang`: **executable** + runtime **on** + bridges **on** + OS baseline syslibs (e.g. `-pthread`).
+Defaults for `xlang build foo.xlang`: executable + OS baseline syslibs (e.g. `-pthread`).
 
 ### `xlang build`
 
@@ -81,10 +71,6 @@ xlang build app.xlang lib.o -o myapp
 xlang build app.xlang --build=object -o app.o
 xlang build app.xlang --build=static -o libapp.a
 xlang build app.xlang --build=shared               # experimental
-xlang build app.xlang --no-runtime                 # no frontend runtime; bridges still link
-xlang build app.xlang --no-bridge                  # raw; user supplies symbols
-xlang build app.xlang --runtime path/to/runtime.xlang
-xlang build app.xlang --bridge path/to/bridges.a
 xlang build app.xlang --target linux --arch x64
 xlang build app.xlang --emit-ir                    # dump Module IR
 xlang build app.xlang --keep-ir
@@ -98,7 +84,6 @@ xlang build app.xlang --keep-ir
 xlang run program.xlang
 xlang run main.xlang lib.o
 xlang run program.xlang --keep-artifacts
-xlang run program.xlang --runtime path/to/runtime.xlang
 ```
 
 ### `xlang parse` / `xlang test`
@@ -113,12 +98,11 @@ xlang test --parallel
 ## Declares (two paths)
 
 ```xlang
-declare xl_net_tcp_connect(host: string, port: int32): int64   // bridge / C ABI
+declare external_fn(host: string, port: int32): int64   // external C ABI
 declare syscall 1 write(fd: int64, buf: int64, n: int64): int64 // CPU-native trap
 // or: @syscall(1, fd, buf, n)
 ```
 
-See [BRIDGE_ABI.md](docs/BRIDGE_ABI.md).
 
 ## Tree
 
@@ -128,15 +112,10 @@ xlang/
 │   ├── cli/                 # main
 │   ├── lang/                # ast, lexer, parser, types
 │   ├── codegen/             # CommonIrBuilder, TargetMachine, lowering
-│   ├── compiler/            # compile / link / module / runtime / test
-│   ├── host/                # layout, resolve, fetch, embed
+│   ├── compiler/            # compile / link / module / test
+│   ├── host/                # layout and target resolution
 │   ├── platform/            # linux | macosx | windows
 │   ├── util/
-│   └── runtime/
-│       ├── RUNTIME_VERSION
-│       ├── SUPPORTED_COMPILERS
-│       ├── bridge/{linux,macosx,windows}/   # xl_* C ABI
-│       └── frontend/                        # .xlang packages
 ├── include/xlang/
 ├── examples/
 ├── test/xlang/
@@ -151,9 +130,9 @@ xlang/
 1. **Lexer / parser** (`src/lang`) → AST  
 2. **Module loader** — `import` merge  
 3. **Codegen** (`src/codegen`) — AST → `CommonIrBuilder` → `llvm::Module` → `TargetMachine` → `.o`  
-4. **Link** — user objects + runtime (unless `--no-runtime`) + bridges (unless `--no-bridge`) + OS baseline syslibs  
+4. **Link** — generated object + user-provided objects + OS baseline syslibs
 
-Bridge ≠ kernel: bridges are userspace `xl_*` helpers. Kernel entry is only via `declare syscall` / `@syscall`.
+Kernel entry is only via `declare syscall` / `@syscall`; ordinary `declare` names are external symbols.
 
 ## Environment
 

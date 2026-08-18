@@ -357,8 +357,8 @@ Program ModuleLoader::loadPackage(const std::filesystem::path& dir) {
         }
         files.push_back(entry.path());
     }
-    // Domain convention: also merge <dir>/<name>/<name>.xlang so runtime can
-    // live in folders while staying auto-linked (http/ and other nested
+    // Domain convention: also merge <dir>/<name>/<name>.xlang so modules can
+    // live in folders while staying discoverable (http/ and other nested
     // packages are NOT pulled in — only the matching basename file).
     for (const std::filesystem::directory_entry& entry :
          std::filesystem::directory_iterator(absolute)) {

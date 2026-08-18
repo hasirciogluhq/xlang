@@ -54,7 +54,7 @@ void Codegen::emitDeclareFunction(const Function& function) {
 
 void Codegen::emitNativeSyscallFunction(const Function& function) {
     // declare syscall <n> name(args): ret
-    // Define a real function that issues the CPU trap (not a bridge/C call).
+    // Define a real function that issues the CPU trap (not an external C call).
     syscalls_.insert(function.name);
 
     std::vector<llvm::Type*> param_tys;

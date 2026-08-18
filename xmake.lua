@@ -2,8 +2,7 @@
 -- Reference: https://xmake.io/llms.txt / https://xmake.io/llms-full.txt
 --
 -- Orchestrator only. Bounded contexts live under xmake/.
--- Build compiles C/C++ only (compiler + src/runtime/bridge).
--- Frontend .xlang under src/runtime/frontend is never compiled by xmake.
+-- Build compiles the C/C++ compiler and host tooling only.
 
 set_project("xlang")
 set_version("0.1.0")
@@ -18,9 +17,7 @@ set_targetdir("$(projectdir)/build")
 includes("xmake/context.lua")
 includes("xmake/toolchains.lua")
 includes("xmake/packages.lua")
-includes("xmake/bridges.lua")
 includes("xmake/compiler.lua")
-includes("xmake/bootstrap.lua")
 
 option("xlang_target_os")
     set_default("")

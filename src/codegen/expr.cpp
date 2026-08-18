@@ -52,8 +52,8 @@ std::pair<Type, llvm::Value*> Codegen::emitExpr(const Expr& expr, const LocalMap
             params.push_back(llvmType(p.type));
         }
         llvm::Function* fn =
-            ensureFn(llvm_name, b().functionType(llvmType(function->return_type), params,
-                                                 function->variadic));
+            ensureFn(llvm_name,
+                     b().functionType(llvmType(function->return_type), params, function->variadic));
         return {Type{TypeKind::Int64}, b().emitPtrToInt(fn, b().i64Ty())};
     }
     case Expr::Kind::FieldAccess: {
@@ -67,8 +67,8 @@ std::pair<Type, llvm::Value*> Codegen::emitExpr(const Expr& expr, const LocalMap
         }
         const std::size_t index = structFieldIndex(*decl, expr.name);
         const Type field_type = decl->fields[index].type;
-        llvm::Value* gep = b().emitStructGEP(structBodyType(decl->name), obj_val,
-                                             static_cast<unsigned>(index));
+        llvm::Value* gep =
+            b().emitStructGEP(structBodyType(decl->name), obj_val, static_cast<unsigned>(index));
         return loadValue(field_type, gep);
     }
     case Expr::Kind::MethodCall: {
@@ -89,8 +89,7 @@ std::pair<Type, llvm::Value*> Codegen::emitExpr(const Expr& expr, const LocalMap
                 resolved = resolveFunctionCall(expr.name, arg_types);
             }
             if (!resolved) {
-                throw XlangError(
-                    std::format("unknown import call `{}.{}`", alias, expr.name));
+                throw XlangError(std::format("unknown import call `{}.{}`", alias, expr.name));
             }
             const std::string llvm_name = mangleFunctionName(
                 resolved->name, paramTypes(resolved->params), resolved->variadic);
@@ -102,8 +101,8 @@ std::pair<Type, llvm::Value*> Codegen::emitExpr(const Expr& expr, const LocalMap
                 call_args.push_back(coerceInt(arg_values[i], arg_types[i], param_ty));
             }
             llvm::Function* fn = ensureFn(
-                llvm_name, b().functionType(llvmType(resolved->return_type), param_tys,
-                                            resolved->variadic));
+                llvm_name,
+                b().functionType(llvmType(resolved->return_type), param_tys, resolved->variadic));
             return {resolved->return_type, b().emitCall(fn, call_args)};
         }
 
@@ -111,8 +110,8 @@ std::pair<Type, llvm::Value*> Codegen::emitExpr(const Expr& expr, const LocalMap
         const std::optional<FunctionSignature> resolved =
             resolveMethodCall(expr.name, recv_ty, arg_types);
         if (!resolved) {
-            throw XlangError(std::format("no matching method `{}` for `{}`", expr.name,
-                                         typeToString(recv_ty)));
+            throw XlangError(
+                std::format("no matching method `{}` for `{}`", expr.name, typeToString(recv_ty)));
         }
         std::vector<llvm::Type*> param_tys;
         std::vector<llvm::Value*> call_args;
@@ -123,11 +122,11 @@ std::pair<Type, llvm::Value*> Codegen::emitExpr(const Expr& expr, const LocalMap
             param_tys.push_back(llvmType(param_ty));
             call_args.push_back(coerceInt(arg_values[i], arg_types[i], param_ty));
         }
-        const std::string llvm_name = mangleFunctionName(
-            resolved->name, paramTypes(resolved->params), resolved->variadic);
+        const std::string llvm_name =
+            mangleFunctionName(resolved->name, paramTypes(resolved->params), resolved->variadic);
         llvm::Function* fn = ensureFn(
-            llvm_name, b().functionType(llvmType(resolved->return_type), param_tys,
-                                        resolved->variadic));
+            llvm_name,
+            b().functionType(llvmType(resolved->return_type), param_tys, resolved->variadic));
         return {resolved->return_type, b().emitCall(fn, call_args)};
     }
     case Expr::Kind::New: {
@@ -138,28 +137,20 @@ std::pair<Type, llvm::Value*> Codegen::emitExpr(const Expr& expr, const LocalMap
         const std::size_t size = structSizeBytes(*decl);
         llvm::Function* malloc_fn =
             ensureFn("malloc", b().functionType(b().ptrTy(), {b().i64Ty()}));
-        llvm::Value* raw =
-            b().emitCall(malloc_fn, {b().constI64(static_cast<std::int64_t>(size))});
+        llvm::Value* raw = b().emitCall(malloc_fn, {b().constI64(static_cast<std::int64_t>(size))});
         const Type struct_type = Type::makeStruct(expr.name);
         for (const FieldInit& init : expr.field_inits) {
             const std::size_t index = structFieldIndex(*decl, init.name);
             const Type field_type = decl->fields[index].type;
             const auto [_, val] = emitExpr(*init.value, locals);
-            llvm::Value* gep = b().emitStructGEP(structBodyType(decl->name), raw,
-                                                 static_cast<unsigned>(index));
+            llvm::Value* gep =
+                b().emitStructGEP(structBodyType(decl->name), raw, static_cast<unsigned>(index));
             storeValue(field_type, val, gep);
         }
         return {struct_type, raw};
     }
     case Expr::Kind::NewArray: {
-        const std::size_t elem_size = typeSizeBytes(expr.type);
-        llvm::Function* fn = b().getFunction("__xlang_array_new");
-        if (fn == nullptr) {
-            throw XlangError("array runtime not initialized");
-        }
-        llvm::Value* arr =
-            b().emitCall(fn, {b().constI64(static_cast<std::int64_t>(elem_size))});
-        return {Type::makeArray(expr.type), arr};
+        throw XlangError("array allocation is not supported");
     }
     case Expr::Kind::Cast: {
         // `x as T`          → static-like (numbers / floats / interface view)
@@ -184,15 +175,14 @@ std::pair<Type, llvm::Value*> Codegen::emitExpr(const Expr& expr, const LocalMap
                 return {target, b().emitPtrToInt(val, b().i64Ty())};
             }
             if (from_ty.kind == TypeKind::Int32 && target.isPtrLike()) {
-                return {target,
-                        b().emitIntToPtr(b().emitSExt(val, b().i64Ty()), b().ptrTy())};
+                return {target, b().emitIntToPtr(b().emitSExt(val, b().i64Ty()), b().ptrTy())};
             }
             if (from_ty.isPtrLike() && target.kind == TypeKind::Int32) {
-                return {target,
-                        b().emitTrunc(b().emitPtrToInt(val, b().i64Ty()), b().i32Ty())};
+                return {target, b().emitTrunc(b().emitPtrToInt(val, b().i64Ty()), b().i32Ty())};
             }
             throw XlangError(std::format("unsupported reinterpret from `{}` to `{}`",
-                                         typeToString(from_ty), typeToString(target)));
+                                         typeToString(from_ty),
+                                         typeToString(target)));
         }
 
         // static-like
@@ -207,10 +197,10 @@ std::pair<Type, llvm::Value*> Codegen::emitExpr(const Expr& expr, const LocalMap
             if (target.kind == TypeKind::Bool || target.kind == TypeKind::Char) {
                 return {target, b().emitTrunc(val, dest)};
             }
-            const unsigned from_bits = from_ty.kind == TypeKind::BigInt   ? 128
+            const unsigned from_bits = from_ty.kind == TypeKind::BigInt  ? 128
                                        : from_ty.kind == TypeKind::Int64 ? 64
-                                                                        : 32;
-            const unsigned to_bits = target.kind == TypeKind::BigInt   ? 128
+                                                                         : 32;
+            const unsigned to_bits = target.kind == TypeKind::BigInt  ? 128
                                      : target.kind == TypeKind::Int64 ? 64
                                                                       : 32;
             if (from_bits < to_bits) {
@@ -247,7 +237,8 @@ std::pair<Type, llvm::Value*> Codegen::emitExpr(const Expr& expr, const LocalMap
 
         throw XlangError(std::format(
             "unsupported cast from `{}` to `{}` (use `reinterpret` for pointer/bit casts)",
-            typeToString(from_ty), typeToString(target)));
+            typeToString(from_ty),
+            typeToString(target)));
     }
     case Expr::Kind::AddrOf: {
         const Expr& inner = *expr.object;
@@ -267,8 +258,8 @@ std::pair<Type, llvm::Value*> Codegen::emitExpr(const Expr& expr, const LocalMap
             }
             const std::size_t index = structFieldIndex(*decl, inner.name);
             const Type field_ty = decl->fields[index].type;
-            llvm::Value* gep = b().emitStructGEP(structBodyType(decl->name), obj_ptr,
-                                                 static_cast<unsigned>(index));
+            llvm::Value* gep = b().emitStructGEP(
+                structBodyType(decl->name), obj_ptr, static_cast<unsigned>(index));
             return {Type::makePointer(field_ty), gep};
         }
         if (inner.kind == Expr::Kind::Index) {
@@ -280,11 +271,9 @@ std::pair<Type, llvm::Value*> Codegen::emitExpr(const Expr& expr, const LocalMap
             const Type elem = arr_ty.arrayElementType();
             const std::size_t sz = typeSizeBytes(elem);
             llvm::Value* idx64 = b().emitSExt(idx, b().i64Ty());
-            llvm::Value* head =
-                b().emitLoad(b().i64Ty(), b().emitStructGEP(array_hdr_ty_, arr, 3));
+            llvm::Value* head = b().emitLoad(b().i64Ty(), b().emitStructGEP(array_hdr_ty_, arr, 3));
             llvm::Value* pos = b().emitAdd(head, idx64);
-            llvm::Value* data =
-                b().emitLoad(b().ptrTy(), b().emitStructGEP(array_hdr_ty_, arr, 0));
+            llvm::Value* data = b().emitLoad(b().ptrTy(), b().emitStructGEP(array_hdr_ty_, arr, 0));
             llvm::Value* off = b().emitMul(pos, b().constI64(static_cast<std::int64_t>(sz)));
             llvm::Value* slot = b().emitGEP(b().i8Ty(), data, {off});
             return {Type::makePointer(elem), slot};
@@ -294,8 +283,8 @@ std::pair<Type, llvm::Value*> Codegen::emitExpr(const Expr& expr, const LocalMap
     case Expr::Kind::Deref: {
         const auto [ptr_ty, ptr] = emitExpr(*expr.object, locals);
         if (!ptr_ty.isPointer()) {
-            throw XlangError(std::format("dereference requires pointer, got `{}`",
-                                         typeToString(ptr_ty)));
+            throw XlangError(
+                std::format("dereference requires pointer, got `{}`", typeToString(ptr_ty)));
         }
         const Type pointee = ptr_ty.dereferenced();
         return loadValue(pointee, ptr);
@@ -309,11 +298,9 @@ std::pair<Type, llvm::Value*> Codegen::emitExpr(const Expr& expr, const LocalMap
         const Type elem = arr_ty.arrayElementType();
         const std::size_t sz = typeSizeBytes(elem);
         llvm::Value* idx64 = b().emitSExt(idx, b().i64Ty());
-        llvm::Value* head =
-            b().emitLoad(b().i64Ty(), b().emitStructGEP(array_hdr_ty_, arr, 3));
+        llvm::Value* head = b().emitLoad(b().i64Ty(), b().emitStructGEP(array_hdr_ty_, arr, 3));
         llvm::Value* pos = b().emitAdd(head, idx64);
-        llvm::Value* data =
-            b().emitLoad(b().ptrTy(), b().emitStructGEP(array_hdr_ty_, arr, 0));
+        llvm::Value* data = b().emitLoad(b().ptrTy(), b().emitStructGEP(array_hdr_ty_, arr, 0));
         llvm::Value* off = b().emitMul(pos, b().constI64(static_cast<std::int64_t>(sz)));
         llvm::Value* slot = b().emitGEP(b().i8Ty(), data, {off});
         if (elem.kind == TypeKind::Struct) {
@@ -351,7 +338,7 @@ std::pair<Type, llvm::Value*> Codegen::emitExpr(const Expr& expr, const LocalMap
             llvm::Value* left_i1 = boolToI1(left);
             llvm::Value* right_i1 = boolToI1(right);
             llvm::Value* tmp_i1 = expr.bin_op == BinOp::And ? b().emitAnd(left_i1, right_i1)
-                                                           : b().emitOr(left_i1, right_i1);
+                                                            : b().emitOr(left_i1, right_i1);
             return {Type{TypeKind::Bool}, b().emitZExt(tmp_i1, b().i8Ty())};
         }
 
@@ -456,8 +443,7 @@ std::pair<Type, llvm::Value*> Codegen::emitExpr(const Expr& expr, const LocalMap
         if (expr.name == "invoke0" && expr.args.size() == 1) {
             llvm::Value* fn_ptr = b().emitIntToPtr(arg_values[0], b().ptrTy());
             auto* fty = b().functionType(b().i32Ty(), {});
-            return {Type{TypeKind::Int32},
-                    b().emitCall(llvm::FunctionCallee(fty, fn_ptr), {})};
+            return {Type{TypeKind::Int32}, b().emitCall(llvm::FunctionCallee(fty, fn_ptr), {})};
         }
         if (expr.name == "ref" && expr.args.size() == 1) {
             if (arg_types[0].kind != TypeKind::Struct) {
@@ -481,20 +467,22 @@ std::pair<Type, llvm::Value*> Codegen::emitExpr(const Expr& expr, const LocalMap
                     b().emitCall(b().getFunction("__xlang_str_len"), {arg_values[0]})};
         }
         if (expr.name == "str_eq" && expr.args.size() == 2) {
-            return {Type{TypeKind::Int32}, b().emitCall(b().getFunction("__xlang_str_eq"),
-                                                       {arg_values[0], arg_values[1]})};
+            return {
+                Type{TypeKind::Int32},
+                b().emitCall(b().getFunction("__xlang_str_eq"), {arg_values[0], arg_values[1]})};
         }
         if (expr.name == "str_concat" && expr.args.size() == 2) {
-            return {Type{TypeKind::String},
-                    emitStringConcat(arg_values[0], arg_values[1])};
+            return {Type{TypeKind::String}, emitStringConcat(arg_values[0], arg_values[1])};
         }
         if (expr.name == "str_byte" && expr.args.size() == 2) {
-            return {Type{TypeKind::Int32}, b().emitCall(b().getFunction("__xlang_str_byte"),
-                                                       {arg_values[0], arg_values[1]})};
+            return {
+                Type{TypeKind::Int32},
+                b().emitCall(b().getFunction("__xlang_str_byte"), {arg_values[0], arg_values[1]})};
         }
         if (expr.name == "str_find" && expr.args.size() == 2) {
-            return {Type{TypeKind::Int32}, b().emitCall(b().getFunction("__xlang_str_find"),
-                                                       {arg_values[0], arg_values[1]})};
+            return {
+                Type{TypeKind::Int32},
+                b().emitCall(b().getFunction("__xlang_str_find"), {arg_values[0], arg_values[1]})};
         }
         if (expr.name == "str_sub" && expr.args.size() == 3) {
             return {Type{TypeKind::String},
@@ -520,9 +508,9 @@ std::pair<Type, llvm::Value*> Codegen::emitExpr(const Expr& expr, const LocalMap
         if (expr.name == "array_pop_front" && expr.args.size() == 1) {
             const Type elem = arg_types[0].arrayElementType();
             const std::size_t sz = typeSizeBytes(elem);
-            llvm::Value* raw = b().emitCall(
-                b().getFunction("__xlang_array_pop_front"),
-                {arg_values[0], b().constI64(static_cast<std::int64_t>(sz))});
+            llvm::Value* raw =
+                b().emitCall(b().getFunction("__xlang_array_pop_front"),
+                             {arg_values[0], b().constI64(static_cast<std::int64_t>(sz))});
             if (elem.kind == TypeKind::Struct) {
                 return {elem, raw};
             }
@@ -532,9 +520,9 @@ std::pair<Type, llvm::Value*> Codegen::emitExpr(const Expr& expr, const LocalMap
             const Type elem = arg_types[0].arrayElementType();
             const std::size_t sz = typeSizeBytes(elem);
             llvm::Value* idx64 = b().emitSExt(arg_values[1], b().i64Ty());
-            llvm::Value* raw = b().emitCall(
-                b().getFunction("__xlang_array_get_raw"),
-                {arg_values[0], idx64, b().constI64(static_cast<std::int64_t>(sz))});
+            llvm::Value* raw =
+                b().emitCall(b().getFunction("__xlang_array_get_raw"),
+                             {arg_values[0], idx64, b().constI64(static_cast<std::int64_t>(sz))});
             if (elem.kind == TypeKind::Struct) {
                 return {elem, raw};
             }
@@ -543,17 +531,16 @@ std::pair<Type, llvm::Value*> Codegen::emitExpr(const Expr& expr, const LocalMap
         if (expr.name == "array_pop" && expr.args.size() == 1) {
             const Type elem = arg_types[0].arrayElementType();
             const std::size_t sz = typeSizeBytes(elem);
-            llvm::Value* raw = b().emitCall(
-                b().getFunction("__xlang_array_pop_raw"),
-                {arg_values[0], b().constI64(static_cast<std::int64_t>(sz))});
+            llvm::Value* raw =
+                b().emitCall(b().getFunction("__xlang_array_pop_raw"),
+                             {arg_values[0], b().constI64(static_cast<std::int64_t>(sz))});
             if (elem.kind == TypeKind::Struct) {
                 return {elem, raw};
             }
             return loadValue(elem, raw);
         }
 
-        const std::optional<FunctionSignature> resolved =
-            resolveFunctionCall(expr.name, arg_types);
+        const std::optional<FunctionSignature> resolved = resolveFunctionCall(expr.name, arg_types);
         if (!resolved) {
             std::string args_list;
             for (std::size_t i = 0; i < arg_types.size(); ++i) {
@@ -569,17 +556,12 @@ std::pair<Type, llvm::Value*> Codegen::emitExpr(const Expr& expr, const LocalMap
         std::string llvm_name =
             mangleFunctionName(resolved->name, paramTypes(resolved->params), resolved->variadic);
         // Match declared params (not call arg types) — coercion can widen i32→i64.
-        if (const Function* definition = findFunctionDefinition(
-                *program_, resolved->name, paramTypes(resolved->params));
+        if (const Function* definition =
+                findFunctionDefinition(*program_, resolved->name, paramTypes(resolved->params));
             definition != nullptr &&
-            (definition->syscall || definition->external ||
-             definition->body.statements.empty())) {
-            // Native-syscall wrappers and bridge/C symbols keep the raw name.
+            (definition->syscall || definition->external || definition->body.statements.empty())) {
+            // Native-syscall wrappers and external C symbols keep the raw name.
             llvm_name = definition->name;
-        } else if (findMatchingFunction(resolved->name, paramTypes(resolved->params),
-                                        options_.runtime_syscalls)) {
-            // Runtime package bridge declares (plain `declare name`).
-            llvm_name = resolved->name;
         }
 
         std::vector<llvm::Type*> param_tys;
@@ -590,13 +572,12 @@ std::pair<Type, llvm::Value*> Codegen::emitExpr(const Expr& expr, const LocalMap
             call_args.push_back(coerceInt(arg_values[i], arg_types[i], param_ty));
         }
         llvm::Function* fn = ensureFn(
-            llvm_name, b().functionType(llvmType(resolved->return_type), param_tys,
-                                        resolved->variadic));
+            llvm_name,
+            b().functionType(llvmType(resolved->return_type), param_tys, resolved->variadic));
         return {resolved->return_type, b().emitCall(fn, call_args)};
     }
     }
     throw XlangError("invalid expression");
 }
 
-
-}  // namespace xlang
+} // namespace xlang

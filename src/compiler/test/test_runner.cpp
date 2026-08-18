@@ -315,8 +315,8 @@ Program withTestHarness(const Program& program, const std::vector<std::string>& 
     return copy;
 }
 
-std::vector<std::filesystem::path> defaultTestModuleSearchPaths(bool skip_runtime) {
-    return defaultModuleSearchPaths(!skip_runtime);
+std::vector<std::filesystem::path> defaultTestModuleSearchPaths() {
+    return defaultModuleSearchPaths();
 }
 
 struct FileTestResult {
@@ -332,7 +332,7 @@ static FileTestResult runSingleTestFile(const TestOptions& options,
 
     try {
         const std::vector<std::filesystem::path> module_search_paths =
-            defaultTestModuleSearchPaths(false);
+            defaultTestModuleSearchPaths();
         const Program loaded = loadProgram(file, module_search_paths);
         ensureNoMain(loaded, file);
 
@@ -351,8 +351,6 @@ static FileTestResult runSingleTestFile(const TestOptions& options,
         compile_options.keep_ir = options.keep_artifacts;
         compile_options.build_kind = BuildKind::Executable;
         compile_options.work_dir = work_dir;
-        compile_options.runtime_override = options.runtime_override;
-
         const Program program =
             withTestHarness(loaded, tests, options.parallel, file.string());
         const CompileResult compiled = compileProgram(program, compile_options);

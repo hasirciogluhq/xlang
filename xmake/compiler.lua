@@ -1,16 +1,13 @@
 -- Bounded context: host xlang compiler binary (C++ only).
--- Development build: no runtime embed (in-tree bridges via findLibrary).
--- Release/bootstrap: see xmake/bootstrap.lua for two-phase embed.
 --
 -- Source layout (context folders):
 --   src/cli/          CLI entry
 --   src/lang/         lexer, parser, ast, types
 --   src/codegen/      LLVM IR builder split by concern
---   src/compiler/     compile/link/runtime/test orchestration
---   src/host/         layout, resolve, fetch, embed
+--   src/compiler/     compile/link/test orchestration
+--   src/host/         layout and target resolution
 --   src/platform/     OS backends
 --   src/util/         shared helpers
---   src/runtime/      frontend .xlang + OS bridges (not compiled here)
 
 local cross = xlang_ctx.is_cross()
 
@@ -56,31 +53,9 @@ target("xlang")
     elseif is_plat("windows") then
         add_files("$(projectdir)/src/platform/windows/sys.cpp")
     end
-    do
-        local embed_rt = path.join(os.projectdir(), "build", "embed", "embedded_runtime.c")
-        local embed_br = path.join(os.projectdir(), "build", "embed", "embedded_bridges.c")
-        if os.isfile(embed_rt) then
-            add_files(embed_rt)
-            add_defines("XLANG_HAS_EMBEDDED_RUNTIME")
-        end
-        if os.isfile(embed_br) then
-            add_files(embed_br)
-            add_defines("XLANG_HAS_EMBEDDED_BRIDGES")
-        end
-    end
     add_includedirs("$(projectdir)/include")
     add_target_defines()
     xlang_ctx.add_llvm()
-    add_deps(
-        "filesystem",
-        "net",
-        "tls",
-        "process",
-        "time",
-        "panic",
-        "thread",
-        {inherit = false}
-    )
     if is_plat("linux") then
         add_syslinks("ncurses", "z", "pthread", "dl", "m")
     elseif is_plat("macosx") then

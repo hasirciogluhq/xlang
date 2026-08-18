@@ -30,14 +30,6 @@ void Codegen::emitStructTypes(const Program& program) {
             break;
         }
     }
-    if (!array_hdr_type_emitted_) {
-        for (const StructDecl& decl : options_.runtime_structs) {
-            if (structUsesArrayField(decl)) {
-                emitArrayHeaderType();
-                break;
-            }
-        }
-    }
 
     auto ensureOpaque = [&](const StructDecl& decl) {
         if (!struct_types_.contains(decl.name)) {
@@ -46,9 +38,6 @@ void Codegen::emitStructTypes(const Program& program) {
         }
     };
     for (const StructDecl& decl : program.structs) {
-        ensureOpaque(decl);
-    }
-    for (const StructDecl& decl : options_.runtime_structs) {
         ensureOpaque(decl);
     }
 
@@ -70,18 +59,10 @@ void Codegen::emitStructTypes(const Program& program) {
     for (const StructDecl& decl : program.structs) {
         setBody(decl);
     }
-    for (const StructDecl& decl : options_.runtime_structs) {
-        setBody(decl);
-    }
 }
 
 const StructDecl* Codegen::findStruct(const std::string& name) const {
     for (const StructDecl& decl : program_->structs) {
-        if (decl.name == name) {
-            return &decl;
-        }
-    }
-    for (const StructDecl& decl : options_.runtime_structs) {
         if (decl.name == name) {
             return &decl;
         }

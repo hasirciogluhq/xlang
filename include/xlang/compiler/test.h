@@ -12,7 +12,6 @@ namespace xlang {
 
 struct TestOptions {
     std::filesystem::path root{"test/xlang"};
-    std::optional<std::filesystem::path> runtime_override;
     std::string clang{"clang"};
     bool keep_artifacts{false};
     bool parallel{false};
@@ -35,7 +34,7 @@ struct TestSuiteResult {
                                       const std::vector<std::string>& tests,
                                       bool parallel,
                                       const std::string& file_label);
-[[nodiscard]] std::vector<std::filesystem::path> defaultTestModuleSearchPaths(bool skip_runtime);
+[[nodiscard]] std::vector<std::filesystem::path> defaultTestModuleSearchPaths();
 
 void rejectTestFileForBuildRun(const std::filesystem::path& path);
 

@@ -100,7 +100,7 @@ Program Parser::parseProgram() {
                 program.functions.push_back(parseDeclareSyscall());
                 continue;
             }
-            // declare [fn] name(...) — blind external / bridge ABI symbol
+            // declare [fn] name(...) — blind external C ABI symbol
             // declare name: type — external global
             if (check(TokenKind::Fn) ||
                 (check(TokenKind::Ident) && pos_ + 1 < tokens_.size() &&
@@ -353,11 +353,11 @@ Function Parser::parseFunction(const ItemModifiers& modifiers) {
 
 Function Parser::parseDeclareSyscall() {
     // declare syscall <number> name(params): ret
-    // Emits a CPU-native trap (x86_64: syscall / aarch64: svc). Not a bridge symbol.
+    // Emits a CPU-native trap (x86_64: syscall / aarch64: svc), not a C ABI call.
     const Span start = currentSpan();
     if (!check(TokenKind::Number)) {
         throw error("expected syscall number after `declare syscall` "
-                    "(bridge/C symbols use plain `declare name(...)`)");
+                    "(C ABI symbols use plain `declare name(...)`)");
     }
     const Token number = consume(TokenKind::Number, "expected syscall number");
     if (match(TokenKind::Fn)) {
@@ -387,7 +387,7 @@ Function Parser::parseDeclareSyscall() {
 }
 
 Function Parser::parseDeclareFunction(const ItemModifiers& modifiers) {
-    // declare [fn] name(params): ret — blind external / bridge ABI (raw symbol name).
+    // declare [fn] name(params): ret — blind external C ABI (raw symbol name).
     const Span start = currentSpan();
     (void)match(TokenKind::Fn);
     const Token name = consume(TokenKind::Ident, "expected function name");

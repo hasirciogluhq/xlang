@@ -25,13 +25,9 @@ namespace xlang {
 
 struct CodegenOptions {
     BuildKind build_kind{BuildKind::Executable};
-    bool link_runtime{true};
     std::string target_triple;
     /// If non-empty, emit a native object via TargetMachine (primary artifact).
     std::string object_output;
-    std::vector<FunctionSignature> runtime_exports;
-    std::vector<FunctionSignature> runtime_syscalls;
-    std::vector<StructDecl> runtime_structs;
 };
 
 /// Primary product is llvm::Module (+ optional object_path). String .ll is not the artifact.
@@ -66,7 +62,6 @@ private:
     void collectSyscalls(const Program& program);
     void emitPrelude(const Program& program);
     void emitStructTypes(const Program& program);
-    void emitRuntimeDeclares(const Program& program);
     void emitGlobals(const Program& program);
     void emitGlobalInit(const Program& program);
     void emitFunction(const Function& function);
@@ -74,9 +69,7 @@ private:
     void emitDeclareFunction(const Function& function);
     /// `declare syscall <n> name` → real function body with CPU-native trap.
     void emitNativeSyscallFunction(const Function& function);
-    void emitStringRuntimeSupport();
     void emitArrayHeaderType();
-    void emitArrayRuntimeSupport();
     void preemitStringLiterals(const Program& program);
     void collectStringLiteralsFromExpr(const Expr& expr);
     void collectStringLiteralsFromStmt(const Stmt& stmt);
