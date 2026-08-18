@@ -126,8 +126,6 @@ struct Expr {
         FieldAccess,
         MethodCall,
         New,
-        NewArray,
-        Index,
         Null,
         Cast,
         AddrOf,
@@ -147,7 +145,6 @@ struct Expr {
     std::unique_ptr<Expr> object;
     std::unique_ptr<Expr> left;
     std::unique_ptr<Expr> right;
-    std::unique_ptr<Expr> index;
     std::vector<std::unique_ptr<Expr>> args;
     std::vector<FieldInit> field_inits;
     Type type{TypeKind::Struct};
@@ -169,9 +166,6 @@ struct Expr {
                                                std::vector<std::unique_ptr<Expr>> args, Span span);
     static std::unique_ptr<Expr> makeNew(std::string struct_name,
                                          std::vector<FieldInit> field_inits, Span span);
-    static std::unique_ptr<Expr> makeNewArray(Type element_type, Span span);
-    static std::unique_ptr<Expr> makeIndex(std::unique_ptr<Expr> object, std::unique_ptr<Expr> index,
-                                           Span span);
     static std::unique_ptr<Expr> makeCast(std::unique_ptr<Expr> value, Type target_type, Span span,
                                           bool reinterpret = false);
     static std::unique_ptr<Expr> makeAddrOf(std::unique_ptr<Expr> value, Span span);
@@ -187,7 +181,6 @@ struct Stmt {
         Local,
         Assign,
         MemberAssign,
-        IndexAssign,
         DerefAssign,
         Return,
         Expr,
@@ -201,7 +194,6 @@ struct Stmt {
     Type type{TypeKind::Int32};
     bool explicit_type{false};
     std::unique_ptr<Expr> target;
-    std::unique_ptr<Expr> index_target;
     std::string field;
     std::unique_ptr<Expr> expr;
     std::unique_ptr<Expr> return_value;

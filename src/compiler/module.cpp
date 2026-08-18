@@ -79,10 +79,6 @@ std::unique_ptr<Expr> cloneExpr(const Expr& expr) {
             }
             return Expr::makeNew(expr.name, std::move(inits), expr.span);
         }
-        case Expr::Kind::NewArray:
-            return Expr::makeNewArray(expr.type, expr.span);
-        case Expr::Kind::Index:
-            return Expr::makeIndex(cloneExpr(*expr.object), cloneExpr(*expr.index), expr.span);
     }
     throw XlangError("invalid expression clone");
 }
@@ -131,9 +127,6 @@ Stmt cloneStmt(const Stmt& stmt) {
     }
     if (stmt.condition) {
         copied.condition = cloneExpr(*stmt.condition);
-    }
-    if (stmt.index_target) {
-        copied.index_target = cloneExpr(*stmt.index_target);
     }
     if (stmt.then_block) {
         copied.then_block = std::make_unique<Block>(cloneBlock(*stmt.then_block));

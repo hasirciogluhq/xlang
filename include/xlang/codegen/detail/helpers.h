@@ -23,7 +23,5 @@ namespace xlang::codegen_detail {
 [[nodiscard]] const Function* findUniqueFunctionByName(const Program& program, const std::string& name);
 [[nodiscard]] bool programUsesStrings(const Program& program);
 [[nodiscard]] bool programUsesHeap(const Program& program);
-[[nodiscard]] bool programUsesArrays(const Program& program);
-[[nodiscard]] bool structUsesArrayField(const StructDecl& decl);
 
 }  // namespace xlang::codegen_detail

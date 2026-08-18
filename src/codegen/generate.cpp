@@ -64,15 +64,10 @@ CodegenResult Codegen::generate(const Program& program, const CodegenOptions& op
     for (const auto& [alias, target] : program.import_aliases) {
         cg.import_aliases_[alias] = target;
     }
-    cg.needs_heap_ =
-        programUsesHeap(program) || programUsesStrings(program) || programUsesArrays(program);
+    cg.needs_heap_ = programUsesHeap(program) || programUsesStrings(program);
     cg.needs_strings_ = programUsesStrings(program);
-    cg.needs_arrays_ = programUsesArrays(program);
     cg.collectSyscalls(program);
     cg.emitPrelude(program);
-    if (cg.needs_arrays_) {
-        cg.emitArrayHeaderType();
-    }
     cg.emitStructTypes(program);
     if (cg.needs_strings_) {
         cg.preemitStringLiterals(program);

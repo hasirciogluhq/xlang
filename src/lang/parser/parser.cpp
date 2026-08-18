@@ -444,10 +444,6 @@ Type Parser::parseType() {
         return Type::makePointer(parseType());
     }
 
-    if (match(TokenKind::Array)) {
-        return Type::makeArray(parseType());
-    }
-
     const Token name = consume(TokenKind::Ident, "expected type name");
     Type type = Type::parse(name.text);
     if (type.kind == TypeKind::Struct) {
@@ -593,9 +589,6 @@ Stmt Parser::parseStatement() {
                 stmt.kind = Stmt::Kind::MemberAssign;
                 stmt.target = std::move(target->object);
                 stmt.field = target->name;
-            } else if (target->kind == Expr::Kind::Index) {
-                stmt.kind = Stmt::Kind::IndexAssign;
-                stmt.index_target = std::move(target);
             } else if (target->kind == Expr::Kind::Variable) {
                 stmt.kind = Stmt::Kind::Assign;
                 stmt.name = target->name;
@@ -815,13 +808,6 @@ std::unique_ptr<Expr> Parser::parsePostfix(std::unique_ptr<Expr> expr) {
             expr = Expr::makeFieldAccess(std::move(expr), field, span);
             continue;
         }
-        if (match(TokenKind::LBracket)) {
-            const Span span = expr->span;
-            auto index = parseExpr();
-            consume(TokenKind::RBracket, "expected ']'");
-            expr = Expr::makeIndex(std::move(expr), std::move(index), span);
-            continue;
-        }
         break;
     }
     return expr;
@@ -899,11 +885,6 @@ std::unique_ptr<Expr> Parser::parsePrimary() {
 }
 
 std::unique_ptr<Expr> Parser::parseNewExpr(const Span& span) {
-    if (match(TokenKind::Array)) {
-        const Type element_type = parseType();
-        return Expr::makeNewArray(element_type, span);
-    }
-
     const std::string struct_name = consume(TokenKind::Ident, "expected struct name").text;
     if (findStruct(struct_name) == nullptr) {
         throw error(std::format("unknown struct `{}`", struct_name));

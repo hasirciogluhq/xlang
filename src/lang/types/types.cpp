@@ -15,7 +15,7 @@ bool Type::isFloating() const {
 
 bool Type::isPtrLike() const {
     return kind == TypeKind::Pointer || kind == TypeKind::Struct || kind == TypeKind::Interface ||
-           kind == TypeKind::String || kind == TypeKind::Array;
+           kind == TypeKind::String;
 }
 
 Type Type::dereferenced() const {
@@ -44,20 +44,6 @@ Type Type::makePointer(Type pointee) {
     type.kind = TypeKind::Pointer;
     type.inner = std::make_shared<Type>(std::move(pointee));
     return type;
-}
-
-Type Type::makeArray(Type element) {
-    Type type;
-    type.kind = TypeKind::Array;
-    type.inner = std::make_shared<Type>(std::move(element));
-    return type;
-}
-
-Type Type::arrayElementType() const {
-    if (kind != TypeKind::Array || !inner) {
-        return Type{TypeKind::Int32};
-    }
-    return *inner;
 }
 
 Type Type::parse(std::string_view name) {
@@ -121,8 +107,6 @@ std::string typeMangleComponent(const Type& type) {
         return "I" + type.struct_name;
     case TypeKind::Pointer:
         return "P" + typeMangleComponent(type.dereferenced());
-    case TypeKind::Array:
-        return "A" + typeMangleComponent(type.arrayElementType());
     }
     return "unknown";
 }
@@ -147,12 +131,6 @@ bool typesEqual(const Type& left, const Type& right) {
         return left.struct_name == right.struct_name;
     }
     if (left.kind == TypeKind::Pointer) {
-        if (!left.inner || !right.inner) {
-            return left.inner == right.inner;
-        }
-        return typesEqual(*left.inner, *right.inner);
-    }
-    if (left.kind == TypeKind::Array) {
         if (!left.inner || !right.inner) {
             return left.inner == right.inner;
         }
@@ -187,8 +165,6 @@ std::string typeToString(const Type& type) {
         return type.struct_name;
     case TypeKind::Pointer:
         return "*" + typeToString(type.dereferenced());
-    case TypeKind::Array:
-        return "array " + typeToString(type.arrayElementType());
     }
     return "unknown";
 }
@@ -219,15 +195,8 @@ std::string llvmTypeName(const Type& type) {
         return "i8*";
     case TypeKind::Pointer:
         return "ptr";
-    case TypeKind::Array:
-        return "%array.hdr*";
     }
     throw XlangError("invalid type for LLVM lowering");
-}
-
-std::string arrayTypeName(const Type& element_type) {
-    (void)element_type;
-    return "%array.hdr";
 }
 
 std::size_t llvmTypeAlign(const Type& type) {
@@ -244,7 +213,6 @@ std::size_t llvmTypeAlign(const Type& type) {
     case TypeKind::Struct:
     case TypeKind::Interface:
     case TypeKind::Pointer:
-    case TypeKind::Array:
         return 8;
     case TypeKind::Bool:
     case TypeKind::Char:

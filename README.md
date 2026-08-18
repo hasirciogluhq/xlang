@@ -16,7 +16,7 @@
 
 | Area | Support |
 |------|---------|
-| Types | `int32`, `int64`, `float`, `double`, `bool`, `string`, struct, pointer, array |
+| Types | `int32`, `int64`, `float`, `double`, `bool`, `string`, struct, pointer |
 | Functions | Overload, variadic (`...`), `export` / `external` / `declare` |
 | Modules | `import`, `import * as`, directory packages (`http/`) |
 | Memory | `new` / `delete`, struct fields, heap |

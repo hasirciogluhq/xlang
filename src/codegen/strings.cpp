@@ -52,9 +52,6 @@ void Codegen::collectStringLiteralsFromExpr(const Expr& expr) {
     if (expr.right) {
         collectStringLiteralsFromExpr(*expr.right);
     }
-    if (expr.index) {
-        collectStringLiteralsFromExpr(*expr.index);
-    }
     for (const auto& arg : expr.args) {
         collectStringLiteralsFromExpr(*arg);
     }

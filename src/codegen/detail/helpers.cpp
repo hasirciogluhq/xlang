@@ -157,8 +157,6 @@ bool exprUsesString(const Expr& expr);
 bool stmtUsesString(const Stmt& stmt);
 bool exprUsesHeap(const Expr& expr);
 bool stmtUsesHeap(const Stmt& stmt);
-bool exprHasArray(const Expr& expr);
-bool stmtHasArray(const Stmt& stmt);
 
 bool exprUsesString(const Expr& expr) {
     if (expr.kind == Expr::Kind::StringLiteral) {
@@ -179,9 +177,6 @@ bool exprUsesString(const Expr& expr) {
         return true;
     }
     if (expr.right && exprUsesString(*expr.right)) {
-        return true;
-    }
-    if (expr.index && exprUsesString(*expr.index)) {
         return true;
     }
     for (const auto& arg : expr.args) {
@@ -263,9 +258,6 @@ bool exprUsesHeap(const Expr& expr) {
     if (expr.right && exprUsesHeap(*expr.right)) {
         return true;
     }
-    if (expr.index && exprUsesHeap(*expr.index)) {
-        return true;
-    }
     for (const auto& arg : expr.args) {
         if (exprUsesHeap(*arg)) {
             return true;
@@ -310,116 +302,5 @@ bool programUsesHeap(const Program& program) {
     }
     return false;
 }
-
-bool exprHasArray(const Expr& expr) {
-    if (expr.kind == Expr::Kind::NewArray) {
-        return true;
-    }
-    if (expr.kind == Expr::Kind::New) {
-        for (const FieldInit& init : expr.field_inits) {
-            if (init.value && exprHasArray(*init.value)) {
-                return true;
-            }
-        }
-    }
-    if (expr.kind == Expr::Kind::Index && expr.object) {
-        return true;
-    }
-    if (expr.object && exprHasArray(*expr.object)) {
-        return true;
-    }
-    if (expr.left && exprHasArray(*expr.left)) {
-        return true;
-    }
-    if (expr.right && exprHasArray(*expr.right)) {
-        return true;
-    }
-    if (expr.index && exprHasArray(*expr.index)) {
-        return true;
-    }
-    for (const auto& arg : expr.args) {
-        if (exprHasArray(*arg)) {
-            return true;
-        }
-    }
-    return false;
-}
-
-bool stmtHasArray(const Stmt& stmt) {
-    if (stmt.type.isArray()) {
-        return true;
-    }
-    if (stmt.expr && exprHasArray(*stmt.expr)) {
-        return true;
-    }
-    if (stmt.return_value && exprHasArray(*stmt.return_value)) {
-        return true;
-    }
-    if (stmt.target && exprHasArray(*stmt.target)) {
-        return true;
-    }
-    if (stmt.index_target && exprHasArray(*stmt.index_target)) {
-        return true;
-    }
-    if (stmt.condition && exprHasArray(*stmt.condition)) {
-        return true;
-    }
-    if (stmt.then_block) {
-        for (const Stmt& inner : stmt.then_block->statements) {
-            if (stmtHasArray(inner)) {
-                return true;
-            }
-        }
-    }
-    if (stmt.else_block) {
-        for (const Stmt& inner : stmt.else_block->statements) {
-            if (stmtHasArray(inner)) {
-                return true;
-            }
-        }
-    }
-    if (stmt.loop_body) {
-        for (const Stmt& inner : stmt.loop_body->statements) {
-            if (stmtHasArray(inner)) {
-                return true;
-            }
-        }
-    }
-    return false;
-}
-
-bool structUsesArrayField(const StructDecl& decl) {
-    for (const StructField& field : decl.fields) {
-        if (field.type.isArray()) {
-            return true;
-        }
-    }
-    return false;
-}
-
-bool programUsesArrays(const Program& program) {
-    for (const StructDecl& decl : program.structs) {
-        if (structUsesArrayField(decl)) {
-            return true;
-        }
-    }
-    for (const GlobalVar& global : program.globals) {
-        if (global.type.isArray()) {
-            return true;
-        }
-        if (global.init && exprHasArray(*global.init)) {
-            return true;
-        }
-    }
-    for (const Function& function : program.functions) {
-        for (const Stmt& stmt : function.body.statements) {
-            if (stmtHasArray(stmt)) {
-                return true;
-            }
-        }
-    }
-    return false;
-}
-
 
 }  // namespace xlang::codegen_detail

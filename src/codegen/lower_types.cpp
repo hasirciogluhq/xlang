@@ -55,7 +55,6 @@ llvm::Type* Codegen::llvmType(const Type& type) {
     case TypeKind::Interface:
     case TypeKind::Pointer:
     case TypeKind::Struct:
-    case TypeKind::Array:
         return b().ptrTy();
     }
     throw XlangError("invalid type for LLVM lowering");
@@ -120,7 +119,6 @@ std::size_t Codegen::typeSizeBytes(const Type& type) const {
     case TypeKind::BigInt:
     case TypeKind::String:
     case TypeKind::Pointer:
-    case TypeKind::Array:
         return 8;
     case TypeKind::Bool:
     case TypeKind::Char:

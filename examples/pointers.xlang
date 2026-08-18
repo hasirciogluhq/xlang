@@ -11,6 +11,7 @@ fn main() {
     *p = 20
     bump(p)
     print("x=%d", x)
+    print("x-pointer: %p", p)
 
     local wide = x as int64
     print("wide=%d", wide as int32)

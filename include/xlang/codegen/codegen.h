@@ -69,7 +69,6 @@ private:
     void emitDeclareFunction(const Function& function);
     /// `declare syscall <n> name` → real function body with CPU-native trap.
     void emitNativeSyscallFunction(const Function& function);
-    void emitArrayHeaderType();
     void preemitStringLiterals(const Program& program);
     void collectStringLiteralsFromExpr(const Expr& expr);
     void collectStringLiteralsFromStmt(const Stmt& stmt);
@@ -135,8 +134,6 @@ private:
     bool needs_global_init_{false};
     bool needs_heap_{false};
     bool needs_strings_{false};
-    bool needs_arrays_{false};
-    bool array_hdr_type_emitted_{false};
     std::size_t spawn_thunk_counter_{0};
     std::size_t string_literal_counter_{0};
     std::size_t label_counter_{0};
@@ -144,7 +141,6 @@ private:
     std::unordered_map<std::string, Type> local_types_;
     std::unordered_map<std::string, std::string> import_aliases_;
     std::unordered_map<std::string, llvm::StructType*> struct_types_;
-    llvm::StructType* array_hdr_ty_{nullptr};
     llvm::Value* print_nl_{nullptr};
     llvm::Value* print_fmt_s_{nullptr};
     llvm::Value* print_fmt_d_{nullptr};

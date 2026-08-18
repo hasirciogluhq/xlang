@@ -15,7 +15,6 @@ This document describes the syntax, types, module system, and compiler-provided 
 7. [Control flow](#control-flow)
 8. [Expressions and operators](#expressions-and-operators)
 9. [Struct and memory](#struct-and-memory)
-10. [Array](#array)
 11. [Modules and import](#modules-and-import)
 12. [Print](#print)
 13. [External linking](#external-linking)
@@ -50,8 +49,6 @@ from math import add, mul           // selective import
 struct Point { x: int32, y: int32 } // struct definition
 
 counter = 0                          // global variable
-queue: array SpawnTask               // typed global (init optional)
-
 declare xl_filesystem_open(path: string, mode: int32): int64  // bridge / C ABI
 declare syscall 1 write(fd: int64, buf: int64, n: int64): int64 // CPU-native
 declare external fn helper(x)        // external symbol (link time)
@@ -84,7 +81,6 @@ fn main() {                          // entry point
 | `void` | Return type (rare) |
 | `StructName` | User-defined struct |
 | `*T` | Pointer (`*int32`, `*Point`) |
-| `array T` | Growable array (element type `T`) |
 
 Type annotation:
 
@@ -106,7 +102,6 @@ If no annotation is given, the default type is **`int32`**.
 ```xlang
 counter = 0
 limit: int32 = 100
-spawn_queue: array SpawnTask
 export counter = 0    // exported with export
 ```
 
@@ -359,31 +354,6 @@ delete p
 
 ---
 
-## Array
-
-Used as a dynamic, front-pop queue or growable buffer.
-
-```xlang
-local items: array int32
-items = new array int32
-
-array_push(items, 42)
-local n = array_len(items)
-local first = array_pop_front(items)
-```
-
-Array of struct elements:
-
-```xlang
-spawn_queue: array SpawnTask
-spawn_queue = new array SpawnTask
-array_push(spawn_queue, task)
-```
-
-Array runtime is codegen'd by the compiler as `%array.hdr`.
-
----
-
 ## Modules and import
 
 xlang resolves modules from:
@@ -503,17 +473,6 @@ spawn(job_worker, 1, "ok")   // ✗ (old API, not supported)
 `go expr` is syntactic sugar for `spawn(expr)`.
 
 The compiler automatically generates a **thunk** (parameterless `i32()` wrapper) for each `spawn(...)`; worker threads run this thunk.
-
-### Scheduler internals (runtime)
-
-- `array SpawnTask` — FIFO queue
-- `mutex` + `cond` — worker wake-up / `wait_all` synchronization
-- `worker_loop` — takes tasks from queue, runs `invoke0(entry)`
-- `init_scheduler()` — starts CPU-1 worker threads (min 1)
-
-Bridge declares used for: `cpu_count`, `mutex_*`, `cond_*`, `xl_thread_start` (and related). Prefer `xl_*` names for new bridges ([BRIDGE_ABI.md](BRIDGE_ABI.md)).
-
----
 
 ## Concurrency and sync
 
@@ -832,11 +791,6 @@ Not bridges and not CPU traps; codegen special cases:
 | `invoke0(entry)` | `int64` fn ptr → call with no args |
 | `ref(obj)` | Struct pointer as `int64` (context stash) |
 | `invoke1(entry, ctx)` | `int64` fn ptr → call with one arg (`Context`, `ServerInfo`, …) |
-| `array_len(arr)` | Array length |
-| `array_push(arr, val)` | Append to end |
-| `array_get(arr, i)` | Read element by index |
-| `array_pop(arr)` | Pop from end |
-| `array_pop_front(arr)` | Take and remove from front |
 | `str_len(s)` | String length |
 | `str_eq(a, b)` | 1 if equal, else 0 |
 | `str_byte(s, i)` | Byte at index (0–255), or -1 |

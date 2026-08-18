@@ -60,7 +60,6 @@ enum class TokenKind {
     If,
     Else,
     While,
-    Array,
     Ellipsis,
     At,
 };

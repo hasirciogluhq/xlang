@@ -99,27 +99,6 @@ bool Codegen::emitStatement(const Stmt& stmt, LocalMap& locals) {
         storeValue(field_type, val, gep);
         return false;
     }
-    case Stmt::Kind::IndexAssign: {
-        const auto [arr_ty, arr] = emitExpr(*stmt.index_target->object, locals);
-        if (!arr_ty.isArray()) {
-            throw XlangError("index assignment requires array");
-        }
-        const auto [_, idx] = emitExpr(*stmt.index_target->index, locals);
-        const auto [val_ty, val] = emitExpr(*stmt.expr, locals);
-        (void)val_ty;
-        const Type elem = arr_ty.arrayElementType();
-        const std::size_t sz = typeSizeBytes(elem);
-        llvm::Value* idx64 = b().emitSExt(idx, b().i64Ty());
-        llvm::Value* head =
-            b().emitLoad(b().i64Ty(), b().emitStructGEP(array_hdr_ty_, arr, 3));
-        llvm::Value* pos = b().emitAdd(head, idx64);
-        llvm::Value* data =
-            b().emitLoad(b().ptrTy(), b().emitStructGEP(array_hdr_ty_, arr, 0));
-        llvm::Value* off = b().emitMul(pos, b().constI64(static_cast<std::int64_t>(sz)));
-        llvm::Value* slot = b().emitGEP(b().i8Ty(), data, {off});
-        storeValue(elem, val, slot);
-        return false;
-    }
     case Stmt::Kind::If: {
         const auto [_, cond] = emitExpr(*stmt.condition, locals);
         llvm::Value* cond_i1 = boolToI1(cond);

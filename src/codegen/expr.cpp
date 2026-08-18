@@ -149,9 +149,6 @@ std::pair<Type, llvm::Value*> Codegen::emitExpr(const Expr& expr, const LocalMap
         }
         return {struct_type, raw};
     }
-    case Expr::Kind::NewArray: {
-        throw XlangError("array allocation is not supported");
-    }
     case Expr::Kind::Cast: {
         // `x as T`          → static-like (numbers / floats / interface view)
         // `x reinterpret T` → bit/pointer reinterpret (ptr↔ptr, int↔ptr)
@@ -262,22 +259,6 @@ std::pair<Type, llvm::Value*> Codegen::emitExpr(const Expr& expr, const LocalMap
                 structBodyType(decl->name), obj_ptr, static_cast<unsigned>(index));
             return {Type::makePointer(field_ty), gep};
         }
-        if (inner.kind == Expr::Kind::Index) {
-            const auto [arr_ty, arr] = emitExpr(*inner.object, locals);
-            if (!arr_ty.isArray()) {
-                throw XlangError("address-of index requires array");
-            }
-            const auto [_, idx] = emitExpr(*inner.index, locals);
-            const Type elem = arr_ty.arrayElementType();
-            const std::size_t sz = typeSizeBytes(elem);
-            llvm::Value* idx64 = b().emitSExt(idx, b().i64Ty());
-            llvm::Value* head = b().emitLoad(b().i64Ty(), b().emitStructGEP(array_hdr_ty_, arr, 3));
-            llvm::Value* pos = b().emitAdd(head, idx64);
-            llvm::Value* data = b().emitLoad(b().ptrTy(), b().emitStructGEP(array_hdr_ty_, arr, 0));
-            llvm::Value* off = b().emitMul(pos, b().constI64(static_cast<std::int64_t>(sz)));
-            llvm::Value* slot = b().emitGEP(b().i8Ty(), data, {off});
-            return {Type::makePointer(elem), slot};
-        }
         throw XlangError("& expects a variable, field, or index lvalue");
     }
     case Expr::Kind::Deref: {
@@ -288,25 +269,6 @@ std::pair<Type, llvm::Value*> Codegen::emitExpr(const Expr& expr, const LocalMap
         }
         const Type pointee = ptr_ty.dereferenced();
         return loadValue(pointee, ptr);
-    }
-    case Expr::Kind::Index: {
-        const auto [arr_ty, arr] = emitExpr(*expr.object, locals);
-        if (!arr_ty.isArray()) {
-            throw XlangError("index access requires array");
-        }
-        const auto [_, idx] = emitExpr(*expr.index, locals);
-        const Type elem = arr_ty.arrayElementType();
-        const std::size_t sz = typeSizeBytes(elem);
-        llvm::Value* idx64 = b().emitSExt(idx, b().i64Ty());
-        llvm::Value* head = b().emitLoad(b().i64Ty(), b().emitStructGEP(array_hdr_ty_, arr, 3));
-        llvm::Value* pos = b().emitAdd(head, idx64);
-        llvm::Value* data = b().emitLoad(b().ptrTy(), b().emitStructGEP(array_hdr_ty_, arr, 0));
-        llvm::Value* off = b().emitMul(pos, b().constI64(static_cast<std::int64_t>(sz)));
-        llvm::Value* slot = b().emitGEP(b().i8Ty(), data, {off});
-        if (elem.kind == TypeKind::Struct) {
-            return loadValue(elem, slot);
-        }
-        return loadValue(elem, slot);
     }
     case Expr::Kind::Binary: {
         const auto [left_ty, left] = emitExpr(*expr.left, locals);
@@ -457,11 +419,6 @@ std::pair<Type, llvm::Value*> Codegen::emitExpr(const Expr& expr, const LocalMap
             return {Type{TypeKind::Int32},
                     b().emitCall(llvm::FunctionCallee(fty, fn_ptr), {arg_values[1]})};
         }
-        if (expr.name == "array_len" && expr.args.size() == 1) {
-            llvm::Function* fn = b().getFunction("__xlang_array_len");
-            llvm::Value* len64 = b().emitCall(fn, {arg_values[0]});
-            return {Type{TypeKind::Int32}, b().emitTrunc(len64, b().i32Ty())};
-        }
         if (expr.name == "str_len" && expr.args.size() == 1) {
             return {Type{TypeKind::Int32},
                     b().emitCall(b().getFunction("__xlang_str_len"), {arg_values[0]})};
@@ -492,54 +449,6 @@ std::pair<Type, llvm::Value*> Codegen::emitExpr(const Expr& expr, const LocalMap
         if (expr.name == "str_from_int" && expr.args.size() == 1) {
             return {Type{TypeKind::String}, emitIntToString(arg_values[0])};
         }
-        if (expr.name == "array_push" && expr.args.size() == 2) {
-            const Type elem = arg_types[0].arrayElementType();
-            const std::size_t sz = typeSizeBytes(elem);
-            llvm::Value* raw = arg_values[1];
-            if (arg_types[1].kind != TypeKind::Struct) {
-                llvm::AllocaInst* slot = b().emitAlloca(llvmType(arg_types[1]));
-                storeValue(arg_types[1], arg_values[1], slot);
-                raw = b().emitBitCast(slot, b().ptrTy());
-            }
-            b().emitCall(b().getFunction("__xlang_array_push"),
-                         {arg_values[0], raw, b().constI64(static_cast<std::int64_t>(sz))});
-            return {Type{TypeKind::Int32}, b().constI32(0)};
-        }
-        if (expr.name == "array_pop_front" && expr.args.size() == 1) {
-            const Type elem = arg_types[0].arrayElementType();
-            const std::size_t sz = typeSizeBytes(elem);
-            llvm::Value* raw =
-                b().emitCall(b().getFunction("__xlang_array_pop_front"),
-                             {arg_values[0], b().constI64(static_cast<std::int64_t>(sz))});
-            if (elem.kind == TypeKind::Struct) {
-                return {elem, raw};
-            }
-            return loadValue(elem, raw);
-        }
-        if (expr.name == "array_get" && expr.args.size() == 2) {
-            const Type elem = arg_types[0].arrayElementType();
-            const std::size_t sz = typeSizeBytes(elem);
-            llvm::Value* idx64 = b().emitSExt(arg_values[1], b().i64Ty());
-            llvm::Value* raw =
-                b().emitCall(b().getFunction("__xlang_array_get_raw"),
-                             {arg_values[0], idx64, b().constI64(static_cast<std::int64_t>(sz))});
-            if (elem.kind == TypeKind::Struct) {
-                return {elem, raw};
-            }
-            return loadValue(elem, raw);
-        }
-        if (expr.name == "array_pop" && expr.args.size() == 1) {
-            const Type elem = arg_types[0].arrayElementType();
-            const std::size_t sz = typeSizeBytes(elem);
-            llvm::Value* raw =
-                b().emitCall(b().getFunction("__xlang_array_pop_raw"),
-                             {arg_values[0], b().constI64(static_cast<std::int64_t>(sz))});
-            if (elem.kind == TypeKind::Struct) {
-                return {elem, raw};
-            }
-            return loadValue(elem, raw);
-        }
-
         const std::optional<FunctionSignature> resolved = resolveFunctionCall(expr.name, arg_types);
         if (!resolved) {
             std::string args_list;

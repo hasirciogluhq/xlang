@@ -13,7 +13,7 @@ src/
     target.cpp         # TargetMachine / object emit / native syscall asm
     lower_types.cpp    # llvmType, coerce, sizes
     prelude.cpp        # declares / prelude
-    strings.cpp arrays.cpp structs.cpp globals.cpp
+    strings.cpp structs.cpp globals.cpp
     functions.cpp      # fn declare/define, locals
     stmt.cpp           # statements (if/while/assign/…)
     expr.cpp           # expressions + @syscall

@@ -24,13 +24,6 @@ using namespace xlang::codegen_detail;
 namespace xlang {
 
 void Codegen::emitStructTypes(const Program& program) {
-    for (const StructDecl& decl : program.structs) {
-        if (structUsesArrayField(decl)) {
-            emitArrayHeaderType();
-            break;
-        }
-    }
-
     auto ensureOpaque = [&](const StructDecl& decl) {
         if (!struct_types_.contains(decl.name)) {
             struct_types_[decl.name] =

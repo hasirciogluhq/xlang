@@ -31,7 +31,6 @@ namespace {
         {"if", TokenKind::If},
         {"else", TokenKind::Else},
         {"while", TokenKind::While},
-        {"array", TokenKind::Array},
         {"go", TokenKind::Go},
         {"interface", TokenKind::Interface},
     };
