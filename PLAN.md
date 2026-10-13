@@ -111,6 +111,8 @@ Source ─► Lexer ─► Preprocess (#if/#elif/#else/#endif, token seviyesi) �
 - **`new` ve `ref T`:** `new T{}` `*T` döndürür; `ref T`'ye atamak için `gen` başlığı (4.10) gerekir:
   varsayılan allocator'ın ref-uyumlu olması mı, ayrı bir yazım mı belirlenmedi (§17 örneği `new Node{}`'u
   `ref Node`'a atıyor).
+- **Çalışma zamanında allocator değiştirme:** varsayılan allocator şu an derleme zamanı kararıdır
+  (işaretli global). `main`'de bir kez çalışma zamanında set etme gibi bir mekanizma planlanmadı.
 - **`@default_allocator` ayrıntıları:** işaretli global'in başlangıç değeri hangi sabit ifadeleri alabilir
   (ör. `&dizi as *ui8`), işaretli öğenin tipi için başka kısıt var mı, `alloc`'un `align` parametresinin
   anlamı, `std/mem`'deki varsayılanın adı (`heap` örneklerde geçici ad) belirlenmedi.
@@ -296,11 +298,13 @@ Source ─► Lexer ─► Preprocess (#if/#elif/#else/#endif, token seviyesi) �
 - [ ] **4.11** `new T { alanlar }` ve `new(a) T { alanlar }`: dil ifadesi; `a.alloc(size_of(T),
   align_of(T))` çağırır, alanları yazar ve `*T` döndürür. Allocator `alloc(self, size: usize, align: usize)
   -> *void` metoduna sahip herhangi bir değer (class, interface değeri, `impl` eden struct); sema yalnızca bu
-  metodu çözer. `new T` **varsayılan allocator**'ı kullanır: `@default_allocator` ile işaretli tek global.
-  Compiler adı değil işareti arar, `malloc` bilmez (kural 4). Stdlib `std/mem`'de bir tane işaretler;
-  kullanıcı programındaki işaretli global stdlib'inkinin yerine geçer; kullanıcıda iki tane hatadır;
-  `--no-std` altında işaretli global yoksa `new T` hatadır (`E0501`, düzelt: `new(a) T` ya da işaretle).
-  `alloc` `null` dönerse `new` `null` döndürür.
+  metodu çözer. `new T` **varsayılan allocator**'ı kullanır: `@default_allocator` ile işaretli global.
+  Compiler adı değil işareti arar, `malloc` bilmez (kural 4) ve stdlib'i ayırt etmez: öncelik kuralı yoktur.
+  Programda toplamda **en fazla bir** işaretli global olabilir (iki tane hatadır). Stdlib `std/mem`'de bir
+  tane işaretler (stdlib özelliği `default-allocator`, varsayılan açık); kullanıcı kendi allocator'ını
+  `--std-features=-default-allocator` ile özelliği kapatıp işaretleyerek seçer. İşaretli global yoksa
+  `new T` hatadır (`E0501`, düzelt: `new(a) T` ya da bir global'i işaretle). `alloc` `null` dönerse `new`
+  `null` döndürür.
 
 **Kabul:** class/interface/vtable içeren küçük programlar çalışır; `@repr(c)` class'ın nesne düzeni
 ve vtable'ı clang ile birebir uyuşur (tek kalıtım).
@@ -373,7 +377,7 @@ kullanıcı kodu → std/{thread,sync,sched,io,memory} → std/sys/{linux,macos,
   | (varsayılan) | Dile gömülü varsayılan stdlib kullanılır |
   | `--no-std` | Stdlib yok (freestanding); yalnızca dil + global yerleşikler |
   | `--std=<yol>` | Varsayılan yerine başka bir stdlib kök dizini |
-  | `--std-features=a,b` | Stdlib özelliklerini aç/kapat (ör. `sched`, `gpu`) |
+  | `--std-features=a,b` | Stdlib özelliklerini aç/kapat (ör. `sched`, `gpu`, `default-allocator`) |
 - [ ] **7.1** `std/sys/*`: OS başına ham syscall katmanı, hepsi `#if os == ...` ile seçilir.
   - Linux: `clone/clone3`, `futex`, `mmap/munmap`, `write/read`, `exit`, `epoll_*`.
   - macOS: `bsdthread_create`/`bsdthread_terminate`, `psynch_*` (mutex/cond), `mmap`, `write/read`, `kevent`.

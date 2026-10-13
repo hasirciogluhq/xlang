@@ -227,8 +227,10 @@ fn main() -> i32 {
 ### Varsayılan allocator
 
 `@default_allocator` ile işaretlenen **tek bir global**, `new T { ... }`'in kullandığı allocator'dır.
-Stdlib `std/mem`'de bir tane işaretler. Stdlib yoksa (`--no-std`) ya da başka bir allocator istenirse
-kullanıcı kendi global'ini işaretler. Compiler adı değil, **işareti** arar.
+Programda **en fazla bir** işaretli global olabilir. İşaret stdlib'den de kullanıcıdan da gelebilir ama
+compiler ikisini ayırt etmez, **öncelik kuralı yoktur**. Stdlib `std/mem`'de bir tane işaretler (stdlib
+özelliği `default-allocator`, varsayılan açık). Kendi allocator'ını seçmek isteyen bu özelliği kapatır
+(`--std-features=-default-allocator`) ve kendi global'ini işaretler. Compiler adı değil, **işareti** arar.
 
 ```xlang
 // std/mem.xl (stdlib)
@@ -251,7 +253,7 @@ fn main() -> i32 {
 ```
 
 ```xlang
-// --no-std: kendi varsayılanını işaretle
+// --no-std ya da --std-features=-default-allocator: kendi varsayılanını işaretle
 global arena_buf: [ui8; 65536]
 
 @default_allocator
@@ -265,10 +267,10 @@ fn main() -> i32 {
 
 | Durum | Sonuç |
 |-------|-------|
-| Stdlib var, kullanıcı işaretlemedi | Stdlib'in `heap`'i |
-| Kullanıcı programında bir `@default_allocator` var | O, stdlib'inkinin yerine geçer |
-| Kullanıcı programında iki tane | **Hata** |
-| `--no-std`, işaretli global yok, `new T { }` yazıldı | **Hata** `E0501` |
+| Stdlib var, `default-allocator` açık, kullanıcı işaretlemedi | Stdlib'in `heap`'i |
+| Kullanıcı işaretledi, stdlib özelliği kapalı (ya da `--no-std`) | Kullanıcının global'i |
+| Toplamda iki işaretli global (stdlib + kullanıcı dahil) | **Hata**; çözüm: stdlib özelliğini kapat |
+| Hiç işaretli global yok, `new T { }` yazıldı | **Hata** `E0501` |
 | `new(a) T { }` | `a` kullanılır, varsayılan aranmaz |
 
 ```
@@ -1140,7 +1142,7 @@ Stdlib bir compiler bayrağıyla seçilir; hiçbir şey zorunlu kılınmaz.
 | (varsayılan) | Dile gömülü varsayılan stdlib |
 | `--no-std` | Stdlib yok: yalnızca dil + global yerleşikler (`syscall`, atomic...) |
 | `--std=<yol>` | Başka bir stdlib kök dizini |
-| `--std-features=sched,gpu` | Stdlib özelliklerini aç/kapat |
+| `--std-features=sched,gpu` | Stdlib özelliklerini aç/kapat (ör. `-default-allocator`: stdlib'in `@default_allocator` işaretini kapatır) |
 
 ```
 xlang build app.xl                       # varsayılan stdlib
