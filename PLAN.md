@@ -14,29 +14,34 @@
    silinebilir. Compiler hedeflendiği gibi çalıştıktan sonra yeni dil için yeniden yazılır.
    Bu dosyalar **okunmaz**, tasarıma girdi olmaz, bir şeyi onlara uydurmak için çalışılmaz.
 3. **`.cursor/` altındaki kurallar/planlar okunmaz.** Tek girdi kullanıcının yönergeleridir.
-4. **Compiler yalnızca dili, CPU primitiflerini ve builtin listesini bilir.** Thread, scheduler, print
-   kavramı compiler'da yoktur; bunlar xlang stdlib'dir. Builtin fonksiyon = **gövdesini compiler'ın
-   kendisinin sağladığı** fonksiyon (liste kural 7'de). `memcpy/memset/memmove/memcmp`, `malloc`/`free` ve
-   allocator builtin değildir, stdlib'dendir; `new` allocator'ı kullanıcıdan alır (4.11). Compiler doğrudan
-   destekleyemeyeceği bir şeyi builtin yapmaz; o şey stdlib'e gider.
+4. **Compiler yalnızca dili, CPU primitiflerini, builtin listesini ve `register` ile kayıtlı rolleri
+   (`panic`, `allocator`) bilir.** Thread, scheduler, print kavramı compiler'da yoktur; bunlar xlang
+   stdlib'dir. Builtin fonksiyon = **gövdesini compiler'ın kendisinin sağladığı** fonksiyon (liste kural
+   7'de). `memcpy/memset/memmove/memcmp`, `malloc`/`free` ve allocator builtin değildir, stdlib'dendir;
+   `new` allocator'ı kayıtlı `register(allocator)` global'inden ya da açıkça verilen `a`'dan alır
+   (4.11, 4.12). Compiler doğrudan destekleyemeyeceği bir şeyi builtin yapmaz; o şey stdlib'e gider.
+   **Compiler stdlib'e özel muamele yapmaz**: stdlib sıradan xl kodudur, `register` her modülde aynı çalışır.
 5. **Önce compiler doğru çalışsın.** Stdlib/example işleri compiler hedefine ulaştıktan sonra gelir.
 6. **Plan ve dil şeması senkron kalır:** dil seviyesini etkileyen her plan değişikliği
    `PLAN.eg.md`'yi de günceller (bkz. `CLAUDE.md`).
 
-7. **Global isim uzayı kapalı bir builtin listesiyle sınırlıdır.** Kaynak koduna "bedavaya" gelen isimler
-   yalnızca compiler'ın bildiği builtin'lerdir; stdlib hiçbir zaman global olamaz. Liste (kesin hali
-   Faz 6'da netleşir):
+7. **Global isim uzayı kapalıdır ve iki katmanı vardır.** Kaynak koduna "bedavaya" (import'suz) gelen
+   isimler yalnızca (a) compiler'ın bildiği builtin'ler ve (b) bir modülde `register` ile kaydedilmiş
+   semboller (4.12) olabilir. Builtin listesi (kesin hali Faz 6'da netleşir):
 
    | Grup | Adlar | Yazım |
    |------|-------|-------|
    | Syscall | `syscall` | öneksiz, doğrudan `syscall` |
    | Atomic | `__builtin_atomic_load/store/xchg/cas/add`, `__builtin_fence` | `__builtin_` önekli |
    | Inline asm | `__builtin_asm` | `__builtin_` önekli |
-   | Memory order | `relaxed`, `acquire`, `release`, `acq_rel`, `seq_cst` | öneksiz sabit |
+   | Memory order | `MemoryOrder` (enum tipi: `MemoryOrder.relaxed`, `.acquire`, `.release`, `.acq_rel`, `.seq_cst`) | öneksiz tip |
    | Derleme zamanı | `size_of`, `align_of`, `offset_of`, `static_assert` | öneksiz |
 
-   Builtin fonksiyonlar iki biçimde yazılır ve **hepsi `__builtin_` önekini taşımaz**. `print`, `alloc`,
-   `memcpy`, `malloc`/`free` gibi listede olmayan şeyler global değildir; stdlib'den `import` ile gelir.
+   Builtin fonksiyonlar iki biçimde yazılır ve **hepsi `__builtin_` önekini taşımaz**.
+   `register` ile kaydedilenler (ör. stdlib'in `panic`'i) builtin değildir: compiler onları stdlib'den
+   değil kayıttan tanır, `register` hangi modülde olursa olsun aynı çalışır.
+   `print`, `alloc`, `memcpy`, `malloc`/`free`, `assert` gibi hiçbiri builtin de `register`'lı da değilse
+   global değildir; stdlib'den `import` ile gelir.
    **libc yasaktır:** hiçbir yerde kullanılmaz, çağrılmaz, taklit edilmez.
    `declare` yalnızca kullanıcının kendi bağladığı bir nesneden (ör. `api.o`) gelen dış şeyler içindir
    (fonksiyon, global, struct, class, interface, type); xl modülleri arası erişim `import`/`export` iledir.
@@ -58,9 +63,9 @@ Source ─► Lexer ─► Preprocess (#if/#elif/#else/#endif, token seviyesi) �
 | Fonksiyon sözdizimi | `fn name(a: i32) -> i32 { }`; `->` yoksa dönüş `void` | İstek: `=>` değil `->` |
 | Tamsayı tipleri | `i8 i16 i32 i64 isize` / `ui8 ui16 ui32 ui64 usize` | İşaretli/işaretsiz ayrımı; kullanıcı yazımı `ui32` |
 | Kayan nokta | `f32`, `f64` | |
-| Diğer tipler | `bool`, `void`, `*T` (pointer), `fn(A) -> R` (fonksiyon pointer'ı), `[T; N]` (sabit boyutlu dizi), `struct`, `class`, `interface` | |
+| Diğer tipler | `bool`, `void`, `*T` (pointer), `fn(A) -> R` (fonksiyon pointer'ı), `[T; N]` (sabit boyutlu dizi), `struct`, `class`, `interface`, `enum` | |
 | Örtük dönüşüm | Sadece aynı işaretlilikte genişleme; diğer her şey açık `as` | Sessiz işaret/daralma hataları olmasın |
-| Taşma | İşaretli ve işaretsiz tamsayılar sarar (two's complement), bölme sıfıra = trap | Tanımlı davranış |
+| Taşma | İşaretli ve işaretsiz tamsayılar sarar (two's complement), bölme sıfıra = `panic` (kayıtlı `panic` yoksa trap) | Tanımlı davranış |
 | Bellek düzeni | Varsayılan: **xlang düzeni** (derleyici alan sırasını/padding'i seçebilir). `@repr(c)` ile işaretli struct/class **C/C++ düzenine** birebir uyar | İstek |
 | Class | Tek kalıtım, sanal metod, vptr; `@repr(c)` ile Itanium C++ ABI düzeni (tek kalıtım) | İstek: compiler class bilsin |
 | Interface | Fat pointer `{data, itable}` (Go/Rust tarzı); struct ve class implement edebilir | Düzeni (C uyumu) bozmaz |
@@ -78,12 +83,17 @@ Source ─► Lexer ─► Preprocess (#if/#elif/#else/#endif, token seviyesi) �
 | Kaynak uzantısı | `.xl` | İstek |
 | Görünürlük | **Varsayılan export yok.** `export` yazılmayan sembole başka modül erişemez; link'te de internal. `export(c)` = `export` + mangle edilmemiş C ABI sembolü | İstek: C-like export, kendi modülleri arası kullanım |
 | Name mangling | Varsayılan açık (`xl` şeması). Proje (`--mangle=`), dosya (`@file(mangle = ...)`), fonksiyon (`@mangle(...)`) seviyesinde override; öncelik fn > dosya > proje | İstek |
-| Bellek güvenliği | Ham `*T` C gibi kontrolsüz kalır; ek `ref T` = `{ptr, gen}` nesil kontrollü güvenli referans (use-after-free'de trap). Borrow checker / lifetime anotasyonu yok. `--safety=checked\|unchecked`, `@unchecked fn` | İstek: Rust benzeri koruma, dil kalıbını bozmadan |
+| Bellek güvenliği | Ham `*T` C gibi kontrolsüz kalır; ek `ref T` = `{ptr, gen}` nesil kontrollü güvenli referans (use-after-free'de `panic`). Borrow checker / lifetime anotasyonu yok. `--safety=checked\|unchecked`, `@unchecked fn` | İstek: Rust benzeri koruma, dil kalıbını bozmadan |
 | C++ birlikte kullanım | Compiler yalnızca `obj` / `ir` (`.ll`) / `bc` / `header` / `exe` / `static` / `shared` üretir; bağlama ve build'i kullanıcının script'i (xmake vb.) yürütür | İstek: compiler karar vermesin |
 | Tip takma adı | `type Ad = Tip` (şeffaf alias, yeni tip yaratmaz), `export type` | İstek: typedef benzeri |
 | define / macro | `define N = sabit` ve `define f(x: expr) { ... }`, çağrı `f!(...)`; gövde süslü parantezli, `\` yok, `#`/`##` yok, türlü parametre (`expr/type/ident/block/items`), hijyenik; macro bildirim ve `import` üretebilir, `export define` ile import edilebilir | İstek: C önişlemcisinin pisliği olmadan macro |
 | CLI tanımları | `-D/--define NAME[=DEĞER]`, `-U/--undef NAME`, + yerleşik `os`, `arch`, ... | İstek |
-| Thread/scheduler/IO/alloc | xlang stdlib; compiler görmez (Faz 7) | Compiler yalnızca düşük seviye bilir |
+| Thread/scheduler/IO/alloc | xlang stdlib; compiler görmez (Faz 7). İstisna: `register` ile kayıtlı roller (aşağıda) | Compiler yalnızca düşük seviye bilir |
+| `register` | `register(rol) bildirim` / `register bildirim`: `declare` gibi tek önek, ters yönde: bildirilen ad modül derlemeye girince **global** olur (import gerekmez, `export` da sayılır). Roller: `panic`, `allocator`; rol başına en fazla bir kayıt. Gölgeleme: yerel tanım/import kayıtlı adı gölgeler (`W0402`). Compiler stdlib'i ayırt etmez | İstek: stdlib'in `panic`'i import'suz görünsün, compiler otomatik çağırsın |
+| Panic / assert | `register(panic) fn panic(msg: *ui8)` `std/runtime`'da; compiler'ın eklediği hata yolları (sıfıra bölme, `ref` nesil uyuşmazlığı, dizi sınırı) onu çağırır, kayıtlı yoksa trap. `assert!` `std/assert`'te macro | İstek |
+| Allocator / `new` | `new T { }` (kayıtlı allocator) ve `new(a) T { }` (açık). Allocator = `alloc` + `free` içeren grup (`std/mem`'de `Allocator` interface'i); bırakma aynı gruptan. Kayıtlı allocator `main`'de `set_allocator` ile **bir kez** çalışma zamanında değiştirilebilir | İstek |
+| Enum | `enum Ad: T { A, B = 5 }`; `T` sabit değer alabilen herhangi bir tip (tamsayı, `f32/f64`, `bool`, `*ui8` string); yazılmazsa `i32`; erişim `Ad.A`; dönüşüm açık `as` | İstek |
+| Dizi | `[T; N]`; indeksleme `a[i]` (dizi ve `*T`); dizide sınır kontrolü `--safety=checked` (varsayılan) altında `panic`; değer tipi; literal `[a, b]` ve `[v; N]` | İstek: C struct uyumu + güvenli indeksleme |
 | Pass manager | New PassManager (`PassBuilder`) | Legacy PM deprecated |
 | Derleme modeli | Whole-program, tek LLVM modülü; ayrı derleme en sona | Basit, doğru |
 | HIR | Eklenecek | Sema çıktısı; codegen yalnızca tipli ağacı görür |
@@ -92,33 +102,31 @@ Source ─► Lexer ─► Preprocess (#if/#elif/#else/#endif, token seviyesi) �
 ### Karar bekleyen / sonradan netleşecek
 
 - `ui32` yazımı kullanıcı isteğiyle seçildi; `u32`'ye çevirmek yalnızca tip tablosunu değiştirir.
-- **Dizi ayrıntıları (`[T; N]`, 2.5):** indeksleme sözdizimi (`a[i]`), sınır kontrolü, dizi literal'i
-  ve diziyi değer olarak kopyalama/geçirme kuralları belirlenmedi.
 - Generic'ler ve closure kapsam dışı (ilk sürümde yok).
-- **macOS hata sözleşmesi:** macOS syscall'ı hatayı carry bayrağı + pozitif errno ile bildirir; Linux
-  `-errno` döndürür. `syscall` her zaman `i64` döner; carry bayrağının nasıl yansıtılacağı (ör. `-errno`'ya
-  normalize) belirlenmedi.
 - **Önek kuralı:** atomic'ler, `fence` ve `__builtin_asm` `__builtin_` önekli; `syscall`, `size_of` ailesi,
   `static_assert` öneksiz. İleride eklenecek builtin için ölçüt yazılmalı, yoksa her ekleme ayrı karar olur.
-- **Inline asm ayrıntıları:** işlenen sözdizimi (`in/out/inout/clobber`) bir öneridir; x86'da şablon
-  lehçesi (Intel/AT&T), `out`'un aggregate/çoklu değer dönüşü, `noreturn`/`nostack` gibi seçenekler
-  belirlenmedi. Context switch'in tam asm gövdesi stdlib'de (7.5).
-- **Memory order sabitleri:** `relaxed/acquire/...` global sabit olarak listeye alındı (örneklerde çıplak
-  isim); tipi/değeri (enum mı, derleme zamanı tamsayı mı) belirlenmedi.
 - **Liste sınırı:** builtin listesi kapalıdır (kural 7); eklenecekler "compiler gövdeyi doğrudan
   sağlayabiliyor mu" ölçütüne tabidir.
-- **Çakışma:** kullanıcı/stdlib bir builtin adını tanımlarsa (ör. atomic'ler) hata mı, gölgeleme mi?
+- **Builtin adı çakışması:** kullanıcı/stdlib bir builtin adını (ör. `size_of`) tanımlarsa hata mı,
+  gölgeleme mi? (`register` adları için gölgeleme `W0402` ile karara bağlandı.)
 - **`new` ve `ref T`:** `new T{}` `*T` döndürür; `ref T`'ye atamak için `gen` başlığı (4.10) gerekir:
-  varsayılan allocator'ın ref-uyumlu olması mı, ayrı bir yazım mı belirlenmedi (§17 örneği `new Node{}`'u
+  kayıtlı allocator'ın ref-uyumlu olması mı, ayrı bir yazım mı belirlenmedi (§17 örneği `new Node{}`'u
   `ref Node`'a atıyor).
-- **Çalışma zamanında allocator değiştirme:** varsayılan allocator şu an derleme zamanı kararıdır
-  (işaretli global). `main`'de bir kez çalışma zamanında set etme gibi bir mekanizma planlanmadı.
-- **`@default_allocator` ayrıntıları:** işaretli global'in başlangıç değeri hangi sabit ifadeleri alabilir
-  (ör. `&dizi as *ui8`), işaretli öğenin tipi için başka kısıt var mı, `alloc`'un `align` parametresinin
-  anlamı, `std/mem`'deki varsayılanın adı (`heap` örneklerde geçici ad) belirlenmedi.
-- **`panic`:** `assert` örneğinde kullanılıyor ama hangi stdlib modülünde yaşayacağı belirlenmedi.
 - **`syscall` argüman tipleri:** pointer'ın `as` olmadan geçip geçmeyeceği (5.5 "syscall sınırında" der)
   örneklerde tutarsız yazıldı; tek kural yazılmalı.
+- **String literal:** `panic`/`print` string'in `*ui8` olduğunu ve sonunun 0 ile bittiğini varsayıyor;
+  string literal'in dil seviyesinde kuralı yazılmadı, uzunluk taşıyan ayrı bir `str` tipi planlanmadı.
+- **`set_allocator` sınırı:** ilk `new`'den sonra çağrılırsa önceki bloklar yeni allocator'a bırakılabilir;
+  bu tespit edilmez. Kural: `main`'in başında çağrılır (belgelendi); ileride tespit eklenebilir.
+- **`panic` imzası:** dosya/satır konumu iletilmiyor; ileride `register(panic)`'e ek parametre
+  eklenebilir. `msg` şu an sabit NUL'lu string.
+- **Dizi ayrıntıları:** uzunluk için ayrı builtin yok (`size_of(a) / size_of(T)`); dilim (slice) tipi yok;
+  sabit indeksin sınır dışı olması derleme hatası mı uyarı mı belirlenmedi.
+- **Enum ayrıntıları:** string enum'da değerden üyeye ters arama yok; `export(c)` imzasında yalnızca tamsayı
+  alt tipli enum geçerli sayıldı; enum'un `@repr(c)` düzeni alt tipin düzenidir.
+- **`register` ayrıntıları:** `define` (macro) kaydı kapsam dışı; `register` ile kaydedilen sembolün
+  başka bir kaydı gölgelemesi/çakışması `E0502`; rol sayısı (şu an `panic`, `allocator`) yeni ihtiyaçta
+  genişler, her yeni rol bu listeye ve 4.12'ye yazılmalı.
 
 ---
 
@@ -137,7 +145,8 @@ Source ─► Lexer ─► Preprocess (#if/#elif/#else/#endif, token seviyesi) �
   `isize`, `usize`, `f32`, `f64`), `class`, `interface`, `impl`/`:` kalıtım sözdizimi.
 - [ ] **1.2** Parser: `fn ... -> T`, öznitelikler (`@repr(c)`, `@align(N)`, `@packed`), `class`/`interface`
   bildirimleri, `declare fn ... -> T`, fonksiyon pointer tipi `fn(A, B) -> R`, dizi tipi `[T; N]`,
-  `new T { ... }` / `new(a) T { ... }` ifadesi, `@default_allocator` özniteliği.
+  dizi literal'i `[a, b]` / `[v; N]`, indeksleme `a[i]`, `enum Ad: T { ... }`, `new T { ... }` /
+  `new(a) T { ... }` ifadesi, `register[(rol)]` öneki.
 - [ ] **1.2b** Import biçimleri: `import "m" as a`, `import * from "m"`, `import * as a from "m"`,
   `from "m" import x [as y], ...` ve
   `import x [as y], ... from "m"`; ikincisi birincisiyle aynı `ImportDecl` düğümüne iner.
@@ -151,7 +160,7 @@ Source ─► Lexer ─► Preprocess (#if/#elif/#else/#endif, token seviyesi) �
 - [ ] **1.2e** `export * from`, `export * as ns from`, `export { ... } from`, `export * from ... except ...`;
   `#if` içinde de kullanılabilir.
 - [ ] **1.3** AST'yi yeniden tasarla: tip düğümü `Type` ağaç yapısı (`TypeKind::Int{bits, signed}`,
-  `Float{bits}`, `Pointer`, `FnPtr`, `Array{elem, N}`, `Struct`, `Class`, `Interface`). Eski
+  `Float{bits}`, `Pointer`, `FnPtr`, `Array{elem, N}`, `Enum{underlying}`, `Struct`, `Class`, `Interface`). Eski
   `Int32/Int64/BigInt` ayrımı gider.
 - [ ] **1.4** Diagnostics altyapısı (`include/xlang/util/diagnostics.h`): `Diagnostic{code, severity, span,
   message, detail, reason, fix, notes}`, snippet'li çıktı, birden fazla hata toplama. Her uyarı
@@ -176,7 +185,8 @@ Source ─► Lexer ─► Preprocess (#if/#elif/#else/#endif, token seviyesi) �
 
 - [ ] **2.1** Tip modeli: boyut/hizalama (`size_of`, `align_of`) hedefe (`DataLayout`/pointer genişliği) göre hesaplanır.
 - [ ] **2.2** İşaretli/işaretsiz semantik: `sdiv/udiv`, `srem/urem`, `sext/zext`, `icmp slt/ult`,
-  `ashr/lshr` — tip bazlı seçim. Örtük dönüşüm kuralları sema'da (tek yerde).
+  `ashr/lshr` — tip bazlı seçim. Örtük dönüşüm kuralları sema'da (tek yerde). Sıfıra bölme kayıtlı
+  `panic` rolünü çağırır (kayıtlı yoksa trap).
 - [ ] **2.3** Layout motoru (yeni `src/sema/layout.cpp`):
   - `@repr(c)`: alanlar bildirim sırasında, C kurallarıyla hizalama/padding, `sizeof` = C `sizeof`.
   - varsayılan: derleyici serbestçe sıralayabilir (ör. büyükten küçüğe) — spesifikasyon verilmez.
@@ -197,8 +207,21 @@ Source ─► Lexer ─► Preprocess (#if/#elif/#else/#endif, token seviyesi) �
   C başlığıyla layout doğrulaması bunlarla yapılır.
 - [ ] **2.5** Sabit boyutlu dizi tipi `[T; N]` (C struct uyumu için): `N` derleme zamanı sabit ifadesi
   (`define` sabiti olabilir); `size_of([T; N]) = N * size_of(T)`, hizalama `align_of(T)`; yerel, struct/class
-  alanı ve global olarak kullanılabilir; `@repr(c)` struct içinde C'deki `T[N]` ile aynı düzen. İndeksleme ve
-  diğer ayrıntılar "Karar bekleyen"de.
+  alanı ve global olarak kullanılabilir; `@repr(c)` struct içinde C'deki `T[N]` ile aynı düzen.
+  - **Değer tipi:** atama, parametre ve dönüşte tamamı kopyalanır; kopyayı önlemek için `&a`.
+  - **Literal:** `[a, b, c]` ve tekrar biçimi `[v; N]`; eleman tipi bağlamdan çıkarılır.
+  - **İndeksleme `a[i]`:** dizi ve `*T` üzerinde; indeks `usize` (aynı işaretlilikte genişleme örtük,
+    işaretliler `as usize`). `*T` indekslemesi `*(p + i * size_of(T))` ve **kontrolsüzdür**. Dizi
+    indekslemesi `--safety=checked` (varsayılan) altında sınır kontrolü yapar, dışındaysa kayıtlı `panic`'i
+    çağırır; `unchecked` ya da `@unchecked fn` kontrolü kaldırır. Sabit indeks sınır dışıysa derleme hatası.
+  - Global başlangıç değerleri ve kuralları PLAN.eg.md §4 "Global değişkenler"de.
+- [ ] **2.6** `enum Ad: T { Üye [= değer], ... }`: `T` derleme zamanı sabiti olabilen herhangi bir tip
+  (tamsayılar, `f32/f64`, `bool`, `*ui8` string literal'i); `T` yazılmazsa `i32`. Üyeler `Ad.Üye` ile
+  erişilir. Otomatik numaralandırma yalnızca tamsayı alt tipte (önceki + 1, ilk üye 0); diğer alt tiplerde
+  her üyenin değeri yazılmalıdır. `Ad` ayrı bir tiptir: alt tipe/alt tipten dönüşüm açık `as`; `==`/`!=`
+  aynı enum'da geçerli. Değerler derleme zamanı sabitidir (`static_assert`, global başlangıç değeri,
+  atomic `order` argümanı için kullanılabilir). Layout alt tipin düzenidir; `export(c)` imzasında yalnızca
+  tamsayı alt tipli enum kabul edilir. `MemoryOrder` (6.1) bu mekanizmayla tanımlı builtin enum'dur.
 
 **Kabul:** `@repr(c)` struct'lar için clang'ın ürettiği `sizeof/alignof/offsetof` ile test
 (birkaç karma tipli struct, iç içe, packed, aligned) birebir uyuşur; x86_64 ve aarch64 için.
@@ -287,24 +310,40 @@ Source ─► Lexer ─► Preprocess (#if/#elif/#else/#endif, token seviyesi) �
   başka modülden erişilemez (sema hatası); LLVM linkage'ı `InternalLinkage`. `export` →
   `ExternalLinkage` (xl mangling'li); `export(c)` → `ExternalLinkage`, C ABI adı.
   `export(c)` imzasında yalnızca C uyumlu tipler (tamsayılar, `f32/f64`, `bool`, `*T`, `@repr(c)` struct,
-  fonksiyon pointer'ı); `class`/`interface`/`ref T` hata.
+  fonksiyon pointer'ı, tamsayı alt tipli enum); `class`/`interface`/`ref T`/string enum hata (`E0302`).
 - [ ] **4.9** Name mangling: tek modül (`src/sema/mangle.cpp`) — `xl` şeması (`_xl$modül$ad$imza`);
   `@file(mangle = ...)`, `@mangle(none|"ad")`, `--mangle=`; öncelik fn > dosya > proje.
   Mangling kapalıyken sembol çakışması derleme hatası.
 - [ ] **4.10** `ref T`: `{ptr, gen}` 16 B; allocator `gen` başlığını yönetir (stdlib `std/mem`), compiler
-  her erişimde `ref.gen == obj.gen` kontrolü + trap üretir. `&local`'dan ref'in kaçışı derleme hatası
+  her erişimde `ref.gen == obj.gen` kontrolü yapar, uyuşmazlıkta kayıtlı `panic`'i çağırır (kayıtlı yoksa
+  trap). `&local`'dan ref'in kaçışı derleme hatası
   (basit escape kontrolü, borrow checker değil). `@unchecked fn` ve `--safety=unchecked` kontrolleri kaldırır.
   `ref T` `@repr(c)` alanında ve `export(c)` imzasında yasak.
 - [ ] **4.11** `new T { alanlar }` ve `new(a) T { alanlar }`: dil ifadesi; `a.alloc(size_of(T),
-  align_of(T))` çağırır, alanları yazar ve `*T` döndürür. Allocator `alloc(self, size: usize, align: usize)
-  -> *void` metoduna sahip herhangi bir değer (class, interface değeri, `impl` eden struct); sema yalnızca bu
-  metodu çözer. `new T` **varsayılan allocator**'ı kullanır: `@default_allocator` ile işaretli global.
-  Compiler adı değil işareti arar, `malloc` bilmez (kural 4) ve stdlib'i ayırt etmez: öncelik kuralı yoktur.
-  Programda toplamda **en fazla bir** işaretli global olabilir (iki tane hatadır). Stdlib `std/mem`'de bir
-  tane işaretler (stdlib özelliği `default-allocator`, varsayılan açık); kullanıcı kendi allocator'ını
-  `--std-features=-default-allocator` ile özelliği kapatıp işaretleyerek seçer. İşaretli global yoksa
-  `new T` hatadır (`E0501`, düzelt: `new(a) T` ya da bir global'i işaretle). `alloc` `null` dönerse `new`
-  `null` döndürür.
+  align_of(T))` çağırır, alanları yazar ve `*T` döndürür. Allocator bir **gruptur**: `alloc(self, size:
+  usize, align: usize) -> *void` ve `free(self, p: *void)` metodlarının ikisine de sahip herhangi bir değer
+  (class, interface değeri, `impl` eden struct); sema bu iki metodu çözer (`E0503`: eksikse). Bellek
+  ayıran ve bırakan hep aynı gruptır. `new T` **kayıtlı allocator**'ı kullanır: `register(allocator)`
+  ile kaydedilmiş global (4.12). Compiler adı değil kaydı arar, `malloc` bilmez (kural 4) ve stdlib'i
+  ayırt etmez: öncelik kuralı yoktur. Programda toplamda **en fazla bir** `register(allocator)` olabilir
+  (iki tane `E0502`). Stdlib `std/mem`'de bir tane kaydeder (stdlib özelliği `default-allocator`,
+  varsayılan açık); kullanıcı kendi allocator'ını `--std-features=-default-allocator` ile özelliği kapatıp
+  kaydederek ya da çalışma zamanında `main`'de `std/mem.set_allocator(a)` ile **bir kez** değiştirerek
+  seçer; kayıtlı global mutable olduğundan `new` ve `std/mem.free` değişimden sonra yeni allocator'ı
+  kullanır. Kayıtlı yoksa `new T` hatadır (`E0501`, düzelt: `new(a) T` ya da `register(allocator)`).
+  `alloc` `null` dönerse `new` `null` döndürür.
+- [ ] **4.12** `register[(rol)] bildirim`: `declare` gibi tek önek. Bildirilen ad, modül derlemeye girer
+  girmez **global** olur (import gerekmez; `register` `export` anlamına da gelir). Kayıtlar modül
+  yüklenirken toplanır: yalnızca import grafiğindeki modüller ve stdlib açıkken her zaman yüklenen
+  `std/runtime` sayılır; yüklenmeyen modülün kaydı yoktur. Roller:
+  - `panic`: `fn(msg: *ui8)`; geri dönmez (compiler çağrıdan sonrasını ulaşılamaz sayar). Compiler'ın
+    ürettiği hata yolları (2.2 sıfıra bölme, 2.5 dizi sınırı, 4.10 `ref` uyuşmazlığı) onu çağırır; kayıtlı
+    yoksa doğrudan trap talimatı üretir.
+  - `allocator`: 4.11'deki grup sözleşmesini sağlayan **global değişken**; `new T` onun `alloc`'unu çağırır.
+  Hata kodları: `E0502` (aynı rolün/adın ikinci kaydı), `E0503` (rol sözleşmesi sağlanmadı). Aynı adlı
+  yerel tanım/import kayıtlı adı gölgeler ve `W0402` uyarısı verir; rol bağı addan değil kayıttan
+  olduğundan gölgeleme rolü bozmaz. Compiler `register`'ı modül stdlib'den mi kullanıcıdan mı geliyor diye
+  ayırt etmez.
 
 **Kabul:** class/interface/vtable içeren küçük programlar çalışır; `@repr(c)` class'ın nesne düzeni
 ve vtable'ı clang ile birebir uyuşur (tek kalıtım).
@@ -331,6 +370,10 @@ ve vtable'ı clang ile birebir uyuşur (tek kalıtım).
   (compiler tabloyu bilmez). Desteklenmeyen OS/arch için açık hata. En fazla argüman sayısı yalnızca bu
   tablodan gelir (register ile geçenler tablodaki sütunlardır; Windows'ta stack aktarımıyla daha yüksek);
   başka yerde sabit bir sayı yazılmaz.
+  **Dönüş sözleşmesi (hedefler arası tek biçim):** `syscall` `i64` döner ve hatayı **negatif `-errno`**
+  olarak bildirir. Linux zaten böyledir; macOS carry bayrağını set edip pozitif errno döndürdüğü için
+  compiler carry set ise sonucu `-errno`'ya çevirir (dönüş değeri ABI'sidir, hangi syscall olduğunu bilmek
+  gerekmez). Windows'ta NTSTATUS (`eax`) olduğu gibi dönüş değeridir, `i64`'e işaret genişletilir.
 - [ ] **5.4** Debug info (`DIBuilder`): compile unit, subprogram, satır konumları, struct/class tipleri.
 - [ ] **5.5** Pointer↔integer dönüşümleri yalnızca `syscall` sınırında ve açık `as`'ta.
 - [ ] **5.6** Çıktı biçimleri: `--emit=obj` (nesne), `ir` (`.ll`, `clang++` ile derlenebilir; hedef triple
@@ -347,16 +390,24 @@ Stdlib'in ihtiyacı olan minimum; hiçbiri "thread" kavramı taşımaz:
 
 - [ ] **6.1** Atomic builtin'ler: `__builtin_atomic_load/store/xchg/cas/add` + memory order,
   `__builtin_fence` (LLVM `load atomic`/`atomicrmw`/`cmpxchg`/`fence`). Hepsi `__builtin_` önekli, global.
+  Memory order, builtin `enum MemoryOrder: ui8 { relaxed, acquire, release, acq_rel, seq_cst }` tipidir
+  (2.6); argüman `MemoryOrder.seq_cst` gibi derleme zamanı sabiti olmalıdır. Atomic'lerin kabul ettiği
+  tipler: `i8..i64`, `ui8..ui64`, `isize`, `usize`, `*T`, `bool` (diğerleri derleme hatası).
 - [ ] **6.2** Fonksiyon pointer'ı: `&fn_name`, dolaylı çağrı, `fn(A) -> R` tipi.
-- [ ] **6.3** Generic inline asm builtin'i `__builtin_asm("şablon", in/out/inout/clobber...)` (**zorunlu**;
-  sözdizimi `PLAN.eg.md` §12.1, LLVM inline asm'ye iner, şablonu yorumlamaz): ham thread oluşturma (Linux `clone`, macOS
-  `bsdthread_create`, Windows `NtCreateThreadEx`) sonrası çocuk thread'in yeni stack'te trampoline'e
-  düşmesi ve scheduler'ın bağlam değiştirmesi (stack/register kaydet-yükle) için gerekli.
+- [ ] **6.3** Generic inline asm builtin'i `__builtin_asm("şablon", in/out/inout/clobber/options...)`
+  (**zorunlu**; sözdizimi `PLAN.eg.md` §12.1, LLVM inline asm'ye iner, şablonu yorumlamaz). Şablon hedefe
+  özeldir ve `#if arch` / `#if os` ile seçilir (farklı OS için farklı şablon yazılabilir). x86'da
+  **Intel** lehçesi, aarch64'te standart sözdizimi. Birden fazla `out` desteklenir (aggregate dönüş yok).
+  Varsayılan: bellek okunup yazılabilir sayılır; `options("nomem")` gevşetir, `options("noreturn")` bloğun
+  geri dönmediğini bildirir. Gerekçe: ham thread oluşturma (Linux `clone`, macOS `bsdthread_create`,
+  Windows `NtCreateThreadEx`) sonrası çocuk thread'in yeni stack'te trampoline'e düşmesi ve scheduler'ın
+  bağlam değiştirmesi (stack/register kaydet-yükle).
 - [ ] **6.4** Derleme zamanı hedef sabitleri `os`, `arch` (Faz 3'te yerleşik tanım olarak zaten var).
 - [ ] **6.5** Builtin tablosu: kapalı tablo (ad, imza, biçim `__builtin_xx` | öneksiz). Sema'da global isim
   olarak çözülür; gövdeyi compiler üretir; çakışma kuralı "Karar bekleyen"e bağlı. Tabloda `__builtin_`
-  önekli atomic'ler, `fence` (6.1) ve `__builtin_asm` (6.3) ile memory order sabitleri vardır; `size_of`
-  ailesi (2.4) öneksizdir. `syscall` bu tablonun dışındadır (5.3'teki özel işleme).
+  önekli atomic'ler, `fence` (6.1) ve `__builtin_asm` (6.3) ile `MemoryOrder` enum tipi vardır; `size_of`
+  ailesi (2.4) öneksizdir. `syscall` bu tablonun dışındadır (5.3'teki özel işleme). `register` ile
+  kaydedilenler bu tabloda değildir (4.12).
 
 ## Faz 7 — xlang stdlib (compiler hedefi tamamlandıktan sonra)
 
@@ -386,12 +437,17 @@ kullanıcı kodu → std/{thread,sync,sched,io,memory} → std/sys/{linux,macos,
   - Numara/yapı tabloları xl içinde (compiler görmez). POSIX uyumlu semantik hedeflenir (pthread benzeri
     thread/mutex/cond davranışı), ama pthread kütüphanesi çağrılmaz.
 - [ ] **7.1b** Stdlib yerleşimi: `std/index.xl` (giriş; alt modülleri `export * from` / `export * as` ile
-  toplar), `std/memory`, `std/mem`, `std/math` (`sqrt` vb.; xl ile yazılır, libm yok), `std/cpu`,
-  `std/gpu`, `std/sys/*`. `import "std"` hepsini, `import "std/cpu"` yalnızca ilgili parçayı verir.
-- [ ] **7.2** `std/mem`: varsayılan allocator (`@default_allocator` ile işaretli global; örneklerde `heap`,
-  ad karar bekleyen) ve `free`. `std/io`: `print` (compiler'a gömülü değil; global değil, `import` ile gelir).
+  toplar), `std/memory`, `std/mem`, `std/runtime`, `std/assert`, `std/math` (`sqrt` vb.; xl ile yazılır,
+  libm yok), `std/cpu`, `std/gpu`, `std/sys/*`. `import "std"` hepsini, `import "std/cpu"` yalnızca ilgili parçayı verir.
+- [ ] **7.2** `std/mem`: `interface Allocator { alloc, free }`, varsayılan `Heap` (OS'tan sayfa alan,
+  syscall'larla), `register(allocator) global current_allocator: Allocator` (stdlib özelliği
+  `default-allocator`), `free(p)` (şimdiki kayıtlı allocator'ın `free`'si), `set_allocator(a)` (bir kez;
+  ikinci çağrı `panic`). `std/io`: `print` (compiler'a gömülü değil; global değil, `import` ile gelir).
   `memcpy/memset/memmove/memcmp` `std/memory`'de **xl ile yazılır** ve `export(c)` ile C adıyla verilir
   (LLVM'in örtük çağrıları için; libc yok); global değildir (bkz. kural 7).
+- [ ] **7.2b** `std/runtime`: `register(panic) fn panic(msg: *ui8)` (mesajı yazar, süreci sonlandırır);
+  stdlib açıkken her zaman derlemeye girer, böylece `panic` her modülde import'suz görünür. `std/assert`:
+  `export define assert(cond: expr)` macro'su; gövdesi `panic` çağırır (kayıtlı olduğu için import'suz).
 - [ ] **7.3** `std/thread`: `thread_start(entry: fn(*void), arg: *void)`, `thread_join`, `thread_detach`,
   `thread_id`. Doğrudan OS thread'i (7.1'deki ham syscall'lar). Argümanlar heap env'de (global yok →
   veri yarışı yok); yeni thread'in stack'i `mmap`/eşdeğeriyle ayrılır; çocuk girişi 6.3 asm trampoline'i.
@@ -404,7 +460,7 @@ kullanıcı kodu → std/{thread,sync,sched,io,memory} → std/sys/{linux,macos,
   (epoll/kqueue/IOCP benzeri; 7.1 syscall'larıyla). Compiler scheduler'ı bilmez.
 - [ ] **7.6** xmake `std` hedefi: stdlib'i derleyip compiler modül arama yoluna kurar.
 - [ ] **7.7** Compiler'dan kaldır: `spawn`/`go`, `print` özel işleme, `malloc/free/printf` prelude,
-  `needs_heap_`/`needs_strings_`; `new` dilde kalır (4.11, allocator'ı kullanıcı verir), `delete` yoktur.
+  `needs_heap_`/`needs_strings_`; `new` dilde kalır (4.11, kayıtlı ya da açık allocator), `delete` yoktur.
   Eski example/lib'ler yeni dile göre yeniden yazılır (bu aşamada).
 
 **Kabul:** compiler kaynağında `spawn`, `thread`, `pthread`, `printf`, `malloc` geçmez (link bayrakları
@@ -438,15 +494,16 @@ Faz 0 ─► Faz 1 ─► Faz 2 ─► Faz 3 ─► Faz 4 ─► Faz 5 ─► Fa
 2. Lexer/parser yeni sözdizimi + AST/Type yeniden tasarımı (1.1–1.3)
 3. Diagnostics (1.4)
 4. Tip modeli + işaretli/işaretsiz lowering (2.1–2.2)
-5. Layout motoru + `@repr(c)` + `size_of/offset_of/static_assert` + clang karşılaştırma testi (2.3–2.5)
+5. Layout motoru + `@repr(c)` + `size_of/offset_of/static_assert` + clang karşılaştırma testi (2.3–2.5);
+   enum (2.6)
 6. `#if` + yerleşik tanımlar (3.1–3.3, 3.5)
 7. CLI bayrakları `-D/-U/--target/-O/-g/--emit/--print-cfg` + `define` sabitleri (3.4, 3.6)
 7b. Macro genişletme + `type` takma adı (3.7–3.8)
 8. Sema + scope + modül yükleme (4.1–4.2, 4.6)
 9. HIR + codegen taşıma (4.3, 4.7)
 10. Class (4.4), Interface (4.5)
-10b. Görünürlük + mangling + `ref T` + `new` (4.8–4.11)
+10b. Görünürlük + mangling + `ref T` + `new` + `register` (4.8–4.12)
 11. Alloca/PassBuilder/Darwin syscall/debug info (5.1–5.5)
 11b. Çıktı biçimleri + header + static/shared (5.6–5.8)
 12. Atomic + fnptr + asm (6)
-13. Stdlib (7.1–7.6), ardından compiler'dan kaldırma (7.7)
+13. Stdlib (7.1–7.6, 7.2b), ardından compiler'dan kaldırma (7.7)

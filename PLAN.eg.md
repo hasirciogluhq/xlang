@@ -8,12 +8,14 @@
 
 İçindekiler: [1 Tipler](#1-tipler) · [2 Tip dönüşümü](#2-tip-dönüşümü) · [3 Fonksiyonlar](#3-fonksiyonlar) ·
 [4 Değişkenler ve kontrol akışı](#4-değişkenler-ve-kontrol-akışı) · [5 Pointer](#5-pointer) ·
-[6 Struct ve bellek düzeni](#6-struct-ve-bellek-düzeni) · [7 Class](#7-class) · [8 Interface](#8-interface) ·
+[6 Struct ve bellek düzeni](#6-struct-ve-bellek-düzeni) · [6.1 Enum](#61-enum) · [7 Class](#7-class) ·
+[8 Interface](#8-interface) ·
 [9 Koşullu derleme](#9-koşullu-derleme) · [9.1 type](#91-tip-takma-adı-type) ·
 [9.2 define/macro](#92-define-ve-macro) · [10 CLI](#10-cli) · [11 Syscall](#11-syscall) ·
 [12 Atomic ve fonksiyon pointer'ı](#12-atomic-ve-fonksiyon-pointerı) · [12.1 Inline asm](#121-inline-asm) ·
 [13 Modüller](#13-modüller) ·
-[14 Harici (C) semboller](#14-harici-c-semboller) · [15 Stdlib ile thread](#15-stdlib-ile-thread) · [16 Name mangling](#16-name-mangling) ·
+[14 Harici (C) semboller](#14-harici-c-semboller) · [14.1 register](#141-register) ·
+[15 Stdlib ile thread](#15-stdlib-ile-thread) · [16 Name mangling](#16-name-mangling) ·
 [17 Güvenli referans](#17-güvenli-referans-ref-t) · [18 C++ ile kullanım](#18-c-ile-kullanım-ve-çıktı-biçimleri) · [19 Tanılar](#19-tanılar-ve-uyarılar) ·
 [20 Düzen geçmişi](#20-bellek-düzeni-geçmişi)
 
@@ -41,6 +43,8 @@ Tüm tipler açık boyutludur. İşaretli ve işaretsiz tamsayılar ayrı tipler
 | `void` | — | — | `void` |
 | `*T` | pointer genişliği | — | `T*` |
 | `fn(A, B) -> R` | pointer genişliği | — | fonksiyon pointer'ı |
+| `[T; N]` | `N * size_of(T)` | `T`'ye göre | `T[N]` ([6](#sabit-boyutlu-dizi-t-n)) |
+| `enum E: T` | `size_of(T)` | `T`'ye göre | `enum` (alt tip tamsayıysa) ([6.1](#61-enum)) |
 
 ```xlang
 local a: i32 = -5
@@ -52,7 +56,7 @@ local p: *i32 = &a
 
 - Sabit literal'in tipi bağlama göre çıkarılır; belirsizse `i32` (tam) / `f64` (ondalık).
 - Taşma **tanımlıdır**: tamsayılar two's complement ile sarar (`ui8: 255 + 1 == 0`).
-- Sıfıra bölme çalışma zamanında trap'tir.
+- Sıfıra bölme çalışma zamanında `panic`'tir (kayıtlı `panic` yoksa trap; bkz. [14.1](#141-register)).
 
 ---
 
@@ -142,6 +146,30 @@ fn main() -> i32 {
 
 Karşılaştırma işaretlilikten etkilenir: `ui32` için `<` işaretsiz, `i32` için işaretli karşılaştırmadır.
 
+### Global değişkenler
+
+```xlang
+define SIZE = 64
+
+global table:   [ui8; SIZE]            // başlangıç değeri yok: sıfırla başlar
+global counter: i64 = 0
+global limit:   usize = SIZE * 2       // sabit ifade
+global banner:  *ui8 = "xlang"
+global origin:  Point = Point { x: 0, y: 0 }
+global first:   *ui8 = &table[0]       // başka global'in adresi sabittir
+```
+
+Global'in başlangıç değeri **derleme zamanı sabit ifadesi**dir (statik başlatma; çalışma zamanı başlatma
+sırası yoktur):
+
+| Sabit sayılan | Sabit sayılmayan |
+|---------------|------------------|
+| Literal'ler, `define` sabitleri, enum üyeleri | Fonksiyon çağrısı |
+| `size_of` / `align_of` / `offset_of` | Başka global'in **değerini** okumak |
+| `&global`, `&global[sabit]`, `as` dönüşümleri | Çalışma zamanı değerleri |
+| Alanları sabit olan struct/class/dizi literal'i | |
+| Global nesnenin interface'e dönüşümü (`itable` sabit) | |
+
 ---
 
 ## 5. Pointer
@@ -178,12 +206,13 @@ Allocator iki yoldan gelir:
 
 | Yazım | Allocator |
 |-------|-----------|
-| `new T { ... }` | **Varsayılan allocator**: `@default_allocator` ile işaretli global ([aşağıda](#varsayılan-allocator)) |
+| `new T { ... }` | **Kayıtlı allocator**: `register(allocator)` ile kaydedilmiş global ([aşağıda](#kayıtlı-allocator)) |
 | `new(a) T { ... }` | Açıkça verilen `a` |
 
-Allocator (`a` ya da varsayılan), `alloc(self, size: usize, align: usize) -> *void` metoduna sahip herhangi
-bir değerdir (class, interface değeri ya da `impl` eden struct). Compiler hiçbir allocator'ın gövdesini
-bilmez; yalnızca `alloc` çağrısını çözer ve işaretli global'e bakar.
+Allocator bir **gruptur**: `alloc(self, size: usize, align: usize) -> *void` ve `free(self, p: *void)`
+metodlarının ikisine de sahip herhangi bir değer (class, interface değeri ya da `impl` eden struct).
+Bırakma her zaman aynı gruptaki `free` ile yapılır; böylece bellek ayıran ile bırakan ayrışmaz. Compiler
+hiçbir allocator'ın gövdesini bilmez; yalnızca `alloc` çağrısını çözer ve kayıtlı global'e bakar.
 
 `new(a) T { x: 1 }` şuna eşittir:
 
@@ -204,16 +233,20 @@ class Bump {
         self.used = self.used + size
         return p
     }
+
+    fn free(self, p: *void) { }                              // arena: tek tek bırakılmaz
 }
 
 struct Point { x: i32, y: i32 }
 
 fn main() -> i32 {
     local buf: [ui8; 4096]
-    local arena: Bump = Bump { base: &buf as *ui8, used: 0, cap: 4096 }
+    local arena: Bump = Bump { base: &buf[0], used: 0, cap: 4096 }
 
     local p: *Point = new(&arena) Point { x: 1, y: 2 }     // arena.alloc çağrılır, *Point döner
-    return p.x + p.y
+    local sum: i32 = p.x + p.y
+    arena.free(p as *void)                                 // aynı grup
+    return sum
 }
 ```
 
@@ -221,43 +254,84 @@ fn main() -> i32 {
 |-------|-------|
 | `new(a) T { ... }` | `a.alloc(size_of(T), align_of(T))` çağır, alanları yaz, `*T` döndür |
 | `a.alloc` `null` dönerse | `new` de `null` döndürür, alanlar yazılmaz |
-| `new T { ... }` | Varsayılan allocator'ın `alloc`'u çağrılır; varsayılan yoksa **hata** (`E0501`) |
-| Bırakma | Allocator'ın kendi metodu (ör. `a.free(p)`) ya da `std/mem`'in `free`'si; `new` için ayrı bir kural yok |
+| `new T { ... }` | Kayıtlı allocator'ın `alloc`'u çağrılır; kayıtlı yoksa **hata** (`E0501`) |
+| Bırakma | `a.free(p)` (açık allocator); kayıtlı allocator için `std/mem`'in `free(p)`'si (aynı gruba gider) |
 
-### Varsayılan allocator
+### Kayıtlı allocator
 
-`@default_allocator` ile işaretlenen **tek bir global**, `new T { ... }`'in kullandığı allocator'dır.
-Programda **en fazla bir** işaretli global olabilir. İşaret stdlib'den de kullanıcıdan da gelebilir ama
-compiler ikisini ayırt etmez, **öncelik kuralı yoktur**. Stdlib `std/mem`'de bir tane işaretler (stdlib
-özelliği `default-allocator`, varsayılan açık). Kendi allocator'ını seçmek isteyen bu özelliği kapatır
-(`--std-features=-default-allocator`) ve kendi global'ini işaretler. Compiler adı değil, **işareti** arar.
+`register(allocator)` ile kaydedilen **tek bir global**, `new T { ... }`'in kullandığı allocator'dır
+([14.1](#141-register)). Programda **en fazla bir** tane kayıtlı olabilir; kayıt stdlib'den de kullanıcıdan
+da gelebilir, compiler ikisini ayırt etmez, **öncelik kuralı yoktur**. Global **değiştirilebilir**
+(mutable) olduğu için çalışma zamanında `main`'de **bir kez** başka allocator'a geçirilebilir; `new` ve
+`free` o andan sonra yeni allocator'ı kullanır, böylece ayıran ve bırakan hep aynı gruptur.
+
+Allocator'ı seçmenin iki yolu vardır:
+
+| Yol | Ne zaman | Nasıl |
+|-----|----------|-------|
+| Çalışma zamanında bir kez | Stdlib var, başka allocator isteniyor | `main`'in başında `set_allocator(a)` |
+| Derleme zamanında kayıt | `--no-std` ya da stdlib'in allocator'ı istenmiyor | `--std-features=-default-allocator` + kendi `register(allocator)` global'in |
 
 ```xlang
 // std/mem.xl (stdlib)
-export class Heap {
-    fn alloc(self, size: usize, align: usize) -> *void { /* OS'tan sayfa al */ }
+export interface Allocator {
+    fn alloc(self, size: usize, align: usize) -> *void
+    fn free(self, p: *void)
 }
 
-@default_allocator
-export global heap: Heap = Heap { }
+class Heap { }
+
+impl Allocator for Heap {
+    fn alloc(self, size: usize, align: usize) -> *void { /* OS'tan sayfa al */ }
+    fn free(self, p: *void) { /* OS'a geri ver */ }
+}
+
+global heap_obj: Heap = Heap { }
+global allocator_set: bool = false
+
+register(allocator) global current_allocator: Allocator = heap_obj     // kayıtlı, değiştirilebilir
+
+export fn free(p: *void) {
+    current_allocator.free(p)                  // her zaman şimdiki allocator'a
+}
+
+export fn set_allocator(a: Allocator) {
+    if allocator_set { panic("allocator zaten ayarlandi") }
+    allocator_set = true
+    current_allocator = a
+}
 ```
 
 ```xlang
-// kullanıcı, stdlib ile: hiçbir şey vermesine gerek yok
+// kullanıcı, stdlib ile: hiçbir şey yazmaya gerek yok
 struct Point { x: i32, y: i32 }
 
 fn main() -> i32 {
-    local p: *Point = new Point { x: 1, y: 2 }     // std/mem'in heap'i
+    local p: *Point = new Point { x: 1, y: 2 }     // current_allocator.alloc → Heap
     return p.x + p.y
 }
 ```
 
 ```xlang
-// --no-std ya da --std-features=-default-allocator: kendi varsayılanını işaretle
+// kullanıcı, çalışma zamanında bir kez kendi allocator'ını verir
+from "std/mem" import set_allocator, free
+
+fn main() -> i32 {
+    local buf: [ui8; 65536]
+    local arena: Bump = Bump { base: &buf[0], used: 0, cap: 65536 }
+    set_allocator(arena)                           // main'in başında, ilk new'den önce
+
+    local p: *Point = new Point { x: 1, y: 2 }     // arena.alloc
+    free(p as *void)                               // arena.free: aynı grup
+    return 0
+}
+```
+
+```xlang
+// --no-std ya da --std-features=-default-allocator: derleme zamanında kendi kaydın
 global arena_buf: [ui8; 65536]
 
-@default_allocator
-global arena: Bump = Bump { base: &arena_buf as *ui8, used: 0, cap: 65536 }
+register(allocator) global arena: Bump = Bump { base: &arena_buf[0], used: 0, cap: 65536 }
 
 fn main() -> i32 {
     local p: *Point = new Point { x: 1, y: 2 }     // arena.alloc
@@ -267,21 +341,25 @@ fn main() -> i32 {
 
 | Durum | Sonuç |
 |-------|-------|
-| Stdlib var, `default-allocator` açık, kullanıcı işaretlemedi | Stdlib'in `heap`'i |
-| Kullanıcı işaretledi, stdlib özelliği kapalı (ya da `--no-std`) | Kullanıcının global'i |
-| Toplamda iki işaretli global (stdlib + kullanıcı dahil) | **Hata**; çözüm: stdlib özelliğini kapat |
-| Hiç işaretli global yok, `new T { }` yazıldı | **Hata** `E0501` |
-| `new(a) T { }` | `a` kullanılır, varsayılan aranmaz |
+| Stdlib var, `default-allocator` açık | Kayıtlı allocator stdlib'in `current_allocator`'ı (`Heap`) |
+| `main`'de `set_allocator(a)` | Bundan sonra `new T` ve `free` `a`'yı kullanır; ikinci çağrı `panic` |
+| Kullanıcı `register(allocator)` yaptı, stdlib özelliği kapalı (ya da `--no-std`) | Kullanıcının global'i |
+| Toplamda iki `register(allocator)` (stdlib + kullanıcı dahil) | **Hata** `E0502`; çözüm: stdlib özelliğini kapat |
+| Kayıtlı yok, `new T { }` yazıldı | **Hata** `E0501` |
+| `new(a) T { }` | `a` kullanılır, kayıtlı aranmaz |
+
+`set_allocator` ilk `new`'den **önce**, `main`'in başında çağrılmalıdır. Daha önce ayrılmış bloklar eski
+allocator'dan gelmiştir; sonradan `free` edilirse yeni allocator'a gider ve bu tespit edilmez.
 
 ```
-error[E0501]: `new` için varsayılan allocator yok
+error[E0501]: `new` için kayıtlı allocator yok
   --> app.xl:9
    |
- 9 | local p: *Point = new Point { x: 1, y: 2 }    <======= varsayılan allocator tanımlı değil
+ 9 | local p: *Point = new Point { x: 1, y: 2 }    <======= kayıtlı allocator yok
    |
-detay:  Stdlib yok (--no-std) ve `@default_allocator` ile işaretli bir global bulunamadı.
+detay:  Stdlib yok (--no-std) ve `register(allocator)` ile kaydedilmiş bir global bulunamadı.
 neden:  Compiler hiçbir allocator bilmez; `new T` hangi allocator'ı çağıracağını bilemez.
-düzelt: `new(a) T { ... }` yaz ya da bir global'i `@default_allocator` ile işaretle.
+düzelt: `new(a) T { ... }` yaz ya da bir global'i `register(allocator)` ile kaydet.
 ```
 
 ---
@@ -344,6 +422,16 @@ struct Packet {
 }
 
 local buf: [ui8; PAGE]        // yerel dizi; N bir define sabiti
+
+fn main() -> i32 {
+    local a: [i32; 4] = [10, 20, 30, 40]     // dizi literal'i
+    local z: [ui8; 16] = [0; 16]             // tekrar biçimi: 16 tane 0
+    local i: usize = 2
+
+    a[i] = a[i] + 1                          // indeksleme; i >= 4 ise panic
+    local p: *i32 = &a[0]                    // eleman pointer'ı
+    return p[1] + a[3]                       // *T de indekslenir (kontrolsüz)
+}
 ```
 
 | Parça | Anlam |
@@ -351,10 +439,62 @@ local buf: [ui8; PAGE]        // yerel dizi; N bir define sabiti
 | Yazım | `[T; N]` |
 | `N` | Derleme zamanı sabit ifadesi (`define` sabiti olabilir) |
 | Boyut / hizalama | `size_of([T; N]) == N * size_of(T)`, `align_of([T; N]) == align_of(T)` |
+| Uzunluk | `size_of(a) / size_of(T)` (ayrı bir `len` builtin'i yok) |
 | Kullanım | Yerel, struct/class alanı, global |
+| Literal | `[a, b, c]` ya da `[v; N]`; eleman tipi bağlamdan çıkarılır |
+| İndeks tipi | `usize`; `ui8/ui16/ui32` örtük genişler, işaretliler `as usize` ister |
+| `a[i]` (dizi) | `--safety=checked` (varsayılan) altında sınır kontrolü: dışındaysa `panic`; `unchecked` ya da `@unchecked fn` kontrolü kaldırır; sabit indeks sınır dışıysa derleme hatası |
+| `p[i]` (`*T`) | `*(p + i * size_of(T))`; **hiçbir zaman kontrol edilmez** |
+| Değer semantiği | Atama, parametre ve dönüşte dizi tamamen kopyalanır; kopyayı önlemek için `&a` |
 | `@repr(c)` struct içinde | C'deki `T[N]` ile aynı düzen |
 
-İndeksleme sözdizimi ve sınır kontrolü henüz belirlenmedi (bkz. `PLAN.md` "Karar bekleyen").
+---
+
+## 6.1 Enum
+
+`enum`, adlandırılmış sabitlerden oluşan bir tiptir. Alt tip (`: T`) sabit değer alabilen **herhangi bir
+tip** olabilir; yazılmazsa `i32`'dir.
+
+```xlang
+enum ESomeEnum: i32 {
+    First,              // 0
+    Second,             // 1
+    Third = 10,         // 10
+    Fourth              // 11
+}
+
+enum Level: *ui8 {      // string enum: alt tip *ui8, her üye değer ister
+    Info  = "info",
+    Warn  = "warn",
+    Error = "error"
+}
+
+enum Ratio: f64 { Half = 0.5, Quarter = 0.25 }
+
+fn describe(l: Level) -> *ui8 {
+    return l as *ui8                       // alt tipe dönüşüm açık
+}
+
+fn main() -> i32 {
+    local e: ESomeEnum = ESomeEnum.Second
+    local raw: i32 = e as i32              // 1
+    local back: ESomeEnum = 10 as ESomeEnum
+    if e == ESomeEnum.Second { return raw }
+    return 0
+}
+```
+
+| Kural | Açıklama |
+|-------|----------|
+| Yazım | `enum Ad: T { Üye [= değer], ... }`; `: T` yoksa `i32` |
+| Alt tip | Sabit değer alabilen herhangi bir tip: tamsayılar, `f32/f64`, `bool`, `*ui8` (string literal) |
+| Numaralama | Otomatik (ilk üye 0, sonrakiler +1) yalnızca **tamsayı** alt tipte; diğerlerinde her üye değer ister |
+| Erişim | `Ad.Üye` (ad alanı altında; global isim kirlenmez) |
+| Dönüşüm | Enum ↔ alt tip arası açık `as`; örtük dönüşüm yok |
+| Karşılaştırma | Aynı enum'un üyeleri `==` / `!=` ile karşılaştırılır |
+| Sabitlik | Üye değerleri derleme zamanı sabitidir (global başlangıç değeri, `static_assert`, atomic `order` argümanı) |
+| Düzen | Alt tipin düzenidir; `export(c)` imzasında yalnızca tamsayı alt tipli enum geçerli |
+| Builtin enum | `MemoryOrder` ([12](#12-atomic-ve-fonksiyon-pointerı)) |
 
 ---
 
@@ -650,11 +790,24 @@ with_logging!(startup, {
 
 ### `#` ve `##` yoktur
 
+`std/assert` bu macro'yu verir. `panic` kayıtlı olduğu için ([14.1](#141-register)) macro gövdesinde
+import gerekmez:
+
 ```xlang
-define assert(cond: expr) {
+// std/assert.xl (stdlib)
+export define assert(cond: expr) {
     if !(cond) {
         panic("assertion failed")
     }
+}
+
+// kullanıcı
+from "std/assert" import assert
+
+fn main() -> i32 {
+    local x: i32 = 3
+    assert!(x > 0)
+    return x
 }
 ```
 
@@ -691,7 +844,7 @@ xlang build main.xl --print-cfg                     # çözülmüş tüm tanıml
 | `-g` | Debug info; `debug = true` |
 | `--emit=ir\|bc\|obj\|hir\|header\|exe\|static\|shared` | Çıktı biçimi ([18](#18-c-ile-kullanım-ve-çıktı-biçimleri)) |
 | `--mangle=xl\|none` | Proje seviyesi mangling varsayılanı ([16](#16-name-mangling)) |
-| `--safety=checked\|unchecked` | `ref T` kontrolleri açık/kapalı ([17](#17-güvenli-referans-ref-t)) |
+| `--safety=checked\|unchecked` | `ref T` nesil kontrolleri ve dizi sınır kontrolleri açık/kapalı; varsayılan `checked` ([17](#17-güvenli-referans-ref-t), [6](#sabit-boyutlu-dizi-t-n)) |
 | `--cpu <ad>` | Hedef CPU (varsayılan `generic`) |
 | `--no-std` / `--std=<yol>` | Stdlib yok / başka stdlib ([15](#15-stdlib-ile-thread)) |
 | `--print-cfg` | Etkin tanımları yazdırır |
@@ -732,8 +885,11 @@ error: `syscall` çağrısında 8 argüman var; hedef `x86_64-linux` en fazla 6 
 
 Numaralar hedefe özeldir; bunları bir stdlib katmanı `#if os == ...` ile seçer, compiler bilmez.
 
-Hata bildirimi hedefe göre farklıdır: Linux hatayı `-errno` olarak döndürür, macOS carry bayrağını set edip
-pozitif errno döndürür. `syscall`'ın bunu nasıl yansıtacağı henüz belirlenmedi (bkz. `PLAN.md` "Karar bekleyen").
+**Hata bildirimi tek biçimdedir:** `syscall` hatayı her hedefte **negatif `-errno`** olarak döndürür.
+Linux zaten böyle yapar. macOS carry bayrağını set edip pozitif errno döndürür; compiler carry set ise
+sonucu `-errno`'ya çevirir (bu dönüş değeri ABI'sidir, hangi syscall olduğunu bilmek gerekmez). Windows'ta
+NTSTATUS (`eax`) olduğu gibi dönüş değeridir ve `i64`'e işaret genişletilir. Böylece stdlib'in sys katmanı
+Linux ve macOS'ta `sonuç < 0` ile aynı biçimde hata kontrolü yapar.
 
 ---
 
@@ -746,11 +902,11 @@ altında bu atomic'leri kullanır.
 
 ```xlang
 fn spin_lock(flag: *ui32) {
-    while __builtin_atomic_cas(flag, 0, 1, seq_cst) != 0 { }
+    while __builtin_atomic_cas(flag, 0, 1, MemoryOrder.seq_cst) != 0 { }
 }
 
 fn spin_unlock(flag: *ui32) {
-    __builtin_atomic_store(flag, 0, release)
+    __builtin_atomic_store(flag, 0, MemoryOrder.release)
 }
 
 fn call_twice(f: fn(i32) -> i32, v: i32) -> i32 {
@@ -774,7 +930,14 @@ fn main() -> i32 {
 | `__builtin_fence(order)` | Bellek bariyeri |
 | `&fn_name` | Fonksiyon adresi (`fn(...) -> R` tipli) |
 
-Order değerleri (global sabitler, import gerekmez): `relaxed`, `acquire`, `release`, `acq_rel`, `seq_cst`.
+`order`, builtin bir enum'dur ([6.1](#61-enum)); import gerekmez:
+
+```xlang
+enum MemoryOrder: ui8 { relaxed, acquire, release, acq_rel, seq_cst }     // builtin
+```
+
+Argüman `MemoryOrder.seq_cst` gibi **derleme zamanı sabiti** olmalıdır. Atomic'ler `i8..i64`, `ui8..ui64`,
+`isize`, `usize`, `*T` ve `bool` üzerinde çalışır; diğer tipler derleme hatasıdır.
 
 ---
 
@@ -802,13 +965,33 @@ fn read_sp() -> usize {
     return sp
 }
 
-fn swap_marker(a: *ui64, v: ui64) -> ui64 {
-    local old: ui64 = 0
+fn swap_u64(a: *ui64, v: ui64) -> ui64 {
+    local x: ui64 = v
 #if arch == "x86_64"
-    __builtin_asm("xchg {0}, [{1}]", inout(reg) v, in(reg) a, clobber("memory"))
-    old = v
+    __builtin_asm("xchg [{0}], {1}", in(reg) a, inout(reg) x)
 #endif
-    return old
+    return x
+}
+
+fn halt() {
+#if arch == "x86_64"
+    __builtin_asm("ud2", options("noreturn"))
+#elif arch == "aarch64"
+    __builtin_asm("brk #1", options("noreturn"))
+#endif
+}
+
+// OS'a göre farklı şablon: #if os ile seçilir
+fn thread_base() -> usize {
+    local t: usize = 0
+#if os == "windows" && arch == "x86_64"
+    __builtin_asm("mov {0}, gs:[0x30]", out(reg) t)         // TEB
+#elif os == "linux" && arch == "x86_64"
+    __builtin_asm("mov {0}, fs:[0]", out(reg) t)            // thread pointer
+#elif os == "macos" && arch == "aarch64"
+    __builtin_asm("mrs {0}, tpidrro_el0", out(reg) t)
+#endif
+    return t
 }
 ```
 
@@ -819,14 +1002,19 @@ fn swap_marker(a: *ui64, v: ui64) -> ui64 {
 | Giriş | `in(reg) ifade` | İfadenin değeri bir register'a konur |
 | Çıkış | `out(reg) değişken` | Register'ın sonucu değişkene yazılır |
 | Giriş+çıkış | `inout(reg) değişken` | Önce okunur, sonra aynı register'dan yazılır |
-| Sabit register | `in("rax") ifade` | Belirli register (hedefe özel ad) |
-| Clobber | `clobber("memory")`, `clobber("rcx")` | Talimatın bozduğu şeyler (compiler bunlara güvenmez) |
+| Sabit register | `in("rax") ifade`, `out("rax") değişken` | Belirli register (hedefe özel ad) |
+| Clobber | `clobber("rcx")`, `clobber("cc")` | Talimatın bozduğu register'lar (`cc`: flag'ler); compiler bunlara güvenmez |
+| Seçenek | `options("noreturn")` | Blok geri dönmez (ör. `ud2`, stack değiştirip atlama); sonrası ulaşılamaz sayılır |
+| Seçenek | `options("nomem")` | Bellekle ilgisi yok; optimizer çevresindeki işlemleri yeniden sıralayabilir |
 
 Kurallar:
 
 | Kural | Açıklama |
 |-------|----------|
-| Hedefe özel | Şablon o hedefin assembly'sidir; `#if arch == ...` ile seçilir, compiler şablonun içini yorumlamaz |
+| Hedefe özel | Şablon o hedefin assembly'sidir; `#if arch == ...` ve `#if os == ...` ile seçilir, farklı OS için farklı şablon yazılabilir; compiler şablonun içini yorumlamaz |
+| Lehçe | x86'da **Intel** sözdizimi (hedef önce, kaynak sonra); aarch64'te standart sözdizimi |
+| Bellek | Varsayılan olarak asm belleği okuyup yazabilir sayılır (ayrıca `clobber("memory")` gerekmez); `options("nomem")` bunu gevşetir |
+| Çoklu çıktı | Birden fazla `out`/`inout` kullanılabilir; struct/dizi döndüren çıktı yoktur |
 | Silinmez | Asm bloğu optimizasyonla kaldırılmaz ve yeniden sıralanmaz |
 | Hata | Geçersiz register veya şablon hatası hedef assembler'dan gelir ve derleme hatasıdır |
 | Kullanım | Çoğunlukla stdlib'de (`std/sys`, `std/sched`); uygulama kodunda gerekmez |
@@ -1024,16 +1212,16 @@ C/C++ ile veri paylaşılacak struct'ların düzeni için `@repr(c)` en sağlam 
 
 ### Global isimler
 
-Kaynak koduna hiçbir import olmadan gelen isimler **kapalı bir builtin listesidir**. Diğer her şey
-stdlib'den import edilir; stdlib hiçbir zaman global olamaz. **libc yasaktır**: builtin'ler compiler'ın
-kendisindendir (aşağıya bak).
+Kaynak koduna import olmadan gelen isimlerin **iki katmanı** vardır: (a) compiler'ın bildiği kapalı
+**builtin** listesi, (b) bir modülde **`register`** ile kaydedilmiş semboller ([14.1](#141-register)).
+Diğer her şey import edilir. **libc yasaktır**: builtin'ler compiler'ın kendisindendir (aşağıya bak).
 
 | Global (import gerekmez) | Neden global |
 |--------------------------|--------------|
 | `syscall(nr, ...)` | CPU trap'i, başka yolla ifade edilemez; öneksiz, doğrudan `syscall` |
 | `__builtin_atomic_*`, `__builtin_fence` | Tek CPU talimatları; `__builtin_` önekli (kesin liste Faz 6'da) |
 | `__builtin_asm` | Inline asm ([12.1](#121-inline-asm)); `__builtin_` önekli |
-| `relaxed`, `acquire`, `release`, `acq_rel`, `seq_cst` | Atomic işlemlerin memory order sabitleri |
+| `MemoryOrder` | Atomic işlemlerin memory order enum'u ([12](#12-atomic-ve-fonksiyon-pointerı)) |
 | `size_of`, `align_of`, `offset_of`, `static_assert` | Derleme zamanı sorguları |
 
 Builtin fonksiyonlar atomic'ler, `fence` ve `__builtin_asm`'dir. Builtin'ler iki biçimde yazılır ve
@@ -1041,14 +1229,14 @@ Builtin fonksiyonlar atomic'ler, `fence` ve `__builtin_asm`'dir. Builtin'ler iki
 `size_of` ailesi, `static_assert` öneksizdir. `syscall` her zaman doğrudan `syscall` olarak yazılır.
 Builtin'in gövdesini compiler'ın kendisi sağlar; compiler'ın doğrudan desteklemeyeceği bir şey builtin
 olmaz, stdlib'e gider. `memcpy`, `malloc`, `free` builtin değildir, global de değildir: stdlib'den import
-edilir. Bkz. `PLAN.md` "Karar bekleyen".
+edilir; `panic` ise builtin değil **`register`'lıdır** (aşağıda). Bkz. `PLAN.md` "Karar bekleyen".
 
 ```xlang
 from "std/mem" import free                     // stdlib: global değil, import gerekir
 from "std/memory" import memcpy
 
 fn clone_header(src: *Header) -> *Header {
-    local p: *Header = new Header { tag: 0, length: 0, id: 0 }    // varsayılan allocator
+    local p: *Header = new Header { tag: 0, length: 0, id: 0 }    // kayıtlı allocator
     memcpy(p as *void, src as *void, size_of(Header))
     return p
 }
@@ -1065,6 +1253,51 @@ dışa verilir: LLVM'in kendi ürettiği örtük `memcpy` çağrıları da böyl
 Dil dışarıdan kütüphane almaz: stdlib hiçbir işletim sistemi kütüphanesini (`libc`, `libSystem`, `kernel32`,
 pthread) çağırmaz. Her OS için çekirdek ABI'si ham `syscall` ile kullanılır ve OS seçimi `#if os == ...`
 ile yapılır ([15](#15-stdlib-ile-thread)). `declare` yalnızca kullanıcının kendi bağladığı nesneler içindir.
+
+---
+
+## 14.1 `register`
+
+`declare` gibi tek önektir ama ters yöndedir: `declare` "bu başka yerde tanımlı" der, `register` "bu ad
+**bütün programda global olsun**" der. Bir modül derlemeye girdiği anda, kayıtlı adlar hiçbir modül import
+etmese bile her yerden görünür. İsteğe bağlı bir **rol**, compiler'a o sembolü otomatik kullanma izni verir.
+
+| Yazım | Anlam |
+|-------|-------|
+| `register fn/global/struct/class/interface/enum/type ...` | Ad global olur (import gerekmez); compiler başka bir şey yapmaz |
+| `register(panic) fn panic(msg: *ui8)` | Global + compiler'ın hata yolları (sıfıra bölme, dizi sınırı, `ref` nesil uyuşmazlığı) bunu çağırır |
+| `register(allocator) global ad: T = ...` | Global + `new T { }` bu global'in `alloc`'unu çağırır ([5](#kayıtlı-allocator)) |
+
+```xlang
+// std/runtime.xl (stdlib; stdlib açıkken her zaman derlemeye girer)
+register(panic) fn panic(msg: *ui8) {
+    // mesajı yaz, süreci sonlandır; geri dönmez
+}
+```
+
+```xlang
+// kullanıcı: hiçbir import yok
+fn first(p: *i32, n: usize) -> i32 {
+    if n == 0 { panic("bos dizi") }       // panic global; import gerekmedi
+    return p[0]
+}
+
+fn main() -> i32 {
+    local d: i32 = 0
+    return 10 / d                         // compiler panic("division by zero") çağrısını kendisi ekler
+}
+```
+
+| Kural | Açıklama |
+|-------|----------|
+| Görünürlük | `register` aynı zamanda `export` anlamına gelir; import gerekmez |
+| Ne zaman geçerli | Modül derlemeye girdiğinde: import grafiğindeki modüller ve stdlib açıkken her zaman yüklenen `std/runtime`. Derlemeye girmeyen modülün kaydı yoktur |
+| Rol sınırı | Rol başına en fazla bir kayıt; aynı global ad iki kez kaydedilirse ya da bir rol iki kez bağlanırsa `E0502` |
+| Rol sözleşmesi | `panic`: tek `*ui8` parametre, geri dönmez (compiler çağrıdan sonrasını ulaşılamaz sayar). `allocator`: `alloc(self, size, align) -> *void` ve `free(self, p)` metodları; eksikse `E0503` |
+| Gölgeleme | Aynı adlı yerel tanım ya da import kayıtlı adı gölgeler ve `W0402` uyarısı verir; rol bağı addan değil kayıttan olduğu için bozulmaz |
+| Stdlib | Compiler stdlib'e özel muamele yapmaz: `register` her modülde aynı çalışır; kullanıcı da kendi `panic`'ini ya da allocator'ını kaydedebilir |
+| Rol kayıtlı değilse | `panic` yoksa (ör. `--no-std`) compiler'ın hata yolları doğrudan trap talimatı üretir; `allocator` yoksa `new T { }` `E0501` verir |
+| Builtin değildir | Builtin'ler compiler'ın gövdesini sağladığı fonksiyonlardır ([14](#14-harici-c-semboller)); `register`'lı semboller stdlib/kullanıcı kodudur, yalnızca adı globaldir |
 
 ---
 
@@ -1142,7 +1375,7 @@ Stdlib bir compiler bayrağıyla seçilir; hiçbir şey zorunlu kılınmaz.
 | (varsayılan) | Dile gömülü varsayılan stdlib |
 | `--no-std` | Stdlib yok: yalnızca dil + global yerleşikler (`syscall`, atomic...) |
 | `--std=<yol>` | Başka bir stdlib kök dizini |
-| `--std-features=sched,gpu` | Stdlib özelliklerini aç/kapat (ör. `-default-allocator`: stdlib'in `@default_allocator` işaretini kapatır) |
+| `--std-features=sched,gpu` | Stdlib özelliklerini aç/kapat (ör. `-default-allocator`: stdlib'in `register(allocator)` kaydını kapatır) |
 
 ```
 xlang build app.xl                       # varsayılan stdlib
@@ -1221,12 +1454,12 @@ from "std/mem" import free              // stdlib: global değil, import gerekir
 struct Node { value: i32 }
 
 fn main() -> i32 {
-    local n: ref Node = new Node { value: 7 }     // varsayılan allocator
+    local n: ref Node = new Node { value: 7 }     // kayıtlı allocator
     local copy: ref Node = n             // ikisi de aynı nesne
 
     free(n)                              // nesnenin nesli artar
 
-    return copy.value                    // ÇALIŞMA ZAMANI TRAP: use-after-free (nesil uyuşmuyor)
+    return copy.value                    // PANIC: use-after-free (nesil uyuşmuyor)
 }
 ```
 
@@ -1238,12 +1471,12 @@ heap nesnesi                         ref Node (16 B)
 | gen (ui64) |  Node { ... }   |     |  ptr  *  |  gen     |
 +------------+-----------------+     +----------+----------+
       ^                                    erişimde:  ref.gen == nesne.gen ?  → devam
-      └──────── free() gen'i artırır                    değilse trap
+      └──────── free() gen'i artırır                    değilse panic
 ```
 
 | Kural | Açıklama |
 |-------|----------|
-| Oluşturma | `new T { ... }` (varsayılan allocator), `new(a) T { ... }` (açık allocator) veya `&local` ile |
+| Oluşturma | `new T { ... }` (kayıtlı allocator), `new(a) T { ... }` (açık allocator) veya `&local` ile |
 | Erişim | `r.alan`, `*r`: her erişimde nesil kontrolü |
 | `ref T → *T` | Açık `as *T` (korumayı bilerek bırakır) |
 | Yerel adresi | `&local` ile alınan `ref`'in fonksiyondan kaçması (return/global'e yazma) **derleme hatası** |
@@ -1478,7 +1711,10 @@ Susturulan (`@allow`/`--allow`) uyarılar ekrandan düşer ama `--diag-log` aç�
 | `E0302` | `export(c)` imzası C'de ifade edilemeyen bir tip içeriyor | **hata** |
 | `W0401` | Aynı varlık iki farklı yoldan import/export edildi | uyarı |
 | `E0401` | Farklı varlıklar aynı ada import/export ediliyor | **hata** |
-| `E0501` | `new T { }` için varsayılan allocator yok (`@default_allocator` işaretli global bulunamadı) | **hata** |
+| `E0501` | `new T { }` için kayıtlı allocator yok (`register(allocator)` bulunamadı) | **hata** |
+| `E0502` | Aynı rol ya da aynı global ad iki kez `register` edilmiş | **hata** |
+| `E0503` | `register` rolünün sözleşmesi sağlanmamış (ör. `allocator`'da `alloc` ya da `free` yok) | **hata** |
+| `W0402` | Yerel tanım ya da import, `register`'lı bir global adı gölgeliyor | uyarı |
 
 ---
 

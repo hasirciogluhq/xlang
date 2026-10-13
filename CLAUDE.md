@@ -30,11 +30,13 @@
 - **Do not read or adapt to `examples/`, `test/xlang/`, or stdlib/runtime `.xlang` files.** They are disposable
   and will be rewritten once the compiler reaches its target.
 - **Do not read anything under `.cursor/`** (rules or plans).
-- The compiler knows only the language, CPU primitives (syscall, atomics, function pointers, inline asm) and the
-  closed builtin function list (the `__builtin_` atomics and fence). A builtin's body is provided by the compiler itself; if
-  the compiler will not directly support something, it is not a builtin and goes to the stdlib. `memcpy` family,
-  `malloc`/`free`/the allocator are NOT builtins: they come from the stdlib (`std/memory`, `std/mem`).
-  Thread, scheduler and print concepts do not belong in the compiler; they are xlang stdlib.
+- The compiler knows only the language, CPU primitives (syscall, atomics, function pointers, inline asm), the
+  closed builtin list (the `__builtin_` atomics, fence and asm; `MemoryOrder`) and the roles bound with
+  `register` (`panic`, `allocator`). A builtin's body is provided by the compiler itself; if the compiler will not
+  directly support something, it is not a builtin and goes to the stdlib. `memcpy` family, `malloc`/`free`/the
+  allocator are NOT builtins: they come from the stdlib (`std/memory`, `std/mem`). The compiler never treats
+  the stdlib specially (no precedence rules). Thread, scheduler and print concepts do not belong in the
+  compiler; they are xlang stdlib.
 - **libc is forbidden**, absolutely: never used, never called, never imitated. Do not suggest it, do not put it in
   examples (`puts`, `FILE`, `environ`, ...).
 - Do not invent features or design beyond what the user asked for. If a decision is needed, record it in
@@ -63,8 +65,18 @@ No filler praise; state weaknesses plainly. For each feature cover:
 
 - Functions: `fn name(a: i32) -> i32 { }` (no `->` means `void`).
 - Types: `i8 i16 i32 i64 isize`, `ui8 ui16 ui32 ui64 usize`, `f32 f64`, `bool`, `void`, `*T`, `fn(A) -> R`,
-  `[T; N]` (fixed-size array, `N` a compile-time constant; indexing syntax pending).
-- Diagnostic codes: `W` = warning, `E` = error (e.g. `E0302` for a non-C type in an `export(c)` signature).
+  `[T; N]` (fixed-size array value type, `N` a compile-time constant; literals `[a, b]` / `[v; N]`; `a[i]` is
+  bounds-checked under `--safety=checked`, default, calling `panic`; `p[i]` on `*T` is unchecked).
+- `enum Name: T { A, B = 5 }`: `T` is any type that can hold a constant (integers, floats, bool, `*ui8` strings);
+  defaults to `i32`; access `Name.A`; conversions with explicit `as`. `MemoryOrder` is a builtin enum.
+- Diagnostic codes: `W` = warning, `E` = error (e.g. `E0302` non-C type in `export(c)`, `E0501` no allocator for
+  `new`, `E0502` duplicate `register`, `E0503` role contract not met, `W0402` local name shadows a registered one).
+- `register(role) decl` / `register decl`: a single prefix like `declare`, opposite direction: the declared name
+  becomes **global** (no import) as soon as the module enters the compilation, and implies `export`. Roles:
+  `panic` (`fn(msg: *ui8)`, noreturn; the compiler's inserted failure paths — division by zero, array bounds,
+  `ref` generation mismatch — call it, plain trap if unregistered) and `allocator` (a mutable global with
+  `alloc` and `free` methods; `new T` calls its `alloc`). One registration per role. Registered names are
+  shadowed (with `W0402`) by local definitions. `panic` lives in `std/runtime`, `assert!` in `std/assert`.
 - Memory layout: default xlang layout; `@repr(c)` gives C/C++ layout.
 - `class` (single inheritance, vptr) and `interface` (fat pointer `{data, itable}`) are compiler features.
 - Conditional compilation: line-based `#if/#elif/#else/#endif/#ifdef/#ifndef/#error`; the condition is the normal
@@ -75,24 +87,31 @@ No filler praise; state weaknesses plainly. For each feature cover:
 - Source extension `.xl`. No default export; `export` (between xl modules) and `export(c)` (unmangled C symbol).
 - Name mangling is on by default; overrides: `--mangle=`, `@file(mangle = ...)`, `@mangle(...)` (fn > file > project).
 - `new T { fields }` and `new(a) T { fields }`: allocate via `alloc(self, size, align) -> *void`, initialize, return
-  `*T`. `new T` uses the default allocator = the single global marked `@default_allocator` (the compiler looks for
-  the mark, not a name, and does not know `malloc`). The compiler does NOT treat the stdlib specially: there is no
-  precedence rule, at most one marked global may exist in the whole program (two is an error). The stdlib
-  (`std/mem`) marks one under the std feature `default-allocator` (on by default); a user picks their own with
-  `--std-features=-default-allocator` and marks a global. With no mark, `new T` is error `E0501` (use `new(a) T`).
-  `sqrt` and math come from `std/math`. The relation of `new` to `ref T` is a pending decision.
+  `*T`. An allocator is a **group**: it must have both `alloc` and `free`, and freeing always goes to the same
+  group. `new T` uses the `register(allocator)` global (the compiler looks for the registration, not a name, and
+  does not know `malloc`); at most one registration in the whole program. The stdlib (`std/mem`) registers
+  `current_allocator` under the std feature `default-allocator` (on by default); a user either calls
+  `std/mem.set_allocator(a)` once at the start of `main` (set-once, second call panics; `new` and `free` follow)
+  or turns the feature off with `--std-features=-default-allocator` and registers their own. With no
+  registration, `new T` is error `E0501` (use `new(a) T`). `sqrt` and math come from `std/math`. The relation of
+  `new` to `ref T` is a pending decision.
+- Global variable initializers are compile-time constants (static init, no runtime init order): literals, `define`
+  constants, enum members, `size_of`-style queries, `&global`, `&global[const]`, `as` casts, constant struct/class/
+  array literals; no function calls or reads of other globals. No initializer means zero-initialized.
 - Safety: `*T` unchecked, `ref T` generation-checked (`--safety=checked|unchecked`); no borrow checker.
 - Outputs: `--emit=obj|ir|bc|header|exe|static|shared`; linking with C++ is done by the user's build script (xmake).
 - Atomics are builtins with the `__builtin_` prefix: `__builtin_atomic_load/store/xchg/cas/add`, `__builtin_fence`.
-  Inline asm is `__builtin_asm("template", in(reg) x, out(reg) y, clobber("memory"))` (syntax in `PLAN.eg.md`
-  §12.1; a proposal, details pending); the template is target-specific and chosen with `#if arch`.
+  The order argument is a compile-time `MemoryOrder` member (`MemoryOrder.seq_cst`). Inline asm is
+  `__builtin_asm("template", in(reg) x, out(reg) y, clobber("rcx"), options("noreturn"))` (syntax in
+  `PLAN.eg.md` §12.1): the template is target-specific and chosen with `#if arch` / `#if os`, Intel dialect on
+  x86, memory is assumed touched unless `options("nomem")`.
   `mutex` exists in the stdlib (`std/sync`, built on the atomics + OS wait); there is no `lock_guard`/RAII guard.
-- Global namespace is a closed builtin list: `syscall`, atomics/`fence`, `size_of`-style queries, `static_assert`,
-  and the memory order constants (`relaxed`, `acquire`, `release`, `acq_rel`, `seq_cst`).
+- Global namespace has two tiers: (a) the closed builtin list: `syscall`, atomics/`fence`/asm, `size_of`-style
+  queries, `static_assert`, the `MemoryOrder` enum; (b) names bound with `register` in any loaded module.
   Builtins come in two spellings: `__builtin_xx` (atomics, fence, asm) and unprefixed (`syscall`, `size_of` family,
-  ...); not all carry the `__builtin_` prefix. `syscall` is always plain `syscall`. Builtins are compiler-level and global; the stdlib is never global.
-  `print` and anything not in the builtin list come from the stdlib via import. Which builtin uses which spelling
-  is a pending decision.
+  ...); not all carry the `__builtin_` prefix. `syscall` is always plain `syscall`. `register`'d names are not
+  builtins (their body is ordinary xl). `print`, `alloc`, `memcpy`, `assert` and anything neither builtin nor
+  registered come from the stdlib via import.
 - `declare` is a single prefix: `declare fn/global/struct/class/interface/type`; no special global syntax; attributes
   (`@repr(c)`, `@mangle`, ...) are the same as for normal declarations; it is only for things coming from other
   objects/libraries.
@@ -120,6 +139,8 @@ No filler praise; state weaknesses plainly. For each feature cover:
 - Syscall: builtin `syscall(nr, args...)`. The argument count is dynamic: the compiler forwards exactly the number
   given, with no fixed limit in the language. The per-target maximum (from the target OS/arch table) is checked
   at compile time and exceeding it is a compile error. Do not write "0-6" or similar fixed counts anywhere.
+  The return is always `i64` with errors as negative `-errno` on every target (macOS carry flag is normalized by
+  the compiler; Windows returns the NTSTATUS sign-extended).
 
 ## Build
 
