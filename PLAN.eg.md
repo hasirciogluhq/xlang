@@ -173,10 +173,17 @@ fn main() -> i32 {
 
 ### `new`
 
-`new(a) T { alanlar }` **hem bellek ayırır hem nesneyi oluşturur** ve nesnenin pointer'ını (`*T`) döndürür.
-Allocator'ı **kullanıcı verir**: `a`, `alloc(self, size: usize, align: usize) -> *void` metoduna sahip
-herhangi bir değerdir (class, interface değeri ya da `impl` eden struct). Compiler hiçbir allocator bilmez,
-örtük/varsayılan allocator yoktur; `--no-std` altında da aynı çalışır.
+`new T { alanlar }` **hem bellek ayırır hem nesneyi oluşturur** ve nesnenin pointer'ını (`*T`) döndürür.
+Allocator iki yoldan gelir:
+
+| Yazım | Allocator |
+|-------|-----------|
+| `new T { ... }` | **Varsayılan allocator**: `@default_allocator` ile işaretli global ([aşağıda](#varsayılan-allocator)) |
+| `new(a) T { ... }` | Açıkça verilen `a` |
+
+Allocator (`a` ya da varsayılan), `alloc(self, size: usize, align: usize) -> *void` metoduna sahip herhangi
+bir değerdir (class, interface değeri ya da `impl` eden struct). Compiler hiçbir allocator'ın gövdesini
+bilmez; yalnızca `alloc` çağrısını çözer ve işaretli global'e bakar.
 
 `new(a) T { x: 1 }` şuna eşittir:
 
@@ -214,8 +221,66 @@ fn main() -> i32 {
 |-------|-------|
 | `new(a) T { ... }` | `a.alloc(size_of(T), align_of(T))` çağır, alanları yaz, `*T` döndür |
 | `a.alloc` `null` dönerse | `new` de `null` döndürür, alanlar yazılmaz |
-| `new T { ... }` (allocator'sız) | **Hata**: allocator açıkça verilmeli |
-| Bırakma | Allocator'ın kendi metodu (ör. `a.free(p)`); `new` için ayrı bir kural yok |
+| `new T { ... }` | Varsayılan allocator'ın `alloc`'u çağrılır; varsayılan yoksa **hata** (`E0501`) |
+| Bırakma | Allocator'ın kendi metodu (ör. `a.free(p)`) ya da `std/mem`'in `free`'si; `new` için ayrı bir kural yok |
+
+### Varsayılan allocator
+
+`@default_allocator` ile işaretlenen **tek bir global**, `new T { ... }`'in kullandığı allocator'dır.
+Stdlib `std/mem`'de bir tane işaretler. Stdlib yoksa (`--no-std`) ya da başka bir allocator istenirse
+kullanıcı kendi global'ini işaretler. Compiler adı değil, **işareti** arar.
+
+```xlang
+// std/mem.xl (stdlib)
+export class Heap {
+    fn alloc(self, size: usize, align: usize) -> *void { /* OS'tan sayfa al */ }
+}
+
+@default_allocator
+export global heap: Heap = Heap { }
+```
+
+```xlang
+// kullanıcı, stdlib ile: hiçbir şey vermesine gerek yok
+struct Point { x: i32, y: i32 }
+
+fn main() -> i32 {
+    local p: *Point = new Point { x: 1, y: 2 }     // std/mem'in heap'i
+    return p.x + p.y
+}
+```
+
+```xlang
+// --no-std: kendi varsayılanını işaretle
+global arena_buf: [ui8; 65536]
+
+@default_allocator
+global arena: Bump = Bump { base: &arena_buf as *ui8, used: 0, cap: 65536 }
+
+fn main() -> i32 {
+    local p: *Point = new Point { x: 1, y: 2 }     // arena.alloc
+    return p.x + p.y
+}
+```
+
+| Durum | Sonuç |
+|-------|-------|
+| Stdlib var, kullanıcı işaretlemedi | Stdlib'in `heap`'i |
+| Kullanıcı programında bir `@default_allocator` var | O, stdlib'inkinin yerine geçer |
+| Kullanıcı programında iki tane | **Hata** |
+| `--no-std`, işaretli global yok, `new T { }` yazıldı | **Hata** `E0501` |
+| `new(a) T { }` | `a` kullanılır, varsayılan aranmaz |
+
+```
+error[E0501]: `new` için varsayılan allocator yok
+  --> app.xl:9
+   |
+ 9 | local p: *Point = new Point { x: 1, y: 2 }    <======= varsayılan allocator tanımlı değil
+   |
+detay:  Stdlib yok (--no-std) ve `@default_allocator` ile işaretli bir global bulunamadı.
+neden:  Compiler hiçbir allocator bilmez; `new T` hangi allocator'ı çağıracağını bilemez.
+düzelt: `new(a) T { ... }` yaz ya da bir global'i `@default_allocator` ile işaretle.
+```
 
 ---
 
@@ -977,11 +1042,11 @@ olmaz, stdlib'e gider. `memcpy`, `malloc`, `free` builtin değildir, global de d
 edilir. Bkz. `PLAN.md` "Karar bekleyen".
 
 ```xlang
-from "std/mem" import heap, free               // stdlib: global değil, import gerekir
+from "std/mem" import free                     // stdlib: global değil, import gerekir
 from "std/memory" import memcpy
 
 fn clone_header(src: *Header) -> *Header {
-    local p: *Header = new(heap) Header { tag: 0, length: 0, id: 0 }
+    local p: *Header = new Header { tag: 0, length: 0, id: 0 }    // varsayılan allocator
     memcpy(p as *void, src as *void, size_of(Header))
     return p
 }
@@ -1149,12 +1214,12 @@ ham pointer `*T` C gibi aynen çalışır. Üstüne, kullanım-sonrası-serbest 
 | `ref T` | 16 B (`ptr` + `gen`) | her erişimde nesil kontrolü | güvenli kod |
 
 ```xlang
-from "std/mem" import heap, free        // stdlib: global değil, import gerekir
+from "std/mem" import free              // stdlib: global değil, import gerekir
 
 struct Node { value: i32 }
 
 fn main() -> i32 {
-    local n: ref Node = new(heap) Node { value: 7 }
+    local n: ref Node = new Node { value: 7 }     // varsayılan allocator
     local copy: ref Node = n             // ikisi de aynı nesne
 
     free(n)                              // nesnenin nesli artar
@@ -1176,7 +1241,7 @@ heap nesnesi                         ref Node (16 B)
 
 | Kural | Açıklama |
 |-------|----------|
-| Oluşturma | `new(a) T { ... }` (allocator'ı kullanıcı verir, ör. `std/mem`'in `heap`'i) veya `&local` ile |
+| Oluşturma | `new T { ... }` (varsayılan allocator), `new(a) T { ... }` (açık allocator) veya `&local` ile |
 | Erişim | `r.alan`, `*r`: her erişimde nesil kontrolü |
 | `ref T → *T` | Açık `as *T` (korumayı bilerek bırakır) |
 | Yerel adresi | `&local` ile alınan `ref`'in fonksiyondan kaçması (return/global'e yazma) **derleme hatası** |
@@ -1411,6 +1476,7 @@ Susturulan (`@allow`/`--allow`) uyarılar ekrandan düşer ama `--diag-log` aç�
 | `E0302` | `export(c)` imzası C'de ifade edilemeyen bir tip içeriyor | **hata** |
 | `W0401` | Aynı varlık iki farklı yoldan import/export edildi | uyarı |
 | `E0401` | Farklı varlıklar aynı ada import/export ediliyor | **hata** |
+| `E0501` | `new T { }` için varsayılan allocator yok (`@default_allocator` işaretli global bulunamadı) | **hata** |
 
 ---
 

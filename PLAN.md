@@ -108,11 +108,12 @@ Source ─► Lexer ─► Preprocess (#if/#elif/#else/#endif, token seviyesi) �
 - **Liste sınırı:** builtin listesi kapalıdır (kural 7); eklenecekler "compiler gövdeyi doğrudan
   sağlayabiliyor mu" ölçütüne tabidir.
 - **Çakışma:** kullanıcı/stdlib bir builtin adını tanımlarsa (ör. atomic'ler) hata mı, gölgeleme mi?
-- **`new` ve `ref T`:** `new(a) T{}` `*T` döndürür; `ref T`'ye atamak için `gen` başlığı (4.10) gerekir:
-  `a`'nın ref-uyumlu olması mı, ayrı bir yazım mı belirlenmedi (§17 örneği `heap` adlı varsayımsal bir
-  allocator nesnesi kullanıyor).
-- **`new` ayrıntıları:** `alloc`'un `align` parametresinin anlamı, `std/mem`'in hazır allocator
-  nesnelerinin adları (`heap` örneklerde geçici ad) belirlenmedi.
+- **`new` ve `ref T`:** `new T{}` `*T` döndürür; `ref T`'ye atamak için `gen` başlığı (4.10) gerekir:
+  varsayılan allocator'ın ref-uyumlu olması mı, ayrı bir yazım mı belirlenmedi (§17 örneği `new Node{}`'u
+  `ref Node`'a atıyor).
+- **`@default_allocator` ayrıntıları:** işaretli global'in başlangıç değeri hangi sabit ifadeleri alabilir
+  (ör. `&dizi as *ui8`), işaretli öğenin tipi için başka kısıt var mı, `alloc`'un `align` parametresinin
+  anlamı, `std/mem`'deki varsayılanın adı (`heap` örneklerde geçici ad) belirlenmedi.
 - **`panic`:** `assert` örneğinde kullanılıyor ama hangi stdlib modülünde yaşayacağı belirlenmedi.
 - **`syscall` argüman tipleri:** pointer'ın `as` olmadan geçip geçmeyeceği (5.5 "syscall sınırında" der)
   örneklerde tutarsız yazıldı; tek kural yazılmalı.
@@ -134,7 +135,7 @@ Source ─► Lexer ─► Preprocess (#if/#elif/#else/#endif, token seviyesi) �
   `isize`, `usize`, `f32`, `f64`), `class`, `interface`, `impl`/`:` kalıtım sözdizimi.
 - [ ] **1.2** Parser: `fn ... -> T`, öznitelikler (`@repr(c)`, `@align(N)`, `@packed`), `class`/`interface`
   bildirimleri, `declare fn ... -> T`, fonksiyon pointer tipi `fn(A, B) -> R`, dizi tipi `[T; N]`,
-  `new(a) T { ... }` ifadesi.
+  `new T { ... }` / `new(a) T { ... }` ifadesi, `@default_allocator` özniteliği.
 - [ ] **1.2b** Import biçimleri: `import "m" as a`, `import * from "m"`, `import * as a from "m"`,
   `from "m" import x [as y], ...` ve
   `import x [as y], ... from "m"`; ikincisi birincisiyle aynı `ImportDecl` düğümüne iner.
@@ -292,11 +293,14 @@ Source ─► Lexer ─► Preprocess (#if/#elif/#else/#endif, token seviyesi) �
   her erişimde `ref.gen == obj.gen` kontrolü + trap üretir. `&local`'dan ref'in kaçışı derleme hatası
   (basit escape kontrolü, borrow checker değil). `@unchecked fn` ve `--safety=unchecked` kontrolleri kaldırır.
   `ref T` `@repr(c)` alanında ve `export(c)` imzasında yasak.
-- [ ] **4.11** `new(a) T { alanlar }`: dil ifadesi; `a.alloc(size_of(T), align_of(T))` çağırır, alanları
-  yazar ve `*T` döndürür. Allocator'ı **kullanıcı verir**: `a`, `alloc(self, size: usize, align: usize) ->
-  *void` metoduna sahip herhangi bir değer (class, interface değeri, `impl` eden struct); sema yalnızca bu
-  metodu çözer. Örtük/varsayılan allocator yoktur, allocator'sız `new` hatadır; compiler `malloc` bilmez
-  (kural 4) ve `--no-std` altında aynı çalışır. `alloc` `null` dönerse `new` `null` döndürür.
+- [ ] **4.11** `new T { alanlar }` ve `new(a) T { alanlar }`: dil ifadesi; `a.alloc(size_of(T),
+  align_of(T))` çağırır, alanları yazar ve `*T` döndürür. Allocator `alloc(self, size: usize, align: usize)
+  -> *void` metoduna sahip herhangi bir değer (class, interface değeri, `impl` eden struct); sema yalnızca bu
+  metodu çözer. `new T` **varsayılan allocator**'ı kullanır: `@default_allocator` ile işaretli tek global.
+  Compiler adı değil işareti arar, `malloc` bilmez (kural 4). Stdlib `std/mem`'de bir tane işaretler;
+  kullanıcı programındaki işaretli global stdlib'inkinin yerine geçer; kullanıcıda iki tane hatadır;
+  `--no-std` altında işaretli global yoksa `new T` hatadır (`E0501`, düzelt: `new(a) T` ya da işaretle).
+  `alloc` `null` dönerse `new` `null` döndürür.
 
 **Kabul:** class/interface/vtable içeren küçük programlar çalışır; `@repr(c)` class'ın nesne düzeni
 ve vtable'ı clang ile birebir uyuşur (tek kalıtım).
@@ -380,7 +384,7 @@ kullanıcı kodu → std/{thread,sync,sched,io,memory} → std/sys/{linux,macos,
 - [ ] **7.1b** Stdlib yerleşimi: `std/index.xl` (giriş; alt modülleri `export * from` / `export * as` ile
   toplar), `std/memory`, `std/mem`, `std/math` (`sqrt` vb.; xl ile yazılır, libm yok), `std/cpu`,
   `std/gpu`, `std/sys/*`. `import "std"` hepsini, `import "std/cpu"` yalnızca ilgili parçayı verir.
-- [ ] **7.2** `std/mem`: hazır allocator nesneleri (`new(a)` için `alloc` metodu olan; örneklerde `heap`,
+- [ ] **7.2** `std/mem`: varsayılan allocator (`@default_allocator` ile işaretli global; örneklerde `heap`,
   ad karar bekleyen) ve `free`. `std/io`: `print` (compiler'a gömülü değil; global değil, `import` ile gelir).
   `memcpy/memset/memmove/memcmp` `std/memory`'de **xl ile yazılır** ve `export(c)` ile C adıyla verilir
   (LLVM'in örtük çağrıları için; libc yok); global değildir (bkz. kural 7).
