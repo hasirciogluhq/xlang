@@ -9,7 +9,8 @@
 İçindekiler: [1 Tipler](#1-tipler) · [2 Tip dönüşümü](#2-tip-dönüşümü) · [3 Fonksiyonlar](#3-fonksiyonlar) ·
 [4 Değişkenler ve kontrol akışı](#4-değişkenler-ve-kontrol-akışı) · [5 Pointer](#5-pointer) ·
 [6 Struct ve bellek düzeni](#6-struct-ve-bellek-düzeni) · [7 Class](#7-class) · [8 Interface](#8-interface) ·
-[9 Koşullu derleme](#9-koşullu-derleme) · [10 CLI](#10-cli) · [11 Syscall](#11-syscall) ·
+[9 Koşullu derleme](#9-koşullu-derleme) · [9.1 type](#91-tip-takma-adı-type) ·
+[9.2 define/macro](#92-define-ve-macro) · [10 CLI](#10-cli) · [11 Syscall](#11-syscall) ·
 [12 Atomic ve fonksiyon pointer'ı](#12-atomic-ve-fonksiyon-pointerı) · [13 Modüller](#13-modüller) ·
 [14 Harici (C) semboller](#14-harici-c-semboller) · [15 Stdlib ile thread](#15-stdlib-ile-thread)
 
@@ -366,6 +367,7 @@ fn main() -> i32 {
 |--------|-------|-----|
 | Yerleşik | `os`, `arch`, `pointer_width`, `endian`, `debug`, `opt_level` | hedef/derleme ayarından |
 | CLI | `-D ENABLE_STATS`, `-D LEVEL=3`, `-D NAME="x"` | bool / tamsayı / string |
+| Dosyada | `define LEVEL = 3` ([9.2](#92-define-ve-macro)) | sabit; CLI `-D` bunun yerine geçer |
 
 | İfade | Anlam |
 |-------|-------|
@@ -375,6 +377,136 @@ fn main() -> i32 {
 | `#error "msg"` | dal seçilirse derleme hatası |
 
 Koşullar derleme zamanı sabitidir; çalışma zamanı değişkeni kullanılamaz.
+
+---
+
+## 9.1 Tip takma adı (`type`)
+
+`typedef` karşılığı `type`'tır. Yeni bir tip **yaratmaz**, mevcut tipe ikinci bir ad verir
+(şeffaf takma ad): aynı boyut, aynı düzen, aynı tip olarak karşılaştırılır.
+
+```xlang
+type Byte = ui8
+type Size = usize
+type Handler = fn(i32) -> i32          // fonksiyon pointer'ı
+type BytePtr = *ui8
+
+export type Fd = i32                   // modül dışına açık
+
+@repr(c)
+struct Header { tag: Byte, length: ui32 }
+
+type Hdr = Header                      // struct'a takma ad
+
+fn run(h: Handler, v: i32) -> i32 {
+    return h(v)
+}
+```
+
+| Yazım | Anlam |
+|-------|-------|
+| `type Ad = Tip` | Takma ad tanımı |
+| `export type Ad = Tip` | Dışa açık takma ad |
+| Kullanım | Tip yazılan her yerde (`local`, parametre, alan, `as`, `size_of`) |
+
+Takma ad ayrı bir tip değildir: `Byte` ile `ui8` birbirinin yerine geçer, yeni sınıf/ayrı kimlik yoktur.
+
+---
+
+## 9.2 `define` ve macro
+
+Metin değiştiren C önişlemcisi **yok**. `define` yapısaldır: gövde süslü parantez içinde yazılır
+(satır sonu için `\` yoktur, gövde zaten çok satırlı olabilir), parametreler **türlüdür**, ve
+`#` / `##` yoktur.
+
+### Sabit define
+
+```xlang
+define MAX_CLIENTS = 64
+define PAGE = 4096
+define NAME = "xlang"
+
+local buf: [ui8; PAGE]
+```
+
+`define NAME = sabit_ifade`: derleme zamanı sabiti. `#if` koşullarında da kullanılır. CLI'dan
+`-D MAX_CLIENTS=128` verilirse dosyadaki tanımın **yerine geçer** (CLI önceliklidir).
+
+### Fonksiyon benzeri macro
+
+```xlang
+define square(x: expr) {
+    x * x
+}
+
+define swap(a: expr, b: expr, T: type) {
+    local tmp: T = a
+    a = b
+    b = tmp
+}
+
+fn main() -> i32 {
+    local p: i32 = 3
+    local q: i32 = 4
+    swap!(p, q, i32)
+    return square!(p + 1)       // (p + 1) * (p + 1): parametre bir ifade olarak yerleşir, öncelik bozulmaz
+}
+```
+
+- Çağrı **`ad!(...)`** ile yapılır; fonksiyon çağrısıyla karışmaz.
+- Gövde çok satırlı olabilir, devam karakteri yoktur.
+- Parametreler parse edilmiş parçalardır; metin yapıştırma olmadığı için `x * x` içinde `p + 1`
+  parantez eklemeye gerek kalmadan doğru önceliğe sahiptir.
+
+| Parametre türü | Kabul ettiği |
+|----------------|--------------|
+| `expr` | Bir ifade |
+| `type` | Bir tip |
+| `ident` | Bir tanımlayıcı |
+| `block` | `{ ... }` bloğu |
+| `items` | Bir veya daha fazla üst düzey bildirim |
+
+### Macro ile import / bildirim üretme
+
+Macro gövdesi ifade, statement, bildirim ve hatta `import` içerebilir. Macro bir modül seviyesinde
+çağrılırsa bildirimleri üretir:
+
+```xlang
+define with_logging(name: ident, body: block) {
+    import "std/io" as io
+    fn name() {
+        io.print("enter {}\n", stringify!(name))
+        body
+    }
+}
+
+with_logging!(startup, {
+    init_system()
+})
+```
+
+| Kural | Açıklama |
+|-------|----------|
+| Hijyen | Macro içindeki `local` adları çağıranın adlarıyla çakışmaz (otomatik yeniden adlandırılır) |
+| Özyineleme | Macro kendini/diğerini çağırabilir; derinlik sınırı 64 |
+| Hata konumu | Hata, macro çağrı yerini ve genişleme zincirini gösterir |
+| Dışa açma | `export define ...`; `from "m" import square` ile alınır, `square!(...)` olarak çağrılır |
+| Koşullu | `#if` içinde tanımlanabilir, macro gövdesinde `#if` kullanılabilir |
+
+### `#` ve `##` yerine adlandırılmış yardımcılar
+
+```xlang
+define assert(cond: expr) {
+    if !(cond) {
+        panic(stringify!(cond))      // kaynak metnini string yapar
+    }
+}
+```
+
+| Yardımcı | Anlam |
+|----------|-------|
+| `stringify!(parça)` | Parçanın kaynak metnini string literal yapar |
+| Tanımlayıcı birleştirme (`##`) | **Yok**; gerekirse macro parametresi olarak `ident` geçirilir |
 
 ---
 

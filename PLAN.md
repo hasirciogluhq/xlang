@@ -44,6 +44,8 @@ Source ─► Lexer ─► Parser ─► AST ─► Cfg eliminate (#if) ─► M
 | Interface | Fat pointer `{data, itable}` (Go/Rust tarzı); struct ve class implement edebilir | Düzeni (C uyumu) bozmaz |
 | Import | `import "m" as a`, `from "m" import x` **ve** `import x from "m"` (ikisi de geçerli, aynı AST) | İstek: iki sıra da desteklensin |
 | Koşullu derleme | `#if` / `#elif` / `#else` **süslü parantezli, yapısal** blok; metin makrosu yok | `#ifdef/#endif` karmaşasından kaçınmak |
+| Tip takma adı | `type Ad = Tip` (şeffaf alias, yeni tip yaratmaz), `export type` | İstek: typedef benzeri |
+| define / macro | `define N = sabit` ve `define f(x: expr) { ... }`, çağrı `f!(...)`; gövde süslü parantezli, `\` yok, `#`/`##` yok, türlü parametre (`expr/type/ident/block/items`), hijyenik; `stringify!`; macro bildirim ve `import` üretebilir, `export define` ile import edilebilir | İstek: C önişlemcisinin pisliği olmadan macro |
 | CLI tanımları | `-D/--define NAME[=DEĞER]`, `-U/--undef NAME`, + yerleşik `os`, `arch`, ... | İstek |
 | Thread/scheduler/IO/alloc | xlang stdlib; compiler görmez (Faz 7) | Compiler yalnızca düşük seviye bilir |
 | Pass manager | New PassManager (`PassBuilder`) | Legacy PM deprecated |
@@ -77,6 +79,9 @@ Source ─► Lexer ─► Parser ─► AST ─► Cfg eliminate (#if) ─► M
 - [ ] **1.2b** Import biçimleri: `import "m" as a`, `from "m" import x [as y], ...` ve
   `import x [as y], ... from "m"`; ikincisi birincisiyle aynı `ImportDecl` düğümüne iner.
   Parser, `import` sonrasında string mi tanımlayıcı mı geldiğine bakarak ayırır.
+- [ ] **1.2c** `type Ad = Tip` (+ `export type`), `define N = ifade`, `define f(p: tür, ...) { gövde }`,
+  macro çağrısı `ad!(...)`. Macro gövdesi ham token ağacı olarak saklanır (parse genişleme anında,
+  parametre türüne göre).
 - [ ] **1.3** AST'yi yeniden tasarla: tip düğümü `Type` ağaç yapısı (`TypeKind::Int{bits, signed}`,
   `Float{bits}`, `Pointer`, `FnPtr`, `Struct`, `Class`, `Interface`). Eski `Int32/Int64/BigInt` ayrımı gider.
 - [ ] **1.4** Diagnostics altyapısı (`include/xlang/util/diagnostics.h`): `Diagnostic{severity, span,
@@ -101,7 +106,7 @@ Source ─► Lexer ─► Parser ─► AST ─► Cfg eliminate (#if) ─► M
 **Kabul:** `@repr(c)` struct'lar için clang'ın ürettiği `sizeof/alignof/offsetof` ile test
 (birkaç karma tipli struct, iç içe, packed, aligned) birebir uyuşur; x86_64 ve aarch64 için.
 
-## Faz 3 — Koşullu derleme ve CLI tanımları
+## Faz 3 — Koşullu derleme, define/macro ve CLI tanımları
 
 - [ ] **3.1** `#if cond { ... } #elif cond { ... } #else { ... }`: item, statement ve struct/class alan
   seviyesinde kullanılabilir. Metin değil **AST** düzeyinde çalışır; pasif dallar yine parse edilir
@@ -126,6 +131,18 @@ Source ─► Lexer ─► Parser ─► AST ─► Cfg eliminate (#if) ─► M
   | `--cpu <name>` | Hedef CPU (varsayılan `generic`) |
 
 - [ ] **3.5** `#error "mesaj"`: koşul dalı seçilirse derleme hatası.
+- [ ] **3.6** `define` sabitleri: dosya içi `define N = ifade` ve CLI `-D` aynı isim uzayında; CLI öncelikli;
+  `#if` ve normal kodda okunabilir. Sabit ifade değerlendirici (tamsayı/bool/string) burada yazılır.
+- [ ] **3.7** Macro genişletme (`src/lang/macro/`): token ağacı üzerinde, metin birleştirme yok.
+  - Parametre türü doğrulama (`expr`, `type`, `ident`, `block`, `items`).
+  - Hijyen: macro içi `local` adları taze isimle yeniden adlandırılır.
+  - Genişleme bir fixpoint döngüsüdür (macro → `#if` eleme → tekrar macro), derinlik sınırı 64,
+    hatalar genişleme zincirini ve çağrı konumunu gösterir.
+  - Macro gövdesi item/statement/`import` üretebilir; modül seviyesinde çağrılan macro bildirim üretir.
+  - `export define` ve `from "m" import ad` ile modüller arası macro paylaşımı; modül yükleme sırasında çözülür.
+  - `stringify!(parça)` yerleşik; `#`/`##` ve satır devam karakteri sözdiziminde **yoktur**.
+- [ ] **3.8** `type` takma adları sema'da çözülür (Faz 4.1 scope'unda), HIR'da hedef tipe indirgenir;
+  döngüsel takma ad hatası.
 
 **Kabul:** `-D DISABLE_X` ile bir item/alan/statement elenir; `--print-cfg` doğru değerleri gösterir.
 
@@ -221,7 +238,8 @@ Faz 0 ─► Faz 1 ─► Faz 2 ─► Faz 3 ─► Faz 4 ─► Faz 5 ─► Fa
 4. Tip modeli + işaretli/işaretsiz lowering (2.1–2.2)
 5. Layout motoru + `@repr(c)` + `size_of/offset_of/static_assert` + clang karşılaştırma testi (2.3–2.5)
 6. `#if` + yerleşik tanımlar (3.1–3.3, 3.5)
-7. CLI bayrakları `-D/-U/--target/-O/-g/--emit/--print-cfg` (3.4)
+7. CLI bayrakları `-D/-U/--target/-O/-g/--emit/--print-cfg` + `define` sabitleri (3.4, 3.6)
+7b. Macro genişletme + `type` takma adı (3.7–3.8)
 8. Sema + scope + modül yükleme (4.1–4.2, 4.6)
 9. HIR + codegen taşıma (4.3, 4.7)
 10. Class (4.4), Interface (4.5)

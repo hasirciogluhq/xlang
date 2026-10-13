@@ -36,6 +36,8 @@
 - Bellek düzeni: varsayılan xlang düzeni; `@repr(c)` C/C++ düzeni.
 - `class` (tek kalıtım, vptr) ve `interface` (fat pointer `{data, itable}`) compiler'da.
 - Koşullu derleme: `#if / #elif / #else { }` (yapısal, makro yok); CLI: `-D`, `-U`, `--target`, `-O`, `-g`.
+- Tip takma adı: `type Ad = Tip` (şeffaf). Macro: `define N = sabit`, `define f(x: expr) { ... }`, çağrı `f!(...)`;
+  gövde süslü parantezli, `\` ve `#`/`##` yok, türlü parametre, hijyenik, `stringify!`.
 - Import: `from "m" import x` ve `import x from "m"` ikisi de geçerli.
 - Syscall: builtin `syscall(nr, args...)`.
 
