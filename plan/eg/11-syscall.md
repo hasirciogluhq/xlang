@@ -10,7 +10,7 @@ fn getpid() -> i64 {
     return syscall(39)                    // 0 argüman: yalnızca numara
 }
 
-fn write_all(fd: i64, buf: *ui8, n: usize) -> i64 {
+fn writeAll(fd: i64, buf: *ui8, n: usize) -> i64 {
     return syscall(1, fd, buf as i64, n as i64)    // 3 argüman iletilir
 }
 ```

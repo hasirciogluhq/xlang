@@ -29,10 +29,10 @@
    | Grup | Adlar | Yazım |
    |------|-------|-------|
    | Syscall | `syscall` | öneksiz, doğrudan `syscall` |
-   | Atomic | `__builtin_atomic_load/store/xchg/cas/add`, `__builtin_fence` | `__builtin_` önekli |
+   | Atomic | `__builtin_atomicLoad/Store/Xchg/Cas/Add`, `__builtin_fence` | `__builtin_` önekli |
    | Inline asm | `__builtin_asm` | `__builtin_` önekli |
-   | Memory order | `MemoryOrder` (enum tipi: `MemoryOrder.relaxed`, `.acquire`, `.release`, `.acq_rel`, `.seq_cst`) | öneksiz tip |
-   | Derleme zamanı | `size_of`, `align_of`, `offset_of`, `static_assert` | öneksiz |
+   | Memory order | `MemoryOrder` (enum tipi: `MemoryOrder.relaxed`, `.acquire`, `.release`, `.acqRel`, `.seqCst`) | öneksiz tip |
+   | Derleme zamanı | `sizeOf`, `alignOf`, `offsetOf`, `staticAssert` | öneksiz |
 
    Builtin fonksiyonlar iki biçimde yazılır ve **hepsi `__builtin_` önekini taşımaz**.
    `register` ile kaydedilenler (ör. stdlib'in `panic`'i) builtin değildir: compiler onları stdlib'den

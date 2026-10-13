@@ -43,6 +43,27 @@ Writer değeri (fat pointer, 16 B)
 | Yapı | Anlam |
 |------|-------|
 | `interface Ad { fn ... }` | Metod imzaları |
-| `impl Ad for Tip { ... }` | Tipin interface'i implement etmesi |
+| `impl Ad for Tip { ... }` | Tipin interface'i implement etmesi; **zorunlu**: metodlar tutsa bile `impl` yoksa tip o interface olarak kullanılamaz, dönüşüm hatadır (`E0504`). Yapısal eşleşme yoktur |
 | Interface tipli parametre/yerel | `{data, itable}` fat pointer |
 | Çağrı | `değer.metod(...)` itable'dan dolaylı |
+
+```xlang
+struct Console { fd: i32 }          // write(self, buf, len) metodu var ama impl Writer for Console YOK
+
+fn main() -> i32 {
+    local c: Console = Console { fd: 1 }
+    emit(c, "hi\n", 3)              // HATA E0504
+    return 0
+}
+```
+
+```
+error[E0504]: `Console` `Writer` interface'ini implement etmiyor
+  --> app.xl:5
+   |
+ 5 |     emit(c, "hi\n", 3)              <======= `Console` -> `Writer` dönüşümü: `impl` yok
+   |
+detay:  `emit` parametresi `Writer` interface'idir; `Console` için `impl Writer for Console` bulunamadı.
+neden:  Interface'ler nominaldir; metod adları tutsa bile `impl` yazılmadan dönüşüm yapılmaz.
+düzelt: `impl Writer for Console { fn write(...) { ... } }` ekle.
+```

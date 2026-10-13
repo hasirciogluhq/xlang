@@ -20,8 +20,8 @@ Tüm tipler açık boyutludur. İşaretli ve işaretsiz tamsayılar ayrı tipler
 | `void` | — | — | `void` |
 | `*T` | pointer genişliği | — | `T*` |
 | `fn(A, B) -> R` | pointer genişliği | — | fonksiyon pointer'ı |
-| `[T; N]` | `N * size_of(T)` | `T`'ye göre | `T[N]` ([6](06-struct-ve-bellek-duzeni.md#sabit-boyutlu-dizi-t-n)) |
-| `enum E: T` | `size_of(T)` | `T`'ye göre | `enum` (alt tip tamsayıysa) ([6.1](06.1-enum.md#61-enum)) |
+| `[T; N]` | `N * sizeOf(T)` | `T`'ye göre | `T[N]` ([6](06-struct-ve-bellek-duzeni.md#sabit-boyutlu-dizi-t-n)) |
+| `enum E: T` | `sizeOf(T)` | `T`'ye göre | `enum` (alt tip tamsayıysa) ([6.1](06.1-enum.md#61-enum)) |
 
 ```xlang
 local a: i32 = -5

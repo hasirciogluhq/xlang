@@ -37,9 +37,9 @@ Ek öznitelikler:
 Derleme zamanı doğrulama:
 
 ```xlang
-static_assert(size_of(Header) == 12, "Header C ile uyumlu olmali")
-static_assert(offset_of(Header, length) == 4, "length offset'i yanlis")
-static_assert(align_of(Header) == 4, "hizalama")
+staticAssert(sizeOf(Header) == 12, "Header C ile uyumlu olmali")
+staticAssert(offsetOf(Header, length) == 4, "length offset'i yanlis")
+staticAssert(alignOf(Header) == 4, "hizalama")
 ```
 
 ### Sabit boyutlu dizi (`[T; N]`)
@@ -72,12 +72,12 @@ fn main() -> i32 {
 |-------|-------|
 | Yazım | `[T; N]` |
 | `N` | Derleme zamanı sabit ifadesi (`define` sabiti olabilir) |
-| Boyut / hizalama | `size_of([T; N]) == N * size_of(T)`, `align_of([T; N]) == align_of(T)` |
-| Uzunluk | `size_of(a) / size_of(T)` (ayrı bir `len` builtin'i yok) |
+| Boyut / hizalama | `sizeOf([T; N]) == N * sizeOf(T)`, `alignOf([T; N]) == alignOf(T)` |
+| Uzunluk | `sizeOf(a) / sizeOf(T)` (ayrı bir `len` builtin'i yok) |
 | Kullanım | Yerel, struct/class alanı, global |
 | Literal | `[a, b, c]` ya da `[v; N]`; eleman tipi bağlamdan çıkarılır |
 | İndeks tipi | `usize`; `ui8/ui16/ui32` örtük genişler, işaretliler `as usize` ister |
 | `a[i]` (dizi) | `--safety=checked` (varsayılan) altında sınır kontrolü: dışındaysa `panic`; `unchecked` ya da `@unchecked fn` kontrolü kaldırır; sabit indeks sınır dışıysa **derleme hatası** `E0701` (`--safety`'den bağımsız, susturulamaz) |
-| `p[i]` (`*T`) | `*(p + i * size_of(T))`; **hiçbir zaman kontrol edilmez** |
+| `p[i]` (`*T`) | `*(p + i * sizeOf(T))`; **hiçbir zaman kontrol edilmez** |
 | Değer semantiği | Atama, parametre ve dönüşte dizi tamamen kopyalanır; kopyayı önlemek için `&a` |
 | `@repr(c)` struct içinde | C'deki `T[N]` ile aynı düzen |

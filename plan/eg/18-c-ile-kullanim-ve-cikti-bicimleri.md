@@ -30,7 +30,7 @@ from "std/math" import sqrt
 @repr(c)
 export struct Vec2 { x: f64, y: f64 }
 
-export(c) fn vec2_len(v: *Vec2) -> f64 {
+export(c) fn vec2Len(v: *Vec2) -> f64 {
     return sqrt(v.x * v.x + v.y * v.y)
 }
 ```
@@ -43,7 +43,7 @@ export(c) fn vec2_len(v: *Vec2) -> f64 {
 extern "C" {
 #endif
 typedef struct { double x; double y; } Vec2;
-double vec2_len(const Vec2* v);
+double vec2Len(const Vec2* v);
 #ifdef __cplusplus
 }
 #endif
@@ -52,7 +52,7 @@ double vec2_len(const Vec2* v);
 ```cpp
 // main.cpp
 #include "geom.h"
-int main() { Vec2 v{3.0, 4.0}; return vec2_len(&v) == 5.0 ? 0 : 1; }
+int main() { Vec2 v{3.0, 4.0}; return vec2Len(&v) == 5.0 ? 0 : 1; }
 ```
 
 ### Kullanıcının kendi xmake script'i (taslak)

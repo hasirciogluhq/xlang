@@ -33,7 +33,7 @@ error[E0401]: `lorem` çift import
    |
 detay:  İki farklı varlık aynı ada bağlanmaya çalışıyor.
 neden:  `lorem` a.xl ve b.xl'de ayrı ayrı tanımlı; hangisinin kullanılacağı belirsiz.
-düzelt: `import * as aa from "a"` / `import * as bb from "b"` ya da `import lorem as lorem_b from "b"`.
+düzelt: `import * as aa from "a"` / `import * as bb from "b"` ya da `import lorem as loremB from "b"`.
 ```
 
 ```
@@ -136,7 +136,8 @@ Susturulan (`@allow`/`--allow`) uyarılar ekrandan düşer ama `--diag-log` aç�
 | `E0401` | Farklı varlıklar aynı ada import/export ediliyor | **hata** |
 | `E0501` | `new T { }` için kayıtlı allocator yok (`register(allocator)` bulunamadı) | **hata** |
 | `E0502` | Aynı rol ya da aynı global ad iki kez `register` edilmiş | **hata** |
-| `E0503` | `register` rolünün sözleşmesi sağlanmamış (ör. `allocator`'da `alloc` ya da `free` yok) | **hata** |
+| `E0503` | `register` rolünün sözleşmesi sağlanmamış (ör. `allocator` global'inin tipi `Allocator` değil ve `impl` yok) | **hata** |
+| `E0504` | Tip bir interface olarak kullanılıyor ama `impl Interface for Tip` yok (yapısal eşleşme sayılmaz; `new(a)`'da `a` dahil) | **hata** |
 | `W0402` | Yerel tanım ya da import, `register`'lı bir global adı gölgeliyor | uyarı |
 | `E0601` | İşaretlilik değiştiren örtük dönüşüm (`ui ↔ i`, ya da işaretlilikleri karışık ikili işlem); `unsafe { }` içinde ya da `as` ile geçer ([2.1](02.1-unsafe.md#21-unsafe-bloğu)) | **hata** |
 | `E0701` | Dizi indeksi sabit ve sınır dışı (`a[7]`, `a: [T; 4]`); `--safety`'den bağımsız | **hata** |

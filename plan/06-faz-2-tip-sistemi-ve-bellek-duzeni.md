@@ -1,6 +1,6 @@
 ## Faz 2 — Tip sistemi ve bellek düzeni (layout)
 
-- [ ] **2.1** Tip modeli: boyut/hizalama (`size_of`, `align_of`) hedefe (`DataLayout`/pointer genişliği) göre hesaplanır.
+- [ ] **2.1** Tip modeli: boyut/hizalama (`sizeOf`, `alignOf`) hedefe (`DataLayout`/pointer genişliği) göre hesaplanır.
 - [ ] **2.2** İşaretli/işaretsiz semantik: `sdiv/udiv`, `srem/urem`, `sext/zext`, `icmp slt/ult`,
   `ashr/lshr` — tip bazlı seçim. Örtük dönüşüm kuralları sema'da (tek yerde): aynı işaretlilikte
   genişleme örtük; işaretli tamsayı → kayan nokta örtük + `W0601`; işaretlilik değiştiren (`ui ↔ i`, `ui → f`; float
@@ -23,15 +23,15 @@
   - Kayıt yok ve `@repr(c)` yok → C varsayımı + `W0201`; kayıtlı düzenle çelişki → `W0202`;
     şema uyuşmazlığı → `W0203`.
   - CLI: `--layout-history=`, `--layout-record`, `--print-layout <Tip>`.
-- [ ] **2.4** Derleme zamanı sorguları: `size_of(T)`, `align_of(T)`, `offset_of(T, alan)`; `static_assert(cond, "msg")`.
+- [ ] **2.4** Derleme zamanı sorguları: `sizeOf(T)`, `alignOf(T)`, `offsetOf(T, alan)`; `staticAssert(cond, "msg")`.
   C başlığıyla layout doğrulaması bunlarla yapılır.
 - [ ] **2.5** Sabit boyutlu dizi tipi `[T; N]` (C struct uyumu için): `N` derleme zamanı sabit ifadesi
-  (`define` sabiti olabilir); `size_of([T; N]) = N * size_of(T)`, hizalama `align_of(T)`; yerel, struct/class
+  (`define` sabiti olabilir); `sizeOf([T; N]) = N * sizeOf(T)`, hizalama `alignOf(T)`; yerel, struct/class
   alanı ve global olarak kullanılabilir; `@repr(c)` struct içinde C'deki `T[N]` ile aynı düzen.
   - **Değer tipi:** atama, parametre ve dönüşte tamamı kopyalanır; kopyayı önlemek için `&a`.
   - **Literal:** `[a, b, c]` ve tekrar biçimi `[v; N]`; eleman tipi bağlamdan çıkarılır.
   - **İndeksleme `a[i]`:** dizi ve `*T` üzerinde; indeks `usize` (aynı işaretlilikte genişleme örtük,
-    işaretliler `as usize`). `*T` indekslemesi `*(p + i * size_of(T))` ve **kontrolsüzdür**. Dizi
+    işaretliler `as usize`). `*T` indekslemesi `*(p + i * sizeOf(T))` ve **kontrolsüzdür**. Dizi
     indekslemesi `--safety=checked` (varsayılan) altında sınır kontrolü yapar, dışındaysa kayıtlı `panic`'i
     çağırır; `unchecked` ya da `@unchecked fn` kontrolü kaldırır. Sabit indeks (derleme zamanı sabit ifadesi) sınır dışıysa **derleme hatası** `E0701`:
     `--safety` ayarından bağımsızdır (`unchecked`'te de verilir, çünkü sonuç tanımsız bellek erişimidir) ve
@@ -41,7 +41,7 @@
   (tamsayılar, `f32/f64`, `bool`, `*ui8` string literal'i); `T` yazılmazsa `i32`. Üyeler `Ad.Üye` ile
   erişilir. Otomatik numaralandırma yalnızca tamsayı alt tipte (önceki + 1, ilk üye 0); diğer alt tiplerde
   her üyenin değeri yazılmalıdır. `Ad` ayrı bir tiptir: alt tipe/alt tipten dönüşüm açık `as`; `==`/`!=`
-  aynı enum'da geçerli. Değerler derleme zamanı sabitidir (`static_assert`, global başlangıç değeri,
+  aynı enum'da geçerli. Değerler derleme zamanı sabitidir (`staticAssert`, global başlangıç değeri,
   atomic `order` argümanı için kullanılabilir). Layout alt tipin düzenidir; `export(c)` imzasında yalnızca
   tamsayı alt tipli enum kabul edilir. `MemoryOrder` (6.1) bu mekanizmayla tanımlı builtin enum'dur.
 

@@ -12,8 +12,8 @@
   basit yorumlayıcıyla değerlendirilir: `&& || !`, `== !=`, `< <= > >=`, tamsayı/string/bool sabitleri,
   `defined(NAME)` / `!defined(NAME)`; `#ifdef NAME` ve `#ifndef NAME` bunların kısaltmasıdır.
 - [ ] **3.3** Yerleşik tanımlar (hedeften türer): `os` (`"linux"|"macos"|"windows"`), `arch`
-  (`"x86_64"|"aarch64"`), `pointer_width` (`32|64`), `endian` (`"little"|"big"`), `debug` (bool),
-  `opt_level` (0..3).
+  (`"x86_64"|"aarch64"`), `pointerWidth` (`32|64`), `endian` (`"little"|"big"`), `debug` (bool),
+  `optLevel` (0..3).
 - [ ] **3.4** CLI bayrakları (`src/cli`):
 
   | Bayrak | Anlam |
@@ -21,8 +21,8 @@
   | `-D NAME`, `--define NAME` | `NAME = true` |
   | `-D NAME=DEĞER`, `--define NAME=DEĞER` | `NAME` tamsayı/string/bool değeri |
   | `-U NAME`, `--undef NAME` | Tanımı (yerleşik dahil olmayan) kaldırır |
-  | `--target <triple>` | Hedef triple; `os/arch/pointer_width` buradan türer |
-  | `-O0..-O3` | Optimizasyon seviyesi (`opt_level`) |
+  | `--target <triple>` | Hedef triple; `os/arch/pointerWidth` buradan türer |
+  | `-O0..-O3` | Optimizasyon seviyesi (`optLevel`) |
   | `-g` | Debug info (`debug = true`) |
   | `--emit=ir\|bc\|obj\|hir\|header\|exe\|static\|shared` | Çıktı biçimi/aşaması; varsayılan `exe` |
   | `--mangle=xl\|none` | Proje seviyesi mangling varsayılanı |

@@ -3,7 +3,7 @@
 - [ ] **4.1** Sembol tablosu/scope: modül, fonksiyon, blok; nitelikli isim (`alias.name`).
 - [ ] **4.2** Sema: isim çözümleme, tip kontrolü, overload yok/var kararı (önerim: overload yok, ad bazlı
   tek tanım, mangling basit), `syscall(...)` argüman doğrulaması (nr + argümanlar tamsayı/pointer; sayı sabit değil, hedef OS/arch'ın
-  en fazla argüman sayısına göre 5.3'teki tablodan denetlenir, aşılırsa hata), `static_assert`.
+  en fazla argüman sayısına göre 5.3'teki tablodan denetlenir, aşılırsa hata), `staticAssert`.
 - [ ] **4.3** HIR (`include/xlang/hir/hir.h`): tipler çözülmüş, örtük dönüşümler açık `Cast`,
   sugar düşürülmüş, sınıf metodları `fn(self: *T, ...)`, interface çağrıları açık itable çağrısı.
 - [ ] **4.4** Class:
@@ -14,6 +14,9 @@
 - [ ] **4.5** Interface: bildirim, `impl Ad for Tip { ... }` (struct ve class implement edebilir),
   interface değeri = `{data: *void, itable: *T}`;
   statik tipten arayüze dönüşüm itable'ı derleme zamanında üretir; çağrı = itable'dan dolaylı çağrı.
+  **Interface nominaldir:** bir tipin interface olarak kullanılabilmesi için `impl Ad for Tip` yazılmış
+  olmalıdır; metodların adı/imzası tutsa bile yapısal eşleşme yoktur. `impl` yoksa dönüşüm **hatadır**
+  (`E0504`).
 - [ ] **4.6a** Yol çözümleme: `"x"` → `x.xl` | `x/index.xl` (ikisi birden hata); yeniden dışa aktarma
   grafiği tek geçişte çözülür; çakışma **her zaman hatadır** (`E0401`) ve `import`/`export` satırında
   raporlanır, kullanım yerinde değil; yerel tanım kazanmaz; export edilmeyen
@@ -44,16 +47,17 @@
   trap). `&local`'dan ref'in kaçışı derleme hatası
   (basit escape kontrolü, borrow checker değil). `@unchecked fn` ve `--safety=unchecked` kontrolleri kaldırır.
   `ref T` `@repr(c)` alanında ve `export(c)` imzasında yasak.
-- [ ] **4.11** `new T { alanlar }` ve `new(a) T { alanlar }`: dil ifadesi; `a.alloc(size_of(T),
-  align_of(T))` çağırır, alanları yazar ve `*T` döndürür. Allocator bir **gruptur**: `alloc(self, size:
-  usize, align: usize) -> *void` ve `free(self, p: *void)` metodlarının ikisine de sahip herhangi bir değer
-  (class, interface değeri, `impl` eden struct); sema bu iki metodu çözer (`E0503`: eksikse). Bellek
-  ayıran ve bırakan hep aynı gruptır. `new T` **kayıtlı allocator**'ı kullanır: `register(allocator)`
+- [ ] **4.11** `new T { alanlar }` ve `new(a) T { alanlar }`: dil ifadesi; `a.alloc(sizeOf(T),
+  alignOf(T))` çağırır, alanları yazar ve `*T` döndürür. Allocator, `std/mem`'in **`Allocator` interface'i**dir
+  (`alloc(self, size: usize, align: usize) -> *void` ve `free(self, p: *void)`); `a` ya `Allocator` değeridir
+  ya da `impl Allocator for T` yazılmış bir `T`'nin değeri/pointer'ıdır (4.5'teki örtük interface
+  dönüşümü). `impl` yoksa hata (`E0504`); metodlar tutsa bile yapısal eşleşme yoktur. Bellek ayıran ve
+  bırakan hep aynı allocator'dır. `new T` **kayıtlı allocator**'ı kullanır: `register(allocator)`
   ile kaydedilmiş global (4.12). Compiler adı değil kaydı arar, `malloc` bilmez (kural 4) ve stdlib'i
   ayırt etmez: öncelik kuralı yoktur. Programda toplamda **en fazla bir** `register(allocator)` olabilir
   (iki tane `E0502`). Stdlib `std/mem`'de bir tane kaydeder (stdlib özelliği `default-allocator`,
   varsayılan açık); kullanıcı kendi allocator'ını `--std-features=-default-allocator` ile özelliği kapatıp
-  kaydederek ya da çalışma zamanında `main`'de `std/mem.set_allocator(a)` ile **bir kez** değiştirerek
+  kaydederek ya da çalışma zamanında `main`'de `std/mem.setAllocator(a)` ile **bir kez** değiştirerek
   seçer; kayıtlı global mutable olduğundan `new` ve `std/mem.free` değişimden sonra yeni allocator'ı
   kullanır. Kayıtlı yoksa `new T` hatadır (`E0501`, düzelt: `new(a) T` ya da `register(allocator)`).
   `alloc` `null` dönerse `new` `null` döndürür.
@@ -65,8 +69,10 @@
   - `panic`: `fn(msg: *ui8)`; geri dönmez (compiler çağrıdan sonrasını ulaşılamaz sayar). Compiler'ın
     ürettiği hata yolları (2.2 sıfıra bölme, 2.5 dizi sınırı, 4.10 `ref` uyuşmazlığı) onu çağırır; kayıtlı
     yoksa doğrudan trap talimatı üretir.
-  - `allocator`: 4.11'deki grup sözleşmesini sağlayan **global değişken**; `new T` onun `alloc`'unu çağırır.
-  Hata kodları: `E0502` (aynı rolün/adın ikinci kaydı), `E0503` (rol sözleşmesi sağlanmadı). Aynı adlı
+  - `allocator`: tipi `Allocator` interface'i olan ya da `impl Allocator for T` yazılmış bir `T` olan
+    **global değişken** (4.11); `new T` onun `alloc`'unu çağırır.
+  Hata kodları: `E0502` (aynı rolün/adın ikinci kaydı), `E0503` (rol sözleşmesi sağlanmadı, ör. allocator
+  global'inin tipi `Allocator` değil ve `impl` yok). Aynı adlı
   yerel tanım/import kayıtlı adı gölgeler ve `W0402` uyarısı verir; rol bağı addan değil kayıttan
   olduğundan gölgeleme rolü bozmaz. Compiler `register`'ı modül stdlib'den mi kullanıcıdan mı geliyor diye
   ayırt etmez.

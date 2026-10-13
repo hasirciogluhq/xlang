@@ -10,17 +10,17 @@ Compiler thread/scheduler bilmez. Varsayılan stdlib (xl ile yazılmış) her OS
 // std/sys/thread.xl
 #if os == "linux"
     // clone(flags, stack, ptid, ctid, tls)
-    fn os_thread_create(stack: *void, entry: fn(*void), arg: *void) -> i64 {
+    fn osThreadCreate(stack: *void, entry: fn(*void), arg: *void) -> i64 {
         return syscall(CLONE_NR, CLONE_FLAGS, stack as i64, 0, 0, 0)
     }
 #elif os == "macos"
     // bsdthread_create(func, arg, stack, pthread, flags)
-    fn os_thread_create(stack: *void, entry: fn(*void), arg: *void) -> i64 {
+    fn osThreadCreate(stack: *void, entry: fn(*void), arg: *void) -> i64 {
         return syscall(BSDTHREAD_CREATE_NR, entry as i64, arg as i64, stack as i64, 0, 0)
     }
 #elif os == "windows"
     // NtCreateThreadEx(...); SSN, -D WIN_BUILD ile seçilen tablodan gelir
-    fn os_thread_create(stack: *void, entry: fn(*void), arg: *void) -> i64 {
+    fn osThreadCreate(stack: *void, entry: fn(*void), arg: *void) -> i64 {
         return syscall(NT_CREATE_THREAD_EX_SSN, 0, 0, 0, 0)
     }
 #endif
@@ -44,7 +44,7 @@ fn main() -> i32 {
     local b: Job = Job { id: 2 }
     sched.spawn(worker, &a as *void)
     sched.spawn(worker, &b as *void)
-    sched.wait_all()
+    sched.waitAll()
     return 0
 }
 ```
@@ -58,7 +58,7 @@ xlang stdlib            thread · sync · sched · io · mem
    ▼
 std/sys/{linux,macos,windows}     yalnızca syscall(...), dış kütüphane yok
    ▼
-compiler çekirdeği:  syscall · __builtin_atomic_* · fn pointer · inline asm
+compiler çekirdeği:  syscall · __builtin_atomic* · fn pointer · inline asm
 ```
 
 `go`/`spawn` anahtar sözcüğü yoktur; hepsi stdlib fonksiyonudur.

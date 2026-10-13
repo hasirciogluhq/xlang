@@ -63,14 +63,14 @@ Diğer her şey import edilir. **libc yasaktır**: builtin'ler compiler'ın kend
 | Global (import gerekmez) | Neden global |
 |--------------------------|--------------|
 | `syscall(nr, ...)` | CPU trap'i, başka yolla ifade edilemez; öneksiz, doğrudan `syscall` |
-| `__builtin_atomic_*`, `__builtin_fence` | Tek CPU talimatları; `__builtin_` önekli (kesin liste Faz 6'da) |
+| `__builtin_atomic*`, `__builtin_fence` | Tek CPU talimatları; `__builtin_` önekli (kesin liste Faz 6'da) |
 | `__builtin_asm` | Inline asm ([12.1](12.1-inline-asm.md#121-inline-asm)); `__builtin_` önekli |
 | `MemoryOrder` | Atomic işlemlerin memory order enum'u ([12](12-atomic-ve-fonksiyon-pointer-i.md#12-atomic-ve-fonksiyon-pointerı)) |
-| `size_of`, `align_of`, `offset_of`, `static_assert` | Derleme zamanı sorguları |
+| `sizeOf`, `alignOf`, `offsetOf`, `staticAssert` | Derleme zamanı sorguları |
 
 Builtin fonksiyonlar `syscall`, atomic'ler, `fence` ve `__builtin_asm`'dir. Builtin'ler iki biçimde yazılır ve
 **hepsi `__builtin_` önekini taşımaz**: atomic'ler, `fence`, `__builtin_asm` önekli; `syscall`,
-`size_of` ailesi, `static_assert` öneksizdir. `syscall` her zaman doğrudan `syscall` olarak yazılır.
+`sizeOf` ailesi, `staticAssert` öneksizdir. `syscall` her zaman doğrudan `syscall` olarak yazılır.
 Builtin'in gövdesini compiler'ın kendisi sağlar; compiler'ın doğrudan desteklemeyeceği bir şey builtin
 olmaz, stdlib'e gider. `memcpy`, `malloc`, `free` builtin değildir, global de değildir: stdlib'den import
 edilir; `panic` ise builtin değil **`register`'lıdır** (aşağıda). Bkz. [Karar bekleyen](../03-karar-bekleyen-sonradan-netlesecek.md).
@@ -79,13 +79,13 @@ edilir; `panic` ise builtin değil **`register`'lıdır** (aşağıda). Bkz. [Ka
 from "std/mem" import free                     // stdlib: global değil, import gerekir
 from "std/memory" import memcpy
 
-fn clone_header(src: *Header) -> *Header {
+fn cloneHeader(src: *Header) -> *Header {
     local p: *Header = new Header { tag: 0, length: 0, id: 0 }    // kayıtlı allocator
-    memcpy(p as *void, src as *void, size_of(Header))
+    memcpy(p as *void, src as *void, sizeOf(Header))
     return p
 }
 
-fn drop_header(h: *Header) {
+fn dropHeader(h: *Header) {
     free(h as *void)
 }
 ```

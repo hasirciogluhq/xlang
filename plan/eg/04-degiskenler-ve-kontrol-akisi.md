@@ -47,7 +47,7 @@ sırası yoktur):
 | Sabit sayılan | Sabit sayılmayan |
 |---------------|------------------|
 | Literal'ler, `define` sabitleri, enum üyeleri | Fonksiyon çağrısı |
-| `size_of` / `align_of` / `offset_of` | Başka global'in **değerini** okumak |
+| `sizeOf` / `alignOf` / `offsetOf` | Başka global'in **değerini** okumak |
 | `&global`, `&global[sabit]`, `as` dönüşümleri | Çalışma zamanı değerleri |
 | Alanları sabit olan struct/class/dizi literal'i | |
 | Global nesnenin interface'e dönüşümü (`itable` sabit) | |

@@ -21,8 +21,8 @@ xlang build main.xl --print-cfg                     # çözülmüş tüm tanıml
 | `-D NAME` / `--define NAME` | `NAME = true` |
 | `-D NAME=DEĞER` | Tamsayı/string/bool değer |
 | `-U NAME` / `--undef NAME` | Tanımı kaldır |
-| `--target <triple>` | Hedef platform; `os`, `arch`, `pointer_width` buradan gelir |
-| `-O0` … `-O3` | Optimizasyon seviyesi (`opt_level`) |
+| `--target <triple>` | Hedef platform; `os`, `arch`, `pointerWidth` buradan gelir |
+| `-O0` … `-O3` | Optimizasyon seviyesi (`optLevel`) |
 | `-g` | Debug info; `debug = true` |
 | `--emit=ir\|bc\|obj\|hir\|header\|exe\|static\|shared` | Çıktı biçimi; **varsayılan `exe`** ([18](18-c-ile-kullanim-ve-cikti-bicimleri.md#18-c-ile-kullanım-ve-çıktı-biçimleri)) |
 | `--mangle=xl\|none` | Proje seviyesi mangling varsayılanı ([16](16-name-mangling.md#16-name-mangling)) |

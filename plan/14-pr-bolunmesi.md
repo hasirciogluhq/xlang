@@ -4,7 +4,7 @@
 2. Lexer/parser yeni sözdizimi + AST/Type yeniden tasarımı (1.1–1.3)
 3. Diagnostics (1.4)
 4. Tip modeli + işaretli/işaretsiz lowering (2.1–2.2)
-5. Layout motoru + `@repr(c)` + `size_of/offset_of/static_assert` + clang karşılaştırma testi (2.3–2.5);
+5. Layout motoru + `@repr(c)` + `sizeOf/offsetOf/staticAssert` + clang karşılaştırma testi (2.3–2.5);
    enum (2.6)
 6. `#if` + yerleşik tanımlar (3.1–3.3, 3.5)
 7. CLI bayrakları `-D/-U/--target/-O/-g/--emit/--print-cfg` + `define` sabitleri (3.4, 3.6)

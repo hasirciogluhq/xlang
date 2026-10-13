@@ -44,5 +44,5 @@ heap nesnesi                         ref Node (16 B)
 | `null` | `ref T` null olamaz; null gerekiyorsa `*T` kullanılır |
 | Maliyet | Erişim başına bir yükleme + karşılaştırma; `--safety=unchecked` ile kontroller kaldırılır |
 
-Per-fonksiyon kapatma: `@unchecked fn hot_loop(...)`.
+Per-fonksiyon kapatma: `@unchecked fn hotLoop(...)`.
 `ref T`, `@repr(c)` struct alanı ve `export(c)` imzasında **kullanılamaz** (C düzeni bozulur); orada `*T` kullanılır.

@@ -29,23 +29,23 @@ kullanıcı kodu → std/{thread,sync,sched,io,memory} → std/sys/{linux,macos,
   toplar), `std/memory`, `std/mem`, `std/runtime`, `std/assert`, `std/math` (`sqrt` vb.; xl ile yazılır,
   libm yok), `std/cpu`, `std/gpu`, `std/sys/*`. `import "std"` hepsini, `import "std/cpu"` yalnızca ilgili parçayı verir.
 - [ ] **7.2** `std/mem`: `interface Allocator { alloc, free }`, varsayılan `Heap` (OS'tan sayfa alan,
-  syscall'larla), `register(allocator) global current_allocator: Allocator` (stdlib özelliği
-  `default-allocator`), `free(p)` (şimdiki kayıtlı allocator'ın `free`'si), `set_allocator(a)` (bir kez;
+  syscall'larla), `register(allocator) global currentAllocator: Allocator` (stdlib özelliği
+  `default-allocator`), `free(p)` (şimdiki kayıtlı allocator'ın `free`'si), `setAllocator(a)` (bir kez;
   ikinci çağrı `panic`). `std/io`: `print` (compiler'a gömülü değil; global değil, `import` ile gelir).
   `memcpy/memset/memmove/memcmp` `std/memory`'de **xl ile yazılır** ve `export(c)` ile C adıyla verilir
   (LLVM'in örtük çağrıları için; libc yok); global değildir (bkz. kural 7).
 - [ ] **7.2b** `std/runtime`: `register(panic) fn panic(msg: *ui8)` (mesajı yazar, süreci sonlandırır);
   stdlib açıkken her zaman derlemeye girer, böylece `panic` her modülde import'suz görünür. `std/assert`:
   `export define assert(cond: expr)` macro'su; gövdesi `panic` çağırır (kayıtlı olduğu için import'suz).
-- [ ] **7.3** `std/thread`: `thread_start(entry: fn(*void), arg: *void)`, `thread_join`, `thread_detach`,
-  `thread_id`. Doğrudan OS thread'i (7.1'deki ham syscall'lar). Argümanlar heap env'de (global yok →
+- [ ] **7.3** `std/thread`: `threadStart(entry: fn(*void), arg: *void)`, `threadJoin`, `threadDetach`,
+  `threadId`. Doğrudan OS thread'i (7.1'deki ham syscall'lar). Argümanlar heap env'de (global yok →
   veri yarışı yok); yeni thread'in stack'i `mmap`/eşdeğeriyle ayrılır; çocuk girişi 6.3 asm trampoline'i.
-- [ ] **7.4** `std/sync`: `__builtin_atomic_*` + OS'un bekleme primitifi (futex / psynch / NtWaitFor...) üstünde
-  mutex/cond/rwlock/once. `mutex` vardır (lock/try_lock/unlock; önce atomic CAS, başarısızsa OS bekleme).
+- [ ] **7.4** `std/sync`: `__builtin_atomic*` + OS'un bekleme primitifi (futex / psynch / NtWaitFor...) üstünde
+  mutex/cond/rwlock/once. `mutex` vardır (lock/tryLock/unlock; önce atomic CAS, başarısızsa OS bekleme).
   `lock_guard`/RAII bekçi **yoktur**: kilit açık `unlock` ile bırakılır.
 - [ ] **7.5** `std/sched`: **Go benzeri scheduler** (M:N): goroutine benzeri hafif görevler, kullanıcı
   alanı stack'leri ve bağlam değiştirme (6.3), her CPU için bir worker thread, iş çalma (work stealing),
-  `spawn(fn, arg)`, `wait_all()`, `cpu()`, bloklayıcı I/O için OS olay mekanizması entegrasyonu
+  `spawn(fn, arg)`, `waitAll()`, `cpu()`, bloklayıcı I/O için OS olay mekanizması entegrasyonu
   (epoll/kqueue/IOCP benzeri; 7.1 syscall'larıyla). Compiler scheduler'ı bilmez.
 - [ ] **7.6** xmake `std` hedefi: stdlib'i derleyip compiler modül arama yoluna kurar.
 - [ ] **7.7** Compiler'dan kaldır: `spawn`/`go`, `print` özel işleme, `malloc/free/printf` prelude,

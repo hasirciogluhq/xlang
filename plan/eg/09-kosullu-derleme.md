@@ -11,13 +11,13 @@ Pasif bölge yalnızca **token olarak okunur** (lexer'dan geçer), parse edilmez
 - **Gövde alt satıra inerse `#endif` zorunludur.**
 
 ```xlang
-#if os == "linux" fn page_size() -> usize { return 4096 }     // aynı satır: #endif YOK
+#if os == "linux" fn pageSize() -> usize { return 4096 }     // aynı satır: #endif YOK
 
 #if os == "macos" && arch == "aarch64"                         // gövde alt satırda: #endif GEREKLİ
-    fn page_size() -> usize { return 16384 }
-    fn cache_line() -> usize { return 128 }
+    fn pageSize() -> usize { return 16384 }
+    fn cacheLine() -> usize { return 128 }
 #elif os == "windows"
-    fn page_size() -> usize { return 4096 }
+    fn pageSize() -> usize { return 4096 }
 #else
     #error "desteklenmeyen platform"
 #endif
@@ -52,7 +52,7 @@ fn main() -> i32 {
 
 | Kaynak | Örnek | Tür |
 |--------|-------|-----|
-| Yerleşik | `os`, `arch`, `pointer_width`, `endian`, `debug`, `opt_level` | hedef/derleme ayarından |
+| Yerleşik | `os`, `arch`, `pointerWidth`, `endian`, `debug`, `optLevel` | hedef/derleme ayarından |
 | CLI | `-D ENABLE_STATS`, `-D LEVEL=3`, `-D NAME="x"` | bool / tamsayı / string |
 | Dosyada | `define LEVEL = 3` ([9.2](09.2-define-ve-macro.md#92-define-ve-macro)) | sabit; CLI `-D` bunun yerine geçer |
 

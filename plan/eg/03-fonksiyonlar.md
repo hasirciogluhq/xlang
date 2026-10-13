@@ -7,11 +7,11 @@ fn add(a: i32, b: i32) -> i32 {
     return a + b
 }
 
-fn log_value(v: i32) {          // -> yok = void
+fn logValue(v: i32) {          // -> yok = void
     // ...
 }
 
-export fn public_api(x: ui64) -> ui64 {   // modül dışına açık
+export fn publicApi(x: ui64) -> ui64 {   // modül dışına açık
     return x * 2
 }
 
