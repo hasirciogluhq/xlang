@@ -14,24 +14,30 @@
    silinebilir. Compiler hedeflendiği gibi çalıştıktan sonra yeni dil için yeniden yazılır.
    Bu dosyalar **okunmaz**, tasarıma girdi olmaz, bir şeyi onlara uydurmak için çalışılmaz.
 3. **`.cursor/` altındaki kurallar/planlar okunmaz.** Tek girdi kullanıcının yönergeleridir.
-4. **Compiler yalnızca dili, CPU primitiflerini ve builtin fonksiyon listesini bilir.** Thread, scheduler,
-   print kavramı compiler'da yoktur; bunlar xlang stdlib'dir. Builtin = **compiler'ın gövdesini kendisinin
-   sağladığı** fonksiyon; liste kural 7'dedir (atomic'ler ve `fence` dahil). `memcpy/memset/memmove/memcmp`
-   ve `malloc`/`free`/allocator builtin değildir, stdlib'dendir. Compiler doğrudan destekleyemeyeceği bir şeyi
-   builtin yapmaz; o şey stdlib'e gider.
+4. **Compiler yalnızca dili, CPU primitiflerini ve builtin listesini bilir.** Thread, scheduler, print
+   kavramı compiler'da yoktur; bunlar xlang stdlib'dir. Builtin fonksiyon = **gövdesini compiler'ın
+   kendisinin sağladığı** fonksiyon (liste kural 7'de). `memcpy/memset/memmove/memcmp`, `malloc`/`free` ve
+   allocator builtin değildir, stdlib'dendir; `new` allocator'ı kullanıcıdan alır (4.11). Compiler doğrudan
+   destekleyemeyeceği bir şeyi builtin yapmaz; o şey stdlib'e gider.
 5. **Önce compiler doğru çalışsın.** Stdlib/example işleri compiler hedefine ulaştıktan sonra gelir.
 6. **Plan ve dil şeması senkron kalır:** dil seviyesini etkileyen her plan değişikliği
    `PLAN.eg.md`'yi de günceller (bkz. `CLAUDE.md`).
 
 7. **Global isim uzayı kapalı bir builtin listesiyle sınırlıdır.** Kaynak koduna "bedavaya" gelen isimler
-   compiler'ın bildiği builtin'lerdir: `syscall`, atomic işlemler ve `fence` (**`__builtin_` önekli**:
-   `__builtin_atomic_load/store/xchg/cas/add`, `__builtin_fence`, `__builtin_asm`), memory order sabitleri (`relaxed`, `acquire`, `release`, `acq_rel`, `seq_cst`),
-   `size_of/align_of/offset_of`, `static_assert` (kesin liste Faz 6'da netleşir). Builtin fonksiyonlar iki biçimde yazılır:
-   `__builtin_xx` önekli olanlar (atomic'ler, `fence`) ve öneksiz olanlar; **hepsi `__builtin_` önekini
-   taşımaz**. `syscall` her zaman öneksiz, doğrudan `syscall`. `memcpy` ailesi ve `malloc/free` builtin
-   değildir. `print`, `alloc` gibi builtin listesinde olmayan şeyler global değildir; stdlib'den
-   `import` ile gelir. Builtin'ler compiler seviyesindedir ve global olmak zorundadır; stdlib hiçbir zaman
-   global olamaz. **libc yasaktır:** hiçbir yerde kullanılmaz, çağrılmaz, taklit edilmez.
+   yalnızca compiler'ın bildiği builtin'lerdir; stdlib hiçbir zaman global olamaz. Liste (kesin hali
+   Faz 6'da netleşir):
+
+   | Grup | Adlar | Yazım |
+   |------|-------|-------|
+   | Syscall | `syscall` | öneksiz, doğrudan `syscall` |
+   | Atomic | `__builtin_atomic_load/store/xchg/cas/add`, `__builtin_fence` | `__builtin_` önekli |
+   | Inline asm | `__builtin_asm` | `__builtin_` önekli |
+   | Memory order | `relaxed`, `acquire`, `release`, `acq_rel`, `seq_cst` | öneksiz sabit |
+   | Derleme zamanı | `size_of`, `align_of`, `offset_of`, `static_assert` | öneksiz |
+
+   Builtin fonksiyonlar iki biçimde yazılır ve **hepsi `__builtin_` önekini taşımaz**. `print`, `alloc`,
+   `memcpy`, `malloc`/`free` gibi listede olmayan şeyler global değildir; stdlib'den `import` ile gelir.
+   **libc yasaktır:** hiçbir yerde kullanılmaz, çağrılmaz, taklit edilmez.
    `declare` yalnızca kullanıcının kendi bağladığı bir nesneden (ör. `api.o`) gelen dış şeyler içindir
    (fonksiyon, global, struct, class, interface, type); xl modülleri arası erişim `import`/`export` iledir.
 
@@ -52,7 +58,7 @@ Source ─► Lexer ─► Preprocess (#if/#elif/#else/#endif, token seviyesi) �
 | Fonksiyon sözdizimi | `fn name(a: i32) -> i32 { }`; `->` yoksa dönüş `void` | İstek: `=>` değil `->` |
 | Tamsayı tipleri | `i8 i16 i32 i64 isize` / `ui8 ui16 ui32 ui64 usize` | İşaretli/işaretsiz ayrımı; kullanıcı yazımı `ui32` |
 | Kayan nokta | `f32`, `f64` | |
-| Diğer tipler | `bool`, `void`, `*T` (pointer), `fn(A) -> R` (fonksiyon pointer'ı), `struct`, `class`, `interface` | |
+| Diğer tipler | `bool`, `void`, `*T` (pointer), `fn(A) -> R` (fonksiyon pointer'ı), `[T; N]` (sabit boyutlu dizi), `struct`, `class`, `interface` | |
 | Örtük dönüşüm | Sadece aynı işaretlilikte genişleme; diğer her şey açık `as` | Sessiz işaret/daralma hataları olmasın |
 | Taşma | İşaretli ve işaretsiz tamsayılar sarar (two's complement), bölme sıfıra = trap | Tanımlı davranış |
 | Bellek düzeni | Varsayılan: **xlang düzeni** (derleyici alan sırasını/padding'i seçebilir). `@repr(c)` ile işaretli struct/class **C/C++ düzenine** birebir uyar | İstek |
@@ -62,7 +68,7 @@ Source ─► Lexer ─► Preprocess (#if/#elif/#else/#endif, token seviyesi) �
 | Koşullu derleme | Satır tabanlı direktifler `#if/#elif/#else/#endif/#ifdef/#ifndef/#error`; koşul, dilin normal `if` ifadesiyle aynı sözdizimi ve operatörler (`defined(X)`, `!defined(X)`, `&& \|\| !`, karşılaştırma), derleme zamanında basit yorumlayıcıyla değerlendirilir. **Gövde aynı satırdaysa `#endif` gerekmez**, alt satıra inerse `#endif` zorunlu. Pasif bölge yalnızca lex edilir | İstek |
 | Dış kütüphane / stdlib | Dil dışarıdan kütüphane almaz: libc, libSystem, kernel32, pthread kütüphanesi yok. Stdlib her OS'un çekirdek ABI'sini `#if os` ile ham `syscall` üzerinden çağırır. Stdlib isteğe bağlı: `--no-std`, `--std=<yol>`; varsayılan stdlib dile gömülü, içinde Go benzeri scheduler var | İstek |
 | libc | **YASAK.** Hiçbir koşulda kullanılmaz. xl'in kendi stdlib'i vardır | İstek |
-| Builtin fonksiyonlar | Global, compiler'ın **gövdesini kendisinin sağladığı** fonksiyonlar. **Liste:** atomic'ler, `fence` ve inline asm (`__builtin_` önekli). `memcpy/memset/memmove/memcmp` (LLVM'in örtük çağrıları için C adıyla bulunmalı) ve `malloc/free`/allocator builtin değildir, stdlib'dendir (`std/memory`, `std/mem`). Compiler doğrudan desteklemeyecekse builtin olmaz. İki yazım: `__builtin_xx` (atomic'ler, `fence`) ve öneksiz (`size_of` ailesi, `static_assert`); `syscall` ayrı, öneksiz, doğrudan `syscall` | İstek |
+| Builtin fonksiyonlar | Global, compiler'ın **gövdesini kendisinin sağladığı** fonksiyonlar. **Liste:** atomic'ler, `fence` ve inline asm (`__builtin_` önekli). `memcpy/memset/memmove/memcmp` (LLVM'in örtük çağrıları için C adıyla bulunmalı) ve `malloc/free`/allocator builtin değildir, stdlib'dendir (`std/memory`, `std/mem`). Compiler doğrudan desteklemeyecekse builtin olmaz. İki yazım: `__builtin_xx` (atomic'ler, `fence`, `__builtin_asm`) ve öneksiz (`syscall`, `size_of` ailesi, `static_assert`); `syscall` her zaman doğrudan `syscall` | İstek |
 | Tanılar | Compiler kısıtlamaz, uyarır: her uyarı `ne + detay + neden + nasıl düzeltilir`; kodlu (`W0201`...), `--allow/--deny/@allow` ile susturulur veya hataya çevrilir, `--explain` | İstek |
 | Düzen geçmişi | Varsayılan düzen **sürümlü şema** (v1, v2, v3...), eski şemalar donmuş ve compiler'da kalır; `.o/.a/.bc` düzen kaydı taşır; `xl.layout` proje geçmişi; bilerek karıştırma (`@layout(shuffle)`) kayıtta işaretlenir; karıştırılmamışsa düzen yeniden türetilir | İstek: önceki derleyici çıktılarının düzenini bilme |
 | `declare` | Tek önek; her bildirimin başına konur: `declare fn/global/struct/class/interface/type`. Global için ayrı sözdizimi yok. Öznitelikler normal bildirimle aynı (`@repr(c)`, `@packed`, `@align`, `@mangle`); `@repr(c)` `declare`'de **zorunlu değil**; düzen yoksa kayıt → geçmiş → C varsayımı + uyarı. Dış tarafın xl/C++/Rust/`.o`/statik olması kısıtlanmaz | İstek |
@@ -86,13 +92,14 @@ Source ─► Lexer ─► Preprocess (#if/#elif/#else/#endif, token seviyesi) �
 ### Karar bekleyen / sonradan netleşecek
 
 - `ui32` yazımı kullanıcı isteğiyle seçildi; `u32`'ye çevirmek yalnızca tip tablosunu değiştirir.
-- Sabit boyutlu diziler (`[T; N]`) C uyumlu struct'lar için gerekli; ayrı bir madde olarak eklenecek (Faz 2).
+- **Dizi ayrıntıları (`[T; N]`, 2.5):** indeksleme sözdizimi (`a[i]`), sınır kontrolü, dizi literal'i
+  ve diziyi değer olarak kopyalama/geçirme kuralları belirlenmedi.
 - Generic'ler ve closure kapsam dışı (ilk sürümde yok).
 - **macOS hata sözleşmesi:** macOS syscall'ı hatayı carry bayrağı + pozitif errno ile bildirir; Linux
   `-errno` döndürür. `syscall` her zaman `i64` döner; carry bayrağının nasıl yansıtılacağı (ör. `-errno`'ya
   normalize) belirlenmedi.
-- **Önek kuralı:** atomic'ler ve `fence` `__builtin_` önekli; `syscall`, `size_of` ailesi, `static_assert`
-  öneksiz. İleride eklenecek builtin için ölçüt yazılmalı, yoksa her ekleme ayrı karar olur.
+- **Önek kuralı:** atomic'ler, `fence` ve `__builtin_asm` `__builtin_` önekli; `syscall`, `size_of` ailesi,
+  `static_assert` öneksiz. İleride eklenecek builtin için ölçüt yazılmalı, yoksa her ekleme ayrı karar olur.
 - **Inline asm ayrıntıları:** işlenen sözdizimi (`in/out/inout/clobber`) bir öneridir; x86'da şablon
   lehçesi (Intel/AT&T), `out`'un aggregate/çoklu değer dönüşü, `noreturn`/`nostack` gibi seçenekler
   belirlenmedi. Context switch'in tam asm gövdesi stdlib'de (7.5).
@@ -105,7 +112,10 @@ Source ─► Lexer ─► Preprocess (#if/#elif/#else/#endif, token seviyesi) �
   `a`'nın ref-uyumlu olması mı, ayrı bir yazım mı belirlenmedi (§17 örneği `heap` adlı varsayımsal bir
   allocator nesnesi kullanıyor).
 - **`new` ayrıntıları:** `alloc`'un `align` parametresinin anlamı, `std/mem`'in hazır allocator
-  nesnelerinin adları (`heap` vb.) belirlenmedi.
+  nesnelerinin adları (`heap` örneklerde geçici ad) belirlenmedi.
+- **`panic`:** `assert` örneğinde kullanılıyor ama hangi stdlib modülünde yaşayacağı belirlenmedi.
+- **`syscall` argüman tipleri:** pointer'ın `as` olmadan geçip geçmeyeceği (5.5 "syscall sınırında" der)
+  örneklerde tutarsız yazıldı; tek kural yazılmalı.
 
 ---
 
@@ -123,7 +133,8 @@ Source ─► Lexer ─► Preprocess (#if/#elif/#else/#endif, token seviyesi) �
 - [ ] **1.1** Lexer: `->`, `#if/#elif/#else`, `@attr`, yeni tip anahtar sözcükleri (`i8..i64`, `ui8..ui64`,
   `isize`, `usize`, `f32`, `f64`), `class`, `interface`, `impl`/`:` kalıtım sözdizimi.
 - [ ] **1.2** Parser: `fn ... -> T`, öznitelikler (`@repr(c)`, `@align(N)`, `@packed`), `class`/`interface`
-  bildirimleri, `declare fn ... -> T`, fonksiyon pointer tipi `fn(A, B) -> R`.
+  bildirimleri, `declare fn ... -> T`, fonksiyon pointer tipi `fn(A, B) -> R`, dizi tipi `[T; N]`,
+  `new(a) T { ... }` ifadesi.
 - [ ] **1.2b** Import biçimleri: `import "m" as a`, `import * from "m"`, `import * as a from "m"`,
   `from "m" import x [as y], ...` ve
   `import x [as y], ... from "m"`; ikincisi birincisiyle aynı `ImportDecl` düğümüne iner.
@@ -137,7 +148,8 @@ Source ─► Lexer ─► Preprocess (#if/#elif/#else/#endif, token seviyesi) �
 - [ ] **1.2e** `export * from`, `export * as ns from`, `export { ... } from`, `export * from ... except ...`;
   `#if` içinde de kullanılabilir.
 - [ ] **1.3** AST'yi yeniden tasarla: tip düğümü `Type` ağaç yapısı (`TypeKind::Int{bits, signed}`,
-  `Float{bits}`, `Pointer`, `FnPtr`, `Struct`, `Class`, `Interface`). Eski `Int32/Int64/BigInt` ayrımı gider.
+  `Float{bits}`, `Pointer`, `FnPtr`, `Array{elem, N}`, `Struct`, `Class`, `Interface`). Eski
+  `Int32/Int64/BigInt` ayrımı gider.
 - [ ] **1.4** Diagnostics altyapısı (`include/xlang/util/diagnostics.h`): `Diagnostic{code, severity, span,
   message, detail, reason, fix, notes}`, snippet'li çıktı, birden fazla hata toplama. Her uyarı
   `ne + detay + neden + nasıl düzeltilir` taşır. Kodlar (`W0201`...) bir kayıt tablosunda; `--allow=KOD`,
@@ -180,7 +192,10 @@ Source ─► Lexer ─► Preprocess (#if/#elif/#else/#endif, token seviyesi) �
   - CLI: `--layout-history=`, `--layout-record`, `--print-layout <Tip>`.
 - [ ] **2.4** Derleme zamanı sorguları: `size_of(T)`, `align_of(T)`, `offset_of(T, alan)`; `static_assert(cond, "msg")`.
   C başlığıyla layout doğrulaması bunlarla yapılır.
-- [ ] **2.5** Sabit boyutlu dizi tipi `[T; N]` (C struct uyumu için).
+- [ ] **2.5** Sabit boyutlu dizi tipi `[T; N]` (C struct uyumu için): `N` derleme zamanı sabit ifadesi
+  (`define` sabiti olabilir); `size_of([T; N]) = N * size_of(T)`, hizalama `align_of(T)`; yerel, struct/class
+  alanı ve global olarak kullanılabilir; `@repr(c)` struct içinde C'deki `T[N]` ile aynı düzen. İndeksleme ve
+  diğer ayrıntılar "Karar bekleyen"de.
 
 **Kabul:** `@repr(c)` struct'lar için clang'ın ürettiği `sizeof/alignof/offsetof` ile test
 (birkaç karma tipli struct, iç içe, packed, aligned) birebir uyuşur; x86_64 ve aarch64 için.
@@ -247,7 +262,8 @@ Source ─► Lexer ─► Preprocess (#if/#elif/#else/#endif, token seviyesi) �
   - `@repr(c)` class: Itanium düzeni (vptr offset 0; vtable'da offset-to-top ve typeinfo slotları,
     ardından fonksiyonlar). Çoklu/sanal kalıtım ve MSVC ABI kapsam dışı (açık hata).
   - Constructor/destructor: ilk sürümde açık `init`/`deinit` metodları.
-- [ ] **4.5** Interface: bildirim, `class/struct implements`, `iface` değeri = `{data: *void, itable: *T}`;
+- [ ] **4.5** Interface: bildirim, `impl Ad for Tip { ... }` (struct ve class implement edebilir),
+  interface değeri = `{data: *void, itable: *T}`;
   statik tipten arayüze dönüşüm itable'ı derleme zamanında üretir; çağrı = itable'dan dolaylı çağrı.
 - [ ] **4.6a** Yol çözümleme: `"x"` → `x.xl` | `x/index.xl` (ikisi birden hata); yeniden dışa aktarma
   grafiği tek geçişte çözülür; çakışma kullanım yerinde hata, yerel export önceliklidir; export edilmeyen
@@ -331,7 +347,8 @@ Stdlib'in ihtiyacı olan minimum; hiçbiri "thread" kavramı taşımaz:
 - [ ] **6.4** Derleme zamanı hedef sabitleri `os`, `arch` (Faz 3'te yerleşik tanım olarak zaten var).
 - [ ] **6.5** Builtin tablosu: kapalı tablo (ad, imza, biçim `__builtin_xx` | öneksiz). Sema'da global isim
   olarak çözülür; gövdeyi compiler üretir; çakışma kuralı "Karar bekleyen"e bağlı. Tabloda `__builtin_`
-  önekli atomic'ler, `fence` (6.1) ve `__builtin_asm` (6.3) ile memory order sabitleri vardır; `size_of` ailesi (2.4) öneksizdir. `syscall` bu tablonun dışındadır (5.3'teki özel işleme).
+  önekli atomic'ler, `fence` (6.1) ve `__builtin_asm` (6.3) ile memory order sabitleri vardır; `size_of`
+  ailesi (2.4) öneksizdir. `syscall` bu tablonun dışındadır (5.3'teki özel işleme).
 
 ## Faz 7 — xlang stdlib (compiler hedefi tamamlandıktan sonra)
 
@@ -361,11 +378,12 @@ kullanıcı kodu → std/{thread,sync,sched,io,memory} → std/sys/{linux,macos,
   - Numara/yapı tabloları xl içinde (compiler görmez). POSIX uyumlu semantik hedeflenir (pthread benzeri
     thread/mutex/cond davranışı), ama pthread kütüphanesi çağrılmaz.
 - [ ] **7.1b** Stdlib yerleşimi: `std/index.xl` (giriş; alt modülleri `export * from` / `export * as` ile
-  toplar), `std/memory`, `std/math` (`sqrt` vb.; xl ile yazılır, libm yok), `std/cpu`, `std/gpu`, `std/sys/*`. `import "std"` hepsini, `import "std/cpu"`
-  yalnızca ilgili parçayı verir.
-- [ ] **7.2** `std/mem`, `std/io`: `alloc/free` (allocator), `print` (compiler'a gömülü değil; global değil,
-  `import` ile gelir). `memcpy/memset/memmove/memcmp` `std/memory`'de **xl ile yazılır** ve `export(c)` ile
-  C adıyla verilir (LLVM'in örtük çağrıları için; libc yok); global değildir (bkz. kural 7).
+  toplar), `std/memory`, `std/mem`, `std/math` (`sqrt` vb.; xl ile yazılır, libm yok), `std/cpu`,
+  `std/gpu`, `std/sys/*`. `import "std"` hepsini, `import "std/cpu"` yalnızca ilgili parçayı verir.
+- [ ] **7.2** `std/mem`: hazır allocator nesneleri (`new(a)` için `alloc` metodu olan; örneklerde `heap`,
+  ad karar bekleyen) ve `free`. `std/io`: `print` (compiler'a gömülü değil; global değil, `import` ile gelir).
+  `memcpy/memset/memmove/memcmp` `std/memory`'de **xl ile yazılır** ve `export(c)` ile C adıyla verilir
+  (LLVM'in örtük çağrıları için; libc yok); global değildir (bkz. kural 7).
 - [ ] **7.3** `std/thread`: `thread_start(entry: fn(*void), arg: *void)`, `thread_join`, `thread_detach`,
   `thread_id`. Doğrudan OS thread'i (7.1'deki ham syscall'lar). Argümanlar heap env'de (global yok →
   veri yarışı yok); yeni thread'in stack'i `mmap`/eşdeğeriyle ayrılır; çocuk girişi 6.3 asm trampoline'i.
@@ -419,7 +437,7 @@ Faz 0 ─► Faz 1 ─► Faz 2 ─► Faz 3 ─► Faz 4 ─► Faz 5 ─► Fa
 8. Sema + scope + modül yükleme (4.1–4.2, 4.6)
 9. HIR + codegen taşıma (4.3, 4.7)
 10. Class (4.4), Interface (4.5)
-10b. Görünürlük + mangling + `ref T` (4.8–4.10)
+10b. Görünürlük + mangling + `ref T` + `new` (4.8–4.11)
 11. Alloca/PassBuilder/Darwin syscall/debug info (5.1–5.5)
 11b. Çıktı biçimleri + header + static/shared (5.6–5.8)
 12. Atomic + fnptr + asm (6)

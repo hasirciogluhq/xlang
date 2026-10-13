@@ -263,15 +263,31 @@ static_assert(offset_of(Header, length) == 4, "length offset'i yanlis")
 static_assert(align_of(Header) == 4, "hizalama")
 ```
 
-Sabit boyutlu dizi (C struct uyumu için):
+### Sabit boyutlu dizi (`[T; N]`)
+
+Boyutu derleme zamanında sabit olan dizi tipi. C struct'larındaki `T name[N]` alanlarıyla uyum için vardır.
 
 ```xlang
+define PAGE = 4096
+
 @repr(c)
 struct Packet {
     magic: ui32
-    data:  [ui8; 16]
+    data:  [ui8; 16]          // C: uint8_t data[16];
 }
+
+local buf: [ui8; PAGE]        // yerel dizi; N bir define sabiti
 ```
+
+| Parça | Anlam |
+|-------|-------|
+| Yazım | `[T; N]` |
+| `N` | Derleme zamanı sabit ifadesi (`define` sabiti olabilir) |
+| Boyut / hizalama | `size_of([T; N]) == N * size_of(T)`, `align_of([T; N]) == align_of(T)` |
+| Kullanım | Yerel, struct/class alanı, global |
+| `@repr(c)` struct içinde | C'deki `T[N]` ile aynı düzen |
+
+İndeksleme sözdizimi ve sınır kontrolü henüz belirlenmedi (bkz. `PLAN.md` "Karar bekleyen").
 
 ---
 
@@ -649,13 +665,17 @@ error: `syscall` çağrısında 8 argüman var; hedef `x86_64-linux` en fazla 6 
 
 Numaralar hedefe özeldir; bunları bir stdlib katmanı `#if os == ...` ile seçer, compiler bilmez.
 
+Hata bildirimi hedefe göre farklıdır: Linux hatayı `-errno` olarak döndürür, macOS carry bayrağını set edip
+pozitif errno döndürür. `syscall`'ın bunu nasıl yansıtacağı henüz belirlenmedi (bkz. `PLAN.md` "Karar bekleyen").
+
 ---
 
 ## 12. Atomic ve fonksiyon pointer'ı
 
 Thread/mutex gibi şeyler compiler'da yoktur; yazılabilmeleri için yalnızca atomic işlemler,
-fonksiyon pointer'ı ve [inline asm](#121-inline-asm) vardır. Atomic fonksiyonlar compiler builtin'idir ve **`__builtin_` önekiyle**
-global olarak bulunur. `mutex` stdlib'dedir (`std/sync`), altında bu atomic'leri kullanır.
+fonksiyon pointer'ı ve [inline asm](#121-inline-asm) vardır. Atomic fonksiyonlar compiler
+builtin'idir ve **`__builtin_` önekiyle** global olarak bulunur. `mutex` stdlib'dedir (`std/sync`),
+altında bu atomic'leri kullanır.
 
 ```xlang
 fn spin_lock(flag: *ui32) {
@@ -949,19 +969,19 @@ kendisindendir (aşağıya bak).
 | `relaxed`, `acquire`, `release`, `acq_rel`, `seq_cst` | Atomic işlemlerin memory order sabitleri |
 | `size_of`, `align_of`, `offset_of`, `static_assert` | Derleme zamanı sorguları |
 
-Builtin fonksiyonlar atomic'ler, `fence` ve `__builtin_asm`'dir, hepsi `__builtin_` önekli. `memcpy`, `malloc`, `free` builtin
-değildir, global de değildir: stdlib'den import edilir. Builtin'ler iki biçimde yazılır ve **hepsi
-`__builtin_` önekini taşımaz**: atomic'ler, `fence`, `__builtin_asm` önekli; `syscall`, `size_of` ailesi, `static_assert`
-öneksizdir. `syscall` her zaman doğrudan `syscall` olarak yazılır. Builtin'in gövdesini compiler'ın kendisi
-sağlar; compiler'ın doğrudan desteklemeyeceği bir şey builtin olmaz, stdlib'e gider. Bkz. `PLAN.md`
-"Karar bekleyen".
+Builtin fonksiyonlar atomic'ler, `fence` ve `__builtin_asm`'dir. Builtin'ler iki biçimde yazılır ve
+**hepsi `__builtin_` önekini taşımaz**: atomic'ler, `fence`, `__builtin_asm` önekli; `syscall`,
+`size_of` ailesi, `static_assert` öneksizdir. `syscall` her zaman doğrudan `syscall` olarak yazılır.
+Builtin'in gövdesini compiler'ın kendisi sağlar; compiler'ın doğrudan desteklemeyeceği bir şey builtin
+olmaz, stdlib'e gider. `memcpy`, `malloc`, `free` builtin değildir, global de değildir: stdlib'den import
+edilir. Bkz. `PLAN.md` "Karar bekleyen".
 
 ```xlang
-from "std/mem" import alloc, free              // stdlib: global değil, import gerekir
+from "std/mem" import heap, free               // stdlib: global değil, import gerekir
 from "std/memory" import memcpy
 
 fn clone_header(src: *Header) -> *Header {
-    local p: *Header = alloc(size_of(Header)) as *Header
+    local p: *Header = new(heap) Header { tag: 0, length: 0, id: 0 }
     memcpy(p as *void, src as *void, size_of(Header))
     return p
 }
@@ -1156,7 +1176,7 @@ heap nesnesi                         ref Node (16 B)
 
 | Kural | Açıklama |
 |-------|----------|
-| Oluşturma | `new T` / allocator (`std/mem`) veya `&local` ile |
+| Oluşturma | `new(a) T { ... }` (allocator'ı kullanıcı verir, ör. `std/mem`'in `heap`'i) veya `&local` ile |
 | Erişim | `r.alan`, `*r`: her erişimde nesil kontrolü |
 | `ref T → *T` | Açık `as *T` (korumayı bilerek bırakır) |
 | Yerel adresi | `&local` ile alınan `ref`'in fonksiyondan kaçması (return/global'e yazma) **derleme hatası** |
@@ -1388,7 +1408,7 @@ Susturulan (`@allow`/`--allow`) uyarılar ekrandan düşer ama `--diag-log` aç�
 | `W0202` | `declare` tipin düzeni, kayıtlı düzenle çelişiyor | uyarı |
 | `W0203` | Düzen kaydı farklı bir düzen şemasıyla üretilmiş (`v2` ↔ `v3`) | uyarı |
 | `W0301` | `declare` edilen sembol bu derlemede çözülemedi (link zamanında aranacak) | uyarı |
-| `W0302` | `export(c)` imzası C'de ifade edilemeyen bir tip içeriyor | **hata** |
+| `E0302` | `export(c)` imzası C'de ifade edilemeyen bir tip içeriyor | **hata** |
 | `W0401` | Aynı varlık iki farklı yoldan import/export edildi | uyarı |
 | `E0401` | Farklı varlıklar aynı ada import/export ediliyor | **hata** |
 

@@ -62,7 +62,9 @@ No filler praise; state weaknesses plainly. For each feature cover:
 ## Language decisions (summary; details in `PLAN.eg.md`)
 
 - Functions: `fn name(a: i32) -> i32 { }` (no `->` means `void`).
-- Types: `i8 i16 i32 i64 isize`, `ui8 ui16 ui32 ui64 usize`, `f32 f64`, `bool`, `void`, `*T`, `fn(A) -> R`.
+- Types: `i8 i16 i32 i64 isize`, `ui8 ui16 ui32 ui64 usize`, `f32 f64`, `bool`, `void`, `*T`, `fn(A) -> R`,
+  `[T; N]` (fixed-size array, `N` a compile-time constant; indexing syntax pending).
+- Diagnostic codes: `W` = warning, `E` = error (e.g. `E0302` for a non-C type in an `export(c)` signature).
 - Memory layout: default xlang layout; `@repr(c)` gives C/C++ layout.
 - `class` (single inheritance, vptr) and `interface` (fat pointer `{data, itable}`) are compiler features.
 - Conditional compilation: line-based `#if/#elif/#else/#endif/#ifdef/#ifndef/#error`; the condition is the normal
