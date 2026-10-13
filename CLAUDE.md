@@ -76,9 +76,10 @@ No filler praise; state weaknesses plainly. For each feature cover:
   `E0601` implicit signedness-changing conversion, `W0601` implicit signed int -> float conversion).
 - Implicit conversions (no `as` written): same-signedness integer widening is implicit; signed integer -> `f32/f64`
   is implicit with `W0601` (silence with `as`, `@allow(W0601)` on a statement/block/fn/file, or `--allow`);
-  `ui <-> i` implicit is error `E0601`, allowed only inside an `unsafe { ... }` block (same or wider target;
-  narrowing always needs `as`). `unsafe` relaxes nothing else (`--safety`, `*T`, `ref T` are unaffected).
-  Everything else is explicit `as`. Pending: `ui -> f` (see `plan/03-*`).
+  unsigned <-> signed implicit is error `E0601` for every type, floats included (floats count as signed, so
+  `ui -> f` is `E0601`); allowed only inside an `unsafe { ... }` block (same or wider target; narrowing always
+  needs `as`). `unsafe` relaxes nothing else (`--safety`, `*T`, `ref T` are unaffected). Everything else is
+  explicit `as`.
 - `register(role) decl` / `register decl`: a single prefix like `declare`, opposite direction: the declared name
   becomes **global** (no import) as soon as the module enters the compilation, and implies `export`. Roles:
   `panic` (`fn(msg: *ui8)`, noreturn; the compiler's inserted failure paths — division by zero, array bounds,

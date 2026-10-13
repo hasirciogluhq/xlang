@@ -7,7 +7,7 @@
 | Tamsayı tipleri | `i8 i16 i32 i64 isize` / `ui8 ui16 ui32 ui64 usize` | İşaretli/işaretsiz ayrımı; kullanıcı yazımı `ui32` |
 | Kayan nokta | `f32`, `f64` | |
 | Diğer tipler | `bool`, `void`, `*T` (pointer), `fn(A) -> R` (fonksiyon pointer'ı), `[T; N]` (sabit boyutlu dizi), `struct`, `class`, `interface`, `enum` | |
-| Örtük dönüşüm | Aynı işaretlilikte tamsayı genişlemesi örtük; işaretli tamsayı → `f32/f64` örtük ama `W0601` uyarısı (`@allow(W0601)`/`as` ile susar); işaretlilik değiştiren (`ui ↔ i`) örtük dönüşüm **hata** `E0601`, yalnızca `unsafe { }` bloğunda geçer (aynı ya da daha geniş hedef); diğer her şey açık `as` | Sessiz işaret/daralma hataları olmasın; bilerek yapılan açıkça işaretlensin |
+| Örtük dönüşüm | Aynı işaretlilikte tamsayı genişlemesi örtük; işaretli tamsayı → `f32/f64` örtük ama `W0601` uyarısı (`@allow(W0601)`/`as` ile susar); işaretlilik değiştiren (`ui ↔ i`, `ui → f`; float işaretli sayılır) örtük dönüşüm **hata** `E0601`, yalnızca `unsafe { }` bloğunda geçer (aynı ya da daha geniş hedef); diğer her şey açık `as` | Sessiz işaret/daralma hataları olmasın; bilerek yapılan açıkça işaretlensin |
 | `unsafe` bloğu | `unsafe { ... }`: şu an yalnızca işaretlilik değiştiren (`ui ↔ i`) örtük dönüşümü açar; başka kontrolü (`--safety`, `*T`, `ref T`) etkilemez | İstek: Rust benzeri bilinçli kaçış, dar kapsam |
 | Taşma | İşaretli ve işaretsiz tamsayılar sarar (two's complement), bölme sıfıra = `panic` (kayıtlı `panic` yoksa trap) | Tanımlı davranış |
 | Bellek düzeni | Varsayılan: **xlang düzeni** (derleyici alan sırasını/padding'i seçebilir). `@repr(c)` ile işaretli struct/class **C/C++ düzenine** birebir uyar | İstek |

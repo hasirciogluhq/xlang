@@ -4,7 +4,8 @@
 **Açık dönüşüm** `as` ile elle yazılır ve her yerde geçer.
 
 Örtük dönüşüm iki grupla sınırlıdır: **aynı işaretlilikte tamsayı genişlemesi** ve **işaretli tamsayı →
-kayan nokta** (uyarıyla). İşaretlilik değiştiren örtük dönüşüm (`ui ↔ i`) **hatadır**; yalnızca
+kayan nokta** (uyarıyla). **Kayan nokta tipleri işaretli sayılır.** İşaretsiz ile işaretli arasındaki
+örtük dönüşüm, hedef tip tamsayı ya da kayan nokta olsun, **hatadır** (`ui ↔ i`, `ui → f`); yalnızca
 `unsafe` bloğunda geçer ([2.1](02.1-unsafe.md#21-unsafe-bloğu)). Diğer her şey `as` ile açık yazılır.
 
 | Kaynak → Hedef | Örtük? | Not |
@@ -13,6 +14,7 @@ kayan nokta** (uyarıyla). İşaretlilik değiştiren örtük dönüşüm (`ui �
 | `i32 → i8` | **hayır** | `as i8` (kırpar) |
 | `i32 → ui32`, `ui32 → i32`, `ui8 → i32` | **hata** `E0601` | `as`; `unsafe { }` içinde örtük geçer ([2.1](02.1-unsafe.md#21-unsafe-bloğu)) |
 | `i32 → f64` | evet, **uyarı** `W0601` | duyarlılık kaybolabilir; susturma aşağıda |
+| `ui32 → f64`, `ui8 → f32` | **hata** `E0601` | float işaretli sayılır; `as f64`; `unsafe { }` içinde örtük geçer (`W0601` yine verilir) |
 | `f64 → i32` | **hayır** | `as i32` (sıfıra yuvarlar) |
 | `*T → *U` | **hayır** | `as *U` |
 | `*T ↔ usize` | **hayır** | `as usize` / `as *T` |

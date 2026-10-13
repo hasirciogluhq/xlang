@@ -29,5 +29,5 @@
 - **`unsafe` ayrıntıları:** yalnızca `unsafe { }` bloğu var; `unsafe fn` ya da bildirim düzeyi işaret yok
   (blok başına yazmak ağır gelirse eklenir). `unsafe` şu an tek kuralı gevşetir (`ui ↔ i` örtük, iki yön aynı);
   `*T` dönüşümleri, `@unchecked fn` ve `--safety` ile ilişkisi bilerek ayrı tutuldu. `W0601` yalnızca
-  **işaretli** tamsayı → float için; **işaretsiz → float** (`ui32 → f64`) için henüz karar yok (şu an `as`
-  ister). `f32 → f64` genişlemesi bu kuralın dışındadır (örtük, uyarısız).
+  **işaretli** tamsayı → float için (`unsafe` içinde `ui → f` geçerken de verilir). Float işaretli sayılır,
+  bu yüzden `ui → f` `E0601`'dir. `f32 → f64` genişlemesi bu kuralın dışındadır (örtük, uyarısız).
