@@ -72,9 +72,10 @@ No filler praise; state weaknesses plainly. For each feature cover:
   brace-delimited body, no `\` and no `#`/`##`, typed parameters, hygienic. There is no `stringify!`.
 - Source extension `.xl`. No default export; `export` (between xl modules) and `export(c)` (unmangled C symbol).
 - Name mangling is on by default; overrides: `--mangle=`, `@file(mangle = ...)`, `@mangle(...)` (fn > file > project).
-- `new T { fields }` stays in the language: it allocates and initializes in one step and returns `*T`. Allocation
-  goes to the stdlib allocator (`std/mem`); the compiler does not know `malloc`. Free with `free` from `std/mem`.
-  How `new` reaches the allocator and its relation to `ref T` are pending decisions.
+- `new(a) T { fields }` stays in the language: it calls `a.alloc(size_of(T), align_of(T))`, initializes and returns
+  `*T`. The user always supplies the allocator `a` (any value with an `alloc(self, size, align) -> *void` method);
+  there is no implicit allocator and the compiler does not know `malloc`. `sqrt` and math come from `std/math`.
+  The relation of `new` to `ref T` is a pending decision.
 - Safety: `*T` unchecked, `ref T` generation-checked (`--safety=checked|unchecked`); no borrow checker.
 - Outputs: `--emit=obj|ir|bc|header|exe|static|shared`; linking with C++ is done by the user's build script (xmake).
 - Atomics are builtins with the `__builtin_` prefix: `__builtin_atomic_load/store/xchg/cas/add`, `__builtin_fence`.

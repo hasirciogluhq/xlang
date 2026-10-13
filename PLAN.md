@@ -101,10 +101,11 @@ Source ─► Lexer ─► Preprocess (#if/#elif/#else/#endif, token seviyesi) �
 - **Liste sınırı:** builtin listesi kapalıdır (kural 7); eklenecekler "compiler gövdeyi doğrudan
   sağlayabiliyor mu" ölçütüne tabidir.
 - **Çakışma:** kullanıcı/stdlib bir builtin adını tanımlarsa (ör. atomic'ler) hata mı, gölgeleme mi?
-- **`new` → allocator bağlantısı:** compiler stdlib'de hangi sembolü çağırır (sabit ad mı, kapsamdaki
-  `alloc` mı)? `--no-std` altında `new` hata mı, kullanıcının sağladığı allocator mı?
-- **`new` ve `ref T`:** `new T{}` `*T` döndürür; `ref T`'ye atamak (`gen` başlığı, 4.10) için `new`'in
-  ref-uyumlu allocator'ı mı çağıracağı, ayrı bir yazım mı gerektiği belirlenmedi (§17 örneği buna bağlı).
+- **`new` ve `ref T`:** `new(a) T{}` `*T` döndürür; `ref T`'ye atamak için `gen` başlığı (4.10) gerekir:
+  `a`'nın ref-uyumlu olması mı, ayrı bir yazım mı belirlenmedi (§17 örneği `heap` adlı varsayımsal bir
+  allocator nesnesi kullanıyor).
+- **`new` ayrıntıları:** `alloc`'un `align` parametresinin anlamı, `std/mem`'in hazır allocator
+  nesnelerinin adları (`heap` vb.) belirlenmedi.
 
 ---
 
@@ -275,9 +276,11 @@ Source ─► Lexer ─► Preprocess (#if/#elif/#else/#endif, token seviyesi) �
   her erişimde `ref.gen == obj.gen` kontrolü + trap üretir. `&local`'dan ref'in kaçışı derleme hatası
   (basit escape kontrolü, borrow checker değil). `@unchecked fn` ve `--safety=unchecked` kontrolleri kaldırır.
   `ref T` `@repr(c)` alanında ve `export(c)` imzasında yasak.
-- [ ] **4.11** `new T { alanlar }`: dil ifadesi; bellek ayırır, alanları başlatır ve `*T` döndürür.
-  Ayırma stdlib allocator'ına (`std/mem`) iner; compiler `malloc` bilmez (kural 4). Bırakma `std/mem`'den
-  `free` ile. Allocator bağlantısı ve `ref T` ile ilişkisi "Karar bekleyen"de.
+- [ ] **4.11** `new(a) T { alanlar }`: dil ifadesi; `a.alloc(size_of(T), align_of(T))` çağırır, alanları
+  yazar ve `*T` döndürür. Allocator'ı **kullanıcı verir**: `a`, `alloc(self, size: usize, align: usize) ->
+  *void` metoduna sahip herhangi bir değer (class, interface değeri, `impl` eden struct); sema yalnızca bu
+  metodu çözer. Örtük/varsayılan allocator yoktur, allocator'sız `new` hatadır; compiler `malloc` bilmez
+  (kural 4) ve `--no-std` altında aynı çalışır. `alloc` `null` dönerse `new` `null` döndürür.
 
 **Kabul:** class/interface/vtable içeren küçük programlar çalışır; `@repr(c)` class'ın nesne düzeni
 ve vtable'ı clang ile birebir uyuşur (tek kalıtım).
@@ -358,7 +361,7 @@ kullanıcı kodu → std/{thread,sync,sched,io,memory} → std/sys/{linux,macos,
   - Numara/yapı tabloları xl içinde (compiler görmez). POSIX uyumlu semantik hedeflenir (pthread benzeri
     thread/mutex/cond davranışı), ama pthread kütüphanesi çağrılmaz.
 - [ ] **7.1b** Stdlib yerleşimi: `std/index.xl` (giriş; alt modülleri `export * from` / `export * as` ile
-  toplar), `std/memory`, `std/cpu`, `std/gpu`, `std/sys/*`. `import "std"` hepsini, `import "std/cpu"`
+  toplar), `std/memory`, `std/math` (`sqrt` vb.; xl ile yazılır, libm yok), `std/cpu`, `std/gpu`, `std/sys/*`. `import "std"` hepsini, `import "std/cpu"`
   yalnızca ilgili parçayı verir.
 - [ ] **7.2** `std/mem`, `std/io`: `alloc/free` (allocator), `print` (compiler'a gömülü değil; global değil,
   `import` ile gelir). `memcpy/memset/memmove/memcmp` `std/memory`'de **xl ile yazılır** ve `export(c)` ile
@@ -375,7 +378,7 @@ kullanıcı kodu → std/{thread,sync,sched,io,memory} → std/sys/{linux,macos,
   (epoll/kqueue/IOCP benzeri; 7.1 syscall'larıyla). Compiler scheduler'ı bilmez.
 - [ ] **7.6** xmake `std` hedefi: stdlib'i derleyip compiler modül arama yoluna kurar.
 - [ ] **7.7** Compiler'dan kaldır: `spawn`/`go`, `print` özel işleme, `malloc/free/printf` prelude,
-  `needs_heap_`/`needs_strings_`; `new` dilde kalır (4.11, ayırma stdlib allocator'ına iner), `delete` yoktur.
+  `needs_heap_`/`needs_strings_`; `new` dilde kalır (4.11, allocator'ı kullanıcı verir), `delete` yoktur.
   Eski example/lib'ler yeni dile göre yeniden yazılır (bu aşamada).
 
 **Kabul:** compiler kaynağında `spawn`, `thread`, `pthread`, `printf`, `malloc` geçmez (link bayrakları

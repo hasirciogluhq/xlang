@@ -173,26 +173,49 @@ fn main() -> i32 {
 
 ### `new`
 
-`new T { alanlar }` **hem bellek ayırır hem nesneyi oluşturur** ve nesnenin pointer'ını (`*T`) döndürür.
-Ayırma stdlib'in allocator'ıyla yapılır; bırakmak için `std/mem`'den `free` kullanılır.
+`new(a) T { alanlar }` **hem bellek ayırır hem nesneyi oluşturur** ve nesnenin pointer'ını (`*T`) döndürür.
+Allocator'ı **kullanıcı verir**: `a`, `alloc(self, size: usize, align: usize) -> *void` metoduna sahip
+herhangi bir değerdir (class, interface değeri ya da `impl` eden struct). Compiler hiçbir allocator bilmez,
+örtük/varsayılan allocator yoktur; `--no-std` altında da aynı çalışır.
+
+`new(a) T { x: 1 }` şuna eşittir:
 
 ```xlang
-from "std/mem" import free
+local p: *T = a.alloc(size_of(T), align_of(T)) as *T
+*p = T { x: 1 }
+```
+
+```xlang
+class Bump {
+    base: *ui8
+    used: usize
+    cap:  usize
+
+    fn alloc(self, size: usize, align: usize) -> *void {     // hizalama bu örnekte yok sayıldı
+        if self.used + size > self.cap { return null }
+        local p: *void = (self.base as usize + self.used) as *void
+        self.used = self.used + size
+        return p
+    }
+}
 
 struct Point { x: i32, y: i32 }
 
 fn main() -> i32 {
-    local p: *Point = new Point { x: 1, y: 2 }     // ayır + alanları yaz, *Point döner
-    local sum: i32 = p.x + p.y
-    free(p as *void)
-    return sum
+    local buf: [ui8; 4096]
+    local arena: Bump = Bump { base: &buf as *ui8, used: 0, cap: 4096 }
+
+    local p: *Point = new(&arena) Point { x: 1, y: 2 }     // arena.alloc çağrılır, *Point döner
+    return p.x + p.y
 }
 ```
 
 | Yazım | Anlam |
 |-------|-------|
-| `new T { ... }` | `size_of(T)` kadar ayır, alanları başlat, `*T` döndür |
-| `free(p as *void)` | Belleği bırak (`std/mem`, import gerekir) |
+| `new(a) T { ... }` | `a.alloc(size_of(T), align_of(T))` çağır, alanları yaz, `*T` döndür |
+| `a.alloc` `null` dönerse | `new` de `null` döndürür, alanlar yazılmaz |
+| `new T { ... }` (allocator'sız) | **Hata**: allocator açıkça verilmeli |
+| Bırakma | Allocator'ın kendi metodu (ör. `a.free(p)`); `new` için ayrı bir kural yok |
 
 ---
 
@@ -1106,12 +1129,12 @@ ham pointer `*T` C gibi aynen çalışır. Üstüne, kullanım-sonrası-serbest 
 | `ref T` | 16 B (`ptr` + `gen`) | her erişimde nesil kontrolü | güvenli kod |
 
 ```xlang
-from "std/mem" import free               // stdlib: global değil, import gerekir
+from "std/mem" import heap, free        // stdlib: global değil, import gerekir
 
 struct Node { value: i32 }
 
 fn main() -> i32 {
-    local n: ref Node = new Node { value: 7 }
+    local n: ref Node = new(heap) Node { value: 7 }
     local copy: ref Node = n             // ikisi de aynı nesne
 
     free(n)                              // nesnenin nesli artar
@@ -1170,6 +1193,8 @@ sisteminizle arşivler/bağlarsınız.
 
 ```xlang
 // geom.xl
+from "std/math" import sqrt
+
 @repr(c)
 export struct Vec2 { x: f64, y: f64 }
 
