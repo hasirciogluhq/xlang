@@ -4,24 +4,25 @@
 
 - **Everything written to the repo is in English**: source code, comments, docs, commit messages, this file,
   diagnostics text produced by the compiler.
-- **Exceptions: `PLAN.md` and `PLAN.eg.md` stay in Turkish.**
+- **Exceptions: everything under `plan/` and `plan/eg/` stays in Turkish.**
 - Chat replies to the user stay in Turkish (the user writes Turkish).
 
 ## Plan files (read these first)
 
 | File | Contents |
 |------|----------|
-| `PLAN.md` | Compiler plan: rules, decisions, phases, PR breakdown |
-| `PLAN.eg.md` | What the language looks like once the plan is done: one section per feature, ASCII tables, xlang code examples |
+| `plan/` | Compiler plan, one file per section (`NN-*.md`): rules, decisions, pending decisions (`03-karar-bekleyen-*.md`), phases, PR breakdown; index in `plan/README.md` |
+| `plan/eg/` | What the language looks like once the plan is done, one file per feature (`NN-*.md`, `NN.M-*.md`): ASCII tables, xlang code examples; index in `plan/eg/README.md` |
 
 ### Sync rule
 
 - If a plan change affects the **language surface** (syntax, types, features, CLI flags, import forms,
-  attributes, builtins), update **`PLAN.eg.md` in the same change**.
-- If only compiler internals change (IR, passes, codegen), update only `PLAN.md`.
-- The user usually drives plan updates through `PLAN.eg.md`. When adding a feature, write the example first
-  (description + ASCII table + `xlang` code block) in `PLAN.eg.md`, then add the item to `PLAN.md`.
-- Every feature in `PLAN.eg.md`: one heading, a short description, a table where useful, an `xlang` code example.
+  attributes, builtins), update **`plan/eg/` in the same change**.
+- If only compiler internals change (IR, passes, codegen), update only `plan/`.
+- The user usually drives plan updates through `plan/eg/`. When adding a feature, write the example first
+  (description + ASCII table + `xlang` code block) in `plan/eg/`, then add the item to `plan/`.
+- Every feature in `plan/eg/`: its own file, one heading, a short description, a table where useful, an `xlang` code
+  example. New features get a new file and a line in `plan/eg/README.md`; likewise new plan sections in `plan/README.md`.
 
 ## Working rules
 
@@ -31,7 +32,8 @@
   and will be rewritten once the compiler reaches its target.
 - **Do not read anything under `.cursor/`** (rules or plans).
 - The compiler knows only the language, CPU primitives (syscall, atomics, function pointers, inline asm), the
-  closed builtin list (the `__builtin_` atomics, fence and asm; `MemoryOrder`) and the roles bound with
+  closed builtin list (`syscall`, the `__builtin_` atomics, fence and asm; `size_of`-style queries,
+  `static_assert`; `MemoryOrder`) and the roles bound with
   `register` (`panic`, `allocator`). A builtin's body is provided by the compiler itself; if the compiler will not
   directly support something, it is not a builtin and goes to the stdlib. `memcpy` family, `malloc`/`free`/the
   allocator are NOT builtins: they come from the stdlib (`std/memory`, `std/mem`). The compiler never treats
@@ -40,7 +42,7 @@
 - **libc is forbidden**, absolutely: never used, never called, never imitated. Do not suggest it, do not put it in
   examples (`puts`, `FILE`, `environ`, ...).
 - Do not invent features or design beyond what the user asked for. If a decision is needed, record it in
-  the "pending decisions" part of `PLAN.md` or ask.
+  the "pending decisions" file in `plan/` (`03-karar-bekleyen-*.md`) or ask.
 - Use the default tools (Read/Edit/Write) for file changes; use bulk regex/python/sed only when necessary.
 
 ## Feature assessment (applies in every session)
@@ -61,7 +63,7 @@ No filler praise; state weaknesses plainly. For each feature cover:
 - Do not re-ask topics the user closed with "do not ask again" (e.g. external libraries/libc); if needed, give a
   one-time risk note instead.
 
-## Language decisions (summary; details in `PLAN.eg.md`)
+## Language decisions (summary; details in `plan/eg/`)
 
 - Functions: `fn name(a: i32) -> i32 { }` (no `->` means `void`).
 - Types: `i8 i16 i32 i64 isize`, `ui8 ui16 ui32 ui64 usize`, `f32 f64`, `bool`, `void`, `*T`, `fn(A) -> R`,
@@ -103,7 +105,7 @@ No filler praise; state weaknesses plainly. For each feature cover:
 - Atomics are builtins with the `__builtin_` prefix: `__builtin_atomic_load/store/xchg/cas/add`, `__builtin_fence`.
   The order argument is a compile-time `MemoryOrder` member (`MemoryOrder.seq_cst`). Inline asm is
   `__builtin_asm("template", in(reg) x, out(reg) y, clobber("rcx"), options("noreturn"))` (syntax in
-  `PLAN.eg.md` §12.1): the template is target-specific and chosen with `#if arch` / `#if os`, Intel dialect on
+  `plan/eg/12.1-inline-asm.md`): the template is target-specific and chosen with `#if arch` / `#if os`, Intel dialect on
   x86, memory is assumed touched unless `options("nomem")`.
   `mutex` exists in the stdlib (`std/sync`, built on the atomics + OS wait); there is no `lock_guard`/RAII guard.
 - Global namespace has two tiers: (a) the closed builtin list: `syscall`, atomics/`fence`/asm, `size_of`-style
