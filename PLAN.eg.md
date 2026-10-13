@@ -171,6 +171,29 @@ fn main() -> i32 {
 
 `null` pointer değeri `0 as *T` ile ya da `null` sabitiyle yazılır.
 
+### `new`
+
+`new T { alanlar }` **hem bellek ayırır hem nesneyi oluşturur** ve nesnenin pointer'ını (`*T`) döndürür.
+Ayırma stdlib'in allocator'ıyla yapılır; bırakmak için `std/mem`'den `free` kullanılır.
+
+```xlang
+from "std/mem" import free
+
+struct Point { x: i32, y: i32 }
+
+fn main() -> i32 {
+    local p: *Point = new Point { x: 1, y: 2 }     // ayır + alanları yaz, *Point döner
+    local sum: i32 = p.x + p.y
+    free(p as *void)
+    return sum
+}
+```
+
+| Yazım | Anlam |
+|-------|-------|
+| `new T { ... }` | `size_of(T)` kadar ayır, alanları başlat, `*T` döndür |
+| `free(p as *void)` | Belleği bırak (`std/mem`, import gerekir) |
+
 ---
 
 ## 6. Struct ve bellek düzeni

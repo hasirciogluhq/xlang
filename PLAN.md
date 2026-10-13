@@ -101,6 +101,10 @@ Source ─► Lexer ─► Preprocess (#if/#elif/#else/#endif, token seviyesi) �
 - **Liste sınırı:** builtin listesi kapalıdır (kural 7); eklenecekler "compiler gövdeyi doğrudan
   sağlayabiliyor mu" ölçütüne tabidir.
 - **Çakışma:** kullanıcı/stdlib bir builtin adını tanımlarsa (ör. atomic'ler) hata mı, gölgeleme mi?
+- **`new` → allocator bağlantısı:** compiler stdlib'de hangi sembolü çağırır (sabit ad mı, kapsamdaki
+  `alloc` mı)? `--no-std` altında `new` hata mı, kullanıcının sağladığı allocator mı?
+- **`new` ve `ref T`:** `new T{}` `*T` döndürür; `ref T`'ye atamak (`gen` başlığı, 4.10) için `new`'in
+  ref-uyumlu allocator'ı mı çağıracağı, ayrı bir yazım mı gerektiği belirlenmedi (§17 örneği buna bağlı).
 
 ---
 
@@ -271,6 +275,9 @@ Source ─► Lexer ─► Preprocess (#if/#elif/#else/#endif, token seviyesi) �
   her erişimde `ref.gen == obj.gen` kontrolü + trap üretir. `&local`'dan ref'in kaçışı derleme hatası
   (basit escape kontrolü, borrow checker değil). `@unchecked fn` ve `--safety=unchecked` kontrolleri kaldırır.
   `ref T` `@repr(c)` alanında ve `export(c)` imzasında yasak.
+- [ ] **4.11** `new T { alanlar }`: dil ifadesi; bellek ayırır, alanları başlatır ve `*T` döndürür.
+  Ayırma stdlib allocator'ına (`std/mem`) iner; compiler `malloc` bilmez (kural 4). Bırakma `std/mem`'den
+  `free` ile. Allocator bağlantısı ve `ref T` ile ilişkisi "Karar bekleyen"de.
 
 **Kabul:** class/interface/vtable içeren küçük programlar çalışır; `@repr(c)` class'ın nesne düzeni
 ve vtable'ı clang ile birebir uyuşur (tek kalıtım).
@@ -368,7 +375,7 @@ kullanıcı kodu → std/{thread,sync,sched,io,memory} → std/sys/{linux,macos,
   (epoll/kqueue/IOCP benzeri; 7.1 syscall'larıyla). Compiler scheduler'ı bilmez.
 - [ ] **7.6** xmake `std` hedefi: stdlib'i derleyip compiler modül arama yoluna kurar.
 - [ ] **7.7** Compiler'dan kaldır: `spawn`/`go`, `print` özel işleme, `malloc/free/printf` prelude,
-  `needs_heap_`/`needs_strings_`; `new/delete` ya stdlib sembolüne iner ya da kalkar.
+  `needs_heap_`/`needs_strings_`; `new` dilde kalır (4.11, ayırma stdlib allocator'ına iner), `delete` yoktur.
   Eski example/lib'ler yeni dile göre yeniden yazılır (bu aşamada).
 
 **Kabul:** compiler kaynağında `spawn`, `thread`, `pthread`, `printf`, `malloc` geçmez (link bayrakları
