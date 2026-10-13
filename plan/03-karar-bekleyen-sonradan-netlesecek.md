@@ -20,7 +20,7 @@
 - **`panic` imzası:** dosya/satır konumu iletilmiyor; ileride `register(panic)`'e ek parametre
   eklenebilir. `msg` şu an sabit NUL'lu string.
 - **Dizi ayrıntıları:** uzunluk için ayrı builtin yok (`size_of(a) / size_of(T)`); dilim (slice) tipi yok;
-  sabit indeksin sınır dışı olması derleme hatası mı uyarı mı belirlenmedi.
+  sabit indeksin sınır dışı olması derleme hatasıdır (`E0701`, karar verildi: 2.5).
 - **Enum ayrıntıları:** string enum'da değerden üyeye ters arama yok; `export(c)` imzasında yalnızca tamsayı
   alt tipli enum geçerli sayıldı; enum'un `@repr(c)` düzeni alt tipin düzenidir.
 - **`register` ayrıntıları:** `define` (macro) kaydı kapsam dışı; `register` ile kaydedilen sembolün

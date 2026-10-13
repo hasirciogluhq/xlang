@@ -33,7 +33,9 @@
   - **İndeksleme `a[i]`:** dizi ve `*T` üzerinde; indeks `usize` (aynı işaretlilikte genişleme örtük,
     işaretliler `as usize`). `*T` indekslemesi `*(p + i * size_of(T))` ve **kontrolsüzdür**. Dizi
     indekslemesi `--safety=checked` (varsayılan) altında sınır kontrolü yapar, dışındaysa kayıtlı `panic`'i
-    çağırır; `unchecked` ya da `@unchecked fn` kontrolü kaldırır. Sabit indeks sınır dışıysa derleme hatası.
+    çağırır; `unchecked` ya da `@unchecked fn` kontrolü kaldırır. Sabit indeks (derleme zamanı sabit ifadesi) sınır dışıysa **derleme hatası** `E0701`:
+    `--safety` ayarından bağımsızdır (`unchecked`'te de verilir, çünkü sonuç tanımsız bellek erişimidir) ve
+    susturulamaz; ulaşılamaz koda (`if false { }`) yazılsa da verilir (sema, ölü kod analizi yapmaz).
   - Global başlangıç değerleri ve kuralları plan/eg/ §4 "Global değişkenler"de.
 - [ ] **2.6** `enum Ad: T { Üye [= değer], ... }`: `T` derleme zamanı sabiti olabilen herhangi bir tip
   (tamsayılar, `f32/f64`, `bool`, `*ui8` string literal'i); `T` yazılmazsa `i32`. Üyeler `Ad.Üye` ile

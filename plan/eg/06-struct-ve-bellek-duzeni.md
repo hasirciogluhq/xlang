@@ -77,7 +77,7 @@ fn main() -> i32 {
 | Kullanım | Yerel, struct/class alanı, global |
 | Literal | `[a, b, c]` ya da `[v; N]`; eleman tipi bağlamdan çıkarılır |
 | İndeks tipi | `usize`; `ui8/ui16/ui32` örtük genişler, işaretliler `as usize` ister |
-| `a[i]` (dizi) | `--safety=checked` (varsayılan) altında sınır kontrolü: dışındaysa `panic`; `unchecked` ya da `@unchecked fn` kontrolü kaldırır; sabit indeks sınır dışıysa derleme hatası |
+| `a[i]` (dizi) | `--safety=checked` (varsayılan) altında sınır kontrolü: dışındaysa `panic`; `unchecked` ya da `@unchecked fn` kontrolü kaldırır; sabit indeks sınır dışıysa **derleme hatası** `E0701` (`--safety`'den bağımsız, susturulamaz) |
 | `p[i]` (`*T`) | `*(p + i * size_of(T))`; **hiçbir zaman kontrol edilmez** |
 | Değer semantiği | Atama, parametre ve dönüşte dizi tamamen kopyalanır; kopyayı önlemek için `&a` |
 | `@repr(c)` struct içinde | C'deki `T[N]` ile aynı düzen |

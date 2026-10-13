@@ -139,4 +139,5 @@ Susturulan (`@allow`/`--allow`) uyarılar ekrandan düşer ama `--diag-log` aç�
 | `E0503` | `register` rolünün sözleşmesi sağlanmamış (ör. `allocator`'da `alloc` ya da `free` yok) | **hata** |
 | `W0402` | Yerel tanım ya da import, `register`'lı bir global adı gölgeliyor | uyarı |
 | `E0601` | İşaretlilik değiştiren örtük dönüşüm (`ui ↔ i`, ya da işaretlilikleri karışık ikili işlem); `unsafe { }` içinde ya da `as` ile geçer ([2.1](02.1-unsafe.md#21-unsafe-bloğu)) | **hata** |
+| `E0701` | Dizi indeksi sabit ve sınır dışı (`a[7]`, `a: [T; 4]`); `--safety`'den bağımsız | **hata** |
 | `W0601` | İşaretli tamsayı → `f32/f64` örtük dönüşüm, duyarlılık kaybolabilir ([2](02-tip-donusumu.md#i--f-uyarısı)) | uyarı |
