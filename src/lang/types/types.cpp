@@ -1,224 +1,172 @@
-#include "xlang/types.h"
+#include "xlang/lang/types.h"
 
-#include "xlang/error.h"
+#include "xlang/lang/ast.h"
+
+#include <format>
 
 namespace xlang {
 
-bool Type::isInteger() const {
-    return kind == TypeKind::Int32 || kind == TypeKind::Int64 || kind == TypeKind::BigInt ||
-           kind == TypeKind::Bool || kind == TypeKind::Char;
+Type Type::makeVoid() {
+    return Type{};
 }
 
-bool Type::isFloating() const {
-    return kind == TypeKind::Float || kind == TypeKind::Double;
+Type Type::makeBool() {
+    Type t;
+    t.kind = TypeKind::Bool;
+    return t;
 }
 
-bool Type::isPtrLike() const {
-    return kind == TypeKind::Pointer || kind == TypeKind::Struct || kind == TypeKind::Interface ||
-           kind == TypeKind::String;
+Type Type::makeInt(unsigned bits, bool is_signed) {
+    Type t;
+    t.kind = TypeKind::Int;
+    t.bits = bits;
+    t.is_signed = is_signed;
+    return t;
 }
 
-Type Type::dereferenced() const {
-    if (kind != TypeKind::Pointer || !inner) {
-        return *this;
-    }
-    return *inner;
-}
-
-Type Type::makeStruct(std::string name) {
-    Type type;
-    type.kind = TypeKind::Struct;
-    type.struct_name = std::move(name);
-    return type;
-}
-
-Type Type::makeInterface(std::string name) {
-    Type type;
-    type.kind = TypeKind::Interface;
-    type.struct_name = std::move(name);
-    return type;
+Type Type::makeFloat(unsigned bits) {
+    Type t;
+    t.kind = TypeKind::Float;
+    t.bits = bits;
+    t.is_signed = true;  // floats count as signed (E0601 rules)
+    return t;
 }
 
 Type Type::makePointer(Type pointee) {
-    Type type;
-    type.kind = TypeKind::Pointer;
-    type.inner = std::make_shared<Type>(std::move(pointee));
-    return type;
+    Type t;
+    t.kind = TypeKind::Pointer;
+    t.elem = std::make_shared<const Type>(std::move(pointee));
+    return t;
 }
 
-Type Type::parse(std::string_view name) {
-    if (name == "void") {
-        return Type{TypeKind::Void};
-    }
-    if (name == "int" || name == "int32") {
-        return Type{TypeKind::Int32};
-    }
-    if (name == "int64") {
-        return Type{TypeKind::Int64};
-    }
-    if (name == "bigint") {
-        return Type{TypeKind::BigInt};
-    }
-    if (name == "float" || name == "float32") {
-        return Type{TypeKind::Float};
-    }
-    if (name == "double" || name == "float64") {
-        return Type{TypeKind::Double};
-    }
-    if (name == "bool") {
-        return Type{TypeKind::Bool};
-    }
-    if (name == "char") {
-        return Type{TypeKind::Char};
-    }
-    if (name == "string") {
-        return Type{TypeKind::String};
-    }
-    return makeStruct(std::string(name));
+Type Type::makeRef(Type pointee) {
+    Type t;
+    t.kind = TypeKind::Ref;
+    t.elem = std::make_shared<const Type>(std::move(pointee));
+    return t;
 }
 
-Type defaultType() {
-    return Type{TypeKind::Int32};
+Type Type::makeFnPtr(std::vector<Type> params, Type ret) {
+    Type t;
+    t.kind = TypeKind::FnPtr;
+    t.params = std::move(params);
+    t.ret = std::make_shared<const Type>(std::move(ret));
+    return t;
 }
 
-std::string typeMangleComponent(const Type& type) {
-    switch (type.kind) {
-    case TypeKind::Void:
-        return "void";
-    case TypeKind::Int32:
-        return "i32";
-    case TypeKind::Int64:
-        return "i64";
-    case TypeKind::BigInt:
-        return "i128";
-    case TypeKind::Float:
-        return "f32";
-    case TypeKind::Double:
-        return "f64";
-    case TypeKind::Bool:
-        return "bool";
-    case TypeKind::Char:
-        return "char";
-    case TypeKind::String:
-        return "str";
-    case TypeKind::Struct:
-        return "S" + type.struct_name;
-    case TypeKind::Interface:
-        return "I" + type.struct_name;
-    case TypeKind::Pointer:
-        return "P" + typeMangleComponent(type.dereferenced());
-    }
-    return "unknown";
+Type Type::makeArray(Type element, std::shared_ptr<const Expr> length) {
+    Type t;
+    t.kind = TypeKind::Array;
+    t.elem = std::make_shared<const Type>(std::move(element));
+    t.length = std::move(length);
+    return t;
 }
 
-std::string
-mangleFunctionName(const std::string& name, const std::vector<Type>& param_types, bool variadic) {
-    std::string result = name;
-    for (const Type& param_type : param_types) {
-        result += "$" + typeMangleComponent(param_type);
-    }
-    if (variadic) {
-        result += "$v";
-    }
-    return result;
+Type Type::makeNamed(std::vector<std::string> path) {
+    Type t;
+    t.kind = TypeKind::Named;
+    t.path = std::move(path);
+    return t;
 }
 
-bool typesEqual(const Type& left, const Type& right) {
-    if (left.kind != right.kind) {
-        return false;
-    }
-    if (left.kind == TypeKind::Struct || left.kind == TypeKind::Interface) {
-        return left.struct_name == right.struct_name;
-    }
-    if (left.kind == TypeKind::Pointer) {
-        if (!left.inner || !right.inner) {
-            return left.inner == right.inner;
+std::optional<Type> primitiveFromName(std::string_view name) {
+    struct Entry {
+        std::string_view name;
+        TypeKind kind;
+        unsigned bits;
+        bool is_signed;
+    };
+    static constexpr Entry table[] = {
+        {"i8", TypeKind::Int, 8, true},     {"i16", TypeKind::Int, 16, true},
+        {"i32", TypeKind::Int, 32, true},   {"i64", TypeKind::Int, 64, true},
+        {"isize", TypeKind::Int, 0, true},  {"ui8", TypeKind::Int, 8, false},
+        {"ui16", TypeKind::Int, 16, false}, {"ui32", TypeKind::Int, 32, false},
+        {"ui64", TypeKind::Int, 64, false}, {"usize", TypeKind::Int, 0, false},
+        {"f32", TypeKind::Float, 32, true}, {"f64", TypeKind::Float, 64, true},
+        {"bool", TypeKind::Bool, 0, false}, {"void", TypeKind::Void, 0, false},
+    };
+    for (const Entry& e : table) {
+        if (e.name != name) {
+            continue;
         }
-        return typesEqual(*left.inner, *right.inner);
+        switch (e.kind) {
+        case TypeKind::Int: return Type::makeInt(e.bits, e.is_signed);
+        case TypeKind::Float: return Type::makeFloat(e.bits);
+        case TypeKind::Bool: return Type::makeBool();
+        default: return Type::makeVoid();
+        }
     }
-    return true;
+    return std::nullopt;
 }
+
+bool isPrimitiveTypeName(std::string_view name) {
+    return primitiveFromName(name).has_value();
+}
+
+namespace {
+
+[[nodiscard]] std::string joinPath(const std::vector<std::string>& path) {
+    std::string out;
+    for (std::size_t i = 0; i < path.size(); ++i) {
+        if (i != 0) {
+            out += '.';
+        }
+        out += path[i];
+    }
+    return out;
+}
+
+[[nodiscard]] std::string lengthToString(const Expr* length) {
+    if (length == nullptr) {
+        return "?";
+    }
+    if (length->kind == Expr::Kind::IntLiteral) {
+        return std::to_string(length->int_value);
+    }
+    if (length->kind == Expr::Kind::Name) {
+        return length->text;
+    }
+    return "<const expr>";
+}
+
+}  // namespace
 
 std::string typeToString(const Type& type) {
     switch (type.kind) {
-    case TypeKind::Void:
-        return "void";
-    case TypeKind::Int32:
-        return "int32";
-    case TypeKind::Int64:
-        return "int64";
-    case TypeKind::BigInt:
-        return "bigint";
-    case TypeKind::Float:
-        return "float";
-    case TypeKind::Double:
-        return "double";
-    case TypeKind::Bool:
-        return "bool";
-    case TypeKind::Char:
-        return "char";
-    case TypeKind::String:
-        return "string";
-    case TypeKind::Struct:
-        return type.struct_name;
-    case TypeKind::Interface:
-        return type.struct_name;
-    case TypeKind::Pointer:
-        return "*" + typeToString(type.dereferenced());
+    case TypeKind::Void: return "void";
+    case TypeKind::Bool: return "bool";
+    case TypeKind::Int:
+        if (type.bits == 0) {
+            return type.is_signed ? "isize" : "usize";
+        }
+        return std::format("{}{}", type.is_signed ? "i" : "ui", type.bits);
+    case TypeKind::Float: return std::format("f{}", type.bits);
+    case TypeKind::Pointer: return "*" + (type.elem ? typeToString(*type.elem) : "?");
+    case TypeKind::Ref: return "ref " + (type.elem ? typeToString(*type.elem) : "?");
+    case TypeKind::FnPtr: {
+        std::string out = "fn(";
+        for (std::size_t i = 0; i < type.params.size(); ++i) {
+            if (i != 0) {
+                out += ", ";
+            }
+            out += typeToString(type.params[i]);
+        }
+        out += ")";
+        if (type.ret && !type.ret->isVoid()) {
+            out += " -> " + typeToString(*type.ret);
+        }
+        return out;
     }
-    return "unknown";
-}
-
-std::string llvmTypeName(const Type& type) {
-    switch (type.kind) {
-    case TypeKind::Void:
-        return "void";
-    case TypeKind::Int32:
-        return "i32";
-    case TypeKind::Int64:
-        return "i64";
-    case TypeKind::BigInt:
-        return "i128";
-    case TypeKind::Float:
-        return "float";
-    case TypeKind::Double:
-        return "double";
-    case TypeKind::Bool:
-        return "i8";
-    case TypeKind::Char:
-        return "i8";
-    case TypeKind::String:
-        return "i8*";
+    case TypeKind::Array:
+        return std::format("[{}; {}]", type.elem ? typeToString(*type.elem) : "?",
+                           lengthToString(type.length.get()));
+    case TypeKind::Enum:
     case TypeKind::Struct:
-        return "%struct." + type.struct_name + "*";
+    case TypeKind::Class:
     case TypeKind::Interface:
-        return "i8*";
-    case TypeKind::Pointer:
-        return "ptr";
+    case TypeKind::Named: return joinPath(type.path);
     }
-    throw XlangError("invalid type for LLVM lowering");
-}
-
-std::size_t llvmTypeAlign(const Type& type) {
-    switch (type.kind) {
-    case TypeKind::Void:
-        return 1;
-    case TypeKind::Int32:
-    case TypeKind::Float:
-        return 4;
-    case TypeKind::Int64:
-    case TypeKind::Double:
-    case TypeKind::BigInt:
-    case TypeKind::String:
-    case TypeKind::Struct:
-    case TypeKind::Interface:
-    case TypeKind::Pointer:
-        return 8;
-    case TypeKind::Bool:
-    case TypeKind::Char:
-        return 1;
-    }
-    return 4;
+    return "?";
 }
 
 }  // namespace xlang

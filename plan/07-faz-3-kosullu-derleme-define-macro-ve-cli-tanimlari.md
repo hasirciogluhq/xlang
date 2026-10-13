@@ -1,6 +1,6 @@
 ## Faz 3 — Koşullu derleme, define/macro ve CLI tanımları
 
-- [ ] **3.1** Önişleme (`src/lang/preprocess/`): lexer'dan sonra, parser'dan önce, token akışı üzerinde.
+- [x] **3.1** Önişleme (`src/lang/preprocess/`): lexer'dan sonra, parser'dan önce, token akışı üzerinde.
   Direktifler satır başında `#if`, `#elif`, `#else`, `#endif`, `#ifdef`, `#ifndef`, `#error`.
   - **Tek satır biçimi:** koşul ve gövde aynı satırdaysa `#endif` yoktur (gövde o satırın kalanıdır).
   - **Blok biçimi:** gövde alt satırdan başlıyorsa `#endif` zorunlu; `#elif`/`#else` yalnızca blok biçiminde.
@@ -8,13 +8,14 @@
   - Koşul/gövde sınırı: koşul ifadesinin bittiği token; belirsizlikte koşul parantezlenir.
   - Item, statement, struct/class alanı ve `export ... from` seviyesinde çalışır (token akışı olduğu için
     konumdan bağımsız).
-- [ ] **3.2** Koşul ifadesi: dilin normal ifade sözdizimi ve operatörleri, derleme zamanı sabit ifade olarak
+- [x] **3.2** Koşul ifadesi: dilin normal ifade sözdizimi ve operatörleri, derleme zamanı sabit ifade olarak
   basit yorumlayıcıyla değerlendirilir: `&& || !`, `== !=`, `< <= > >=`, tamsayı/string/bool sabitleri,
   `defined(NAME)` / `!defined(NAME)`; `#ifdef NAME` ve `#ifndef NAME` bunların kısaltmasıdır.
-- [ ] **3.3** Yerleşik tanımlar (hedeften türer): `os` (`"linux"|"macos"|"windows"`), `arch`
+- [x] **3.3** Yerleşik tanımlar (hedeften türer): `os` (`"linux"|"macos"|"windows"`), `arch`
   (`"x86_64"|"aarch64"`), `pointerWidth` (`32|64`), `endian` (`"little"|"big"`), `debug` (bool),
   `optLevel` (0..3).
-- [ ] **3.4** CLI bayrakları (`src/cli`):
+- [x] **3.4** (`--emit` hariç: çıktı üretimi yok, Faz 5.6; `--mangle/--safety/--no-std/--std/--std-features/--cpu`
+  alınır ve `--print-cfg`'de görünür, etkileri ilgili fazlardadır) CLI bayrakları (`src/cli`):
 
   | Bayrak | Anlam |
   |--------|-------|
@@ -31,10 +32,10 @@
   | `--cpu <name>` | Hedef CPU (varsayılan `generic`) |
   | `--no-std` / `--std=<yol>` / `--std-features=...` | Stdlib seçimi (varsayılan: gömülü stdlib) |
 
-- [ ] **3.5** `#error "mesaj"`: koşul dalı seçilirse derleme hatası.
-- [ ] **3.6** `define` sabitleri: dosya içi `define N = ifade` ve CLI `-D` aynı isim uzayında; CLI öncelikli;
+- [x] **3.5** `#error "mesaj"`: koşul dalı seçilirse derleme hatası.
+- [x] **3.6** `define` sabitleri: dosya içi `define N = ifade` ve CLI `-D` aynı isim uzayında; CLI öncelikli;
   `#if` ve normal kodda okunabilir. Sabit ifade değerlendirici (tamsayı/bool/string) burada yazılır.
-- [ ] **3.7** Macro genişletme (`src/lang/macro/`): token ağacı üzerinde, metin birleştirme yok.
+- [x] **3.7** (modüller arası `export define` içe aktarımı modül yükleyicide, Faz 4.6; `MacroTable` bunun için hazır) Macro genişletme (`src/lang/macro/`): token ağacı üzerinde, metin birleştirme yok.
   - Parametre türü doğrulama (`expr`, `type`, `ident`, `block`, `items`).
   - Hijyen: macro içi `local` adları taze isimle yeniden adlandırılır.
   - Genişleme bir fixpoint döngüsüdür (macro → `#if` eleme → tekrar macro), derinlik sınırı 64,
@@ -42,7 +43,22 @@
   - Macro gövdesi item/statement/`import` üretebilir; modül seviyesinde çağrılan macro bildirim üretir.
   - `export define` ve `from "m" import ad` ile modüller arası macro paylaşımı; modül yükleme sırasında çözülür.
   - `#`/`##` ve satır devam karakteri sözdiziminde **yoktur** (`stringify!` da yoktur).
-- [ ] **3.8** `type` takma adları sema'da çözülür (Faz 4.1 scope'unda), HIR'da hedef tipe indirgenir;
+- [x] **3.8** (`Sema::resolve`; HIR'da indirgeme 4.3'te) `type` takma adları sema'da çözülür (Faz 4.1 scope'unda), HIR'da hedef tipe indirgenir;
   döngüsel takma ad hatası.
 
 **Kabul:** `-D DISABLE_X` ile bir item/alan/statement elenir; `--print-cfg` doğru değerleri gösterir.
+
+### Faz 3 uygulama notları
+
+- **Hat:** `lex -> preprocess -> expandMacros -> parseTokens` (`src/lang/frontend.cpp`, `parseSource`).
+- **Önişleme:** tek satır gövde = direktif satırının kalanı (ilk token `newline_before` alır, ayrı deyim olur);
+  blok biçimi `#endif` ister, kapanmayan `#if` ve başıboş `#else/#endif` `E0003`. Pasif `#error` susar.
+  Koşulda tanımsız ad `E0003`'tür (isteğe bağlı tanımlar için `defined(NAME)`). `define NAME = literal` aktif kodda
+  görüldükçe sonraki koşullara görünür; `-D` aynı ada her zaman üstündür.
+- **Macro:** token düzeyinde; `expr` argümanı çok token ise parantezlenir, ifade konumunda genişleme tek işlenen
+  olsun diye parantezlenir, deyim konumunda (satır başı / `{` / `}` sonrası) olduğu gibi eklenir. Hijyen: gövdede
+  `local` ile bağlanan ve parametre olmayan adlar `ad__mN` olur. Derinlik 64, hata zinciri etiketlerde. Bilinmeyen
+  `ad!(...)` olduğu gibi kalır (modül çözümü sonrası sema bakar).
+- **Yeni kodlar:** `E0003` (önişleme), `E0004` (macro).
+- **Belirsiz/bekleyen:** `#if` içinde `define` ifadesi (yalnız tek literal tanınır); makro gövdesindeki `#if`
+  dosya düzeyinde, tanım anında değerlendirilir.

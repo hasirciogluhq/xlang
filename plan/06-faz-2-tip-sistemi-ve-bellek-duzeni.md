@@ -1,18 +1,22 @@
 ## Faz 2 — Tip sistemi ve bellek düzeni (layout)
 
-- [ ] **2.1** Tip modeli: boyut/hizalama (`sizeOf`, `alignOf`) hedefe (`DataLayout`/pointer genişliği) göre hesaplanır.
-- [ ] **2.2** İşaretli/işaretsiz semantik: `sdiv/udiv`, `srem/urem`, `sext/zext`, `icmp slt/ult`,
+- [x] **2.1** Tip modeli: boyut/hizalama (`sizeOf`, `alignOf`) hedefe (`DataLayout`/pointer genişliği) göre hesaplanır.
+- [~] **2.2** (kural kütüphanesi `src/sema/conversion.cpp` tamam ve testli: `implicitConversion`,
+  `commonBinaryType`; ifade tipleme ve `sdiv/udiv`.. seçimi HIR/codegen'dedir, Faz 4–5) İşaretli/işaretsiz semantik: `sdiv/udiv`, `srem/urem`, `sext/zext`, `icmp slt/ult`,
   `ashr/lshr` — tip bazlı seçim. Örtük dönüşüm kuralları sema'da (tek yerde): aynı işaretlilikte
   genişleme örtük; işaretli tamsayı → kayan nokta örtük + `W0601`; işaretlilik değiştiren (`ui ↔ i`, `ui → f`; float
   işaretli sayılır) örtük dönüşüm `E0601` hatası, `unsafe` bloğu içinde (aynı ya da daha geniş hedefe) geçer; karışık işaretli
   ikili işlem `E0601`; kalan her şey `as`. HIR'da dönüşümler açık `Cast`'tır (4.3). Sıfıra bölme kayıtlı `panic` rolünü çağırır
   (kayıtlı yoksa trap).
-- [ ] **2.3** Layout motoru (yeni `src/sema/layout.cpp`):
+- [x] **2.3** Layout motoru (`src/sema/sema.cpp` `aggregateLayout`, kayıt biçimi `src/sema/layout.cpp`; clang ile
+  doğrulandı):
   - `@repr(c)`: alanlar bildirim sırasında, C kurallarıyla hizalama/padding, `sizeof` = C `sizeof`.
   - varsayılan: derleyici serbestçe sıralayabilir (ör. büyükten küçüğe) — spesifikasyon verilmez.
   - `@packed`, `@align(N)` desteği.
   - Üretilen LLVM struct tipleri, hesaplanan offset'lerle birebir uyuşur (gerekirse açık padding alanı).
-- [ ] **2.3b** Düzen şemaları ve geçmiş (`src/sema/layout_history.cpp`):
+- [x] **2.3b** (nesneye gömülü LLVM metaverisi **hariç**: kayıt `xl.layout` dosyasında; `.o/.a/.bc` metaverisi codegen
+  gelince; CLI `xlang layout <dosya> [Tip] [--layout-record]`, `--print-layout` yerine) Düzen şemaları ve geçmiş
+  (`include/xlang/sema/layout.h`):
   - Varsayılan düzen, sürümlü ve deterministik **şema** (v1, v2, v3...); eski şemalar donmuştur ve
     compiler'da kalır, yeni davranış yeni şema olur. `--layout-scheme=`, `@layout(scheme = vN)`.
   - Dışa aktarılan tipler için **düzen kaydı** (şema kimliği, alan sırası, offset, boyut, hizalama,
@@ -23,9 +27,9 @@
   - Kayıt yok ve `@repr(c)` yok → C varsayımı + `W0201`; kayıtlı düzenle çelişki → `W0202`;
     şema uyuşmazlığı → `W0203`.
   - CLI: `--layout-history=`, `--layout-record`, `--print-layout <Tip>`.
-- [ ] **2.4** Derleme zamanı sorguları: `sizeOf(T)`, `alignOf(T)`, `offsetOf(T, alan)`; `staticAssert(cond, "msg")`.
+- [x] **2.4** Derleme zamanı sorguları: `sizeOf(T)`, `alignOf(T)`, `offsetOf(T, alan)`; `staticAssert(cond, "msg")`.
   C başlığıyla layout doğrulaması bunlarla yapılır.
-- [ ] **2.5** Sabit boyutlu dizi tipi `[T; N]` (C struct uyumu için): `N` derleme zamanı sabit ifadesi
+- [x] **2.5** (sabit indeks `E0701` ifade tipleme gerektirir, Faz 4; tip/boyut/uzunluk sabiti tamam) Sabit boyutlu dizi tipi `[T; N]` (C struct uyumu için): `N` derleme zamanı sabit ifadesi
   (`define` sabiti olabilir); `sizeOf([T; N]) = N * sizeOf(T)`, hizalama `alignOf(T)`; yerel, struct/class
   alanı ve global olarak kullanılabilir; `@repr(c)` struct içinde C'deki `T[N]` ile aynı düzen.
   - **Değer tipi:** atama, parametre ve dönüşte tamamı kopyalanır; kopyayı önlemek için `&a`.
@@ -37,7 +41,7 @@
     `--safety` ayarından bağımsızdır (`unchecked`'te de verilir, çünkü sonuç tanımsız bellek erişimidir) ve
     susturulamaz; ulaşılamaz koda (`if false { }`) yazılsa da verilir (sema, ölü kod analizi yapmaz).
   - Global başlangıç değerleri ve kuralları plan/eg/ §4 "Global değişkenler"de.
-- [ ] **2.6** `enum Ad: T { Üye [= değer], ... }`: `T` derleme zamanı sabiti olabilen herhangi bir tip
+- [x] **2.6** `enum Ad: T { Üye [= değer], ... }`: `T` derleme zamanı sabiti olabilen herhangi bir tip
   (tamsayılar, `f32/f64`, `bool`, `*ui8` string literal'i); `T` yazılmazsa `i32`. Üyeler `Ad.Üye` ile
   erişilir. Otomatik numaralandırma yalnızca tamsayı alt tipte (önceki + 1, ilk üye 0); diğer alt tiplerde
   her üyenin değeri yazılmalıdır. `Ad` ayrı bir tiptir: alt tipe/alt tipten dönüşüm açık `as`; `==`/`!=`
@@ -47,3 +51,21 @@
 
 **Kabul:** `@repr(c)` struct'lar için clang'ın ürettiği `sizeof/alignof/offsetof` ile test
 (birkaç karma tipli struct, iç içe, packed, aligned) birebir uyuşur; x86_64 ve aarch64 için.
+
+### Faz 2 uygulama notları
+
+- **Kapsam:** `Sema` sınıfı (`include/xlang/sema/sema.h`) tek modül için isim tablosu, alias çözümü (döngü `E0704`),
+  enum numaralandırma/doğrulama (`E0705`), sabit ifade değerlendirici (`E0707`), layout ve modül düzeyi
+  `staticAssert` (`E0702`) yapar. Ifade/deyim tipleme ve çağrı çözümleme Faz 4'tedir.
+- **v1 şeması (donmuş):** `@repr(c)`/`@packed` bildirim sırasını korur; varsayılan düzende alanlar hizalamaya göre
+  büyükten küçüğe **kararlı** sıralanır (eşitlerde bildirim sırası). `@layout(shuffle[, seed = N])` tohumlu
+  karıştırır, tohum kayda yazılır. `@align(N)` yalnız 2'nin kuvveti. Boş struct boyutu 0, `@repr(c)` boş class 1.
+- **Class:** vptr offset 0 (kendi ya da kalıtımla gelen sanal metod varsa); taban alanları öne kopyalanır;
+  `@repr(c)` ve tabanın vptr'ı varsa türetilmiş alanlar taban `dsize`'ından başlar (Itanium kuyruk dolgusu
+  yeniden kullanımı), yoksa taban `size`'ından. Clang ile `Header/Mixed/Nested/Packed/Aligned/Shape/Circle/
+  Plain/Derived/WithEnum` birebir uyuştu (x86_64 ve aarch64'te bu tiplerin kuralı aynı).
+- **Boyutu bilinmeyen tipler `E0703`:** `void`, opak `declare`, çapraz modül tip (modül yükleme yok), değerle
+  özyineleme.
+- **`declare` düzeni:** `@repr(c)` yoksa önce `xl.layout` kaydı (`W0202` alan uyuşmazlığı, `W0203` şema farkı),
+  yoksa C varsayımı + `W0201`.
+- **Yeni tanı kodları:** `E0702..E0707` (bkz. eg/19).

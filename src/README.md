@@ -1,30 +1,29 @@
 # Source layout
 
-Context folders — each concern owns its tree. Prefer adding a new file under the right folder over growing a root blob.
+Context folders — each concern owns its tree.
 
 ```
 src/
-  cli/                 # xlang CLI entry (main)
+  cli/                 # xlang CLI entry (`parse`, `check`, `layout`, `--explain`)
   lang/
-    ast/ lexer/ parser/ types/
-  codegen/
-    generate.cpp       # Codegen::generate entry + CodegenResult
-    builder.cpp        # CommonIrBuilder (LLVM IR API)
-    target.cpp         # TargetMachine / object emit / native syscall asm
-    lower_types.cpp    # llvmType, coerce, sizes
-    prelude.cpp        # declares / prelude
-    strings.cpp structs.cpp globals.cpp
-    functions.cpp      # fn declare/define, locals
-    stmt.cpp           # statements (if/while/assign/…)
-    expr.cpp           # expressions + @syscall
-    print.cpp          # print / spawn helpers
-    resolve.cpp        # overload / method / var resolve
-    detail/helpers.cpp # matching + use-analysis helpers
-  compiler/            # compile, link, module load
-    test/              # test runner
-  host/                # layout and target resolution
-  platform/            # OS backends (linux|macosx|windows)
+    lexer/             # tokens; `#if` ... directives are lexed here
+    preprocess/        # conditional compilation on the token stream
+    macro/             # `define f(x: expr) { }` / `f!(...)` token-level expansion
+    parser/            # recursive descent, error recovery
+    ast/               # AST dump (`xlang parse`)
+    types/             # Type tree + primitive names
+    config.cpp         # BuildConfig, target triples, -D values
+    frontend.cpp       # lex -> preprocess -> macros -> parse
+  sema/
+    sema.cpp           # names, aliases, enums, const eval, layouts, staticAssert
+    layout.cpp         # layout record / xl.layout history
+    conversion.cpp     # implicit conversion rules (E0601 / W0601)
   util/
+    source.cpp         # SourceManager / Span
+    diagnostics.cpp    # code registry, rendering, allow/deny, log
+test/compiler/         # unit tests (xlang-tests)
 ```
 
-Headers mirror under `include/xlang/{lang,codegen,compiler,host,util}/` with thin facades at the old `include/xlang/*.h` paths.
+Headers: `include/xlang/{lang,sema,util}/*`.
+
+There is no codegen yet; it returns with plan phase 4.7 (HIR + LLVM).

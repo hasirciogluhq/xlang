@@ -30,3 +30,33 @@ xlang build main.xl --print-cfg                     # çözülmüş tüm tanıml
 | `--cpu <ad>` | Hedef CPU (varsayılan `generic`) |
 | `--no-std` / `--std=<yol>` | Stdlib yok / başka stdlib ([15](15-stdlib-ile-thread.md#15-stdlib-ile-thread)) |
 | `--print-cfg` | Etkin tanımları yazdırır |
+
+### Frontend komutları (codegen gelene kadar)
+
+```
+xlang parse main.xl -D ENABLE_STATS --target aarch64-apple-darwin   # önişle + macro aç + parse
+xlang check main.xl                       # + tipler, enum, layout, staticAssert
+xlang layout main.xl Header               # offset/boyut/hizalama; --layout-record xl.layout'a yazar
+xlang parse main.xl --print-cfg -D LEVEL=3 -O2 -g                   # çözülmüş tüm tanımlar
+```
+
+`-D/-U/--target/-O0..3/-g/--cpu/--print-cfg/--mangle/--safety/--no-std/--std/--std-features/--layout-scheme/
+--layout-history` üç komutta da geçerlidir.
+
+### `xlang parse` ve tanı bayrakları
+
+```
+xlang parse main.xl                       # öğe özeti (tür, ad, konum)
+xlang parse main.xl --ast                 # tam ağaç
+xlang parse main.xl --allow=W0601 --deny=W0201 --context=3 --diag-log=diag.log --diag-format=json
+xlang --explain E0601                     # kodun uzun açıklaması
+```
+
+| Bayrak | Anlam |
+|--------|-------|
+| `--allow=KOD`, `-Wno-KOD` | Uyarıyı sustur (hata kodları susturulamaz) |
+| `--deny=KOD` | Uyarıyı hataya çevir |
+| `--warn-all` / `--allow-all` | Tüm uyarıları aç / sustur |
+| `--context=N`, `--context-errors=N`, `--context-warnings=N` | Bağlam satırı sayısı |
+| `--diag-log=<dosya>`, `--diag-format=text\|json`, `--diag-log-level=all\|warn\|error` | Tanı günlüğü ([19](19-tanilar-ve-uyarilar.md#19-tanılar-ve-uyarılar)) |
+| `--explain KOD` | Kodun açıklamasını yazdırır |

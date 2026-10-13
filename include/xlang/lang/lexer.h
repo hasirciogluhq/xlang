@@ -1,6 +1,7 @@
 #pragma once
 
-#include "xlang/error.h"
+#include "xlang/util/diagnostics.h"
+#include "xlang/util/source.h"
 
 #include <cstdint>
 #include <string>
@@ -9,90 +10,107 @@
 namespace xlang {
 
 enum class TokenKind {
-    Go,
-    Interface,
     End,
+
+    // Literals and names
+    Ident,
+    PrimType,  ///< i8 .. i64, isize, ui8 .. ui64, usize, f32, f64, bool, void
+    Int,
+    Float,
+    String,
+
+    // Keywords
     Fn,
     Local,
     Return,
+    If,
+    Else,
+    While,
+    Unsafe,
     Import,
     From,
     As,
-    Reinterpret,
     Export,
-    External,
     Declare,
+    Register,
+    Global,
     Struct,
+    Class,
+    Interface,
+    Impl,
+    Enum,
+    Type,
+    Define,
     New,
-    Delete,
+    Virtual,
+    Override,
+    SelfKw,
+    For,
+    Ref,
+    Except,
     True,
     False,
     Null,
+
+    // Punctuation
     LParen,
     RParen,
     LBrace,
     RBrace,
+    LBracket,
+    RBracket,
     Comma,
-    Semicolon,
     Colon,
+    Semicolon,
     Dot,
+    Arrow,
+    At,
+    Bang,
     Plus,
     Minus,
     Star,
-    Amp,
     Slash,
-    Eq,
-    Ident,
-    Number,
-    FloatNumber,
-    String,
+    Percent,
+    Amp,
+    Assign,
     EqEq,
     NotEq,
     Lt,
-    Gt,
     Le,
+    Gt,
     Ge,
     AndAnd,
     OrOr,
-    LBracket,
-    RBracket,
-    If,
-    Else,
-    While,
-    Ellipsis,
-    At,
+
+    // Conditional-compilation directives (`#if` ...). The lexer only recognizes them; the
+    // preprocessor (plan phase 3) consumes them.
+    DirIf,
+    DirElif,
+    DirElse,
+    DirEndif,
+    DirIfdef,
+    DirIfndef,
+    DirError,
 };
 
 struct Token {
     TokenKind kind{TokenKind::End};
+    /// Identifier/keyword spelling, decoded string value, or the directive name.
     std::string text;
-    std::int64_t number{0};
-    double float_number{0.0};
-    std::size_t line{1};
-    std::size_t column{1};
+    std::uint64_t int_value{0};
+    double float_value{0.0};
+    Span span;
+    /// A line break (or the file start) precedes this token. Statements end at line breaks.
+    bool newline_before{false};
 };
 
-class Lexer {
-public:
-    explicit Lexer(std::string source);
+/// Tokenizes `file`. Lexical problems are reported to `diagnostics` (E0001) and lexing continues.
+/// The result always ends with a `TokenKind::End` token.
+[[nodiscard]] std::vector<Token> lex(const SourceManager& sources, FileId file,
+                                     DiagnosticEngine& diagnostics);
 
-    [[nodiscard]] const std::vector<Token>& tokens() const { return tokens_; }
-
-private:
-    void tokenize();
-
-    [[nodiscard]] char peek() const;
-    [[nodiscard]] char peekNext() const;
-    char advance();
-    void skipWhitespaceAndComments();
-    Token makeToken(TokenKind kind, std::size_t line, std::size_t column, std::string text = {},
-                    std::int64_t number = 0, double float_number = 0.0);
-
-    std::string source_;
-    std::size_t pos_{0};
-    std::vector<Token> tokens_;
-};
-
-std::vector<Token> tokenize(const std::string& source);
+[[nodiscard]] const char* tokenKindName(TokenKind kind);
+/// Human-readable spelling for diagnostics: "`fn`", "identifier", "end of file", ...
+[[nodiscard]] std::string describeToken(const Token& token);
 
 }  // namespace xlang

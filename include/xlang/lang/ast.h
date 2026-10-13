@@ -1,116 +1,50 @@
 #pragma once
 
-#include "xlang/types.h"
+#include "xlang/lang/lexer.h"
+#include "xlang/lang/types.h"
+#include "xlang/util/source.h"
 
 #include <cstdint>
+#include <iosfwd>
 #include <memory>
 #include <string>
-#include <unordered_map>
+#include <variant>
 #include <vector>
 
 namespace xlang {
 
-// AST nodes are tagged unions (Kind) with static factory helpers.
-// Keep factories thin; prefer adding Kind + factory over ad-hoc helpers.
+// AST nodes are tagged structs (Kind) with static factory helpers; declarations are a variant
+// of structs deriving from `DeclBase`. Types live in `types.h` (`Type` tree).
 
-enum class BinOp {
-    Add,
-    Sub,
-    Mul,
-    Div,
-    Eq,
-    Ne,
-    Lt,
-    Le,
-    Gt,
-    Ge,
-    And,
-    Or,
+enum class UnaryOp { Neg, Not, Deref, AddrOf };
+
+enum class BinaryOp { Add, Sub, Mul, Div, Mod, Eq, Ne, Lt, Le, Gt, Ge, And, Or };
+
+[[nodiscard]] const char* unaryOpName(UnaryOp op);
+[[nodiscard]] const char* binaryOpName(BinaryOp op);
+
+/// `@name`, `@name(arg, key = value, ...)`.
+struct AttributeArg {
+    enum class Kind { Ident, Int, String } kind{Kind::Ident};
+    std::string key;   ///< empty for positional arguments
+    std::string text;  ///< identifier or string value
+    std::int64_t number{0};
+    Span span;
 };
 
-struct Span {
-    std::size_t line{1};
-    std::size_t column{1};
+struct Attribute {
+    std::string name;
+    std::vector<AttributeArg> args;
+    Span span;
 };
 
 struct Expr;
-struct Stmt;
-struct Block;
-struct Function;
-struct Program;
-
-struct TypedName {
-    std::string name;
-    Type type{TypeKind::Int32};
-};
-
-struct FunctionSignature {
-    std::string name;
-    std::vector<TypedName> params;
-    Type return_type{TypeKind::Int32};
-    bool variadic{false};
-};
-
-struct ImportSpec {
-    bool wildcard{false};
-    bool use_prefix{false};
-    std::string name;
-    std::string alias;
-    std::string bound_alias;
-};
-
-struct ItemModifiers {
-    bool exported{false};
-    bool external{false};
-    bool declare{false};
-};
-
-struct ImportDecl {
-    bool is_from{false};
-    bool is_clause_import{false};
-    std::string module;
-    std::string alias;
-    std::vector<ImportSpec> names;
-    Span span{};
-};
-
-struct StructField {
-    std::string name;
-    Type type{TypeKind::Int32};
-};
-
-struct InterfaceMethod {
-    std::string name;
-    std::vector<TypedName> params;
-    Type return_type{TypeKind::Int32};
-};
-
-struct InterfaceDecl {
-    std::string name;
-    std::vector<InterfaceMethod> methods;
-    bool exported{false};
-    Span span{};
-};
-
-struct StructDecl {
-    std::string name;
-    std::vector<StructField> fields;
-    bool exported{false};
-    Span span{};
-};
+using ExprPtr = std::unique_ptr<Expr>;
 
 struct FieldInit {
     std::string name;
-    std::unique_ptr<Expr> value;
-};
-
-struct GlobalVar {
-    std::string name;
-    Type type{TypeKind::Int32};
-    std::unique_ptr<Expr> init;
-    bool exported{false};
-    bool external{false};
-    Span span{};
+    ExprPtr value;
+    Span span;
 };
 
 struct Expr {
@@ -119,113 +53,235 @@ struct Expr {
         FloatLiteral,
         BoolLiteral,
         StringLiteral,
-        Variable,
+        NullLiteral,
+        Name,          ///< identifier, including `self`
+        Unary,
         Binary,
-        Call,
-        FunctionRef,
-        FieldAccess,
-        MethodCall,
-        New,
-        Null,
-        Cast,
-        AddrOf,
-        Deref,
-        NativeSyscall,
-    } kind;
+        Call,          ///< lhs(args...)
+        Index,         ///< lhs[rhs]
+        Field,         ///< lhs.text
+        Cast,          ///< lhs as type
+        ArrayList,     ///< [args...]
+        ArrayRepeat,   ///< [lhs; rhs]
+        StructLiteral, ///< type { fields }
+        New,           ///< new T { fields } / new(lhs) T { fields }; lhs null = registered allocator
+        MacroCall,     ///< text!( macro_args... ), arguments kept as raw token lists
+        AsmOperand,    ///< `in(reg) x` / `out("rax") y` / `inout(reg) z` inside `__builtin_asm(...)`:
+                       ///< text = in|out|inout, lhs = register spec, rhs = operand
+    } kind{Kind::IntLiteral};
 
-    Span span{};
-    std::int64_t int_value{};
-    double float_value{};
-    bool bool_value{};
-    /// Kind::Cast: false = `as` (static-like), true = `reinterpret` (bit/pointer).
-    bool reinterpret_cast_{false};
-    std::string name;
-    std::string string_value;
-    BinOp bin_op{};
-    std::unique_ptr<Expr> object;
-    std::unique_ptr<Expr> left;
-    std::unique_ptr<Expr> right;
-    std::vector<std::unique_ptr<Expr>> args;
-    std::vector<FieldInit> field_inits;
-    Type type{TypeKind::Struct};
-
-    static std::unique_ptr<Expr> makeInt(std::int64_t value, Span span);
-    static std::unique_ptr<Expr> makeFloat(double value, Span span);
-    static std::unique_ptr<Expr> makeBool(bool value, Span span);
-    static std::unique_ptr<Expr> makeString(std::string value, Span span);
-    static std::unique_ptr<Expr> makeNull(Span span);
-    static std::unique_ptr<Expr> makeVar(std::string name, Span span);
-    static std::unique_ptr<Expr> makeBinary(BinOp op, std::unique_ptr<Expr> left,
-                                            std::unique_ptr<Expr> right, Span span);
-    static std::unique_ptr<Expr> makeCall(std::string name, std::vector<std::unique_ptr<Expr>> args,
-                                          Span span);
-    static std::unique_ptr<Expr> makeFunctionRef(std::string name, Span span);
-    static std::unique_ptr<Expr> makeFieldAccess(std::unique_ptr<Expr> object, std::string field,
-                                                 Span span);
-    static std::unique_ptr<Expr> makeMethodCall(std::unique_ptr<Expr> object, std::string method,
-                                               std::vector<std::unique_ptr<Expr>> args, Span span);
-    static std::unique_ptr<Expr> makeNew(std::string struct_name,
-                                         std::vector<FieldInit> field_inits, Span span);
-    static std::unique_ptr<Expr> makeCast(std::unique_ptr<Expr> value, Type target_type, Span span,
-                                          bool reinterpret = false);
-    static std::unique_ptr<Expr> makeAddrOf(std::unique_ptr<Expr> value, Span span);
-    static std::unique_ptr<Expr> makeDeref(std::unique_ptr<Expr> value, Span span);
-    /// `@syscall(number, args...)` — CPU-native trap; number in `left`, args in `args`.
-    static std::unique_ptr<Expr> makeNativeSyscall(std::unique_ptr<Expr> number,
-                                                   std::vector<std::unique_ptr<Expr>> args,
-                                                   Span span);
+    Span span;
+    std::uint64_t int_value{0};
+    double float_value{0.0};
+    bool bool_value{false};
+    /// Name: identifier. Field: member name. StringLiteral: decoded value. MacroCall: macro name.
+    std::string text;
+    UnaryOp unary_op{UnaryOp::Neg};
+    BinaryOp binary_op{BinaryOp::Add};
+    ExprPtr lhs;
+    ExprPtr rhs;
+    std::vector<ExprPtr> args;
+    std::vector<FieldInit> fields;
+    /// Cast: target type. StructLiteral/New: the constructed type.
+    Type type;
+    std::vector<std::vector<Token>> macro_args;
 };
+
+struct Block;
 
 struct Stmt {
     enum class Kind {
-        Local,
-        Assign,
-        MemberAssign,
-        DerefAssign,
-        Return,
-        Expr,
-        Delete,
-        If,
-        While,
-    } kind;
+        Local,   ///< local name [: type] [= expr]
+        Assign,  ///< target = expr
+        Return,  ///< return [expr]
+        Expr,    ///< expr
+        If,      ///< if expr { then } [else { else_body }]
+        While,   ///< while expr { body }
+        Unsafe,  ///< unsafe { body }
+        Block,   ///< { body }
+    } kind{Kind::Expr};
 
-    Span span{};
+    Span span;
+    std::vector<Attribute> attributes;
     std::string name;
-    Type type{TypeKind::Int32};
-    bool explicit_type{false};
-    std::unique_ptr<Expr> target;
-    std::string field;
-    std::unique_ptr<Expr> expr;
-    std::unique_ptr<Expr> return_value;
-    std::unique_ptr<Expr> condition;
-    std::unique_ptr<Block> then_block;
-    std::unique_ptr<Block> else_block;
-    std::unique_ptr<Block> loop_body;
+    bool has_type{false};
+    Type type;
+    ExprPtr target;
+    ExprPtr expr;
+    std::unique_ptr<Block> body;       ///< If: then block; While/Unsafe/Block: the block
+    std::unique_ptr<Block> else_body;  ///< If: else block (an `else if` is a block holding one If)
+    bool else_is_if{false};
 };
 
 struct Block {
-    Span span{};
+    Span span;
     std::vector<Stmt> statements;
 };
 
-struct Function {
+// ---------------------------------------------------------------------------------------------
+// Declarations
+
+struct DeclBase {
     std::string name;
-    std::vector<TypedName> params;
-    Type return_type{TypeKind::Int32};
-    Block body;
-    bool exported{false};
-    bool external{false};
-    bool variadic{false};
-    Span span{};
+    std::vector<Attribute> attributes;
+    Span span;       ///< the whole declaration, modifiers included
+    Span name_span;
 };
 
-struct Program {
-    std::vector<ImportDecl> imports;
-    std::unordered_map<std::string, std::string> import_aliases;
-    std::vector<StructDecl> structs;
-    std::vector<InterfaceDecl> interfaces;
-    std::vector<GlobalVar> globals;
-    std::vector<Function> functions;
+struct Modifiers {
+    bool exported{false};         ///< `export`
+    bool export_c{false};         ///< `export(c)` (implies exported)
+    bool declared{false};         ///< `declare`
+    bool registered{false};       ///< `register` / `register(role)`
+    std::string register_role;    ///< empty for a plain `register`
 };
+
+struct Param {
+    std::string name;
+    Type type;  ///< unused for `self`
+    bool is_self{false};
+    Span span;
+};
+
+struct FieldDecl {
+    std::string name;
+    Type type;
+    std::vector<Attribute> attributes;
+    Span span;
+};
+
+struct FnDecl : DeclBase {
+    std::vector<Param> params;
+    bool has_return_type{false};
+    Type return_type;  ///< void when `->` is absent
+    bool has_body{false};
+    Block body;
+    bool is_virtual{false};
+    bool is_override{false};
+};
+
+struct GlobalDecl : DeclBase {
+    Type type;
+    ExprPtr init;  ///< null = zero-initialized / external
+};
+
+struct StructDecl : DeclBase {
+    std::vector<FieldDecl> fields;
+    bool opaque{false};  ///< `declare struct S` without a body
+};
+
+struct ClassDecl : DeclBase {
+    bool has_base{false};
+    std::vector<std::string> base;  ///< qualified base class name
+    std::vector<FieldDecl> fields;
+    std::vector<FnDecl> methods;
+    bool opaque{false};
+};
+
+struct InterfaceDecl : DeclBase {
+    std::vector<FnDecl> methods;  ///< signatures (no body)
+    bool opaque{false};
+};
+
+struct ImplDecl : DeclBase {
+    std::vector<std::string> interface_path;
+    Type target;
+    std::vector<FnDecl> methods;
+};
+
+struct EnumMember {
+    std::string name;
+    ExprPtr value;  ///< null = auto-numbered
+    std::vector<Attribute> attributes;
+    Span span;
+};
+
+struct EnumDecl : DeclBase {
+    bool has_underlying{false};
+    Type underlying;  ///< `i32` when no `: T` was written
+    std::vector<EnumMember> members;
+};
+
+struct TypeAliasDecl : DeclBase {
+    Type target;
+};
+
+struct DefineConstDecl : DeclBase {
+    ExprPtr value;
+};
+
+struct MacroParam {
+    enum class Kind { Expr, Type, Ident, Block, Items } kind{Kind::Expr};
+    std::string name;
+    Span span;
+};
+
+struct DefineMacroDecl : DeclBase {
+    std::vector<MacroParam> params;
+    std::vector<Token> body;  ///< raw token tree between the outer braces
+};
+
+struct ImportName {
+    std::string name;
+    std::string alias;  ///< empty = same as `name`
+    Span span;
+};
+
+/// All import forms land here:
+///   Module : import "m" [as a]
+///   Star   : import * from "m"
+///   StarAs : import * as a from "m"
+///   Names  : from "m" import x [as y], ...   and   import x [as y], ... from "m"
+struct ImportDecl : DeclBase {
+    enum class Form { Module, Star, StarAs, Names } form{Form::Module};
+    std::string module;
+    Span module_span;
+    std::string alias;
+    std::vector<ImportName> names;
+};
+
+///   Star   : export * from "m" [except a, b]
+///   StarAs : export * as ns from "m"
+///   Names  : export { a, b as c } from "m"
+struct ExportFromDecl : DeclBase {
+    enum class Form { Star, StarAs, Names } form{Form::Star};
+    std::string module;
+    Span module_span;
+    std::string alias;
+    std::vector<ImportName> names;
+    std::vector<ImportName> except;
+};
+
+/// `name!(args...)` at module level (generates declarations once expanded).
+struct MacroCallDecl : DeclBase {
+    std::vector<std::vector<Token>> args;
+};
+
+/// A call expression at module level, e.g. `staticAssert(sizeOf(T) == 12, "msg")`.
+struct TopLevelCallDecl : DeclBase {
+    ExprPtr call;
+};
+
+using Decl = std::variant<FnDecl, GlobalDecl, StructDecl, ClassDecl, InterfaceDecl, ImplDecl,
+                          EnumDecl, TypeAliasDecl, DefineConstDecl, DefineMacroDecl, ImportDecl,
+                          ExportFromDecl, MacroCallDecl, TopLevelCallDecl>;
+
+struct Item {
+    Modifiers modifiers;
+    Decl decl;
+};
+
+[[nodiscard]] const DeclBase& declBase(const Item& item);
+[[nodiscard]] const char* declKindName(const Decl& decl);
+
+struct Program {
+    FileId file{kNoFile};
+    /// `@file(...)` attributes at the top of the file.
+    std::vector<Attribute> file_attributes;
+    std::vector<Item> items;
+};
+
+/// `summary`: one line per item. Otherwise the full tree.
+void dumpProgram(std::ostream& out, const Program& program, bool summary);
 
 }  // namespace xlang

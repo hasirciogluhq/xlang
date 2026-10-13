@@ -123,10 +123,18 @@ Susturulan (`@allow`/`--allow`) uyarılar ekrandan düşer ama `--diag-log` aç�
 | `--warn-all` / `--allow-all` | Hepsini aç / hepsini sustur |
 | `--explain W0201` | Uyarının uzun açıklamasını yazdırır |
 
+> Gerçek çıktıda etiketler İngilizcedir (`detail:` / `reason:` / `fix:`), ok satırı `--> dosya:satır:sütun`,
+> işaretli satırlar `<=======` ile biter; yukarıdaki `detay/neden/düzelt` yalnızca şema gösterimidir.
+> Çıktı kaynak konumuna göre sıralıdır.
+
 Örnek uyarılar:
 
 | Kod | Ne zaman | Varsayılan |
 |-----|----------|-----------|
+| `E0001` | Sözcüksel hata: bilinmeyen karakter, kapanmamış string, bozuk sayı/kaçış, satır başında olmayan `#` | **hata** |
+| `E0002` | Sözdizimi hatası: beklenen token yok, deyim sonu yok, geçersiz atama hedefi | **hata** |
+| `E0003` | Önişleme: `#error` dalı seçildi, bozuk/kapanmayan direktif, koşulda tanımsız ad | **hata** |
+| `E0004` | Macro: yanlış argüman sayısı/türü, çift tanım, derinlik > 64 (genişleme zinciri etiketlerde) | **hata** |
 | `W0201` | `declare` tipin düzeni bilinmiyor, C varsayıldı | uyarı |
 | `W0202` | `declare` tipin düzeni, kayıtlı düzenle çelişiyor | uyarı |
 | `W0203` | Düzen kaydı farklı bir düzen şemasıyla üretilmiş (`v2` ↔ `v3`) | uyarı |
@@ -141,4 +149,10 @@ Susturulan (`@allow`/`--allow`) uyarılar ekrandan düşer ama `--diag-log` aç�
 | `W0402` | Yerel tanım ya da import, `register`'lı bir global adı gölgeliyor | uyarı |
 | `E0601` | İşaretlilik değiştiren örtük dönüşüm (`ui ↔ i`, ya da işaretlilikleri karışık ikili işlem); `unsafe { }` içinde ya da `as` ile geçer ([2.1](02.1-unsafe.md#21-unsafe-bloğu)) | **hata** |
 | `E0701` | Dizi indeksi sabit ve sınır dışı (`a[7]`, `a: [T; 4]`); `--safety`'den bağımsız | **hata** |
+| `E0702` | `staticAssert` koşulu yanlış (ya da bool sabit değil) | **hata** |
+| `E0703` | Boyutu bilinmeyen tip: `void`, opak `declare`, değerle özyineleme, yüklenmemiş modül tipi | **hata** |
+| `E0704` | Döngüsel `type` takma adı | **hata** |
+| `E0705` | Geçersiz enum (alt tip, çift üye, eksik/yanlış değer) ya da `@align`/`@layout` argümanı | **hata** |
+| `E0706` | Bilinmeyen tip/ad | **hata** |
+| `E0707` | Derleme zamanı sabiti olmayan ifade (dizi uzunluğu, enum değeri, `staticAssert`, `sizeOf`) | **hata** |
 | `W0601` | İşaretli tamsayı → `f32/f64` örtük dönüşüm, duyarlılık kaybolabilir ([2](02-tip-donusumu.md#i--f-uyarısı)) | uyarı |

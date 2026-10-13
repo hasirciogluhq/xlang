@@ -1,978 +1,1690 @@
-#include "xlang/parser.h"
+#include "xlang/lang/parser.h"
 
 #include <format>
-#include <string>
 #include <string_view>
 #include <utility>
-#include <vector>
 
 namespace xlang {
 
-Program parseSource(const std::string& source) {
-    return parseSource(source, {});
+namespace {
+
+/// Thrown after a syntax error has been reported; caught at statement/item level, which
+/// resynchronizes and keeps parsing.
+struct ParseAbort {};
+
+[[nodiscard]] ExprPtr makeExpr(Expr::Kind kind, const Span& span) {
+    auto e = std::make_unique<Expr>();
+    e->kind = kind;
+    e->span = span;
+    return e;
 }
 
-Program parseSource(const std::string& source, const std::vector<StructDecl>& prelude) {
-    Parser parser(tokenize(source));
-    parser.seedStructs(prelude);
-    return parser.parseProgram();
-}
-
-std::vector<ImportDecl> parseImportDecls(const std::string& source) {
-    return Parser::scanImports(source);
-}
-
-std::vector<ImportDecl> Parser::scanImports(const std::string& source) {
-    Parser parser(tokenize(source));
-    std::vector<ImportDecl> imports;
-    while (!parser.isAtEnd() && (parser.check(TokenKind::Import) || parser.check(TokenKind::From))) {
-        imports.push_back(parser.parseImport());
-    }
-    return imports;
-}
-
-void Parser::seedStructs(const std::vector<StructDecl>& decls) {
-    for (const StructDecl& decl : decls) {
-        registerStruct(decl);
-    }
-}
-
-Parser::Parser(std::vector<Token> tokens) : tokens_(std::move(tokens)) {
-    tokens_.push_back(Token{TokenKind::End, "", 0, 0.0, 0, 0});
-    for (std::size_t i = 0; i + 1 < tokens_.size(); ++i) {
-        if (tokens_[i].kind == TokenKind::Fn && tokens_[i + 1].kind == TokenKind::Ident) {
-            function_names_.insert(tokens_[i + 1].text);
-        }
-    }
-}
-
-ItemModifiers Parser::parseModifiers() {
-    ItemModifiers modifiers;
-    while (true) {
-        if (match(TokenKind::Export)) {
-            modifiers.exported = true;
-            continue;
-        }
-        if (match(TokenKind::External)) {
-            modifiers.external = true;
-            continue;
-        }
-        if (match(TokenKind::Declare)) {
-            modifiers.declare = true;
-            continue;
-        }
-        break;
-    }
-    return modifiers;
-}
-
-void Parser::validateModifiers(const ItemModifiers& modifiers, const std::string& kind) const {
-    if (modifiers.declare && modifiers.exported) {
-        throw error("'declare' cannot be combined with 'export'");
-    }
-    (void)kind;
-}
-
-Program Parser::parseProgram() {
-    Program program;
-    while (!isAtEnd()) {
-        if (check(TokenKind::Import) || check(TokenKind::From)) {
-            program.imports.push_back(parseImport());
-            continue;
-        }
-
-        const ItemModifiers modifiers = parseModifiers();
-
-        if (check(TokenKind::Struct)) {
-            program.structs.push_back(parseStruct(modifiers));
-            continue;
-        }
-
-        if (check(TokenKind::Interface)) {
-            program.interfaces.push_back(parseInterface(modifiers));
-            continue;
-        }
-
-        if (modifiers.declare) {
-            validateModifiers(modifiers, "declare");
-            // declare [fn] name(...) — blind external C ABI symbol
-            // declare name: type — external global
-            if (check(TokenKind::Fn) ||
-                (check(TokenKind::Ident) && pos_ + 1 < tokens_.size() &&
-                 tokens_[pos_ + 1].kind == TokenKind::LParen)) {
-                program.functions.push_back(parseDeclareFunction(modifiers));
-            } else if (check(TokenKind::Ident)) {
-                program.globals.push_back(parseDeclareGlobal(modifiers));
+class Parser {
+public:
+    Parser(std::vector<Token> tokens, FileId file, DiagnosticEngine& diagnostics)
+        : tokens_(std::move(tokens)), file_(file), diag_(diagnostics) {
+        if (tokens_.empty() || tokens_.back().kind != TokenKind::End) {
+            Token end;
+            end.kind = TokenKind::End;
+            end.newline_before = true;
+            if (!tokens_.empty()) {
+                end.span = tokens_.back().span;
             } else {
-                throw error("expected fn, name(...), or global after declare");
+                end.span.file = file;
             }
-            continue;
+            tokens_.push_back(std::move(end));
         }
-
-        if (check(TokenKind::Fn)) {
-            program.functions.push_back(parseFunction(modifiers));
-            continue;
-        }
-
-        if (check(TokenKind::Ident) &&
-            (tokens_[pos_ + 1].kind == TokenKind::Eq ||
-             tokens_[pos_ + 1].kind == TokenKind::Colon)) {
-            program.globals.push_back(parseGlobalVar(modifiers));
-            continue;
-        }
-
-        if (modifiers.exported || modifiers.external) {
-            throw error("expected struct, fn, or global after modifier");
-        }
-
-        throw error("expected import, struct, declare, fn, or global assignment");
     }
-    return program;
-}
 
-ImportSpec Parser::parseImportClause() {
-    ImportSpec spec;
-    if (match(TokenKind::Star)) {
-        spec.wildcard = true;
-        consume(TokenKind::As, "expected 'as' after '*'");
-        spec.alias = consume(TokenKind::Ident, "expected namespace alias").text;
-        return spec;
-    }
-    spec.name = consume(TokenKind::Ident, "expected import name").text;
-    if (match(TokenKind::As)) {
-        spec.alias = consume(TokenKind::Ident, "expected alias name").text;
-    }
-    return spec;
-}
+    Program run() {
+        Program program;
+        program.file = file_;
 
-ImportDecl Parser::parseImportClausesFrom() {
-    ImportDecl decl;
-    decl.is_clause_import = true;
-    decl.span = currentSpan();
-    decl.names.push_back(parseImportClause());
-    while (match(TokenKind::Comma)) {
-        decl.names.push_back(parseImportClause());
-    }
-    consume(TokenKind::From, "expected 'from'");
-    decl.module = parseModulePath();
-    consumeEndOfStatement();
-    return decl;
-}
-
-ImportDecl Parser::parseImport() {
-    ImportDecl decl;
-    decl.span = currentSpan();
-
-    if (match(TokenKind::Import)) {
-        if (check(TokenKind::Star)) {
-            return parseImportClausesFrom();
+        // `@file(...)` attributes at the very top.
+        while (at(TokenKind::At) && peekKind(1) == TokenKind::Ident && peek(1).text == "file") {
+            try {
+                program.file_attributes.push_back(parseAttribute());
+            } catch (const ParseAbort&) {
+                syncItem(pos_);
+            }
         }
 
-        const std::string first = consume(TokenKind::Ident, "expected module or import name").text;
-        if (match(TokenKind::Comma)) {
-            decl.is_clause_import = true;
-            ImportSpec spec;
-            spec.name = first;
-            decl.names.push_back(std::move(spec));
-            while (true) {
-                decl.names.push_back(parseImportClause());
+        while (!at(TokenKind::End)) {
+            const std::size_t start = pos_;
+            try {
+                parseItem(program);
+            } catch (const ParseAbort&) {
+                syncItem(start);
+            }
+        }
+        return program;
+    }
+
+private:
+    // ------------------------------------------------------------------------------------
+    // Token access
+
+    [[nodiscard]] const Token& cur() const { return tokens_[pos_]; }
+    [[nodiscard]] const Token& peek(std::size_t ahead) const {
+        return tokens_[std::min(pos_ + ahead, tokens_.size() - 1)];
+    }
+    [[nodiscard]] TokenKind peekKind(std::size_t ahead) const { return peek(ahead).kind; }
+    [[nodiscard]] bool at(TokenKind kind) const { return cur().kind == kind; }
+    [[nodiscard]] const Token& prev() const { return tokens_[pos_ == 0 ? 0 : pos_ - 1]; }
+
+    const Token& advance() {
+        const Token& t = tokens_[pos_];
+        if (pos_ + 1 < tokens_.size()) {
+            ++pos_;
+        }
+        return t;
+    }
+
+    bool match(TokenKind kind) {
+        if (at(kind)) {
+            advance();
+            return true;
+        }
+        return false;
+    }
+
+    /// The current token may continue the expression/statement being parsed: it is on the same
+    /// line, or we are inside `(...)`/`[...]` where line breaks do not end anything.
+    [[nodiscard]] bool continues() const { return !cur().newline_before || nl_depth_ > 0; }
+
+    [[nodiscard]] static bool adjacent(const Token& a, const Token& b) {
+        return a.span.end_line == b.span.line && a.span.end_column == b.span.column;
+    }
+
+    [[nodiscard]] Span spanFrom(const Span& start) const { return Span::merge(start, prev().span); }
+
+    // ------------------------------------------------------------------------------------
+    // Errors
+
+    [[noreturn]] void failAt(const Token& token, std::string message, std::string label,
+                             std::string detail = {}, std::string fix = {}) {
+        Diagnostic d;
+        d.code = "E0002";
+        d.severity = Severity::Error;
+        d.message = std::move(message);
+        d.labels.push_back({token.span, std::move(label)});
+        d.detail = std::move(detail);
+        d.fix = std::move(fix);
+        diag_.report(std::move(d));
+        throw ParseAbort{};
+    }
+
+    [[noreturn]] void expected(std::string_view what) {
+        failAt(cur(), std::format("expected {}, found {}", what, describeToken(cur())),
+               std::format("expected {} here", what));
+    }
+
+    const Token& expect(TokenKind kind, std::string_view what) {
+        if (!at(kind)) {
+            expected(what);
+        }
+        return advance();
+    }
+
+    std::string expectIdent(std::string_view what = "an identifier") {
+        if (!at(TokenKind::Ident)) {
+            expected(what);
+        }
+        return advance().text;
+    }
+
+    void softError(const Span& span, std::string message, std::string label) {
+        diag_.error("E0002", span, std::move(message), std::move(label));
+    }
+
+    // ------------------------------------------------------------------------------------
+    // Recovery
+
+    [[nodiscard]] static bool startsItem(TokenKind kind) {
+        switch (kind) {
+        case TokenKind::At:
+        case TokenKind::Export:
+        case TokenKind::Declare:
+        case TokenKind::Register:
+        case TokenKind::Fn:
+        case TokenKind::Global:
+        case TokenKind::Struct:
+        case TokenKind::Class:
+        case TokenKind::Interface:
+        case TokenKind::Impl:
+        case TokenKind::Enum:
+        case TokenKind::Type:
+        case TokenKind::Define:
+        case TokenKind::Import:
+        case TokenKind::From:
+            return true;
+        default:
+            return false;
+        }
+    }
+
+    void syncItem(std::size_t start) {
+        if (pos_ == start && !at(TokenKind::End)) {
+            advance();
+        }
+        // Brace depth at the error position, counted from the start of the failed item, so the
+        // rest of its body is skipped instead of being re-parsed as top-level code.
+        int depth = 0;
+        for (std::size_t i = start; i < pos_; ++i) {
+            if (tokens_[i].kind == TokenKind::LBrace) {
+                ++depth;
+            } else if (tokens_[i].kind == TokenKind::RBrace && depth > 0) {
+                --depth;
+            }
+        }
+        while (!at(TokenKind::End)) {
+            if (depth == 0 && cur().newline_before && startsItem(cur().kind)) {
+                return;
+            }
+            if (at(TokenKind::LBrace)) {
+                ++depth;
+            } else if (at(TokenKind::RBrace) && depth > 0) {
+                --depth;
+            }
+            advance();
+        }
+    }
+
+    void syncStatement(std::size_t start) {
+        if (pos_ == start && !at(TokenKind::End) && !at(TokenKind::RBrace)) {
+            advance();
+        }
+        int depth = 0;
+        while (!at(TokenKind::End)) {
+            if (depth == 0 && (cur().newline_before || at(TokenKind::RBrace))) {
+                return;
+            }
+            if (at(TokenKind::LBrace)) {
+                ++depth;
+            } else if (at(TokenKind::RBrace)) {
+                --depth;
+            }
+            advance();
+        }
+    }
+
+    void rejectDirective() {
+        if (cur().kind >= TokenKind::DirIf && cur().kind <= TokenKind::DirError) {
+            failAt(cur(), std::format("`{}` is not supported yet", tokenKindName(cur().kind)),
+                   "conditional-compilation directive",
+                   "The lexer recognizes `#if`/`#elif`/`#else`/`#endif`/`#ifdef`/`#ifndef`/`#error`, "
+                   "but the preprocessor that evaluates them is not implemented yet.",
+                   "remove the directive for now");
+        }
+    }
+
+    // ------------------------------------------------------------------------------------
+    // Attributes
+
+    Attribute parseAttribute() {
+        Attribute attr;
+        const Token& at_token = expect(TokenKind::At, "`@`");
+        attr.span = at_token.span;
+        attr.name = expectIdent("an attribute name");
+        if (at(TokenKind::LParen) && continues() && adjacent(prev(), cur())) {
+            advance();
+            ++nl_depth_;
+            while (!at(TokenKind::RParen)) {
+                AttributeArg arg;
+                arg.span = cur().span;
+                if (at(TokenKind::Ident) && peekKind(1) == TokenKind::Assign) {
+                    arg.key = advance().text;
+                    advance();  // '='
+                    arg.span = cur().span;
+                }
+                parseAttributeValue(arg);
+                attr.args.push_back(std::move(arg));
                 if (!match(TokenKind::Comma)) {
                     break;
                 }
             }
-            consume(TokenKind::From, "expected 'from'");
-            decl.module = parseModulePath();
-            consumeEndOfStatement();
-            return decl;
+            --nl_depth_;
+            expect(TokenKind::RParen, "`)` closing the attribute");
         }
-
-        if (match(TokenKind::From)) {
-            decl.module = parseModulePath();
-            if (decl.module.contains('/') || first == decl.module) {
-                decl.alias = first;
-                consumeEndOfStatement();
-                return decl;
-            }
-            decl.is_clause_import = true;
-            ImportSpec spec;
-            spec.name = first;
-            decl.names.push_back(std::move(spec));
-            consumeEndOfStatement();
-            return decl;
-        }
-
-        decl.module = first;
-        while (match(TokenKind::Slash)) {
-            decl.module += "/";
-            decl.module += consume(TokenKind::Ident, "expected module path segment").text;
-        }
-        if (match(TokenKind::As)) {
-            decl.alias = consume(TokenKind::Ident, "expected alias name").text;
-        }
-        consumeEndOfStatement();
-        return decl;
+        attr.span = spanFrom(attr.span);
+        return attr;
     }
 
-    consume(TokenKind::From, "expected 'from'");
-    decl.is_from = true;
-    decl.module = parseModulePath();
-    consume(TokenKind::Import, "expected 'import'");
-    decl.names = parseImportNames();
-    consumeEndOfStatement();
-    return decl;
-}
-
-std::string Parser::parseModulePath() {
-    std::string path = consume(TokenKind::Ident, "expected module name").text;
-    while (match(TokenKind::Slash)) {
-        path += "/";
-        path += consume(TokenKind::Ident, "expected module path segment").text;
-    }
-    return path;
-}
-
-std::vector<ImportSpec> Parser::parseImportNames() {
-    std::vector<ImportSpec> names;
-    do {
-        ImportSpec spec;
-        spec.name = consume(TokenKind::Ident, "expected symbol name").text;
-        if (match(TokenKind::As)) {
-            spec.alias = consume(TokenKind::Ident, "expected alias name").text;
-        }
-        names.push_back(std::move(spec));
-    } while (match(TokenKind::Comma));
-    return names;
-}
-
-StructDecl Parser::parseStruct(const ItemModifiers& modifiers) {
-    StructDecl decl;
-    decl.span = currentSpan();
-    decl.exported = modifiers.exported;
-    consume(TokenKind::Struct, "expected 'struct'");
-    decl.name = consume(TokenKind::Ident, "expected struct name").text;
-    consume(TokenKind::LBrace, "expected '{'");
-
-    while (!check(TokenKind::RBrace) && !isAtEnd()) {
-        StructField field;
-        field.name = consume(TokenKind::Ident, "expected field name").text;
-        consume(TokenKind::Colon, "expected ':' after field name");
-        field.type = parseType();
-        consumeEndOfStatement();
-        decl.fields.push_back(std::move(field));
-    }
-
-    consume(TokenKind::RBrace, "expected '}'");
-    registerStruct(decl);
-    return decl;
-}
-
-InterfaceDecl Parser::parseInterface(const ItemModifiers& modifiers) {
-    InterfaceDecl decl;
-    decl.span = currentSpan();
-    decl.exported = modifiers.exported;
-    consume(TokenKind::Interface, "expected 'interface'");
-    decl.name = consume(TokenKind::Ident, "expected interface name").text;
-    consume(TokenKind::LBrace, "expected '{'");
-
-    while (!check(TokenKind::RBrace) && !isAtEnd()) {
-        InterfaceMethod method;
-        method.name = consume(TokenKind::Ident, "expected method name").text;
-        consume(TokenKind::LParen, "expected '('");
-        const ParamList params = parseParams();
-        method.params = params.params;
-        (void)params.variadic;
-        consume(TokenKind::RParen, "expected ')'");
-        consume(TokenKind::Colon, "expected ':' after method params");
-        method.return_type = parseType();
-        consumeEndOfStatement();
-        decl.methods.push_back(std::move(method));
-    }
-
-    consume(TokenKind::RBrace, "expected '}'");
-    registerInterface(decl);
-    return decl;
-}
-
-GlobalVar Parser::parseGlobalVar(const ItemModifiers& modifiers) {
-    GlobalVar global;
-    global.span = currentSpan();
-    global.exported = modifiers.exported;
-    global.external = modifiers.external;
-    global.name = consume(TokenKind::Ident, "expected variable name").text;
-    global.type = parseOptionalTypeAfterName(defaultType());
-    if (match(TokenKind::Eq)) {
-        global.init = parseExpr();
-    }
-    consumeEndOfStatement();
-    return global;
-}
-
-GlobalVar Parser::parseDeclareGlobal(const ItemModifiers& modifiers) {
-    GlobalVar global;
-    global.span = currentSpan();
-    global.external = true;
-    global.name = consume(TokenKind::Ident, "expected variable name").text;
-    global.type = parseOptionalTypeAfterName(defaultType());
-    consumeEndOfStatement();
-    (void)modifiers;
-    return global;
-}
-
-Function Parser::parseFunction(const ItemModifiers& modifiers) {
-    const Span start = currentSpan();
-    consume(TokenKind::Fn, "expected 'fn'");
-    const Token name = consume(TokenKind::Ident, "expected function name");
-    consume(TokenKind::LParen, "expected '('");
-    const ParamList parsed = parseParams();
-    std::vector<TypedName> params = parsed.params;
-    const bool variadic = parsed.variadic;
-    consume(TokenKind::RParen, "expected ')'");
-    Type return_type = defaultType();
-    if (match(TokenKind::Colon)) {
-        return_type = parseType();
-    }
-    Block body = parseBlock();
-
-    Function function;
-    function.name = name.text;
-    function.params = std::move(params);
-    function.return_type = return_type;
-    function.variadic = variadic;
-    function.body = std::move(body);
-    function.exported = modifiers.exported;
-    function.external = modifiers.external;
-    function.span = start;
-    registerFunction(function.name);
-    return function;
-}
-
-Function Parser::parseDeclareFunction(const ItemModifiers& modifiers) {
-    // declare [fn] name(params): ret — blind external C ABI (raw symbol name).
-    const Span start = currentSpan();
-    (void)match(TokenKind::Fn);
-    const Token name = consume(TokenKind::Ident, "expected function name");
-    consume(TokenKind::LParen, "expected '('");
-    const ParamList parsed = parseParams();
-    std::vector<TypedName> params = parsed.params;
-    const bool variadic = parsed.variadic;
-    consume(TokenKind::RParen, "expected ')'");
-    Type return_type = defaultType();
-    if (match(TokenKind::Colon)) {
-        return_type = parseType();
-    }
-    consumeEndOfStatement();
-
-    Function function;
-    function.name = name.text;
-    function.params = std::move(params);
-    function.return_type = return_type;
-    function.variadic = variadic;
-    function.external = true;
-    function.span = start;
-    registerFunction(function.name);
-    (void)modifiers;
-    return function;
-}
-
-ParamList Parser::parseParams() {
-    ParamList result;
-    if (check(TokenKind::RParen)) {
-        return result;
-    }
-
-    if (match(TokenKind::Ellipsis)) {
-        result.variadic = true;
-        return result;
-    }
-
-    do {
-        TypedName param;
-        param.name = consume(TokenKind::Ident, "expected parameter name").text;
-        param.type = parseOptionalTypeAfterName(defaultType());
-        result.params.push_back(std::move(param));
-    } while (match(TokenKind::Comma));
-
-    if (match(TokenKind::Ellipsis)) {
-        result.variadic = true;
-    }
-
-    return result;
-}
-
-Type Parser::parseType() {
-    if (match(TokenKind::Star)) {
-        return Type::makePointer(parseType());
-    }
-
-    const Token name = consume(TokenKind::Ident, "expected type name");
-    Type type = Type::parse(name.text);
-    if (type.kind == TypeKind::Struct) {
-        if (findInterface(name.text) != nullptr) {
-            type = Type::makeInterface(name.text);
-        } else if (findStruct(name.text) == nullptr) {
-            throw error(std::format("unknown type `{}`", name.text));
+    void parseAttributeValue(AttributeArg& arg) {
+        switch (cur().kind) {
+        case TokenKind::Ident:
+        case TokenKind::PrimType:
+        case TokenKind::True:
+        case TokenKind::False:
+            arg.kind = AttributeArg::Kind::Ident;
+            arg.text = advance().text;
+            return;
+        case TokenKind::Int:
+            arg.kind = AttributeArg::Kind::Int;
+            arg.number = static_cast<std::int64_t>(advance().int_value);
+            return;
+        case TokenKind::Minus:
+            advance();
+            arg.kind = AttributeArg::Kind::Int;
+            arg.number = -static_cast<std::int64_t>(expect(TokenKind::Int, "an integer").int_value);
+            return;
+        case TokenKind::String:
+            arg.kind = AttributeArg::Kind::String;
+            arg.text = advance().text;
+            return;
+        default:
+            expected("an attribute argument (identifier, integer or string)");
         }
     }
-    while (match(TokenKind::Star)) {
-        type = Type::makePointer(type);
-    }
-    return type;
-}
 
-Type Parser::parseOptionalTypeAfterName(const Type& fallback) {
-    if (!match(TokenKind::Colon)) {
-        return fallback;
-    }
-    return parseType();
-}
-
-Block Parser::parseBlock() {
-    const Span start = currentSpan();
-    consume(TokenKind::LBrace, "expected '{'");
-
-    Block block;
-    block.span = start;
-    while (!check(TokenKind::RBrace) && !isAtEnd()) {
-        block.statements.push_back(parseStatement());
-    }
-    consume(TokenKind::RBrace, "expected '}'");
-    return block;
-}
-
-Stmt Parser::parseStatement() {
-    const Span span = currentSpan();
-
-    if (match(TokenKind::Local)) {
-        const Token name = consume(TokenKind::Ident, "expected variable name");
-        Type type = defaultType();
-        bool explicit_type = false;
-        if (match(TokenKind::Colon)) {
-            type = parseType();
-            explicit_type = true;
+    std::vector<Attribute> parseAttributes() {
+        std::vector<Attribute> attrs;
+        while (at(TokenKind::At)) {
+            attrs.push_back(parseAttribute());
         }
-        consume(TokenKind::Eq, "expected '='");
-        auto value = parseExpr();
-        consumeEndOfStatement();
-
-        Stmt stmt;
-        stmt.kind = Stmt::Kind::Local;
-        stmt.span = span;
-        stmt.name = name.text;
-        stmt.type = type;
-        stmt.explicit_type = explicit_type;
-        stmt.expr = std::move(value);
-        return stmt;
+        return attrs;
     }
 
-    if (match(TokenKind::Return)) {
-        std::unique_ptr<Expr> value;
-        if (!check(TokenKind::Semicolon) && !check(TokenKind::RBrace)) {
-            value = parseExpr();
-        }
-        consumeEndOfStatement();
-
-        Stmt stmt;
-        stmt.kind = Stmt::Kind::Return;
-        stmt.span = span;
-        stmt.return_value = std::move(value);
-        return stmt;
-    }
-
-    if (match(TokenKind::Go)) {
-        const Token name = consume(TokenKind::Ident, "expected function name after go");
-        consume(TokenKind::LParen, "expected '('");
-        auto args = parseCallArgs();
-        consume(TokenKind::RParen, "expected ')'");
-        consumeEndOfStatement();
-
-        auto bound = Expr::makeCall(name.text, std::move(args), span);
-        std::vector<std::unique_ptr<Expr>> spawn_args;
-        spawn_args.push_back(std::move(bound));
-
-        Stmt stmt;
-        stmt.kind = Stmt::Kind::Expr;
-        stmt.span = span;
-        stmt.expr = Expr::makeCall("spawn", std::move(spawn_args), span);
-        return stmt;
-    }
-
-    if (match(TokenKind::If)) {
-        auto condition = parseExpr();
-        auto then_block = std::make_unique<Block>(parseBlock());
-        std::unique_ptr<Block> else_block;
-        if (match(TokenKind::Else)) {
-            else_block = std::make_unique<Block>(parseBlock());
-        }
-
-        Stmt stmt;
-        stmt.kind = Stmt::Kind::If;
-        stmt.span = span;
-        stmt.condition = std::move(condition);
-        stmt.then_block = std::move(then_block);
-        stmt.else_block = std::move(else_block);
-        return stmt;
-    }
-
-    if (match(TokenKind::While)) {
-        auto condition = parseExpr();
-        auto loop_body = std::make_unique<Block>(parseBlock());
-
-        Stmt stmt;
-        stmt.kind = Stmt::Kind::While;
-        stmt.span = span;
-        stmt.condition = std::move(condition);
-        stmt.loop_body = std::move(loop_body);
-        return stmt;
-    }
-
-    if (match(TokenKind::Delete)) {
-        auto value = parseExpr();
-        consumeEndOfStatement();
-
-        Stmt stmt;
-        stmt.kind = Stmt::Kind::Delete;
-        stmt.span = span;
-        stmt.expr = std::move(value);
-        return stmt;
-    }
-
-    if (check(TokenKind::Ident) || check(TokenKind::Star)) {
-        auto target = check(TokenKind::Star) ? parseUnary() : parsePostfix(parsePrimary());
-        if (match(TokenKind::Eq)) {
-            auto value = parseExpr();
-            consumeEndOfStatement();
-
-            Stmt stmt;
-            stmt.span = span;
-            stmt.expr = std::move(value);
-            if (target->kind == Expr::Kind::FieldAccess) {
-                stmt.kind = Stmt::Kind::MemberAssign;
-                stmt.target = std::move(target->object);
-                stmt.field = target->name;
-            } else if (target->kind == Expr::Kind::Variable) {
-                stmt.kind = Stmt::Kind::Assign;
-                stmt.name = target->name;
-            } else if (target->kind == Expr::Kind::Deref) {
-                stmt.kind = Stmt::Kind::DerefAssign;
-                stmt.target = std::move(target);
-            } else {
-                throw error("invalid assignment target");
-            }
-            return stmt;
-        }
-
-        Stmt stmt;
-        stmt.kind = Stmt::Kind::Expr;
-        stmt.span = span;
-        stmt.expr = std::move(target);
-        consumeEndOfStatement();
-        return stmt;
-    }
-
-    auto expr = parseExpr();
-    consumeEndOfStatement();
-
-    Stmt stmt;
-    stmt.kind = Stmt::Kind::Expr;
-    stmt.span = span;
-    stmt.expr = std::move(expr);
-    return stmt;
-}
-
-void Parser::consumeEndOfStatement() {
-    if (check(TokenKind::RBrace) || isAtEnd()) {
-        return;
-    }
-    if (match(TokenKind::Semicolon)) {
-        return;
-    }
-    // Newline is whitespace — next stmt may start with unary `*` / `&` / `-`.
-    const TokenKind k = peek().kind;
-    if (k == TokenKind::Fn || k == TokenKind::Local || k == TokenKind::Return ||
-        k == TokenKind::Import || k == TokenKind::From || k == TokenKind::Ident ||
-        k == TokenKind::Export || k == TokenKind::External ||
-        k == TokenKind::Declare || k == TokenKind::Struct || k == TokenKind::Delete ||
-        k == TokenKind::New || k == TokenKind::If || k == TokenKind::While ||
-        k == TokenKind::Go || k == TokenKind::Star || k == TokenKind::Amp ||
-        k == TokenKind::Minus || k == TokenKind::LParen || k == TokenKind::True ||
-        k == TokenKind::False || k == TokenKind::Null || k == TokenKind::Number ||
-        k == TokenKind::String || k == TokenKind::At) {
-        return;
-    }
-    throw error("expected ';' or newline");
-}
-
-std::unique_ptr<Expr> Parser::parseExpr() { return parseLogicalOr(); }
-
-std::unique_ptr<Expr> Parser::parseLogicalOr() {
-    auto left = parseLogicalAnd();
-    while (match(TokenKind::OrOr)) {
-        const Span span = left->span;
-        auto right = parseLogicalAnd();
-        left = Expr::makeBinary(BinOp::Or, std::move(left), std::move(right), span);
-    }
-    return left;
-}
-
-std::unique_ptr<Expr> Parser::parseLogicalAnd() {
-    auto left = parseEquality();
-    while (match(TokenKind::AndAnd)) {
-        const Span span = left->span;
-        auto right = parseEquality();
-        left = Expr::makeBinary(BinOp::And, std::move(left), std::move(right), span);
-    }
-    return left;
-}
-
-std::unique_ptr<Expr> Parser::parseEquality() {
-    auto left = parseComparison();
-    while (true) {
-        if (match(TokenKind::EqEq)) {
-            const Span span = left->span;
-            auto right = parseComparison();
-            left = Expr::makeBinary(BinOp::Eq, std::move(left), std::move(right), span);
-        } else if (match(TokenKind::NotEq)) {
-            const Span span = left->span;
-            auto right = parseComparison();
-            left = Expr::makeBinary(BinOp::Ne, std::move(left), std::move(right), span);
-        } else {
-            break;
-        }
-    }
-    return left;
-}
-
-std::unique_ptr<Expr> Parser::parseComparison() {
-    auto left = parseAdditive();
-    while (true) {
-        if (match(TokenKind::Lt)) {
-            const Span span = left->span;
-            auto right = parseAdditive();
-            left = Expr::makeBinary(BinOp::Lt, std::move(left), std::move(right), span);
-        } else if (match(TokenKind::Le)) {
-            const Span span = left->span;
-            auto right = parseAdditive();
-            left = Expr::makeBinary(BinOp::Le, std::move(left), std::move(right), span);
-        } else if (match(TokenKind::Gt)) {
-            const Span span = left->span;
-            auto right = parseAdditive();
-            left = Expr::makeBinary(BinOp::Gt, std::move(left), std::move(right), span);
-        } else if (match(TokenKind::Ge)) {
-            const Span span = left->span;
-            auto right = parseAdditive();
-            left = Expr::makeBinary(BinOp::Ge, std::move(left), std::move(right), span);
-        } else {
-            break;
-        }
-    }
-    return left;
-}
-
-std::unique_ptr<Expr> Parser::parseAdditive() {
-    auto left = parseMultiplicative();
-    while (true) {
-        if (peek().line > left->span.line) {
-            break;
-        }
-        if (match(TokenKind::Plus)) {
-            const Span span = left->span;
-            auto right = parseMultiplicative();
-            left = Expr::makeBinary(BinOp::Add, std::move(left), std::move(right), span);
-        } else if (match(TokenKind::Minus)) {
-            const Span span = left->span;
-            auto right = parseMultiplicative();
-            left = Expr::makeBinary(BinOp::Sub, std::move(left), std::move(right), span);
-        } else {
-            break;
-        }
-    }
-    return left;
-}
-
-std::unique_ptr<Expr> Parser::parseMultiplicative() {
-    auto left = parseCast();
-    while (true) {
-        // Newline before `*` / `/` → statement boundary (so `*p = …` is deref, not mul).
-        if (peek().line > left->span.line) {
-            break;
-        }
-        if (match(TokenKind::Star)) {
-            const Span span = left->span;
-            auto right = parseCast();
-            left = Expr::makeBinary(BinOp::Mul, std::move(left), std::move(right), span);
-        } else if (match(TokenKind::Slash)) {
-            const Span span = left->span;
-            auto right = parseCast();
-            left = Expr::makeBinary(BinOp::Div, std::move(left), std::move(right), span);
-        } else {
-            break;
-        }
-    }
-    return left;
-}
-
-std::unique_ptr<Expr> Parser::parseCast() {
-    auto expr = parseUnary();
-    while (true) {
-        if (match(TokenKind::As)) {
-            const Span span = expr->span;
-            const Type target_type = parseType();
-            expr = Expr::makeCast(std::move(expr), target_type, span, /*reinterpret=*/false);
-            continue;
-        }
-        if (match(TokenKind::Reinterpret)) {
-            const Span span = expr->span;
-            const Type target_type = parseType();
-            expr = Expr::makeCast(std::move(expr), target_type, span, /*reinterpret=*/true);
-            continue;
-        }
-        break;
-    }
-    return expr;
-}
-
-std::unique_ptr<Expr> Parser::parseUnary() {
-    if (check(TokenKind::Star)) {
-        const Span start = currentSpan();
-        advance();
-        auto inner = parseUnary();
-        return Expr::makeDeref(std::move(inner), start);
-    }
-    if (check(TokenKind::Amp)) {
-        const Span start = currentSpan();
-        advance();
-        auto inner = parseUnary();
-        return Expr::makeAddrOf(std::move(inner), start);
-    }
-    if (check(TokenKind::Minus)) {
-        const Span start = currentSpan();
-        advance();
-        auto inner = parseUnary();
-        auto zero = Expr::makeInt(0, start);
-        return Expr::makeBinary(BinOp::Sub, std::move(zero), std::move(inner), start);
-    }
-    return parsePostfix(parsePrimary());
-}
-
-std::unique_ptr<Expr> Parser::parsePostfix(std::unique_ptr<Expr> expr) {
-    while (true) {
-        if (match(TokenKind::Dot)) {
-            const std::string field = consume(TokenKind::Ident, "expected field name").text;
-            const Span span = expr->span;
-            if (match(TokenKind::LParen)) {
-                auto args = parseCallArgs();
-                consume(TokenKind::RParen, "expected ')'");
-                expr = Expr::makeMethodCall(std::move(expr), field, std::move(args), span);
+    void registerAllowScopes(const std::vector<Attribute>& attrs, const Span& scope) {
+        for (const Attribute& attr : attrs) {
+            if (attr.name != "allow") {
                 continue;
             }
-            expr = Expr::makeFieldAccess(std::move(expr), field, span);
-            continue;
-        }
-        break;
-    }
-    return expr;
-}
-
-std::unique_ptr<Expr> Parser::parsePrimary() {
-    const Span span = currentSpan();
-
-    if (match(TokenKind::Number)) {
-        return Expr::makeInt(previous().number, span);
-    }
-
-    if (match(TokenKind::FloatNumber)) {
-        return Expr::makeFloat(previous().float_number, span);
-    }
-
-    if (match(TokenKind::True)) {
-        return Expr::makeBool(true, span);
-    }
-
-    if (match(TokenKind::False)) {
-        return Expr::makeBool(false, span);
-    }
-
-    if (match(TokenKind::Null)) {
-        return Expr::makeNull(span);
-    }
-
-    if (match(TokenKind::String)) {
-        return Expr::makeString(previous().text, span);
-    }
-
-    if (match(TokenKind::LParen)) {
-        auto expr = parseExpr();
-        consume(TokenKind::RParen, "expected ')'");
-        return expr;
-    }
-
-    if (match(TokenKind::New)) {
-        return parseNewExpr(span);
-    }
-
-    if (match(TokenKind::Ident)) {
-        const std::string name = previous().text;
-        if (match(TokenKind::LParen)) {
-            auto args = parseCallArgs();
-            consume(TokenKind::RParen, "expected ')'");
-            if (name == "syscall") {
-                // Compiler builtin: syscall(nr, a0..a5) — lowered straight to the CPU trap.
-                if (args.empty()) {
-                    throw error("syscall requires a syscall number as first argument");
+            std::vector<std::string> codes;
+            for (const AttributeArg& arg : attr.args) {
+                if (arg.key.empty() && arg.kind == AttributeArg::Kind::Ident) {
+                    codes.push_back(arg.text);
                 }
-                auto number = std::move(args.front());
-                args.erase(args.begin());
-                return Expr::makeNativeSyscall(std::move(number), std::move(args), span);
             }
-            return Expr::makeCall(name, std::move(args), span);
+            diag_.addAllowScope(scope, codes);
         }
-        if (check(TokenKind::Dot)) {
-            return Expr::makeVar(name, span);
-        }
-        if (isFunctionName(name)) {
-            return Expr::makeFunctionRef(name, span);
-        }
-        return Expr::makeVar(name, span);
     }
 
-    throw error("expected expression");
-}
+    // ------------------------------------------------------------------------------------
+    // Types
 
-std::unique_ptr<Expr> Parser::parseNewExpr(const Span& span) {
-    const std::string struct_name = consume(TokenKind::Ident, "expected struct name").text;
-    if (findStruct(struct_name) == nullptr) {
-        throw error(std::format("unknown struct `{}`", struct_name));
+    Type parseType() {
+        const Span start = cur().span;
+        Type type;
+        switch (cur().kind) {
+        case TokenKind::Star: {
+            advance();
+            type = Type::makePointer(parseType());
+            break;
+        }
+        case TokenKind::Ref: {
+            advance();
+            type = Type::makeRef(parseType());
+            break;
+        }
+        case TokenKind::PrimType: {
+            type = *primitiveFromName(advance().text);
+            break;
+        }
+        case TokenKind::Fn: {
+            advance();
+            expect(TokenKind::LParen, "`(` after `fn` in a function pointer type");
+            ++nl_depth_;
+            std::vector<Type> params;
+            while (!at(TokenKind::RParen)) {
+                params.push_back(parseType());
+                if (!match(TokenKind::Comma)) {
+                    break;
+                }
+            }
+            --nl_depth_;
+            expect(TokenKind::RParen, "`)` closing the parameter types");
+            Type ret = Type::makeVoid();
+            if (match(TokenKind::Arrow)) {
+                ret = parseType();
+            }
+            type = Type::makeFnPtr(std::move(params), std::move(ret));
+            break;
+        }
+        case TokenKind::LBracket: {
+            advance();
+            ++nl_depth_;
+            Type element = parseType();
+            expect(TokenKind::Semicolon, "`;` between the element type and the length");
+            const bool saved_no_struct = no_struct_;
+            no_struct_ = false;
+            ExprPtr length = parseExpr();
+            no_struct_ = saved_no_struct;
+            --nl_depth_;
+            expect(TokenKind::RBracket, "`]` closing the array type");
+            type = Type::makeArray(std::move(element), std::shared_ptr<const Expr>(std::move(length)));
+            break;
+        }
+        case TokenKind::Ident: {
+            std::vector<std::string> path;
+            path.push_back(advance().text);
+            while (at(TokenKind::Dot) && peekKind(1) == TokenKind::Ident) {
+                advance();
+                path.push_back(advance().text);
+            }
+            type = Type::makeNamed(std::move(path));
+            break;
+        }
+        default:
+            expected("a type");
+        }
+        type.span = spanFrom(start);
+        return type;
     }
 
-    std::vector<FieldInit> field_inits;
-    if (match(TokenKind::LBrace)) {
-        field_inits = parseFieldInits();
-        consume(TokenKind::RBrace, "expected '}'");
-    } else if (match(TokenKind::LParen)) {
-        if (!check(TokenKind::RParen)) {
-            do {
-                FieldInit init;
-                init.value = parseExpr();
-                field_inits.push_back(std::move(init));
-            } while (match(TokenKind::Comma));
-        }
-        consume(TokenKind::RParen, "expected ')'");
+    // ------------------------------------------------------------------------------------
+    // Expressions
 
-        const StructDecl* decl = findStruct(struct_name);
-        if (field_inits.size() > decl->fields.size()) {
-            throw error(std::format("too many arguments for struct `{}`", struct_name));
-        }
-        for (std::size_t i = 0; i < field_inits.size(); ++i) {
-            field_inits[i].name = decl->fields[i].name;
-        }
-    } else {
-        throw error("expected '{' or '(' after new struct name");
+    ExprPtr parseExpr() { return parseOr(); }
+
+    ExprPtr makeBinary(BinaryOp op, ExprPtr lhs, ExprPtr rhs) {
+        const Span span = Span::merge(lhs->span, rhs->span);
+        ExprPtr e = makeExpr(Expr::Kind::Binary, span);
+        e->binary_op = op;
+        e->lhs = std::move(lhs);
+        e->rhs = std::move(rhs);
+        return e;
     }
 
-    return Expr::makeNew(struct_name, std::move(field_inits), span);
-}
-
-std::vector<FieldInit> Parser::parseFieldInits() {
-    std::vector<FieldInit> inits;
-    if (check(TokenKind::RBrace)) {
-        return inits;
+    ExprPtr parseOr() {
+        ExprPtr lhs = parseAnd();
+        while (at(TokenKind::OrOr) && continues()) {
+            advance();
+            lhs = makeBinary(BinaryOp::Or, std::move(lhs), parseAnd());
+        }
+        return lhs;
     }
 
-    do {
-        FieldInit init;
-        init.name = consume(TokenKind::Ident, "expected field name").text;
-        consume(TokenKind::Eq, "expected '=' in field initializer");
-        init.value = parseExpr();
-        inits.push_back(std::move(init));
-    } while (match(TokenKind::Comma));
+    ExprPtr parseAnd() {
+        ExprPtr lhs = parseEquality();
+        while (at(TokenKind::AndAnd) && continues()) {
+            advance();
+            lhs = makeBinary(BinaryOp::And, std::move(lhs), parseEquality());
+        }
+        return lhs;
+    }
 
-    return inits;
-}
+    ExprPtr parseEquality() {
+        ExprPtr lhs = parseComparison();
+        while ((at(TokenKind::EqEq) || at(TokenKind::NotEq)) && continues()) {
+            const BinaryOp op = advance().kind == TokenKind::EqEq ? BinaryOp::Eq : BinaryOp::Ne;
+            lhs = makeBinary(op, std::move(lhs), parseComparison());
+        }
+        return lhs;
+    }
 
-std::vector<std::unique_ptr<Expr>> Parser::parseCallArgs() {
-    std::vector<std::unique_ptr<Expr>> args;
-    if (check(TokenKind::RParen)) {
+    ExprPtr parseComparison() {
+        ExprPtr lhs = parseAdditive();
+        while ((at(TokenKind::Lt) || at(TokenKind::Le) || at(TokenKind::Gt) || at(TokenKind::Ge)) &&
+               continues()) {
+            BinaryOp op = BinaryOp::Lt;
+            switch (advance().kind) {
+            case TokenKind::Lt: op = BinaryOp::Lt; break;
+            case TokenKind::Le: op = BinaryOp::Le; break;
+            case TokenKind::Gt: op = BinaryOp::Gt; break;
+            default: op = BinaryOp::Ge; break;
+            }
+            lhs = makeBinary(op, std::move(lhs), parseAdditive());
+        }
+        return lhs;
+    }
+
+    ExprPtr parseAdditive() {
+        ExprPtr lhs = parseMultiplicative();
+        while ((at(TokenKind::Plus) || at(TokenKind::Minus)) && continues()) {
+            const BinaryOp op = advance().kind == TokenKind::Plus ? BinaryOp::Add : BinaryOp::Sub;
+            lhs = makeBinary(op, std::move(lhs), parseMultiplicative());
+        }
+        return lhs;
+    }
+
+    ExprPtr parseMultiplicative() {
+        ExprPtr lhs = parseCast();
+        while ((at(TokenKind::Star) || at(TokenKind::Slash) || at(TokenKind::Percent)) &&
+               continues()) {
+            BinaryOp op = BinaryOp::Mul;
+            switch (advance().kind) {
+            case TokenKind::Star: op = BinaryOp::Mul; break;
+            case TokenKind::Slash: op = BinaryOp::Div; break;
+            default: op = BinaryOp::Mod; break;
+            }
+            lhs = makeBinary(op, std::move(lhs), parseCast());
+        }
+        return lhs;
+    }
+
+    ExprPtr parseCast() {
+        ExprPtr value = parseUnary();
+        while (at(TokenKind::As) && continues()) {
+            advance();
+            Type target = parseType();
+            ExprPtr e = makeExpr(Expr::Kind::Cast, Span::merge(value->span, prev().span));
+            e->lhs = std::move(value);
+            e->type = std::move(target);
+            value = std::move(e);
+        }
+        return value;
+    }
+
+    ExprPtr parseUnary() {
+        const Span start = cur().span;
+        std::optional<UnaryOp> op;
+        switch (cur().kind) {
+        case TokenKind::Minus: op = UnaryOp::Neg; break;
+        case TokenKind::Bang: op = UnaryOp::Not; break;
+        case TokenKind::Star: op = UnaryOp::Deref; break;
+        case TokenKind::Amp: op = UnaryOp::AddrOf; break;
+        case TokenKind::AndAnd: {
+            // `&&x` in prefix position is two address-of operators.
+            advance();
+            ExprPtr inner = parseUnary();
+            ExprPtr mid = makeExpr(Expr::Kind::Unary, Span::merge(start, inner->span));
+            mid->unary_op = UnaryOp::AddrOf;
+            mid->lhs = std::move(inner);
+            ExprPtr outer = makeExpr(Expr::Kind::Unary, mid->span);
+            outer->unary_op = UnaryOp::AddrOf;
+            outer->lhs = std::move(mid);
+            return outer;
+        }
+        default: break;
+        }
+        if (op) {
+            advance();
+            ExprPtr operand = parseUnary();
+            ExprPtr e = makeExpr(Expr::Kind::Unary, Span::merge(start, operand->span));
+            e->unary_op = *op;
+            e->lhs = std::move(operand);
+            return e;
+        }
+        return parsePostfix(parsePrimary());
+    }
+
+    /// Dotted name of a `Name`/`Field` chain, empty when `e` is anything else.
+    [[nodiscard]] static std::string pathOf(const Expr& e) {
+        if (e.kind == Expr::Kind::Name) {
+            return e.text;
+        }
+        if (e.kind == Expr::Kind::Field && e.lhs) {
+            std::string base = pathOf(*e.lhs);
+            return base.empty() ? base : base + "." + e.text;
+        }
+        return {};
+    }
+
+    [[nodiscard]] static std::vector<std::string> splitPath(const std::string& path) {
+        std::vector<std::string> out;
+        std::size_t start = 0;
+        while (true) {
+            const std::size_t dot = path.find('.', start);
+            out.push_back(path.substr(start, dot == std::string::npos ? dot : dot - start));
+            if (dot == std::string::npos) {
+                break;
+            }
+            start = dot + 1;
+        }
+        return out;
+    }
+
+    /// At `{`: does what follows look like a struct literal body (`}` or `name :`)?
+    [[nodiscard]] bool looksLikeStructLiteral() const {
+        if (peekKind(1) == TokenKind::RBrace) {
+            return true;
+        }
+        return peekKind(1) == TokenKind::Ident && peekKind(2) == TokenKind::Colon;
+    }
+
+    std::vector<FieldInit> parseFieldInits() {
+        expect(TokenKind::LBrace, "`{`");
+        const int saved_depth = nl_depth_;
+        const bool saved_no_struct = no_struct_;
+        nl_depth_ = 0;
+        no_struct_ = false;
+        std::vector<FieldInit> fields;
+        while (!at(TokenKind::RBrace)) {
+            FieldInit init;
+            init.span = cur().span;
+            init.name = expectIdent("a field name");
+            expect(TokenKind::Colon, "`:` after the field name");
+            init.value = parseExpr();
+            init.span = spanFrom(init.span);
+            fields.push_back(std::move(init));
+            if (match(TokenKind::Comma)) {
+                continue;
+            }
+            if (!at(TokenKind::RBrace) && !cur().newline_before) {
+                expected("`,`, a line break or `}`");
+            }
+        }
+        nl_depth_ = saved_depth;
+        no_struct_ = saved_no_struct;
+        expect(TokenKind::RBrace, "`}`");
+        return fields;
+    }
+
+    /// Raw token lists of a macro argument list; consumes the `(` ... `)`.
+    std::vector<std::vector<Token>> parseMacroArgs() {
+        expect(TokenKind::LParen, "`(`");
+        std::vector<std::vector<Token>> args;
+        std::vector<Token> current;
+        int depth = 0;
+        bool any = false;
+        while (true) {
+            if (at(TokenKind::End)) {
+                expected("`)` closing the macro call");
+            }
+            const TokenKind kind = cur().kind;
+            if (depth == 0 && kind == TokenKind::RParen) {
+                break;
+            }
+            if (depth == 0 && kind == TokenKind::Comma) {
+                args.push_back(std::move(current));
+                current.clear();
+                advance();
+                continue;
+            }
+            if (kind == TokenKind::LParen || kind == TokenKind::LBracket ||
+                kind == TokenKind::LBrace) {
+                ++depth;
+            } else if (kind == TokenKind::RParen || kind == TokenKind::RBracket ||
+                       kind == TokenKind::RBrace) {
+                --depth;
+            }
+            any = true;
+            current.push_back(advance());
+        }
+        if (any || !args.empty()) {
+            args.push_back(std::move(current));
+        }
+        advance();  // ')'
         return args;
     }
 
-    do {
-        args.push_back(parseExpr());
-    } while (match(TokenKind::Comma));
-
-    return args;
-}
-
-const Token& Parser::peek() const { return tokens_[pos_]; }
-
-const Token& Parser::previous() const { return tokens_[pos_ - 1]; }
-
-bool Parser::isAtEnd() const { return peek().kind == TokenKind::End; }
-
-bool Parser::check(TokenKind kind) const { return peek().kind == kind; }
-
-bool Parser::match(TokenKind kind) {
-    if (!check(kind)) {
-        return false;
+    /// A call argument. Inline-asm operands are written `in(reg) x`, `out("rax") y`,
+    /// `inout(reg) z`: a register spec in parentheses followed by the operand expression.
+    ExprPtr parseCallArg() {
+        ExprPtr arg = parseExpr();
+        const bool operand_head =
+            arg->kind == Expr::Kind::Call && arg->lhs->kind == Expr::Kind::Name &&
+            (arg->lhs->text == "in" || arg->lhs->text == "out" || arg->lhs->text == "inout") &&
+            arg->args.size() == 1;
+        if (!operand_head || at(TokenKind::Comma) || at(TokenKind::RParen)) {
+            return arg;
+        }
+        ExprPtr operand = makeExpr(Expr::Kind::AsmOperand, arg->span);
+        operand->text = arg->lhs->text;
+        operand->lhs = std::move(arg->args.front());
+        operand->rhs = parseExpr();
+        operand->span = spanFrom(operand->span);
+        return operand;
     }
-    advance();
-    return true;
-}
 
-Token Parser::advance() {
-    if (!isAtEnd()) {
-        ++pos_;
+    ExprPtr parsePostfix(ExprPtr expr) {
+        while (true) {
+            if (at(TokenKind::LParen) && continues()) {
+                advance();
+                ++nl_depth_;
+                const bool saved_no_struct = no_struct_;
+                no_struct_ = false;
+                ExprPtr call = makeExpr(Expr::Kind::Call, expr->span);
+                while (!at(TokenKind::RParen)) {
+                    call->args.push_back(parseCallArg());
+                    if (!match(TokenKind::Comma)) {
+                        break;
+                    }
+                }
+                no_struct_ = saved_no_struct;
+                --nl_depth_;
+                expect(TokenKind::RParen, "`)` closing the argument list");
+                call->span = spanFrom(expr->span);
+                call->lhs = std::move(expr);
+                expr = std::move(call);
+            } else if (at(TokenKind::LBracket) && continues()) {
+                advance();
+                ++nl_depth_;
+                const bool saved_no_struct = no_struct_;
+                no_struct_ = false;
+                ExprPtr index = makeExpr(Expr::Kind::Index, expr->span);
+                index->rhs = parseExpr();
+                no_struct_ = saved_no_struct;
+                --nl_depth_;
+                expect(TokenKind::RBracket, "`]` closing the index");
+                index->span = spanFrom(expr->span);
+                index->lhs = std::move(expr);
+                expr = std::move(index);
+            } else if (at(TokenKind::Dot) && continues()) {
+                advance();
+                if (!at(TokenKind::Ident)) {
+                    expected("a member name after `.`");
+                }
+                ExprPtr field = makeExpr(Expr::Kind::Field, expr->span);
+                field->text = advance().text;
+                field->span = spanFrom(expr->span);
+                field->lhs = std::move(expr);
+                expr = std::move(field);
+            } else if (at(TokenKind::Bang) && peekKind(1) == TokenKind::LParen &&
+                       adjacent(prev(), cur()) && adjacent(cur(), peek(1)) &&
+                       !pathOf(*expr).empty()) {
+                advance();  // '!'
+                ExprPtr call = makeExpr(Expr::Kind::MacroCall, expr->span);
+                call->text = pathOf(*expr);
+                call->macro_args = parseMacroArgs();
+                call->span = spanFrom(expr->span);
+                expr = std::move(call);
+            } else if (at(TokenKind::LBrace) && !no_struct_ && continues() &&
+                       !pathOf(*expr).empty() && looksLikeStructLiteral()) {
+                ExprPtr lit = makeExpr(Expr::Kind::StructLiteral, expr->span);
+                Type type = Type::makeNamed(splitPath(pathOf(*expr)));
+                type.span = expr->span;
+                lit->type = std::move(type);
+                lit->fields = parseFieldInits();
+                lit->span = spanFrom(expr->span);
+                expr = std::move(lit);
+            } else {
+                break;
+            }
+        }
+        return expr;
     }
-    return tokens_[pos_ - 1];
-}
 
-Token Parser::consume(TokenKind kind, const std::string& message) {
-    if (check(kind)) {
-        return advance();
+    ExprPtr parsePrimary() {
+        const Token& tok = cur();
+        const Span start = tok.span;
+        switch (tok.kind) {
+        case TokenKind::Int: {
+            ExprPtr e = makeExpr(Expr::Kind::IntLiteral, start);
+            e->int_value = tok.int_value;
+            advance();
+            return e;
+        }
+        case TokenKind::Float: {
+            ExprPtr e = makeExpr(Expr::Kind::FloatLiteral, start);
+            e->float_value = tok.float_value;
+            advance();
+            return e;
+        }
+        case TokenKind::String: {
+            ExprPtr e = makeExpr(Expr::Kind::StringLiteral, start);
+            e->text = tok.text;
+            advance();
+            return e;
+        }
+        case TokenKind::True:
+        case TokenKind::False: {
+            ExprPtr e = makeExpr(Expr::Kind::BoolLiteral, start);
+            e->bool_value = tok.kind == TokenKind::True;
+            advance();
+            return e;
+        }
+        case TokenKind::Null: {
+            advance();
+            return makeExpr(Expr::Kind::NullLiteral, start);
+        }
+        case TokenKind::Ident: {
+            ExprPtr e = makeExpr(Expr::Kind::Name, start);
+            e->text = tok.text;
+            advance();
+            return e;
+        }
+        case TokenKind::SelfKw: {
+            ExprPtr e = makeExpr(Expr::Kind::Name, start);
+            e->text = "self";
+            advance();
+            return e;
+        }
+        case TokenKind::PrimType: {
+            // A type used as an argument, e.g. `sizeOf(i32)`.
+            ExprPtr e = makeExpr(Expr::Kind::Name, start);
+            e->text = tok.text;
+            advance();
+            return e;
+        }
+        case TokenKind::LParen: {
+            advance();
+            ++nl_depth_;
+            const bool saved_no_struct = no_struct_;
+            no_struct_ = false;
+            ExprPtr inner = parseExpr();
+            no_struct_ = saved_no_struct;
+            --nl_depth_;
+            expect(TokenKind::RParen, "`)`");
+            inner->span = spanFrom(start);
+            return inner;
+        }
+        case TokenKind::LBracket:
+            return parseArrayLiteral();
+        case TokenKind::New:
+            return parseNew();
+        default:
+            expected("an expression");
+        }
     }
-    throw error(message);
-}
 
-Span Parser::currentSpan() const {
-    Span span;
-    span.line = peek().line;
-    span.column = peek().column;
-    return span;
-}
-
-void Parser::registerFunction(const std::string& name) {
-    function_names_.insert(name);
-}
-
-void Parser::registerStruct(const StructDecl& decl) {
-    struct_defs_[decl.name] = decl;
-}
-
-void Parser::registerInterface(const InterfaceDecl& decl) {
-    interface_defs_[decl.name] = decl;
-}
-
-const StructDecl* Parser::findStruct(std::string_view name) const {
-    const auto it = struct_defs_.find(std::string(name));
-    if (it == struct_defs_.end()) {
-        return nullptr;
+    ExprPtr parseArrayLiteral() {
+        const Span start = cur().span;
+        advance();  // '['
+        ++nl_depth_;
+        const bool saved_no_struct = no_struct_;
+        no_struct_ = false;
+        ExprPtr result;
+        if (at(TokenKind::RBracket)) {
+            result = makeExpr(Expr::Kind::ArrayList, start);
+        } else {
+            ExprPtr first = parseExpr();
+            if (match(TokenKind::Semicolon)) {
+                result = makeExpr(Expr::Kind::ArrayRepeat, start);
+                result->lhs = std::move(first);
+                result->rhs = parseExpr();
+            } else {
+                result = makeExpr(Expr::Kind::ArrayList, start);
+                result->args.push_back(std::move(first));
+                while (match(TokenKind::Comma)) {
+                    if (at(TokenKind::RBracket)) {
+                        break;
+                    }
+                    result->args.push_back(parseExpr());
+                }
+            }
+        }
+        no_struct_ = saved_no_struct;
+        --nl_depth_;
+        expect(TokenKind::RBracket, "`]` closing the array literal");
+        result->span = spanFrom(start);
+        return result;
     }
-    return &it->second;
-}
 
-const InterfaceDecl* Parser::findInterface(std::string_view name) const {
-    const auto it = interface_defs_.find(std::string(name));
-    if (it == interface_defs_.end()) {
-        return nullptr;
+    ExprPtr parseNew() {
+        const Span start = cur().span;
+        advance();  // 'new'
+        ExprPtr e = makeExpr(Expr::Kind::New, start);
+        if (at(TokenKind::LParen)) {
+            advance();
+            ++nl_depth_;
+            const bool saved_no_struct = no_struct_;
+            no_struct_ = false;
+            e->lhs = parseExpr();
+            no_struct_ = saved_no_struct;
+            --nl_depth_;
+            expect(TokenKind::RParen, "`)` closing the allocator argument");
+        }
+        e->type = parseType();
+        if (!at(TokenKind::LBrace)) {
+            expected("`{` with the field initializers after the type of `new`");
+        }
+        e->fields = parseFieldInits();
+        e->span = spanFrom(start);
+        return e;
     }
-    return &it->second;
+
+    // ------------------------------------------------------------------------------------
+    // Statements
+
+    Block parseBlock() {
+        Block block;
+        block.span = cur().span;
+        expect(TokenKind::LBrace, "`{`");
+        const int saved_depth = nl_depth_;
+        const bool saved_no_struct = no_struct_;
+        nl_depth_ = 0;
+        no_struct_ = false;
+        while (!at(TokenKind::RBrace)) {
+            if (at(TokenKind::End)) {
+                nl_depth_ = saved_depth;
+                no_struct_ = saved_no_struct;
+                failAt(cur(), "unexpected end of file in a block", "the block opened here is never closed",
+                       {}, "add a closing `}`");
+            }
+            const std::size_t start = pos_;
+            try {
+                block.statements.push_back(parseStatement());
+            } catch (const ParseAbort&) {
+                syncStatement(start);
+            }
+        }
+        nl_depth_ = saved_depth;
+        no_struct_ = saved_no_struct;
+        advance();  // '}'
+        block.span = spanFrom(block.span);
+        return block;
+    }
+
+    std::unique_ptr<Block> parseBlockPtr() {
+        return std::make_unique<Block>(parseBlock());
+    }
+
+    /// After a statement that did not end in a block: a line break or `}` must follow.
+    void endOfStatement() {
+        if (at(TokenKind::End) || at(TokenKind::RBrace) || cur().newline_before) {
+            return;
+        }
+        failAt(cur(), std::format("unexpected {} after the end of a statement", describeToken(cur())),
+               "a statement ends at a line break",
+               "Statements are separated by line breaks; there is no `;` terminator.",
+               "put this on a new line");
+    }
+
+    Stmt parseStatement() {
+        rejectDirective();
+        std::vector<Attribute> attrs = parseAttributes();
+        const Span start = attrs.empty() ? cur().span : attrs.front().span;
+        Stmt stmt = parseStatementBody();
+        stmt.attributes = std::move(attrs);
+        stmt.span = spanFrom(start);
+        registerAllowScopes(stmt.attributes, stmt.span);
+        return stmt;
+    }
+
+    Stmt parseStatementBody() {
+        Stmt stmt;
+        switch (cur().kind) {
+        case TokenKind::Local: {
+            advance();
+            stmt.kind = Stmt::Kind::Local;
+            stmt.name = expectIdent("a variable name");
+            if (match(TokenKind::Colon)) {
+                stmt.has_type = true;
+                stmt.type = parseType();
+            }
+            if (match(TokenKind::Assign)) {
+                stmt.expr = parseExpr();
+            } else if (!stmt.has_type) {
+                expected("`:` with a type or `=` with an initializer");
+            }
+            endOfStatement();
+            return stmt;
+        }
+        case TokenKind::Return: {
+            advance();
+            stmt.kind = Stmt::Kind::Return;
+            if (!at(TokenKind::End) && !at(TokenKind::RBrace) && !cur().newline_before) {
+                stmt.expr = parseExpr();
+            }
+            endOfStatement();
+            return stmt;
+        }
+        case TokenKind::If:
+            return parseIf();
+        case TokenKind::While: {
+            advance();
+            stmt.kind = Stmt::Kind::While;
+            stmt.expr = parseCondition();
+            stmt.body = parseBlockPtr();
+            return stmt;
+        }
+        case TokenKind::Unsafe: {
+            advance();
+            stmt.kind = Stmt::Kind::Unsafe;
+            stmt.body = parseBlockPtr();
+            return stmt;
+        }
+        case TokenKind::LBrace: {
+            stmt.kind = Stmt::Kind::Block;
+            stmt.body = parseBlockPtr();
+            return stmt;
+        }
+        default: break;
+        }
+
+        ExprPtr lhs = parseExpr();
+        if (at(TokenKind::Assign) && continues()) {
+            switch (lhs->kind) {
+            case Expr::Kind::Name:
+            case Expr::Kind::Field:
+            case Expr::Kind::Index:
+                break;
+            case Expr::Kind::Unary:
+                if (lhs->unary_op == UnaryOp::Deref) {
+                    break;
+                }
+                [[fallthrough]];
+            default:
+                failAt(cur(), "invalid assignment target", "cannot assign to this expression",
+                       "Only a variable, a field, an index or a dereference can be assigned to.");
+            }
+            advance();
+            stmt.kind = Stmt::Kind::Assign;
+            stmt.target = std::move(lhs);
+            stmt.expr = parseExpr();
+            endOfStatement();
+            return stmt;
+        }
+        stmt.kind = Stmt::Kind::Expr;
+        stmt.expr = std::move(lhs);
+        endOfStatement();
+        return stmt;
+    }
+
+    /// `if`/`while` condition: struct literals are not allowed (the `{` starts the block).
+    ExprPtr parseCondition() {
+        const bool saved = no_struct_;
+        no_struct_ = true;
+        ExprPtr cond = parseExpr();
+        no_struct_ = saved;
+        return cond;
+    }
+
+    Stmt parseIf() {
+        Stmt stmt;
+        stmt.kind = Stmt::Kind::If;
+        const Span start = cur().span;
+        advance();  // 'if'
+        stmt.expr = parseCondition();
+        stmt.body = parseBlockPtr();
+        if (at(TokenKind::Else)) {
+            advance();
+            if (at(TokenKind::If)) {
+                Stmt nested = parseIf();
+                auto wrapper = std::make_unique<Block>();
+                wrapper->span = nested.span;
+                wrapper->statements.push_back(std::move(nested));
+                stmt.else_body = std::move(wrapper);
+                stmt.else_is_if = true;
+            } else {
+                stmt.else_body = parseBlockPtr();
+            }
+        }
+        stmt.span = spanFrom(start);
+        return stmt;
+    }
+
+    // ------------------------------------------------------------------------------------
+    // Declarations
+
+    struct DeclStart {
+        std::vector<Attribute> attributes;
+        Modifiers modifiers;
+        Span start;
+    };
+
+    void finishDecl(DeclBase& base, const DeclStart& s, std::string name, const Span& name_span) {
+        base.name = std::move(name);
+        base.attributes = s.attributes;
+        base.name_span = name_span;
+        base.span = spanFrom(s.start);
+    }
+
+    /// Items that end without a closing brace must be followed by a line break.
+    void endOfItemLine() {
+        if (at(TokenKind::End) || at(TokenKind::RBrace) || cur().newline_before) {
+            return;
+        }
+        failAt(cur(), std::format("unexpected {} after the end of a declaration", describeToken(cur())),
+               "a declaration ends at a line break", {}, "put this on a new line");
+    }
+
+    void parseItem(Program& program) {
+        rejectDirective();
+        DeclStart s;
+        s.start = cur().span;
+        s.attributes = parseAttributes();
+        if (!s.attributes.empty()) {
+            s.start = s.attributes.front().span;
+        }
+        rejectDirective();
+
+        // Re-exports: `export * ...` / `export { ... } from ...`.
+        if (at(TokenKind::Export) &&
+            (peekKind(1) == TokenKind::Star || peekKind(1) == TokenKind::LBrace)) {
+            parseExportFrom(program, s);
+            return;
+        }
+
+        parseModifiers(s.modifiers);
+
+        const Token& kw = cur();
+        switch (kw.kind) {
+        case TokenKind::Fn:
+            addItem(program, s, parseFn(s, /*member=*/false));
+            return;
+        case TokenKind::Global:
+            addItem(program, s, parseGlobal(s));
+            return;
+        case TokenKind::Struct:
+            addItem(program, s, parseStruct(s));
+            return;
+        case TokenKind::Class:
+            addItem(program, s, parseClass(s));
+            return;
+        case TokenKind::Interface:
+            addItem(program, s, parseInterface(s));
+            return;
+        case TokenKind::Impl:
+            addItem(program, s, parseImpl(s));
+            return;
+        case TokenKind::Enum:
+            addItem(program, s, parseEnum(s));
+            return;
+        case TokenKind::Type:
+            addItem(program, s, parseTypeAlias(s));
+            return;
+        case TokenKind::Define:
+            addItem(program, s, parseDefine(s));
+            return;
+        case TokenKind::Import:
+        case TokenKind::From:
+            addItem(program, s, parseImport(s));
+            return;
+        case TokenKind::Ident:
+            addItem(program, s, parseTopLevelCall(s));
+            return;
+        default:
+            failAt(kw, std::format("expected a declaration, found {}", describeToken(kw)),
+                   "expected a declaration here", {},
+                   "declarations start with fn, global, struct, class, interface, impl, enum, type, "
+                   "define, import, from or export");
+        }
+    }
+
+    void addItem(Program& program, DeclStart& s, Decl decl) {
+        Item item;
+        item.modifiers = s.modifiers;
+        item.decl = std::move(decl);
+        registerAllowScopes(s.attributes, declBase(item).span);
+        checkModifiers(item);
+        program.items.push_back(std::move(item));
+    }
+
+    void parseModifiers(Modifiers& mods) {
+        while (true) {
+            if (at(TokenKind::Export)) {
+                if (mods.exported) {
+                    failAt(cur(), "duplicate `export`", "already exported");
+                }
+                advance();
+                mods.exported = true;
+                if (at(TokenKind::LParen) && peekKind(1) == TokenKind::Ident &&
+                    peekKind(2) == TokenKind::RParen) {
+                    advance();
+                    const Token& abi = advance();
+                    advance();
+                    if (abi.text != "c") {
+                        failAt(abi, std::format("unknown export ABI `{}`", abi.text),
+                               "only `export(c)` exists");
+                    }
+                    mods.export_c = true;
+                }
+            } else if (at(TokenKind::Declare)) {
+                if (mods.declared) {
+                    failAt(cur(), "duplicate `declare`", "already declared");
+                }
+                advance();
+                mods.declared = true;
+            } else if (at(TokenKind::Register)) {
+                if (mods.registered) {
+                    failAt(cur(), "duplicate `register`", "already registered");
+                }
+                advance();
+                mods.registered = true;
+                if (at(TokenKind::LParen) && peekKind(1) == TokenKind::Ident &&
+                    peekKind(2) == TokenKind::RParen) {
+                    advance();
+                    mods.register_role = advance().text;
+                    advance();
+                }
+            } else {
+                return;
+            }
+        }
+    }
+
+    /// Prefix applicability (soft errors: parsing continues).
+    void checkModifiers(const Item& item) {
+        const Modifiers& m = item.modifiers;
+        const DeclBase& base = declBase(item);
+        const std::string kind = declKindName(item.decl);
+        const auto reject = [&](std::string_view prefix) {
+            softError(base.span, std::format("`{}` cannot be applied to {} `{}`", prefix, kind, base.name),
+                      std::format("`{}` is not valid on {}", prefix, kind));
+        };
+        const bool is_import = std::holds_alternative<ImportDecl>(item.decl);
+        const bool is_call = std::holds_alternative<TopLevelCallDecl>(item.decl) ||
+                             std::holds_alternative<MacroCallDecl>(item.decl);
+        const bool is_impl = std::holds_alternative<ImplDecl>(item.decl);
+        const bool is_define = std::holds_alternative<DefineConstDecl>(item.decl) ||
+                               std::holds_alternative<DefineMacroDecl>(item.decl);
+        const bool is_enum = std::holds_alternative<EnumDecl>(item.decl);
+        if (m.exported && (is_import || is_call || is_impl)) {
+            reject("export");
+        }
+        if (m.declared && (is_import || is_call || is_impl || is_define)) {
+            reject("declare");
+        }
+        if (m.declared && is_enum) {
+            reject("declare");
+        }
+        if (m.registered && (is_import || is_call || is_impl || is_define)) {
+            reject("register");
+        }
+        if (m.export_c && !(std::holds_alternative<FnDecl>(item.decl) ||
+                            std::holds_alternative<GlobalDecl>(item.decl))) {
+            reject("export(c)");
+        }
+    }
+
+    // --- fn ----------------------------------------------------------------------------------
+
+    FnDecl parseFn(const DeclStart& s, bool member) {
+        FnDecl fn;
+        Span fn_start = cur().span;
+        expect(TokenKind::Fn, "`fn`");
+        const Token& name_tok = cur();
+        if (!at(TokenKind::Ident)) {
+            expected("a function name");
+        }
+        const std::string name = advance().text;
+        const Span name_span = name_tok.span;
+
+        expect(TokenKind::LParen, "`(` starting the parameter list");
+        ++nl_depth_;
+        while (!at(TokenKind::RParen)) {
+            Param param;
+            param.span = cur().span;
+            if (at(TokenKind::SelfKw)) {
+                advance();
+                param.name = "self";
+                param.is_self = true;
+            } else {
+                param.name = expectIdent("a parameter name");
+                expect(TokenKind::Colon, "`:` and the parameter type");
+                param.type = parseType();
+            }
+            param.span = spanFrom(param.span);
+            fn.params.push_back(std::move(param));
+            if (!match(TokenKind::Comma)) {
+                break;
+            }
+        }
+        --nl_depth_;
+        expect(TokenKind::RParen, "`)` closing the parameter list");
+
+        if (match(TokenKind::Arrow)) {
+            fn.has_return_type = true;
+            fn.return_type = parseType();
+        } else {
+            fn.return_type = Type::makeVoid();
+        }
+
+        if (at(TokenKind::LBrace)) {
+            fn.has_body = true;
+            fn.body = parseBlock();
+        } else if (!member && !s.modifiers.declared) {
+            // A free function needs a body unless it is `declare`d.
+            failAt(cur(), std::format("expected `{{` starting the body of `{}`, found {}", name,
+                                      describeToken(cur())),
+                   "function body expected here", {},
+                   "write a body, or `declare fn` for a function defined elsewhere");
+        } else {
+            endOfItemLine();
+        }
+        finishDecl(fn, s, name, name_span);
+        if (member) {
+            fn.span = spanFrom(fn_start);
+        }
+        return fn;
+    }
+
+    // --- global ------------------------------------------------------------------------------
+
+    GlobalDecl parseGlobal(const DeclStart& s) {
+        GlobalDecl g;
+        advance();  // 'global'
+        const Token& name_tok = cur();
+        const std::string name = expectIdent("a global name");
+        expect(TokenKind::Colon, "`:` and the type of the global");
+        g.type = parseType();
+        if (match(TokenKind::Assign)) {
+            g.init = parseExpr();
+        }
+        endOfItemLine();
+        finishDecl(g, s, name, name_tok.span);
+        return g;
+    }
+
+    // --- struct / class / interface / impl ---------------------------------------------------
+
+    FieldDecl parseField(std::vector<Attribute> attrs) {
+        FieldDecl field;
+        field.span = attrs.empty() ? cur().span : attrs.front().span;
+        field.attributes = std::move(attrs);
+        field.name = expectIdent("a field name");
+        expect(TokenKind::Colon, "`:` and the field type");
+        field.type = parseType();
+        field.span = spanFrom(field.span);
+        return field;
+    }
+
+    /// Separator between members: `,`, or a line break, or the closing `}`.
+    void memberSeparator() {
+        if (match(TokenKind::Comma)) {
+            return;
+        }
+        if (!at(TokenKind::RBrace) && !cur().newline_before) {
+            expected("`,`, a line break or `}`");
+        }
+    }
+
+    StructDecl parseStruct(const DeclStart& s) {
+        StructDecl decl;
+        advance();  // 'struct'
+        const Token& name_tok = cur();
+        const std::string name = expectIdent("a struct name");
+        if (at(TokenKind::LBrace)) {
+            advance();
+            const int saved_depth = nl_depth_;
+            nl_depth_ = 0;
+            while (!at(TokenKind::RBrace)) {
+                rejectDirective();
+                std::vector<Attribute> attrs = parseAttributes();
+                if (at(TokenKind::Fn) || at(TokenKind::Virtual) || at(TokenKind::Override)) {
+                    failAt(cur(), "structs cannot have methods", "method declared inside a struct",
+                           "`struct` only carries data.",
+                           "use `class` for methods and inheritance, or an `impl` block for interfaces");
+                }
+                decl.fields.push_back(parseField(std::move(attrs)));
+                memberSeparator();
+            }
+            nl_depth_ = saved_depth;
+            advance();  // '}'
+        } else if (s.modifiers.declared) {
+            decl.opaque = true;
+            endOfItemLine();
+        } else {
+            expected("`{` with the fields of the struct");
+        }
+        finishDecl(decl, s, name, name_tok.span);
+        return decl;
+    }
+
+    ClassDecl parseClass(const DeclStart& s) {
+        ClassDecl decl;
+        advance();  // 'class'
+        const Token& name_tok = cur();
+        const std::string name = expectIdent("a class name");
+        if (match(TokenKind::Colon)) {
+            decl.has_base = true;
+            decl.base.push_back(expectIdent("a base class name"));
+            while (at(TokenKind::Dot) && peekKind(1) == TokenKind::Ident) {
+                advance();
+                decl.base.push_back(advance().text);
+            }
+        }
+        if (at(TokenKind::LBrace)) {
+            advance();
+            const int saved_depth = nl_depth_;
+            nl_depth_ = 0;
+            while (!at(TokenKind::RBrace)) {
+                rejectDirective();
+                std::vector<Attribute> attrs = parseAttributes();
+                if (at(TokenKind::Fn) || at(TokenKind::Virtual) || at(TokenKind::Override)) {
+                    decl.methods.push_back(parseMethod(std::move(attrs)));
+                } else {
+                    decl.fields.push_back(parseField(std::move(attrs)));
+                    memberSeparator();
+                }
+            }
+            nl_depth_ = saved_depth;
+            advance();  // '}'
+        } else if (s.modifiers.declared) {
+            decl.opaque = true;
+            endOfItemLine();
+        } else {
+            expected("`{` with the members of the class");
+        }
+        finishDecl(decl, s, name, name_tok.span);
+        return decl;
+    }
+
+    /// `[virtual|override] fn ...` inside class/interface/impl bodies.
+    FnDecl parseMethod(std::vector<Attribute> attrs) {
+        DeclStart ms;
+        ms.start = attrs.empty() ? cur().span : attrs.front().span;
+        ms.attributes = std::move(attrs);
+        bool is_virtual = false;
+        bool is_override = false;
+        if (match(TokenKind::Virtual)) {
+            is_virtual = true;
+        } else if (match(TokenKind::Override)) {
+            is_override = true;
+        }
+        FnDecl fn = parseFn(ms, /*member=*/true);
+        fn.is_virtual = is_virtual;
+        fn.is_override = is_override;
+        fn.span = spanFrom(ms.start);
+        fn.attributes = ms.attributes;
+        registerAllowScopes(fn.attributes, fn.span);
+        return fn;
+    }
+
+    InterfaceDecl parseInterface(const DeclStart& s) {
+        InterfaceDecl decl;
+        advance();  // 'interface'
+        const Token& name_tok = cur();
+        const std::string name = expectIdent("an interface name");
+        if (at(TokenKind::LBrace)) {
+            advance();
+            const int saved_depth = nl_depth_;
+            nl_depth_ = 0;
+            while (!at(TokenKind::RBrace)) {
+                rejectDirective();
+                std::vector<Attribute> attrs = parseAttributes();
+                if (!at(TokenKind::Fn)) {
+                    expected("`fn` (an interface only holds method signatures)");
+                }
+                decl.methods.push_back(parseMethod(std::move(attrs)));
+            }
+            nl_depth_ = saved_depth;
+            advance();  // '}'
+        } else if (s.modifiers.declared) {
+            decl.opaque = true;
+            endOfItemLine();
+        } else {
+            expected("`{` with the method signatures of the interface");
+        }
+        finishDecl(decl, s, name, name_tok.span);
+        return decl;
+    }
+
+    ImplDecl parseImpl(const DeclStart& s) {
+        ImplDecl decl;
+        advance();  // 'impl'
+        const Token& name_tok = cur();
+        decl.interface_path.push_back(expectIdent("an interface name"));
+        while (at(TokenKind::Dot) && peekKind(1) == TokenKind::Ident) {
+            advance();
+            decl.interface_path.push_back(advance().text);
+        }
+        expect(TokenKind::For, "`for` and the implementing type");
+        decl.target = parseType();
+        expect(TokenKind::LBrace, "`{` with the methods of the impl");
+        const int saved_depth = nl_depth_;
+        nl_depth_ = 0;
+        while (!at(TokenKind::RBrace)) {
+            rejectDirective();
+            std::vector<Attribute> attrs = parseAttributes();
+            if (!at(TokenKind::Fn)) {
+                expected("`fn`");
+            }
+            decl.methods.push_back(parseMethod(std::move(attrs)));
+        }
+        nl_depth_ = saved_depth;
+        advance();  // '}'
+        std::string name = decl.interface_path.back();
+        finishDecl(decl, s, name, name_tok.span);
+        return decl;
+    }
+
+    // --- enum / type / define ----------------------------------------------------------------
+
+    EnumDecl parseEnum(const DeclStart& s) {
+        EnumDecl decl;
+        advance();  // 'enum'
+        const Token& name_tok = cur();
+        const std::string name = expectIdent("an enum name");
+        if (match(TokenKind::Colon)) {
+            decl.has_underlying = true;
+            decl.underlying = parseType();
+        } else {
+            decl.underlying = Type::makeInt(32, true);
+        }
+        expect(TokenKind::LBrace, "`{` with the enum members");
+        const int saved_depth = nl_depth_;
+        nl_depth_ = 0;
+        while (!at(TokenKind::RBrace)) {
+            rejectDirective();
+            EnumMember member;
+            member.attributes = parseAttributes();
+            member.span = cur().span;
+            member.name = expectIdent("an enum member name");
+            if (match(TokenKind::Assign)) {
+                member.value = parseExpr();
+            }
+            member.span = spanFrom(member.span);
+            decl.members.push_back(std::move(member));
+            memberSeparator();
+        }
+        nl_depth_ = saved_depth;
+        advance();  // '}'
+        finishDecl(decl, s, name, name_tok.span);
+        return decl;
+    }
+
+    TypeAliasDecl parseTypeAlias(const DeclStart& s) {
+        TypeAliasDecl decl;
+        advance();  // 'type'
+        const Token& name_tok = cur();
+        const std::string name = expectIdent("a type alias name");
+        expect(TokenKind::Assign, "`=` and the aliased type");
+        decl.target = parseType();
+        endOfItemLine();
+        finishDecl(decl, s, name, name_tok.span);
+        return decl;
+    }
+
+    Decl parseDefine(const DeclStart& s) {
+        advance();  // 'define'
+        const Token& name_tok = cur();
+        const std::string name = expectIdent("a define name");
+        if (at(TokenKind::LParen)) {
+            DefineMacroDecl decl;
+            advance();
+            ++nl_depth_;
+            while (!at(TokenKind::RParen)) {
+                MacroParam param;
+                param.span = cur().span;
+                param.name = expectIdent("a macro parameter name");
+                expect(TokenKind::Colon, "`:` and the parameter kind");
+                const Token& kind_tok = cur();
+                if (at(TokenKind::Type)) {
+                    param.kind = MacroParam::Kind::Type;
+                    advance();
+                } else if (at(TokenKind::Ident) && kind_tok.text == "expr") {
+                    param.kind = MacroParam::Kind::Expr;
+                    advance();
+                } else if (at(TokenKind::Ident) && kind_tok.text == "ident") {
+                    param.kind = MacroParam::Kind::Ident;
+                    advance();
+                } else if (at(TokenKind::Ident) && kind_tok.text == "block") {
+                    param.kind = MacroParam::Kind::Block;
+                    advance();
+                } else if (at(TokenKind::Ident) && kind_tok.text == "items") {
+                    param.kind = MacroParam::Kind::Items;
+                    advance();
+                } else {
+                    expected("a macro parameter kind (expr, type, ident, block or items)");
+                }
+                param.span = spanFrom(param.span);
+                decl.params.push_back(std::move(param));
+                if (!match(TokenKind::Comma)) {
+                    break;
+                }
+            }
+            --nl_depth_;
+            expect(TokenKind::RParen, "`)` closing the macro parameters");
+            expect(TokenKind::LBrace, "`{` starting the macro body");
+            int depth = 1;
+            while (true) {
+                if (at(TokenKind::End)) {
+                    expected("`}` closing the macro body");
+                }
+                if (at(TokenKind::LBrace)) {
+                    ++depth;
+                } else if (at(TokenKind::RBrace) && --depth == 0) {
+                    break;
+                }
+                decl.body.push_back(advance());
+            }
+            advance();  // closing '}'
+            finishDecl(decl, s, name, name_tok.span);
+            return decl;
+        }
+        DefineConstDecl decl;
+        expect(TokenKind::Assign, "`=` and the constant value, or `(` for a macro");
+        decl.value = parseExpr();
+        endOfItemLine();
+        finishDecl(decl, s, name, name_tok.span);
+        return decl;
+    }
+
+    // --- import / export ---------------------------------------------------------------------
+
+    std::vector<ImportName> parseNameList() {
+        std::vector<ImportName> names;
+        while (true) {
+            ImportName n;
+            n.span = cur().span;
+            n.name = expectIdent("a name");
+            if (match(TokenKind::As)) {
+                n.alias = expectIdent("an alias");
+            }
+            n.span = spanFrom(n.span);
+            names.push_back(std::move(n));
+            if (!(at(TokenKind::Comma) && continues())) {
+                break;
+            }
+            advance();
+        }
+        return names;
+    }
+
+    std::string parseModuleString(Span& span) {
+        if (!at(TokenKind::String)) {
+            expected("a module path string");
+        }
+        span = cur().span;
+        return advance().text;
+    }
+
+    ImportDecl parseImport(const DeclStart& s) {
+        ImportDecl decl;
+        const Token& name_tok = cur();
+        if (match(TokenKind::From)) {
+            decl.form = ImportDecl::Form::Names;
+            decl.module = parseModuleString(decl.module_span);
+            expect(TokenKind::Import, "`import` and the imported names");
+            decl.names = parseNameList();
+        } else {
+            advance();  // 'import'
+            if (at(TokenKind::String)) {
+                decl.form = ImportDecl::Form::Module;
+                decl.module = parseModuleString(decl.module_span);
+                if (match(TokenKind::As)) {
+                    decl.alias = expectIdent("a module alias");
+                }
+            } else if (match(TokenKind::Star)) {
+                decl.form = ImportDecl::Form::Star;
+                if (match(TokenKind::As)) {
+                    decl.form = ImportDecl::Form::StarAs;
+                    decl.alias = expectIdent("a namespace alias");
+                }
+                expect(TokenKind::From, "`from` and the module path");
+                decl.module = parseModuleString(decl.module_span);
+            } else if (at(TokenKind::Ident)) {
+                decl.form = ImportDecl::Form::Names;
+                decl.names = parseNameList();
+                expect(TokenKind::From, "`from` and the module path");
+                decl.module = parseModuleString(decl.module_span);
+            } else {
+                expected("a module path string, `*` or an imported name");
+            }
+        }
+        endOfItemLine();
+        finishDecl(decl, s, decl.module, name_tok.span);
+        return decl;
+    }
+
+    void parseExportFrom(Program& program, DeclStart& s) {
+        ExportFromDecl decl;
+        const Token& name_tok = cur();
+        advance();  // 'export'
+        if (match(TokenKind::Star)) {
+            decl.form = ExportFromDecl::Form::Star;
+            if (match(TokenKind::As)) {
+                decl.form = ExportFromDecl::Form::StarAs;
+                decl.alias = expectIdent("a namespace name");
+            }
+            expect(TokenKind::From, "`from` and the module path");
+            decl.module = parseModuleString(decl.module_span);
+            if (at(TokenKind::Except) && continues()) {
+                if (decl.form == ExportFromDecl::Form::StarAs) {
+                    failAt(cur(), "`except` cannot be combined with `export * as`",
+                           "not valid here", {}, "write `export * from \"m\" except a, b`");
+                }
+                advance();
+                decl.except = parseNameList();
+            }
+        } else {
+            expect(TokenKind::LBrace, "`{`");
+            decl.form = ExportFromDecl::Form::Names;
+            ++nl_depth_;
+            while (!at(TokenKind::RBrace)) {
+                ImportName n;
+                n.span = cur().span;
+                n.name = expectIdent("an exported name");
+                if (match(TokenKind::As)) {
+                    n.alias = expectIdent("an alias");
+                }
+                n.span = spanFrom(n.span);
+                decl.names.push_back(std::move(n));
+                if (!match(TokenKind::Comma)) {
+                    break;
+                }
+            }
+            --nl_depth_;
+            expect(TokenKind::RBrace, "`}`");
+            expect(TokenKind::From, "`from` and the module path");
+            decl.module = parseModuleString(decl.module_span);
+        }
+        endOfItemLine();
+        finishDecl(decl, s, decl.module, name_tok.span);
+        Item item;
+        item.modifiers.exported = true;
+        item.decl = std::move(decl);
+        registerAllowScopes(s.attributes, declBase(item).span);
+        program.items.push_back(std::move(item));
+    }
+
+    // --- module-level calls ------------------------------------------------------------------
+
+    Decl parseTopLevelCall(const DeclStart& s) {
+        const Token& first = cur();
+        ExprPtr expr = parseExpr();
+        if (expr->kind == Expr::Kind::MacroCall) {
+            MacroCallDecl decl;
+            decl.args = std::move(expr->macro_args);
+            endOfItemLine();
+            finishDecl(decl, s, expr->text, first.span);
+            return decl;
+        }
+        if (expr->kind == Expr::Kind::Call) {
+            TopLevelCallDecl decl;
+            const std::string name = pathOf(*expr->lhs);
+            decl.call = std::move(expr);
+            endOfItemLine();
+            finishDecl(decl, s, name, first.span);
+            return decl;
+        }
+        failAt(first, std::format("expected a declaration, found {}", describeToken(first)),
+               "expected a declaration here", {},
+               "module-level code is limited to declarations, macro invocations and calls such as "
+               "`staticAssert(...)`");
+    }
+
+    std::vector<Token> tokens_;
+    FileId file_;
+    DiagnosticEngine& diag_;
+    std::size_t pos_{0};
+    int nl_depth_{0};
+    bool no_struct_{false};
+};
+
+}  // namespace
+
+Program parseTokens(std::vector<Token> tokens, FileId file, DiagnosticEngine& diagnostics) {
+    Parser parser(std::move(tokens), file, diagnostics);
+    return parser.run();
 }
 
-bool Parser::isFunctionName(std::string_view name) const {
-    return function_names_.contains(std::string(name));
-}
-
-ParseError Parser::error(std::string_view message) const {
-    return ParseError(peek().line, peek().column, message);
+Program parseFile(const SourceManager& sources, FileId file, DiagnosticEngine& diagnostics) {
+    return parseTokens(lex(sources, file, diagnostics), file, diagnostics);
 }
 
 }  // namespace xlang

@@ -1,221 +1,296 @@
-#include "xlang/build.h"
-#include "xlang/compiler.h"
-#include "xlang/error.h"
-#include "xlang/input.h"
-#include "xlang/module.h"
-#include "xlang/test.h"
+#include "xlang/lang/ast.h"
+#include "xlang/lang/config.h"
+#include "xlang/lang/frontend.h"
+#include "xlang/sema/sema.h"
+#include "xlang/util/diagnostics.h"
+#include "xlang/util/error.h"
+#include "xlang/util/source.h"
 
 #include <CLI/CLI.hpp>
 
 #include <filesystem>
-#include <format>
 #include <iostream>
-#include <optional>
 #include <string>
-#include <string_view>
 #include <vector>
 
 namespace {
 
-xlang::BuildKind parseBuildKind(std::string_view kind) {
-    if (kind == "executable" || kind == "binary" || kind == "exe") {
-        return xlang::BuildKind::Executable;
-    }
-    if (kind == "static") {
-        return xlang::BuildKind::Static;
-    }
-    if (kind == "shared") {
-        return xlang::BuildKind::Shared;
-    }
-    if (kind == "object" || kind == "lib") {
-        // `lib` kept as alias for object for old scripts; prefer --build=object|static.
-        return kind == "lib" ? xlang::BuildKind::Object : xlang::BuildKind::Object;
-    }
-    throw xlang::XlangError(
-        std::format("unknown build kind `{}` (use executable|static|shared|object)", kind));
+struct DiagCliOptions {
+    std::vector<std::string> allow;
+    std::vector<std::string> deny;
+    bool warn_all{false};
+    bool allow_all{false};
+    std::size_t context{0};
+    std::size_t context_errors{10};
+    std::size_t context_warnings{2};
+    std::string log_path;
+    std::string format{"text"};
+    std::string log_level{"all"};
+};
+
+struct BuildCliOptions {
+    std::vector<std::string> defines;
+    std::vector<std::string> undefs;
+    std::string target;
+    std::string opt;
+    bool debug{false};
+    std::string cpu{"generic"};
+    bool print_cfg{false};
+    std::string mangle{"xl"};
+    std::string safety{"checked"};
+    bool no_std{false};
+    std::string std_path;
+    std::vector<std::string> std_features;
+    std::string layout_scheme;
+    std::string layout_history;
+};
+
+void addDiagOptions(CLI::App* cmd, DiagCliOptions& o) {
+    cmd->add_option("--allow", o.allow, "Silence warning CODE (repeatable); `-Wno-CODE` is the same");
+    cmd->add_option("--deny", o.deny, "Turn warning CODE into an error (repeatable)");
+    cmd->add_flag("--warn-all", o.warn_all, "Enable every warning, ignoring --allow and @allow");
+    cmd->add_flag("--allow-all", o.allow_all, "Silence every warning");
+    cmd->add_option("--context", o.context, "Context lines around marks for errors and warnings")
+        ->check(CLI::NonNegativeNumber);
+    cmd->add_option("--context-errors", o.context_errors, "Context lines for errors (default 10)");
+    cmd->add_option("--context-warnings", o.context_warnings, "Context lines for warnings (default 2)");
+    cmd->add_option("--diag-log", o.log_path, "Write every diagnostic (suppressed ones included) to FILE");
+    cmd->add_option("--diag-format", o.format, "Diagnostic format: text|json")
+        ->check(CLI::IsMember({"text", "json"}));
+    cmd->add_option("--diag-log-level", o.log_level, "Log level: all|warn|error")
+        ->check(CLI::IsMember({"all", "warn", "error"}));
 }
 
-xlang::CompileOptions makeCompileOptions(const std::vector<std::filesystem::path>& inputs,
-                                         const std::filesystem::path& output,
-                                         const std::string& build_kind,
-                                         bool emit_ir,
-                                         bool keep_ir,
-                                         const std::optional<std::string>& target_os,
-                                         const std::optional<std::string>& target_arch,
-                                         const std::optional<std::string>& target_triple,
-                                         const std::string& clang) {
-    const xlang::ResolvedBuildInputs resolved = xlang::resolveBuildInputs(inputs);
-
-    xlang::CompileOptions options;
-    options.input = resolved.primary;
-    options.link_objects = resolved.link_objects;
-    options.output = output;
-    options.emit_ir = emit_ir;
-    options.keep_ir = keep_ir;
-    options.build_kind = parseBuildKind(build_kind);
-    options.target_os = target_os;
-    options.target_arch = target_arch;
-    options.target_triple = target_triple;
-    options.clang = clang.empty() ? xlang::defaultClang() : clang;
-    return options;
+void addBuildOptions(CLI::App* cmd, BuildCliOptions& o) {
+    cmd->add_option("-D,--define", o.defines, "NAME or NAME=VALUE (repeatable)");
+    cmd->add_option("-U,--undef", o.undefs, "Remove a user definition (repeatable)");
+    cmd->add_option("--target", o.target, "Target triple, e.g. aarch64-apple-darwin");
+    cmd->add_option("-O", o.opt, "Optimization level 0..3 (`-O2`)")->check(CLI::IsMember({"0", "1", "2", "3"}));
+    cmd->add_flag("-g", o.debug, "Debug info (`debug` = true)");
+    cmd->add_option("--cpu", o.cpu, "Target CPU (default generic)");
+    cmd->add_flag("--print-cfg", o.print_cfg, "Print every resolved definition");
+    cmd->add_option("--mangle", o.mangle, "xl|none")->check(CLI::IsMember({"xl", "none"}));
+    cmd->add_option("--safety", o.safety, "checked|unchecked")->check(CLI::IsMember({"checked", "unchecked"}));
+    cmd->add_flag("--no-std", o.no_std, "Do not load the standard library");
+    cmd->add_option("--std", o.std_path, "Use another standard library");
+    cmd->add_option("--std-features", o.std_features, "Standard library features, e.g. -default-allocator");
+    cmd->add_option("--layout-scheme", o.layout_scheme, "Pin the default layout scheme (v1)");
+    cmd->add_option("--layout-history", o.layout_history, "Layout history file (default xl.layout)");
 }
 
-} // namespace
+xlang::DiagnosticOptions toEngineOptions(const CLI::App* cmd, const DiagCliOptions& o) {
+    xlang::DiagnosticOptions out;
+    out.allow = o.allow;
+    out.deny = o.deny;
+    out.warn_all = o.warn_all;
+    out.allow_all = o.allow_all;
+    out.context_errors = o.context_errors;
+    out.context_warnings = o.context_warnings;
+    if (cmd->count("--context") != 0) {
+        out.context_errors = o.context;
+        out.context_warnings = o.context;
+    }
+    if (cmd->count("--context-errors") != 0) {
+        out.context_errors = o.context_errors;
+    }
+    if (cmd->count("--context-warnings") != 0) {
+        out.context_warnings = o.context_warnings;
+    }
+    out.log_path = o.log_path;
+    out.format = o.format == "json" ? xlang::DiagFormat::Json : xlang::DiagFormat::Text;
+    out.log_level = o.log_level == "error"  ? xlang::DiagLogLevel::Error
+                    : o.log_level == "warn" ? xlang::DiagLogLevel::Warn
+                                            : xlang::DiagLogLevel::All;
+    return out;
+}
+
+xlang::BuildConfig toBuildConfig(const BuildCliOptions& o) {
+    xlang::BuildConfig config;
+    if (!o.target.empty()) {
+        auto target = xlang::parseTargetTriple(o.target);
+        if (!target) {
+            throw xlang::XlangError("unsupported target `" + o.target +
+                                    "` (x86_64/aarch64 on linux/macos/windows)");
+        }
+        config.target = std::move(*target);
+    }
+    if (!o.opt.empty()) {
+        config.opt_level = std::stoi(o.opt);
+    }
+    config.debug = o.debug;
+    config.cpu = o.cpu;
+    config.mangle = o.mangle;
+    config.safety = o.safety;
+    config.no_std = o.no_std;
+    config.std_path = o.std_path;
+    config.std_features = o.std_features;
+    config.layout_scheme = o.layout_scheme;
+    config.layout_history = o.layout_history;
+    for (const std::string& def : o.defines) {
+        const std::size_t eq = def.find('=');
+        const std::string name = def.substr(0, eq);
+        if (name.empty()) {
+            throw xlang::XlangError("empty name in -D");
+        }
+        config.defines[name] = xlang::ConfigValue::parse(eq == std::string::npos ? "" : def.substr(eq + 1));
+    }
+    for (const std::string& name : o.undefs) {
+        if (config.defines.erase(name) == 0 && config.lookup(name)) {
+            throw xlang::XlangError("`" + name + "` is a builtin definition and cannot be undefined");
+        }
+    }
+    return config;
+}
+
+void printConfig(const xlang::BuildConfig& config) {
+    std::cout << "target = \"" << config.target.triple << "\"\n";
+    for (const auto& [name, value] : config.resolved()) {
+        std::cout << name << " = " << value.toString() << '\n';
+    }
+    std::cout << "cpu = \"" << config.cpu << "\"\n"
+              << "mangle = \"" << config.mangle << "\"\n"
+              << "safety = \"" << config.safety << "\"\n"
+              << "std = " << (config.no_std ? "none" : (config.std_path.empty() ? "embedded" : config.std_path))
+              << '\n';
+}
+
+}  // namespace
 
 int main(int argc, char** argv) {
-    CLI::App app{"xlang — compiler (.xlang / .o / .ll -> executable|static|shared|object)"};
-    app.require_subcommand(1);
+    // `-Wno-CODE` is spelled like a single flag; rewrite it to `--allow=CODE` for CLI11.
+    std::vector<std::string> args;
+    args.reserve(static_cast<std::size_t>(argc));
+    for (int i = 0; i < argc; ++i) {
+        std::string arg = argv[i];
+        if (i > 0 && arg.starts_with("-Wno-") && arg.size() > 5) {
+            arg = "--allow=" + arg.substr(5);
+        }
+        args.push_back(std::move(arg));
+    }
+    std::vector<char*> raw;
+    for (std::string& a : args) {
+        raw.push_back(a.data());
+    }
 
-    std::vector<std::filesystem::path> inputs;
-    std::filesystem::path output;
-    std::string build_kind = "executable";
-    bool emit_ir = false;
-    bool keep_ir = false;
-    std::optional<std::string> target_os;
-    std::optional<std::string> target_arch;
-    std::optional<std::string> target_triple;
-    std::string clang;
+    CLI::App app{"xlang compiler (frontend)"};
+    app.require_subcommand(0, 1);
 
-    auto* build = app.add_subcommand("build", "Compile or link input files");
-    build->add_option("inputs", inputs, "Primary .xlang/.ll/.o plus optional .o files to link")
-        ->required()
-        ->expected(-1)
-        ->check(CLI::ExistingFile);
-    build->add_option("-o,--output", output, "Output path");
-    build
-        ->add_option("--build",
-                     build_kind,
-                     "Output kind: executable|static|shared|object (default executable; "
-                     "shared=experimental)")
-        ->check(
-            CLI::IsMember({"executable", "binary", "exe", "static", "shared", "object", "lib"}));
-    build->add_option("--target", target_os, "Target OS override (linux|macosx|windows)");
-    build->add_option("--arch", target_arch, "Target arch override (x86|x64|arm64)");
-    build->add_option("--triple", target_triple, "Full target triple override");
-    build->add_flag("--emit-ir", emit_ir, "Emit LLVM IR only");
-    build->add_flag("--keep-ir", keep_ir, "Keep intermediate LLVM IR dump");
-    build->add_option("--clang", clang, "Clang binary path");
+    std::string explain_code;
+    app.add_option("--explain", explain_code, "Print the long explanation of a diagnostic code");
 
-    bool keep_artifacts = false;
-    std::vector<std::filesystem::path> run_inputs;
-    auto* run = app.add_subcommand("run", "Compile and run a .xlang program");
-    run->add_option("inputs", run_inputs, "Primary .xlang source plus optional .o files to link")
-        ->required()
-        ->expected(-1)
-        ->check(CLI::ExistingFile);
-    run->add_flag("--keep-artifacts", keep_artifacts, "Keep temp build directory");
-    run->add_option("--clang", clang, "Clang binary path");
+    DiagCliOptions diag_options;
+    BuildCliOptions build_options;
 
-    std::filesystem::path parse_input;
-    auto* parse = app.add_subcommand("parse", "Parse and summarize a .xlang file");
-    parse->add_option("input", parse_input, "xlang source file")
-        ->required()
-        ->check(CLI::ExistingFile);
+    std::filesystem::path input;
+    bool ast = false;
+    CLI::App* parse = app.add_subcommand("parse", "Preprocess, expand macros and parse; print the AST summary");
+    parse->add_option("file", input, "Source file (.xl)")->required();
+    parse->add_flag("--ast", ast, "Print the full tree instead of the item summary");
+    addBuildOptions(parse, build_options);
+    addDiagOptions(parse, diag_options);
 
-    std::filesystem::path test_root = "test/xlang";
-    bool test_parallel = false;
-    auto* test_cmd = app.add_subcommand("test", "Run *.test.xlang files (Vitest-style)");
-    test_cmd->add_option("path", test_root, "Test file, directory, or path/name pattern (regex)")
-        ->default_str("test/xlang");
-    test_cmd->add_flag("--parallel", test_parallel, "Run Test* functions in parallel via spawn");
-    test_cmd->add_flag("--keep-artifacts", keep_artifacts, "Keep temp build directories");
-    test_cmd->add_option("--clang", clang, "Clang binary path");
+    std::filesystem::path check_input;
+    CLI::App* check = app.add_subcommand("check", "Parse and run the module checks (types, enums, layouts, staticAssert)");
+    check->add_option("file", check_input, "Source file (.xl)")->required();
+    addBuildOptions(check, build_options);
+    addDiagOptions(check, diag_options);
 
-    CLI11_PARSE(app, argc, argv);
+    std::filesystem::path layout_input;
+    std::string layout_type;
+    bool layout_record = false;
+    CLI::App* layout = app.add_subcommand("layout", "Print the layout (offset/size/align) of structs and classes");
+    layout->add_option("file", layout_input, "Source file (.xl)")->required();
+    layout->add_option("type", layout_type, "Only this type");
+    layout->add_flag("--layout-record", layout_record, "Write the printed layouts to the history file");
+    addBuildOptions(layout, build_options);
+    addDiagOptions(layout, diag_options);
 
     try {
-        if (build->parsed()) {
-            for (const std::filesystem::path& input : inputs) {
-                if (xlang::isTestFileName(input)) {
-                    throw xlang::XlangError("test files cannot be built; use `xlang test`");
-                }
+        app.parse(static_cast<int>(raw.size()), raw.data());
+    } catch (const CLI::ParseError& e) {
+        return app.exit(e);
+    }
+
+    try {
+        if (!explain_code.empty()) {
+            const std::string text = xlang::DiagnosticEngine::explain(explain_code);
+            if (text.empty()) {
+                std::cerr << "error: unknown diagnostic code `" << explain_code << "`\n";
+                return 1;
             }
-
-            const xlang::CompileOptions options = makeCompileOptions(inputs,
-                                                                     output,
-                                                                     build_kind,
-                                                                     emit_ir,
-                                                                     keep_ir,
-                                                                     target_os,
-                                                                     target_arch,
-                                                                     target_triple,
-                                                                     clang);
-
-            const xlang::CompileResult result = xlang::compileFile(options);
-
-            if (emit_ir) {
-                std::cerr << "IR written to " << result.executable << '\n';
-            } else {
-                std::cerr << "Built " << result.executable << '\n';
-                if (result.has_ir) {
-                    std::cerr << "IR kept at " << result.ir_path << '\n';
-                }
-            }
+            std::cout << text;
             return 0;
         }
 
-        if (run->parsed()) {
-            const xlang::ResolvedBuildInputs resolved = xlang::resolveBuildInputs(run_inputs);
-            if (xlang::isTestFileName(resolved.primary)) {
-                throw xlang::XlangError("test files cannot be run; use `xlang test`");
-            }
-            if (resolved.primary_kind != xlang::InputKind::Xlang) {
-                throw xlang::XlangError("run requires a .xlang source as the first input");
-            }
-
-            xlang::RunOptions options;
-            options.input = resolved.primary;
-            options.link_objects = resolved.link_objects;
-            options.keep_artifacts = keep_artifacts;
-            if (!clang.empty()) {
-                options.clang = clang;
-            }
-
-            const xlang::RunResult result = xlang::runFile(options);
-            if (result.kept_artifacts) {
-                std::cerr << "Artifacts kept at " << result.work_dir << '\n';
-            }
-            return result.exit_code;
+        CLI::App* active = parse->parsed() ? parse : (check->parsed() ? check : (layout->parsed() ? layout : nullptr));
+        if (active == nullptr) {
+            std::cout << app.help();
+            return 0;
         }
+        const std::filesystem::path& path = parse->parsed() ? input : (check->parsed() ? check_input : layout_input);
+
+        xlang::BuildConfig config = toBuildConfig(build_options);
+        if (build_options.print_cfg) {
+            printConfig(config);
+            return 0;
+        }
+
+        xlang::SourceManager sources;
+        const xlang::FileId file = sources.loadFile(path);
+        xlang::DiagnosticEngine diagnostics(sources, std::cerr);
+        diagnostics.configure(toEngineOptions(active, diag_options));
+
+        const xlang::Program program = xlang::parseSource(sources, file, config, diagnostics);
 
         if (parse->parsed()) {
-            const std::vector<std::filesystem::path> module_search_paths =
-                xlang::defaultTestModuleSearchPaths();
-            const xlang::Program program = xlang::loadProgram(parse_input, module_search_paths);
-
-            std::cout << "globals: " << program.globals.size() << '\n';
-            for (const xlang::GlobalVar& global : program.globals) {
-                std::cout << "  " << global.name << (global.exported ? " export" : "")
-                          << (global.external ? " external" : "") << '\n';
+            diagnostics.flush();
+            if (diagnostics.hasErrors()) {
+                std::cerr << diagnostics.errorCount() << " error(s), " << diagnostics.warningCount() << " warning(s)\n";
+                return 1;
             }
-            std::cout << "functions: " << program.functions.size() << '\n';
-            for (const xlang::Function& fn : program.functions) {
-                std::cout << "  fn " << fn.name << " params=" << fn.params.size()
-                          << " stmts=" << fn.body.statements.size()
-                          << (fn.exported ? " export" : "") << (fn.external ? " external" : "")
-                          << (fn.body.statements.empty() ? " declare" : "") << '\n';
-            }
+            xlang::dumpProgram(std::cout, program, !ast);
             return 0;
         }
 
-        if (test_cmd->parsed()) {
-            xlang::TestOptions options;
-            options.root = test_root;
-            options.keep_artifacts = keep_artifacts;
-            options.parallel = test_parallel;
-            if (!clang.empty()) {
-                options.clang = clang;
-            }
-            const xlang::TestSuiteResult result = xlang::runTestSuite(options);
-            return result.exit_code;
+        std::string history_path = config.layout_history;
+        if (history_path.empty()) {
+            history_path = (path.parent_path() / "xl.layout").string();
         }
+        xlang::LayoutHistory history = xlang::LayoutHistory::load(history_path);
+
+        xlang::Sema sema(program, config, diagnostics, &history);
+        if (!diagnostics.hasErrors()) {
+            sema.analyze();
+        }
+
+        if (layout->parsed() && !diagnostics.hasErrors()) {
+            const std::vector<std::string> names = layout_type.empty()
+                                                       ? sema.aggregateNames()
+                                                       : std::vector<std::string>{layout_type};
+            for (const std::string& name : names) {
+                auto l = sema.layoutOfName(name, xlang::Span{});
+                if (!l) {
+                    continue;
+                }
+                xlang::LayoutRecord record{name, *l};
+                std::cout << xlang::formatLayoutRecord(record);
+                if (layout_record) {
+                    history.put(std::move(record));
+                }
+            }
+            if (layout_record && !diagnostics.hasErrors()) {
+                history.save(history_path);
+            }
+        }
+
+        diagnostics.flush();
+        if (diagnostics.hasErrors()) {
+            std::cerr << diagnostics.errorCount() << " error(s), " << diagnostics.warningCount() << " warning(s)\n";
+            return 1;
+        }
+        return 0;
     } catch (const xlang::XlangError& error) {
         std::cerr << "error: " << error.what() << '\n';
         return 1;
-    } catch (const std::exception& error) {
-        std::cerr << "error: " << error.what() << '\n';
-        return 1;
     }
-
-    return 1;
 }

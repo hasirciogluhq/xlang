@@ -3,11 +3,8 @@
 -- Source layout (context folders):
 --   src/cli/          CLI entry
 --   src/lang/         lexer, parser, ast, types
---   src/codegen/      LLVM IR builder split by concern
---   src/compiler/     compile/link/test orchestration
---   src/host/         layout and target resolution
---   src/platform/     OS backends
---   src/util/         shared helpers
+--   src/util/         source manager, diagnostics, errors
+--   (src/codegen, src/compiler, src/host, src/platform: old pipeline, not built until phase 4.7)
 
 local cross = xlang_ctx.is_cross()
 
@@ -27,37 +24,44 @@ local function add_target_defines()
     end
 end
 
+-- Frontend library: lexer, preprocessor, macros, parser, AST, types, diagnostics, module checks.
+target("xlang-frontend")
+    set_kind("static")
+    set_default(false)
+    set_enabled(not cross)
+    add_files(
+        "$(projectdir)/src/lang/ast/ast.cpp",
+        "$(projectdir)/src/lang/lexer/lexer.cpp",
+        "$(projectdir)/src/lang/preprocess/preprocess.cpp",
+        "$(projectdir)/src/lang/macro/macro.cpp",
+        "$(projectdir)/src/lang/parser/parser.cpp",
+        "$(projectdir)/src/lang/types/types.cpp",
+        "$(projectdir)/src/lang/config.cpp",
+        "$(projectdir)/src/lang/frontend.cpp",
+        "$(projectdir)/src/sema/sema.cpp",
+        "$(projectdir)/src/sema/layout.cpp",
+        "$(projectdir)/src/sema/conversion.cpp",
+        "$(projectdir)/src/util/source.cpp",
+        "$(projectdir)/src/util/diagnostics.cpp"
+    )
+    add_includedirs("$(projectdir)/include", {public = true})
+
 target("xlang")
     set_kind("binary")
     set_basename("xlang")
     set_default(not cross)
     set_enabled(not cross)
-    add_files(
-        "$(projectdir)/src/cli/main.cpp",
-        "$(projectdir)/src/lang/ast/ast.cpp",
-        "$(projectdir)/src/lang/lexer/lexer.cpp",
-        "$(projectdir)/src/lang/parser/parser.cpp",
-        "$(projectdir)/src/lang/types/types.cpp",
-        "$(projectdir)/src/codegen/*.cpp",
-        "$(projectdir)/src/codegen/detail/*.cpp",
-        "$(projectdir)/src/compiler/*.cpp",
-        "$(projectdir)/src/compiler/test/*.cpp",
-        "$(projectdir)/src/util/*.cpp",
-        "$(projectdir)/src/host/*.cpp",
-        "$(projectdir)/src/platform/common.cpp"
-    )
-    if is_plat("linux") then
-        add_files("$(projectdir)/src/platform/linux/sys.cpp")
-    elseif is_plat("macosx") then
-        add_files("$(projectdir)/src/platform/macosx/sys.cpp")
-    elseif is_plat("windows") then
-        add_files("$(projectdir)/src/platform/windows/sys.cpp")
-    end
-    add_includedirs("$(projectdir)/include")
+    add_files("$(projectdir)/src/cli/main.cpp")
+    add_deps("xlang-frontend")
     add_target_defines()
-    xlang_ctx.add_llvm()
-    if is_plat("linux") then
-        add_syslinks("ncurses", "z", "pthread", "dl", "m")
-    elseif is_plat("macosx") then
-        add_syslinks("z", "curses", "xml2")
-    end
+    -- Frontend only for now; LLVM comes back with codegen (plan phase 4.7).
+    add_packages("cli11")
+
+-- Frontend/diagnostics unit tests: `xmake build xlang-tests && xmake run xlang-tests`.
+target("xlang-tests")
+    set_kind("binary")
+    set_default(false)
+    set_enabled(not cross)
+    add_files("$(projectdir)/test/compiler/main.cpp", "$(projectdir)/test/compiler/sema_test.cpp")
+    add_deps("xlang-frontend")
+    add_tests("frontend")
