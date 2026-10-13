@@ -12,7 +12,9 @@
 [9 Koşullu derleme](#9-koşullu-derleme) · [9.1 type](#91-tip-takma-adı-type) ·
 [9.2 define/macro](#92-define-ve-macro) · [10 CLI](#10-cli) · [11 Syscall](#11-syscall) ·
 [12 Atomic ve fonksiyon pointer'ı](#12-atomic-ve-fonksiyon-pointerı) · [13 Modüller](#13-modüller) ·
-[14 Harici (C) semboller](#14-harici-c-semboller) · [15 Stdlib ile thread](#15-stdlib-ile-thread)
+[14 Harici (C) semboller](#14-harici-c-semboller) · [15 Stdlib ile thread](#15-stdlib-ile-thread) · [16 Name mangling](#16-name-mangling) ·
+[17 Güvenli referans](#17-güvenli-referans-ref-t) · [18 C++ ile kullanım](#18-c-ile-kullanım-ve-çıktı-biçimleri) · [19 Tanılar](#19-tanılar-ve-uyarılar) ·
+[20 Düzen geçmişi](#20-bellek-düzeni-geçmişi)
 
 ---
 
@@ -336,32 +338,55 @@ Writer değeri (fat pointer, 16 B)
 
 ## 9. Koşullu derleme
 
-Metin makrosu **yok** (`#ifdef/#endif` yok). `#if` süslü parantezli, yapısaldır; item, statement ve
-struct/class alanı seviyesinde çalışır. Pasif dallar yine parse edilir, ama derlenmez.
+Satır tabanlı direktifler: `#if`, `#elif`, `#else`, `#endif`, `#ifdef`, `#ifndef`, `#error`.
+Koşul ifadesi, dilin normal `if` ifadesiyle **aynı** sözdizimi ve aynı operatörlerdir; tek fark derleme
+zamanında basit bir yorumlayıcıyla değerlendirilmesidir. Direktif, kendi satırının başında `#` ile yazılır.
+Pasif bölge yalnızca **token olarak okunur** (lexer'dan geçer), parse edilmez ve derlenmez.
+
+### `#endif` ne zaman gerekli?
+
+- **Gövde aynı satırdaysa `#endif` yazılmaz.** Direktif tek satırı kontrol eder.
+- **Gövde alt satıra inerse `#endif` zorunludur.**
 
 ```xlang
-#if os == "linux" {
-    fn page_size() -> usize { return 4096 }
-} #elif os == "macos" && arch == "aarch64" {
-    fn page_size() -> usize { return 16384 }
-} #else {
-    #error "desteklenmeyen platform"
-}
+#if os == "linux" fn page_size() -> usize { return 4096 }     // aynı satır: #endif YOK
 
+#if os == "macos" && arch == "aarch64"                         // gövde alt satırda: #endif GEREKLİ
+    fn page_size() -> usize { return 16384 }
+    fn cache_line() -> usize { return 128 }
+#elif os == "windows"
+    fn page_size() -> usize { return 4096 }
+#else
+    #error "desteklenmeyen platform"
+#endif
+```
+
+Tek satırlık biçimde `#elif`/`#else` kullanılmaz; birden fazla dal gerekiyorsa blok biçimi (`#endif`'li) yazılır.
+Koşul ile gövde aynı satırdaysa ayrım, koşul ifadesinin bittiği yerdir; belirsizse koşul parantezlenir:
+`#if (defined(A) && B) return 1`.
+
+```xlang
 struct Config {
     verbose: bool
-    #if defined(ENABLE_STATS) {
-        counter: ui64
-    }
+#if defined(ENABLE_STATS)
+    counter: ui64
+#endif
 }
 
 fn main() -> i32 {
-    #if debug {
-        log("debug build")
-    }
+#if debug log("debug build")             // tek satır
     return 0
 }
 ```
+
+### Tanım sorguları
+
+| Yazım | Anlam |
+|-------|-------|
+| `#ifdef NAME` | `#if defined(NAME)` ile aynı |
+| `#ifndef NAME` | `#if !defined(NAME)` ile aynı |
+| `defined(NAME)` / `!defined(NAME)` | İfade içinde kullanılabilir: `#if defined(A) && !defined(B)` |
+| `#elif ifade`, `#else`, `#endif` | Normal `if / else if / else` karşılığı |
 
 | Kaynak | Örnek | Tür |
 |--------|-------|-----|
@@ -513,12 +538,17 @@ define assert(cond: expr) {
 ## 10. CLI
 
 ```
-xlang build main.xlang -o app                       # çalıştırılabilir
-xlang build main.xlang --emit=ir                    # LLVM IR
-xlang build main.xlang -D ENABLE_STATS -D LEVEL=3   # tanımlar
-xlang build main.xlang -U DEBUG_TRACE               # tanımı kaldır
-xlang build main.xlang --target aarch64-apple-darwin -O2 -g
-xlang build main.xlang --print-cfg                  # çözülmüş tüm tanımları yaz
+xlang build main.xl -o app                          # çalıştırılabilir
+xlang build main.xl --emit=ir                       # LLVM IR (.ll metin)
+xlang build main.xl --emit=bc                       # LLVM bitcode (.bc)
+xlang build main.xl --emit=obj                      # nesne dosyası (.o / .obj)
+xlang build lib.xl --emit=header                    # C/C++ başlığı (.h)
+xlang build main.xl -D ENABLE_STATS -D LEVEL=3      # tanımlar
+xlang build main.xl -U DEBUG_TRACE                  # tanımı kaldır
+xlang build main.xl --target aarch64-apple-darwin -O2 -g
+xlang build main.xl --mangle=none                   # proje seviyesi mangling
+xlang build main.xl --safety=checked                # ref T çalışma zamanı kontrolleri
+xlang build main.xl --print-cfg                     # çözülmüş tüm tanımları yaz
 ```
 
 | Bayrak | Anlam |
@@ -529,8 +559,11 @@ xlang build main.xlang --print-cfg                  # çözülmüş tüm tanıml
 | `--target <triple>` | Hedef platform; `os`, `arch`, `pointer_width` buradan gelir |
 | `-O0` … `-O3` | Optimizasyon seviyesi (`opt_level`) |
 | `-g` | Debug info; `debug = true` |
-| `--emit=ir\|hir\|obj\|exe` | Hangi aşamada durulacağı |
+| `--emit=ir\|bc\|obj\|hir\|header\|exe\|static\|shared` | Çıktı biçimi ([18](#18-c-ile-kullanım-ve-çıktı-biçimleri)) |
+| `--mangle=xl\|none` | Proje seviyesi mangling varsayılanı ([16](#16-name-mangling)) |
+| `--safety=checked\|unchecked` | `ref T` kontrolleri açık/kapalı ([17](#17-güvenli-referans-ref-t)) |
 | `--cpu <ad>` | Hedef CPU (varsayılan `generic`) |
+| `--no-std` / `--std=<yol>` | Stdlib yok / başka stdlib ([15](#15-stdlib-ile-thread)) |
 | `--print-cfg` | Etkin tanımları yazdırır |
 
 ---
@@ -556,6 +589,7 @@ fn write_all(fd: i64, buf: *ui8, n: usize) -> i64 {
 | Linux aarch64 | `svc #0` | `x8` | `x0 … x5` | `x0` |
 | macOS x86_64 | `syscall` | `rax` (+`0x2000000`) | `rdi rsi rdx r10 r8 r9` | `rax` |
 | macOS aarch64 | `svc #0x80` | `x16` | `x0 … x5` | `x0` |
+| Windows x86_64 (NT) | `syscall` | `eax` (SSN) | `r10 rdx r8 r9`, fazlası stack | `rax` |
 
 Numaralar hedefe özeldir; bunları bir stdlib katmanı `#if os == ...` ile seçer, compiler bilmez.
 
@@ -602,14 +636,17 @@ Order değerleri: `relaxed`, `acquire`, `release`, `acq_rel`, `seq_cst`.
 
 ## 13. Modüller
 
-Her `.xlang` dosyası bir modüldür. `export` ile işaretli semboller dışarı açılır.
+Kaynak dosya uzantısı **`.xl`**'dir. Her `.xl` dosyası bir modüldür.
+
+**Varsayılan export yoktur.** `export` yazılmayan hiçbir şey (fonksiyon, tip, global, macro, takma ad)
+başka modülden görünmez ve erişilemez; link seviyesinde de içeride (internal) kalır.
 
 ```xlang
-// math.xlang
+// math.xl
 export fn square(x: i32) -> i32 { return x * x }
-fn helper() -> i32 { return 0 }          // private, import edilemez
+fn helper() -> i32 { return 0 }          // export yok: başka modül göremez, çağıramaz
 
-// main.xlang
+// main.xl
 import "math" as m                    // tüm modül, m. önekiyle
 from "math" import square as sq       // Python tarzı: from <modül> import <sembol>
 import cube from "math"              // ters sıra da geçerli: import <sembol> from <modül>
@@ -624,35 +661,230 @@ fn main() -> i32 {
 | `import "yol" as ad` | Modülü `ad.` önekiyle kullan |
 | `from "yol" import a, b as c` | Seçili sembolleri doğrudan al |
 | `import a, b as c from "yol"` | Yukarıdakiyle **aynı anlam**, ters sıra |
-| `export` | Modül dışına açık |
+| `import * from "yol"` | Modülün tüm export'larını düz biçimde al |
+| `import * as ad from "yol"` | `import "yol" as ad` ile aynı: ad alanı altında al |
+| `export` | Başka xl modüllerine açık (varsayılan: kapalı) |
+| `export(c)` | `export` + C ABI'de **mangle edilmemiş** sembol; C/C++ buradan çağırır ([16](#16-name-mangling), [18](#18-c-ile-kullanım-ve-çıktı-biçimleri)) |
+
+```xlang
+// main.xl
+import helper from "math"      // HATA: `helper` math.xl'de export edilmemiş
+```
 
 `from "yol" import ...` ve `import ... from "yol"` birbirinin eşdeğeridir; ikisi de aynı AST düğümüne iner,
 biri diğerine tercih edilmez. Alias için her iki biçimde de `as` kullanılır.
+
+### Çift import ve çakışma
+
+Aynı ada sahip iki bağlama (binding) **hatadır**; hata, çakışmanın **import satırında** verilir
+(kullanım yerinde değil).
+
+```xlang
+// a.xl: export fn lorem() ...      b.xl: export fn lorem() ...
+
+import * from "a"
+import * from "b"                 // HATA: `lorem` hem a hem b'den geliyor
+
+import * as aa from "a"
+import * as bb from "b"           // OK: aa.lorem() ve bb.lorem() ayrı ad alanları
+
+import lorem from "a"
+import lorem from "b"             // HATA: aynı ad iki kez bağlanıyor
+import lorem as lorem2 from "b"   // OK: yeniden adlandırma
+```
+
+| Durum | Sonuç |
+|-------|-------|
+| `import *` + `import *`, ortak ad | Hata |
+| `import *` + `import x from` aynı ad | Hata |
+| Aynı ad iki kez adlandırılmış import | Hata |
+| Yerel tanım ile import edilen aynı ad | Hata |
+| `import * as aa` + `import * as bb` | Çalışır (ad alanları ayrı) |
+| Aynı varlık iki yoldan gelirse (ör. a ve b, c'deki aynı fonksiyonu yeniden dışa aktarıyor) | Hata değil, tek varlık; ama **detaylı uyarı** (`W0401`) ve log kaydı |
+
+```
+warning[W0401]: `lorem` aynı varlık olarak iki yoldan import edildi
+  --> app.xl
+   |
+ 1 | import * from "a"      <======= `lorem` burada a üzerinden geliyor (asıl tanım: c.xl:7)
+ 2 | import * from "b"      <======= ve burada b üzerinden de geliyor (aynı tanım: c.xl:7)
+   |
+detay:  a.xl ve b.xl, `lorem`'i c.xl'den yeniden dışa aktarıyor; ikisi de aynı sembole çözülüyor.
+neden:  Hata değil (tek varlık), ama iki yoldan gelmesi ileride a veya b'nin kendi `lorem`'ini
+        tanımlaması durumunda sessiz çakışmaya dönüşebilir.
+düzelt: Tek yoldan import et, ya da `import * as aa from "a"` kullan. Bilerek ise: @allow(W0401)
+```
+
+Export tarafındaki kural aynıdır: `export * from "a"` ve `export * from "b"` ortak ad veriyorsa hata,
+`export * as aa from "a"` ve `export * as bb from "b"` çalışır.
+
+### Dizin modülleri ve yeniden dışa aktarma (`export ... from`)
+
+Bir yol hem dosya hem dizin olabilir: `"std/memory"` önce `std/memory.xl`'e, yoksa
+`std/memory/index.xl`'e çözülür (ikisi birden varsa hata). Dizinin giriş dosyası **`index.xl`**'dir.
+Giriş dosyası alt modülleri yeniden dışa aktararak "hepsini" verir.
+
+```
+std/
+  index.xl            # export * as memory from "memory"; export * from "cpu"; ...
+  memory.xl           # (veya memory/index.xl)
+  cpu/
+    index.xl
+    atomic.xl
+  gpu.xl
+```
+
+```xlang
+// std/index.xl
+export * from "memory"                 // memory'nin tüm export'ları düz biçimde std'ye girer
+export * as cpu from "cpu"             // std.cpu.atomic_add(...) olarak erişilir
+export { launch, Device as GpuDevice } from "gpu"   // seçili + yeniden adlandırma
+```
+
+| Yazım | Anlam |
+|-------|-------|
+| `export * from "m"` | `m`'nin tüm export'larını olduğu gibi yeniden dışa aktar (düz) |
+| `export * as ns from "m"` | `m`'yi `ns` ad alanı altında yeniden dışa aktar |
+| `export { a, b as c } from "m"` | Seçili sembolleri (isteğe bağlı yeni adla) yeniden dışa aktar |
+| `export * from "m" except a, b` | Belirtilenler hariç hepsini aktar |
+| `#if os == "linux" export * from "sys_linux"` | Koşullu yeniden dışa aktarma (tek satır) |
+
+```xlang
+// kullanıcı
+import "std" as std                       // hepsi: std.memcpy, std.cpu.atomic_add, std.GpuDevice
+from "std/memory" import memcpy           // yalnızca bir alt modül
+import "std/cpu" as cpu
+```
+
+Kurallar:
+
+| Kural | Açıklama |
+|-------|----------|
+| Yalnızca export edilenler aktarılır | Kaynak modülde `export` olmayan sembol yeniden dışa aktarılamaz (hata) |
+| Çakışma | Aynı ada sahip **iki export hata**dır: aynı dosyada iki kez export, farklı dosyalardan aynı ad (`export *` ile gelenler dahil), yerel export ile aktarılanın çakışması. Çözüm: `except`, `as` ile yeniden adlandırma veya `export * as ns` |
+| Modül çözümleme | Bir yolun hangi dosyaya çözüleceğine dair birden fazla strateji olacak (ayrıntı henüz planlanmadı) |
+| Döngü | Döngüsel yeniden dışa aktarma desteklenir (tek geçişte çözülür), kendi kendini aktarma hata |
+| JS'den farklar | `except` filtresi, koşullu (`#if`) export, `declare` öğelerini (fn/global/struct/class) de aktarabilme, `export(c)` yeniden dışa aktarmada korunur |
 
 ---
 
 ## 14. Harici (C) semboller
 
-Gövdesiz `declare fn` bir harici (C ABI) sembolü bildirir; link zamanında çözülür. Compiler bu
-fonksiyonun ne olduğunu bilmez.
+`declare`, **tek bir önektir**: herhangi bir bildirimin başına konur ve "bu başka yerde tanımlı, ben
+sadece şeklini söylüyorum" demektir. Fonksiyon, global değişken, struct, class, interface ve
+`type` için aynı kural geçerlidir; globaller için ayrı bir sözdizimi yoktur.
+
+| Yazım | Anlam |
+|-------|-------|
+| `declare fn ad(...) -> T` | Dış fonksiyon (gövdesiz, link'te çözülür) |
+| `declare global ad: T` | Dış global değişken |
+| `declare struct S { alanlar }` | Düzeni verilmiş dış struct (kod üretmez) |
+| `declare struct S` | Opak tip (alanlar bilinmez; yalnızca `*S` ile kullanılır) |
+| `declare class C { alanlar; metod imzaları }` | Dış class: metodlar gövdesiz, dış sembol |
+| `declare interface I { imzalar }` | Dış interface bildirimi |
+| `declare type Ad = Tip` | Dış tarafa ait takma ad |
+
+`declare` içeren her bildirim, normal bildirimlerle **aynı öznitelikleri** alır (`@repr(c)`, `@packed`,
+`@align(N)`, `@mangle(...)`). `@repr(c)` **zorunlu değildir**. Dış tarafın xl, C++, Rust, statik kütüphane
+ya da `.o` olması fark etmez; compiler kısıtlamaz, yalnızca gerektiğinde uyarı verir ([19](#19-tanılar-ve-uyarılar),
+[20](#20-bellek-düzeni-geçmişi)).
+
+Düzen belirtilmemiş bir `declare` struct/class/global için sıra:
+
+| Sıra | Durum | Sonuç |
+|------|-------|-------|
+| 1 | Bağlanan `.o`/`.a`/`.bc` içinde o tipin düzen kaydı var | Kayıttaki düzen kullanılır |
+| 2 | Proje düzen geçmişinde (`xl.layout`) var | Kayıttaki düzen kullanılır |
+| 3 | Hiçbiri yok | C düzeni varsayılır **ve uyarı** basılır (`W0201`) |
 
 ```xlang
 declare fn puts(s: *ui8) -> i32
-declare fn pthread_create(t: *ui64, attr: *void, entry: fn(*void) -> *void, arg: *void) -> i32
+declare fn api_add(a: i32, b: i32) -> i32       // api.o (C++/Rust/xl) içinden
 
 @repr(c)
-struct Point { x: f64, y: f64 }
+declare struct Point { x: f64, y: f64 }          // C: struct Point { double x, y; };
 
-declare fn point_len(p: *Point) -> f64     // C tarafı: double point_len(const struct Point*)
+declare fn point_len(p: *Point) -> f64           // C: double point_len(const struct Point*)
+
+@repr(c)
+declare global environ: **ui8                    // C: extern char** environ;
+
+declare struct FILE                              // opak: C'nin FILE'ı, alanlar bilinmez
+declare fn fclose(f: *FILE) -> i32
+
+// C++ sınıfı: metodlar C++ mangling'iyle bağlanır, adı @mangle ile verilir
+@repr(c)
+declare class Counter {
+    value: i32
+
+    @mangle("_ZN7Counter9incrementEv")
+    fn increment(self)
+}
 ```
 
-C ile veri paylaşılacak struct'lar `@repr(c)` olmalıdır.
+C/C++ ile veri paylaşılacak struct'ların düzeni için `@repr(c)` en sağlam yoldur, ama zorunlu değildir.
+
+### Global isimler
+
+Kaynak koduna hiçbir import olmadan gelen isimler **çok azdır** (kapalı liste). Diğer her şey
+stdlib'den import edilir. xl **libc kullanmaz**: stdlib kendi içinde tamdır (aşağıya bak).
+
+| Global (import gerekmez) | Neden global |
+|--------------------------|--------------|
+| `syscall(nr, ...)` | CPU trap'i, başka yolla ifade edilemez |
+| `atomic_*`, `fence` | Tek CPU talimatları (kesin liste Faz 6'da) |
+| `size_of`, `align_of`, `offset_of`, `static_assert` | Derleme zamanı sorguları |
+| `stringify!` | Macro yerleşiği |
+
+```xlang
+// std/memory.xl: xl'in kendi standart kütüphanesi, libc yok
+export(c) fn memcpy(dst: *void, src: *void, n: usize) -> *void {
+    // xl ile yazılmış gerçek gövde
+}
+
+// kullanıcı
+from "std/memory" import memcpy
+```
+
+`memcpy`, `memset`, `memmove`, `memcmp` stdlib'in içinde **xl ile yazılmıştır** ve `export(c)` ile C adıyla
+dışa verilir: LLVM'in kendi ürettiği örtük `memcpy` çağrıları da böylece çözülür, libc gerekmez.
+`declare` ise yalnızca başka bir nesnede (`api.o`, C++, Rust, statik kütüphane) tanımlı şeyler içindir.
+
+Dil dışarıdan kütüphane almaz: stdlib hiçbir işletim sistemi kütüphanesini (`libc`, `libSystem`, `kernel32`,
+pthread) çağırmaz. Her OS için çekirdek ABI'si ham `syscall` ile kullanılır ve OS seçimi `#if os == ...`
+ile yapılır ([15](#15-stdlib-ile-thread)). `declare` yalnızca kullanıcının kendi bağladığı nesneler içindir.
 
 ---
 
 ## 15. Stdlib ile thread
 
-Compiler thread/scheduler bilmez. Stdlib (xlang) platform API'sini çağırır; kullanıcı yalnızca stdlib'i görür.
+Compiler thread/scheduler bilmez. Varsayılan stdlib (xl ile yazılmış) her OS'un çekirdek ABI'sini ham
+`syscall` ile çağırarak thread oluşturur; OS farkı `#if os` ile stdlib içinde çözülür. Stdlib'in içinde
+**Go benzeri bir scheduler** vardır (hafif görevler, her CPU için worker, iş çalma).
+
+Önce stdlib'in kendi içinden bir parça (kullanıcı görmez):
+
+```xlang
+// std/sys/thread.xl
+#if os == "linux"
+    // clone(flags, stack, ptid, ctid, tls)
+    fn os_thread_create(stack: *void, entry: fn(*void), arg: *void) -> i64 {
+        return syscall(CLONE_NR, CLONE_FLAGS, stack as i64, 0, 0, 0)
+    }
+#elif os == "macos"
+    // bsdthread_create(func, arg, stack, pthread, flags)
+    fn os_thread_create(stack: *void, entry: fn(*void), arg: *void) -> i64 {
+        return syscall(BSDTHREAD_CREATE_NR, entry as i64, arg as i64, stack as i64, 0, 0)
+    }
+#elif os == "windows"
+    // NtCreateThreadEx(...); SSN, -D WIN_BUILD ile seçilen tablodan gelir
+    fn os_thread_create(stack: *void, entry: fn(*void), arg: *void) -> i64 {
+        return syscall(NT_CREATE_THREAD_EX_SSN, 0, 0, 0, 0)
+    }
+#endif
+```
+
+Kullanıcı kodu:
 
 ```xlang
 import "std/sched" as sched
@@ -682,9 +914,389 @@ kullanıcı kodu
 xlang stdlib            thread · sync · sched · io · mem
    │   #if os == ...
    ▼
-std/sys/{linux,macos,windows}     syscall(...)   veya   declare fn pthread_* / CreateThread
+std/sys/{linux,macos,windows}     yalnızca syscall(...), dış kütüphane yok
    ▼
 compiler çekirdeği:  syscall · atomic_* · fn pointer · inline asm
 ```
 
 `go`/`spawn` anahtar sözcüğü yoktur; hepsi stdlib fonksiyonudur.
+
+### Stdlib isteğe bağlıdır
+
+Stdlib bir compiler bayrağıyla seçilir; hiçbir şey zorunlu kılınmaz.
+
+| Bayrak | Anlam |
+|--------|-------|
+| (varsayılan) | Dile gömülü varsayılan stdlib |
+| `--no-std` | Stdlib yok: yalnızca dil + global yerleşikler (`syscall`, atomic...) |
+| `--std=<yol>` | Başka bir stdlib kök dizini |
+| `--std-features=sched,gpu` | Stdlib özelliklerini aç/kapat |
+
+```
+xlang build app.xl                       # varsayılan stdlib
+xlang build kernel.xl --no-std           # stdlib'siz
+xlang build app.xl --std=./mystd         # kendi stdlib'in
+```
+
+### Scheduler (Go benzeri)
+
+```
+M:N model
+
+   goroutine benzeri görevler (G)         worker thread'ler (M)         OS thread'leri
+   +----+ +----+ +----+ +----+            +---------+  +---------+
+   | G1 | | G2 | | G3 | | G4 |  ───────►  | worker0 |  | worker1 |  ───►  clone / bsdthread / NtCreateThreadEx
+   +----+ +----+ +----+ +----+            +----+----+  +----+----+
+        yerel kuyruk  ◄── iş çalma ──►  yerel kuyruk
+```
+
+| Parça | Açıklama |
+|-------|----------|
+| Görev | Kendi stack'i olan hafif birim; bağlam değişimi inline asm ile |
+| Worker | CPU sayısı kadar OS thread'i |
+| İş çalma | Boş worker, başkasının kuyruğundan görev alır |
+| Bloklama | Bloklayıcı I/O, OS olay mekanizması (epoll/kqueue/IOCP benzeri) ile görev park edilir |
+
+---
+
+## 16. Name mangling
+
+Varsayılan olarak mangling **açıktır**: semboller modül ve imza bilgisini taşır, çakışmaz.
+Üç seviyede kapatılıp özelleştirilebilir.
+
+```
+xl varsayılanı:     math.xl içinde  fn square(x: i32) -> i32     →   _xl$math$square$i32
+export(c) ile:                                                     →   square
+@mangle("my_sq"):                                                  →   my_sq
+```
+
+| Seviye | Yazım | Kapsam |
+|--------|-------|--------|
+| Proje | `xlang build ... --mangle=none` (`xl` varsayılan) | Tüm derleme |
+| Dosya | `@file(mangle = none)` dosyanın en başında | O dosyadaki tüm semboller |
+| Fonksiyon | `@mangle(none)` veya `@mangle("ad")` | Tek fonksiyon / global |
+
+Öncelik: **fonksiyon > dosya > proje**.
+
+```xlang
+@file(mangle = none)            // bu dosyada hiçbir sembol mangle edilmez
+
+export fn plain() -> i32 { return 0 }       // sembol: plain
+
+@mangle("renamed_sym")
+export fn other() -> i32 { return 1 }       // sembol: renamed_sym
+```
+
+`export(c)` her zaman C ABI adını (`mangle = none`) kullanır; mangling ayarlarından bağımsızdır.
+Aynı sembol adı iki modülde çakışırsa (mangling kapalıyken) link hatası yerine derleme hatası verilir.
+
+---
+
+## 17. Güvenli referans (`ref T`)
+
+Rust gibi bir borrow checker veya yaşam süresi (lifetime) anotasyonu **yoktur**. Dilin kalıbı bozulmaz:
+ham pointer `*T` C gibi aynen çalışır. Üstüne, kullanım-sonrası-serbest (dangling) hatalarını
+çalışma zamanında yakalayan **`ref T`** tipi vardır.
+
+| Tip | Boyut | Kontrol | Kullanım |
+|-----|-------|---------|----------|
+| `*T` | 8 B | yok | FFI, düşük seviye, C uyumlu düzen |
+| `ref T` | 16 B (`ptr` + `gen`) | her erişimde nesil kontrolü | güvenli kod |
+
+```xlang
+struct Node { value: i32 }
+
+fn main() -> i32 {
+    local n: ref Node = new Node { value: 7 }
+    local copy: ref Node = n             // ikisi de aynı nesne
+
+    free(n)                              // nesnenin nesli artar
+
+    return copy.value                    // ÇALIŞMA ZAMANI TRAP: use-after-free (nesil uyuşmuyor)
+}
+```
+
+Düzen:
+
+```
+heap nesnesi                         ref Node (16 B)
++------------+-----------------+     +----------+----------+
+| gen (ui64) |  Node { ... }   |     |  ptr  *  |  gen     |
++------------+-----------------+     +----------+----------+
+      ^                                    erişimde:  ref.gen == nesne.gen ?  → devam
+      └──────── free() gen'i artırır                    değilse trap
+```
+
+| Kural | Açıklama |
+|-------|----------|
+| Oluşturma | `new T` / allocator (`std/mem`) veya `&local` ile |
+| Erişim | `r.alan`, `*r`: her erişimde nesil kontrolü |
+| `ref T → *T` | Açık `as *T` (korumayı bilerek bırakır) |
+| Yerel adresi | `&local` ile alınan `ref`'in fonksiyondan kaçması (return/global'e yazma) **derleme hatası** |
+| `null` | `ref T` null olamaz; null gerekiyorsa `*T` kullanılır |
+| Maliyet | Erişim başına bir yükleme + karşılaştırma; `--safety=unchecked` ile kontroller kaldırılır |
+
+Per-fonksiyon kapatma: `@unchecked fn hot_loop(...)`.
+`ref T`, `@repr(c)` struct alanı ve `export(c)` imzasında **kullanılamaz** (C düzeni bozulur); orada `*T` kullanılır.
+
+---
+
+## 18. C++ ile kullanım ve çıktı biçimleri
+
+Compiler, xl kodunu C++ projesine bağlamayı **kendisi yürütmez**. Compiler yalnızca standart bir
+biçim üretir; hangisini, nasıl bağlayacağınıza kullanıcı kendi build script'inde (xmake vb.) karar verir.
+
+### Çıktı biçimleri (`--emit`)
+
+| Değer | Dosya | Ne için |
+|-------|-------|---------|
+| `obj` | `.o` / `.obj` | Doğrudan linkere |
+| `ir` | `.ll` | `clang++` ile derlenebilen LLVM IR (metin) |
+| `bc` | `.bc` | LLVM bitcode |
+| `header` | `.h` | `export(c)` fonksiyonlarının ve `@repr(c)` tiplerin C/C++ başlığı |
+| `exe` | çalıştırılabilir | tek başına program |
+| `static` | `.a` / `.lib` | statik kütüphane (nesneleri arşivler) |
+| `shared` | `.so` / `.dylib` / `.dll` | dinamik kütüphane |
+
+`static` ve `shared`, `obj` / `ir`'den **ayrı bir konudur**: ilk ikisi çıktının *biçimi*, son ikisi
+*kütüphane türü*dür. `static`/`shared` yalnızca kolaylıktır; isterseniz `obj` üretip kendi build
+sisteminizle arşivler/bağlarsınız.
+
+### C++ tarafından kullanılacak API
+
+```xlang
+// geom.xl
+@repr(c)
+export struct Vec2 { x: f64, y: f64 }
+
+export(c) fn vec2_len(v: *Vec2) -> f64 {
+    return sqrt(v.x * v.x + v.y * v.y)
+}
+```
+
+`xlang build geom.xl --emit=header` ürettiği başlık:
+
+```c
+/* geom.h */
+#ifdef __cplusplus
+extern "C" {
+#endif
+typedef struct { double x; double y; } Vec2;
+double vec2_len(const Vec2* v);
+#ifdef __cplusplus
+}
+#endif
+```
+
+```cpp
+// main.cpp
+#include "geom.h"
+int main() { Vec2 v{3.0, 4.0}; return vec2_len(&v) == 5.0 ? 0 : 1; }
+```
+
+### Kullanıcının kendi xmake script'i (taslak)
+
+```lua
+-- xmake.lua
+rule("xl")
+    set_extensions(".xl")
+    on_buildcmd_file(function (target, batchcmds, sourcefile, opt)
+        local obj = target:objectfile(sourcefile)
+        -- "obj" yerine "ir" seçilirse çıktı .ll olur, clang++ ile derlenir
+        batchcmds:execv("xlang", {"build", sourcefile, "--emit=obj", "-o", obj})
+        table.insert(target:objectfiles(), obj)
+        batchcmds:set_depmtime(os.mtime(obj))
+    end)
+
+target("app")
+    set_kind("binary")                 -- ya da "static" / "shared": kullanıcı seçer
+    add_rules("xl")
+    add_files("src/*.cpp", "src/*.xl")
+```
+
+| Karar | Kimin |
+|-------|-------|
+| `obj` mı `ir` mi | Kullanıcı (build script) |
+| Statik mi dinamik mi | Kullanıcı (build script) |
+| Başlık üretimi | İsteğe bağlı, kullanıcı `--emit=header` çağırır |
+| Bağlama komutu | Kullanıcının toolchain'i; compiler çağırmaz |
+
+`export(c)` imzalarında yalnızca C uyumlu tipler (`ui8..i64`, `f32/f64`, `bool`, `*T`, `@repr(c)` struct,
+fonksiyon pointer'ı) geçebilir; `class`, `interface`, `ref T` bu imzada derleme hatasıdır.
+
+---
+
+## 19. Tanılar ve uyarılar
+
+Compiler kısıtlamaz, **bilgilendirir**. Kullanıcının bilerek yaptığı şeyi (ör. `declare` ile başka bir
+dilden/nesneden gelen bir sembolü bağlamak) engellemez; riskli olabilecek durumlarda uyarı basar ve
+uyarılar susturulabilir. Her uyarı dört parça taşır: **ne**, **detay**, **neden**, **nasıl düzeltilir**.
+
+```
+warning[W0201]: `Point` için bellek düzeni bilinmiyor, C düzeni varsayıldı
+  --> app.xl:12:9
+   |
+12 | declare struct Point { x: f64, y: f64 }
+   |         ^^^^^^^^^^^^ bu tip dış bir nesneden geliyor
+   |
+detay:  `Point` için bağlanan hiçbir nesnede düzen kaydı yok ve xl.layout içinde de bulunmuyor.
+neden:  Dış tarafın derleyicisi/dili bilinmediği için alan sırası ve boşluklar doğrulanamadı.
+düzelt: `@repr(c)` ekle (dış taraf C/C++ ise), ya da dış nesneyi xl ile derle (düzen kaydı otomatik gelir),
+        ya da bu uyarıyı kasıtlıysa sustur:  @allow(W0201)  veya  --allow=W0201
+```
+
+### Hatalı yeri gösterme
+
+Compiler hatalı/uyarılı yeri **kaynak satırının yanına nokta atışı yorumla** gösterir: satırın sonuna
+`<=======` ve o noktaya özel açıklama yazılır. Aynı olayın birden fazla yeri varsa her biri kendi satırında
+işaretlenir (çakışmalarda iki taraf da). Bir satırda birden fazla nokta varsa altına `^^^` ile tam token
+vurgulanır.
+
+```
+error[E0401]: `lorem` çift import
+  --> app.xl
+   |
+ 3 | import * from "a"      <======= `lorem` burada a.xl:12'den geliyor
+ 4 | import * from "b"      <======= ve burada b.xl:30'dan da geliyor: çakışma
+   |
+detay:  İki farklı varlık aynı ada bağlanmaya çalışıyor.
+neden:  `lorem` a.xl ve b.xl'de ayrı ayrı tanımlı; hangisinin kullanılacağı belirsiz.
+düzelt: `import * as aa from "a"` / `import * as bb from "b"` ya da `import lorem as lorem_b from "b"`.
+```
+
+```
+warning[W0201]: `Point` için düzen bilinmiyor, C düzeni varsayıldı
+  --> app.xl
+   |
+12 | declare struct Point { x: f64, y: f64 }    <======= bu tip dış nesneden geliyor
+   |                 ^^^^^
+```
+
+### Bağlam satırları ve satır numaraları
+
+İşaretlenen noktadan yukarı ve aşağı kaç satırın gösterileceği **önem derecesine göre** değişir:
+hatada çok, uyarıda az.
+
+| Tür | Varsayılan bağlam | Neden |
+|-----|-------------------|-------|
+| `error` | noktadan **−10 / +10** satır | Hatanın çevresini anlamak için geniş görünüm |
+| `warning` | noktadan **−2 / +2** satır | Dikey yer kaplamasın |
+
+| Bayrak | Anlam |
+|--------|-------|
+| `--context-errors=N` | Hatalarda üst/alt satır sayısı (varsayılan 10) |
+| `--context-warnings=N` | Uyarılarda üst/alt satır sayısı (varsayılan 2) |
+| `--context=N` | İkisini birden ayarlar |
+
+Satır numaraları ve blok biçimi:
+
+- Numara sütunu, gösterilen en büyük numaraya göre **sağa hizalanır** (ör. 8 ve 12 aynı genişlikte).
+- İşaretli satırlar `<=======` yorumunu taşır; bağlam satırları soluk (yorumsuz) gösterilir.
+- Birbirine yakın birden fazla nokta (çakışmanın iki tarafı) **tek blokta birleştirilir**, bağlam
+  örtüşüyorsa satırlar tekrarlanmaz.
+- Birleştirilemeyen uzak noktalar arasındaki boşluk `...` satırı ile gösterilir, numara atlaması görünür kalır.
+- Dosya başı/sonu sınırında bağlam kırpılır; boş satırlar da sayılır.
+- Sekmeler boşluğa açılır, çok uzun satırlar `…` ile kısaltılır ama işaretli sütun korunur.
+
+Uyarı (±2):
+
+```
+warning[W0401]: `lorem` aynı varlık olarak iki yoldan import edildi
+  --> app.xl
+    |
+  3 | import std from "std"
+  4 |
+  5 | import * from "a"      <======= `lorem` burada a üzerinden geliyor (asıl tanım: c.xl:7)
+  6 | import * from "b"      <======= ve burada b üzerinden de geliyor (aynı tanım: c.xl:7)
+  7 |
+  8 | fn main() -> i32 {
+```
+
+Hata (±10, kısaltılmış gösterim; gerçekte noktanın üstünde ve altında 10'ar satır):
+
+```
+error[E0401]: `lorem` çift import
+  --> app.xl
+    |
+  1 | // app.xl
+  2 | import std from "std"
+  ⋮   (üstte 10 satıra kadar bağlam)
+ 11 | import * from "a"      <======= `lorem` burada a.xl:12'den geliyor
+ 12 | import * from "b"      <======= ve burada b.xl:30'dan da geliyor: çakışma
+ 13 |
+ 14 | fn main() -> i32 {
+  ⋮   (altta 10 satıra kadar bağlam)
+ 22 |     return 0
+    |
+detay:  İki farklı varlık aynı ada bağlanmaya çalışıyor.
+```
+
+### Kayıt (log)
+
+Tüm tanılar, ekrana basılanın yanında isteğe bağlı olarak dosyaya da yazılır.
+
+| Bayrak | Anlam |
+|--------|-------|
+| `--diag-log=<dosya>` | Tüm tanıları (hata, uyarı, susturulanlar dahil) dosyaya yaz |
+| `--diag-format=text\|json` | Ekran/log biçimi (`json`: satır başına bir tanı, araçlar için) |
+| `--diag-log-level=all\|warn\|error` | Log'a hangi seviyeler yazılsın |
+
+Susturulan (`@allow`/`--allow`) uyarılar ekrandan düşer ama `--diag-log` açıksa "susturuldu" işaretiyle log'a yazılır.
+
+| Susturma | Kapsam |
+|----------|--------|
+| `--allow=W0201` / `-Wno-W0201` | Tüm derleme |
+| `@allow(W0201)` | Bildirimin, fonksiyonun veya dosyanın üstünde; o kapsam |
+| `--deny=W0201` | Uyarıyı hataya çevirir |
+| `--warn-all` / `--allow-all` | Hepsini aç / hepsini sustur |
+| `--explain W0201` | Uyarının uzun açıklamasını yazdırır |
+
+Örnek uyarılar:
+
+| Kod | Ne zaman | Varsayılan |
+|-----|----------|-----------|
+| `W0201` | `declare` tipin düzeni bilinmiyor, C varsayıldı | uyarı |
+| `W0202` | `declare` tipin düzeni, kayıtlı düzenle çelişiyor | uyarı |
+| `W0203` | Düzen kaydı farklı bir düzen şemasıyla üretilmiş (`v2` ↔ `v3`) | uyarı |
+| `W0301` | `declare` edilen sembol bu derlemede çözülemedi (link zamanında aranacak) | uyarı |
+| `W0302` | `export(c)` imzası C'de ifade edilemeyen bir tip içeriyor | **hata** |
+| `W0401` | Aynı varlık iki farklı yoldan import/export edildi | uyarı |
+| `E0401` | Farklı varlıklar aynı ada import/export ediliyor | **hata** |
+
+---
+
+## 20. Bellek düzeni geçmişi
+
+xl'in varsayılan (xlang) düzeni **sürümlü ve deterministik** bir algoritmadır; compiler geçmişteki
+algoritmaların hepsini içinde taşır ve eski bir nesnenin hangi düzenle üretildiğini bilir.
+Düzen, derleyici sürümü değiştiğinde sessizce kaymaz.
+
+```
+düzen şeması   v1  →  v2  →  v3  (güncel)         Her şema donmuştur; yeni davranış yeni şema olur.
+                                                   Eski bir .o "v2 ile üretildi" der; compiler v2'yi bilir.
+```
+
+| Konu | Davranış |
+|------|----------|
+| Şema kimliği | Her xl nesnesi/başlığı/IR'ı kullandığı düzen şemasını taşır (`xl.layout` metaverisi) |
+| Düzen kaydı | Dışa aktarılan her tip için alan sırası, offset, boyut, hizalama yazılır |
+| Bilerek karıştırma | `@layout(shuffle)` veya sertleştirme bayrağı; kayıt "karıştırıldı + seed" olarak işaretlenir |
+| Karıştırılmamışsa | Compiler, kaydı okumadan şema + tip tanımından düzeni **yeniden türetir** |
+| Proje geçmişi | `xl.layout` dosyası projedeki tiplerin son bilinen düzenini tutar; derleme bunu kullanır |
+| Statik kütüphane / `.o` | Düzen kaydı nesneyle gelir; xl'in kendi stdlib'i kod yerine `.a`/`.o` olarak gelse bile çalışır |
+| Başka dillerden nesne | Kayıt yok; `@repr(c)` ya da C varsayımı + uyarı (`W0201`) |
+
+```xlang
+// libgeom.a, xl ile derlenmiş ve düzen kaydı taşıyor (şema v3)
+declare struct Vec3 { x: f32, y: f32, z: f32 }   // kayıttan okunur, @repr(c) gerekmez
+
+@layout(scheme = v3)                              // şemayı sabitler (yeni şema çıksa bile kayma olmaz)
+struct Packet { id: ui16, flag: bool, len: ui64 }
+```
+
+| CLI | Anlam |
+|-----|-------|
+| `--layout-scheme=v3` | Varsayılan düzen şemasını sabitle |
+| `--layout-history=<dosya>` | Düzen geçmişi dosyası (varsayılan `xl.layout`) |
+| `--layout-record` | Derlemede düzen kaydını (yeniden) yaz |
+| `--print-layout <Tip>` | Bir tipin düzenini (offset/boyut/hizalama) yazdır |

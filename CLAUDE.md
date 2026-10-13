@@ -1,47 +1,102 @@
-# xlang — Claude için proje notları
+# xlang — project notes for Claude
 
-## Plan dosyaları (önce bunlar okunur)
+## Language rules
 
-| Dosya | İçerik |
-|-------|--------|
-| `PLAN.md` | Compiler planı: kurallar, kararlar, fazlar, PR bölünmesi |
-| `PLAN.eg.md` | Plan bitince dilin nasıl görüneceği: özellik başına açıklama, ASCII tablo, xlang kod örneği |
+- **Everything written to the repo is in English**: source code, comments, docs, commit messages, this file,
+  diagnostics text produced by the compiler.
+- **Exceptions: `PLAN.md` and `PLAN.eg.md` stay in Turkish.**
+- Chat replies to the user stay in Turkish (the user writes Turkish).
 
-### Senkron kuralı
+## Plan files (read these first)
 
-- Plan değişince **dil yüzeyi** (sözdizimi, tipler, özellikler, CLI bayrakları, import biçimleri,
-  öznitelikler, builtin'ler) etkileniyorsa **aynı değişiklikte `PLAN.eg.md` de güncellenir**.
-- Compiler iç yapısı (IR, pass, codegen) değişiyorsa yalnızca `PLAN.md` güncellenir.
-- Kullanıcı genelde `PLAN.eg.md` üzerinden plan güncellemesi ister; yeni özellik eklerken önce
-  `PLAN.eg.md`'ye örnek (açıklama + ASCII tablo + `xlang` kod bloğu) yazılır, sonra `PLAN.md`'ye madde eklenir.
-- `PLAN.eg.md` içindeki her özellik: 1 başlık, kısa açıklama, tablo (gerekirse), `xlang` kod örneği.
+| File | Contents |
+|------|----------|
+| `PLAN.md` | Compiler plan: rules, decisions, phases, PR breakdown |
+| `PLAN.eg.md` | What the language looks like once the plan is done: one section per feature, ASCII tables, xlang code examples |
 
-## Çalışma kuralları
+### Sync rule
 
-- **Geriye/ileriye uyumluluk yok.** Compiler hiç kullanılmadı; sözdizimi, AST, CLI, IR kökten
-  değiştirilebilir. Uyumluluk katmanı yazma.
-- **`examples/`, `test/xlang/` ve stdlib/runtime `.xlang` dosyalarını okuma, onlara uydurma.**
-  Kırılabilirler; compiler hedefine ulaşınca yeniden yazılır.
-- **`.cursor/` altındaki kuralları/planları okuma.**
-- Compiler yalnızca dili ve CPU primitiflerini (syscall, atomic, fonksiyon pointer'ı, inline asm) bilir.
-  OS/thread/scheduler/print/malloc compiler'da olmaz; xlang stdlib'dir.
-- Kullanıcının söylediği dışında özellik/tasarım uydurma; karar gerekiyorsa `PLAN.md` "Karar bekleyen"
-  bölümüne yaz ya da sor.
-- Dosya düzenlemelerinde varsayılan araçları (Read/Edit/Write) kullan; toplu regex/python/sed yalnızca gerekirse.
+- If a plan change affects the **language surface** (syntax, types, features, CLI flags, import forms,
+  attributes, builtins), update **`PLAN.eg.md` in the same change**.
+- If only compiler internals change (IR, passes, codegen), update only `PLAN.md`.
+- The user usually drives plan updates through `PLAN.eg.md`. When adding a feature, write the example first
+  (description + ASCII table + `xlang` code block) in `PLAN.eg.md`, then add the item to `PLAN.md`.
+- Every feature in `PLAN.eg.md`: one heading, a short description, a table where useful, an `xlang` code example.
 
-## Dil kararları (özet, ayrıntı `PLAN.eg.md`'de)
+## Working rules
 
-- Fonksiyon: `fn ad(a: i32) -> i32 { }` (`->` yoksa `void`).
-- Tipler: `i8 i16 i32 i64 isize`, `ui8 ui16 ui32 ui64 usize`, `f32 f64`, `bool`, `void`, `*T`, `fn(A) -> R`.
-- Bellek düzeni: varsayılan xlang düzeni; `@repr(c)` C/C++ düzeni.
-- `class` (tek kalıtım, vptr) ve `interface` (fat pointer `{data, itable}`) compiler'da.
-- Koşullu derleme: `#if / #elif / #else { }` (yapısal, makro yok); CLI: `-D`, `-U`, `--target`, `-O`, `-g`.
-- Tip takma adı: `type Ad = Tip` (şeffaf). Macro: `define N = sabit`, `define f(x: expr) { ... }`, çağrı `f!(...)`;
-  gövde süslü parantezli, `\` ve `#`/`##` yok, türlü parametre, hijyenik, `stringify!`.
-- Import: `from "m" import x` ve `import x from "m"` ikisi de geçerli.
+- **No backward or forward compatibility.** The compiler has never been used; syntax, AST, CLI and IR can be
+  rewritten from scratch. Do not write compatibility layers.
+- **Do not read or adapt to `examples/`, `test/xlang/`, or stdlib/runtime `.xlang` files.** They are disposable
+  and will be rewritten once the compiler reaches its target.
+- **Do not read anything under `.cursor/`** (rules or plans).
+- The compiler knows only the language and CPU primitives (syscall, atomics, function pointers, inline asm).
+  OS, thread, scheduler, print and malloc concepts do not belong in the compiler; they are xlang stdlib.
+- Do not invent features or design beyond what the user asked for. If a decision is needed, record it in
+  the "pending decisions" part of `PLAN.md` or ask.
+- Use the default tools (Read/Edit/Write) for file changes; use bulk regex/python/sed only when necessary.
+
+## Feature assessment (applies in every session)
+
+When the user adds a feature or decision to the plan, give an **honest assessment** alongside the plan update.
+No filler praise; state weaknesses plainly. For each feature cover:
+
+| Heading | Content |
+|---------|---------|
+| Impact | Cost to the compiler: complexity (low/medium/high), phases touched, maintenance load |
+| Value | Benefit to users/the language: huge / good / marginal / junk (with reasoning) |
+| Comparison | Which compiler/language it is better or worse than (clang/gcc, Rust, Zig, Go, Swift, Odin, ...); concrete differences |
+| Risk | Known pitfalls, conflicts with other features, places that will become expensive later |
+| Recommendation | Now, later, or a reduced version; a short alternative if there is one |
+
+- If you see a conflict or a bad idea, do not just accept it: object, but leave the decision to the user and apply it.
+- Cite real-world precedent concretely (other languages that tried the same path or backed out of it).
+- Do not re-ask topics the user closed with "do not ask again" (e.g. external libraries/libc); if needed, give a
+  one-time risk note instead.
+
+## Language decisions (summary; details in `PLAN.eg.md`)
+
+- Functions: `fn name(a: i32) -> i32 { }` (no `->` means `void`).
+- Types: `i8 i16 i32 i64 isize`, `ui8 ui16 ui32 ui64 usize`, `f32 f64`, `bool`, `void`, `*T`, `fn(A) -> R`.
+- Memory layout: default xlang layout; `@repr(c)` gives C/C++ layout.
+- `class` (single inheritance, vptr) and `interface` (fat pointer `{data, itable}`) are compiler features.
+- Conditional compilation: line-based `#if/#elif/#else/#endif/#ifdef/#ifndef/#error`; the condition is the normal
+  `if` expression syntax; body on the same line means no `#endif`, body on a later line requires `#endif`;
+  inactive regions are only lexed. CLI: `-D`, `-U`, `--target`, `-O`, `-g`.
+- Type alias: `type Name = T` (transparent). Macros: `define N = const`, `define f(x: expr) { ... }`, call `f!(...)`;
+  brace-delimited body, no `\` and no `#`/`##`, typed parameters, hygienic, `stringify!`.
+- Source extension `.xl`. No default export; `export` (between xl modules) and `export(c)` (unmangled C symbol).
+- Name mangling is on by default; overrides: `--mangle=`, `@file(mangle = ...)`, `@mangle(...)` (fn > file > project).
+- Safety: `*T` unchecked, `ref T` generation-checked (`--safety=checked|unchecked`); no borrow checker.
+- Outputs: `--emit=obj|ir|bc|header|exe|static|shared`; linking with C++ is done by the user's build script (xmake).
+- Minimal global namespace: only `syscall`, atomics/`fence`, `size_of`-style queries, `static_assert`, `stringify!`.
+  `memcpy`/`print`/`alloc` are not global; they come from the stdlib via import.
+- `declare` is a single prefix: `declare fn/global/struct/class/interface/type`; no special global syntax; attributes
+  (`@repr(c)`, `@mangle`, ...) are the same as for normal declarations; it is only for things coming from other
+  objects/libraries.
+- No libc: xl has its own stdlib; `memcpy` etc. are written in xl in the stdlib and exported with `export(c)`.
+- The language takes no external libraries (no libc, libSystem, kernel32, pthread library). The stdlib calls each
+  OS's kernel ABI with raw `syscall` + `#if os` (including macOS/Windows; stability is not a concern). Do not ask again.
+- Stdlib is optional: `--no-std`, `--std=<path>`; the default stdlib is embedded and contains a Go-like M:N scheduler.
+- The inline asm builtin is mandatory (thread trampoline, scheduler context switch).
+- Two exports or two imports binding the same name is an error (reported on the import/export line):
+  `import * from a` + `import * from b` with a common name is an error; `import * as aa from a` +
+  `import * as bb from b` is fine; the same entity arriving via two paths is not an error but a detailed
+  warning (`W0401`) plus a log entry. Module resolution strategies are not planned yet.
+- `@repr(c)` is not required on `declare`; layout resolution order: layout record in the object -> `xl.layout`
+  history -> C assumption + warning. Layout schemes are versioned and frozen (v1, v2, v3...); objects carry a
+  layout record.
+- Diagnostics: the compiler does not restrict, it warns (`what + detail + reason + how to fix`); coded, with
+  `--allow/--deny/@allow/--explain`. The faulty spot is shown at the end of the line with `<======= pinpoint comment`
+  (both sides of a conflict); logged with `--diag-log=<file>`. Context lines: error -10/+10, warning -2/+2
+  (`--context-errors/--context-warnings/--context`); line numbers right-aligned.
+- Module path: `"x"` -> `x.xl` or `x/index.xl`. Re-exports: `export * from "m"`, `export * as ns from "m"`,
+  `export { a, b as c } from "m"`, `export * from "m" except a`. `import "std"` provides everything.
+- Import: both `from "m" import x` and `import x from "m"` are valid; also `import * from "m"` and
+  `import * as a from "m"`.
 - Syscall: builtin `syscall(nr, args...)`.
 
 ## Build
 
-- Build sistemi xmake: `xmake build`; çıktı `build/xlang`.
-- `xlang build <dosya> --emit-ir --keep-ir` ara IR dosyasını bırakır.
+- Build system is xmake: `xmake build`; output `build/xlang`.
+- `xlang build <file> --emit-ir --keep-ir` keeps the intermediate IR file.
