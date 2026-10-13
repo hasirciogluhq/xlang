@@ -14,6 +14,6 @@
 10. Class (4.4), Interface (4.5)
 10b. Görünürlük + mangling + `ref T` + `new` + `register` (4.8–4.12)
 11. Alloca/PassBuilder/Darwin syscall/debug info (5.1–5.5)
-11b. Çıktı biçimleri + header + static/shared (5.6–5.8)
+11b. Çıktı biçimleri + header + static/shared + varsayılan `exe` ve linker sürücüsü (5.6–5.9)
 12. Atomic + fnptr + asm (6)
 13. Stdlib (7.1–7.6, 7.2b), ardından compiler'dan kaldırma (7.7)

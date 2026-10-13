@@ -31,3 +31,7 @@
   `*T` dönüşümleri, `@unchecked fn` ve `--safety` ile ilişkisi bilerek ayrı tutuldu. `W0601` yalnızca
   **işaretli** tamsayı → float için (`unsafe` içinde `ui → f` geçerken de verilir). Float işaretli sayılır,
   bu yüzden `ui → f` `E0601`'dir. `f32 → f64` genişlemesi bu kuralın dışındadır (örtük, uyarısız).
+- **Linker/arşivleyici seçimi:** `exe`/`shared`/`static` için compiler'ın hangi aracı çağıracağı belirlenmedi
+  (LLVM'e gömülü `lld` mi, hedefin sistem linker'ı mı, `ar` yerine kendi arşiv yazıcısı mı); araç yolunu
+  veren bayrak (`--linker=<yol>`) gerekip gerekmediği, hedef başına varsayılan ve çapraz derlemede nasıl
+  seçileceği de açık. Her durumda libc/libSystem/kernel32 verilmez (5.9).

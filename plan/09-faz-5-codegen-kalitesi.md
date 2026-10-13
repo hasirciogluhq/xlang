@@ -27,9 +27,13 @@
 - [ ] **5.4** Debug info (`DIBuilder`): compile unit, subprogram, satır konumları, struct/class tipleri.
 - [ ] **5.5** Pointer↔integer dönüşümleri yalnızca `syscall` sınırında ve açık `as`'ta.
 - [ ] **5.6** Çıktı biçimleri: `--emit=obj` (nesne), `ir` (`.ll`, `clang++` ile derlenebilir; hedef triple
-  ve data layout yazılı), `bc` (bitcode). Kaynak: yalnızca LLVM Module; farklı yazıcılar.
+  ve data layout yazılı), `bc` (bitcode). Kaynak: yalnızca LLVM Module; farklı yazıcılar. Bu çıktılar
+  üretilir ve compiler orada durur (başka araç çağrılmaz).
 - [ ] **5.7** `--emit=header`: `export(c)` fonksiyonları ve `@repr(c)` tipler için `extern "C"` korumalı
-  C/C++ başlığı (`src/codegen/header.cpp`). Compiler başka bir şey üretmez/bağlamaz.
-- [ ] **5.8** `--emit=static` (arşivle) ve `--emit=shared` (paylaşımlı kütüphane): yalnızca kolaylık;
-  obj/ir üretimiyle karıştırılmaz. Kullanıcının kendi build script'i (xmake) obj/ir'i alıp kendisi de
-  bağlayabilir; compiler bunu zorunlu kılmaz.
+  C/C++ başlığı (`src/codegen/header.cpp`). Üretilir ve durur.
+- [ ] **5.8** `--emit=static` (`.a`/`.lib`) ve `--emit=shared` (`.so`/`.dylib`/`.dll`): compiler nesneyi
+  kendisi üretir, arşivleme/bağlama için hedefin arşivleyicisini/linker'ını çağırır (5.9).
+- [ ] **5.9** `--emit=exe` (**varsayılan**): nesneyi üretir, linker'ı çağırıp çalıştırılabiliri çıkarır.
+  Linker sürücüsü (`src/driver/link.cpp`): hedefe göre linker seçimi, `-nostdlib`/`-static` benzeri
+  bayraklar (libc/libSystem/kernel32 **verilmez**), giriş sembolü; araç bulunamazsa net hata (`--emit=obj`
+  önerilir). Compiler yalnızca kendi nesnesini bağlar.

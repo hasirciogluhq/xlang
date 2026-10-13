@@ -15,12 +15,14 @@
   interface değeri = `{data: *void, itable: *T}`;
   statik tipten arayüze dönüşüm itable'ı derleme zamanında üretir; çağrı = itable'dan dolaylı çağrı.
 - [ ] **4.6a** Yol çözümleme: `"x"` → `x.xl` | `x/index.xl` (ikisi birden hata); yeniden dışa aktarma
-  grafiği tek geçişte çözülür; çakışma kullanım yerinde hata, yerel export önceliklidir; export edilmeyen
+  grafiği tek geçişte çözülür; çakışma **her zaman hatadır** (`E0401`) ve `import`/`export` satırında
+  raporlanır, kullanım yerinde değil; yerel tanım kazanmaz; export edilmeyen
   sembol yeniden dışa aktarılamaz (4.8 ile uyumlu); `export(c)` aktarmada korunur.
   **Çift import da aynı kuralla hatadır** (`import * from a` + `import * from b` ortak ad → import satırında
   hata; `import * as aa` / `import * as bb` serbest; aynı varlık iki yoldan gelirse hata değil, `W0401` uyarısı + log; farklı varlıklar `E0401` hatası).
   **Aynı ada sahip iki export hatadır** (aynı dosyada çift export, farklı dosyalardan aynı ad, `export *`
-  ile gelen ve yerel olan dahil); "yerel kazanır" kuralı yoktur. Çözüm yolları: `except`, `as`, `export * as ns`.
+  ile gelen ve yerel olan dahil); "yerel kazanır" kuralı yoktur, çakışma zorla hatadır ve çakışan ad hiç
+  kullanılmasa bile verilir. Çözüm yolları: `except`, `as`, `export * as ns`.
   Modül çözümleme stratejileri (birden fazla yol: göreli, proje kökü, arama yolları, std, paket) **henüz
   planlanmadı**; bu madde yalnızca dosya/dizin kuralını (`x.xl` | `x/index.xl`) kapsar.
 - [ ] **4.6b** `declare` semantiği: gövdesiz dış öğe, kod üretmez; düzen çözümü sırası: nesne içi düzen kaydı → `xl.layout`

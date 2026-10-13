@@ -24,7 +24,7 @@
   | `--target <triple>` | Hedef triple; `os/arch/pointer_width` buradan türer |
   | `-O0..-O3` | Optimizasyon seviyesi (`opt_level`) |
   | `-g` | Debug info (`debug = true`) |
-  | `--emit=ir\|bc\|obj\|hir\|header\|exe\|static\|shared` | Çıktı biçimi/aşaması |
+  | `--emit=ir\|bc\|obj\|hir\|header\|exe\|static\|shared` | Çıktı biçimi/aşaması; varsayılan `exe` |
   | `--mangle=xl\|none` | Proje seviyesi mangling varsayılanı |
   | `--safety=checked\|unchecked` | `ref T` kontrolleri |
   | `--print-cfg` | Çözülmüş tüm tanımları yazdır |

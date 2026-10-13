@@ -109,7 +109,10 @@ No filler praise; state weaknesses plainly. For each feature cover:
   constants, enum members, `size_of`-style queries, `&global`, `&global[const]`, `as` casts, constant struct/class/
   array literals; no function calls or reads of other globals. No initializer means zero-initialized.
 - Safety: `*T` unchecked, `ref T` generation-checked (`--safety=checked|unchecked`); no borrow checker.
-- Outputs: `--emit=obj|ir|bc|header|exe|static|shared`; linking with C++ is done by the user's build script (xmake).
+- Outputs: `--emit=obj|ir|bc|header|exe|static|shared`, default `exe`. The compiler produces every output itself and
+  runs the rest of the pipeline to the end by default (calling LLVM + linker/archiver when needed); `ir`/`bc`/`obj`/
+  `header` stop at that stage. It links only its own output (no libc/external libs). Linking into a C++ project is
+  the user's build script (xmake): take `--emit=obj`.
 - Atomics are builtins with the `__builtin_` prefix: `__builtin_atomic_load/store/xchg/cas/add`, `__builtin_fence`.
   The order argument is a compile-time `MemoryOrder` member (`MemoryOrder.seq_cst`). Inline asm is
   `__builtin_asm("template", in(reg) x, out(reg) y, clobber("rcx"), options("noreturn"))` (syntax in
