@@ -66,7 +66,6 @@ CodegenResult Codegen::generate(const Program& program, const CodegenOptions& op
     }
     cg.needs_heap_ = programUsesHeap(program) || programUsesStrings(program);
     cg.needs_strings_ = programUsesStrings(program);
-    cg.collectSyscalls(program);
     cg.emitPrelude(program);
     cg.emitStructTypes(program);
     if (cg.needs_strings_) {
@@ -75,12 +74,7 @@ CodegenResult Codegen::generate(const Program& program, const CodegenOptions& op
     cg.emitGlobals(program);
     cg.emitGlobalInit(program);
     for (const Function& function : program.functions) {
-        // declare syscall <n> → CPU-native trap body
         // declare / external / empty → blind LLVM declare (C ABI)
-        if (function.syscall) {
-            cg.emitNativeSyscallFunction(function);
-            continue;
-        }
         if (function.external || function.body.statements.empty()) {
             cg.emitDeclareFunction(function);
             continue;
@@ -92,7 +86,6 @@ CodegenResult Codegen::generate(const Program& program, const CodegenOptions& op
     }
 
     CodegenResult result;
-    result.syscalls = std::move(cg.syscalls_);
     ReleasedModule released = cg.irb_->release();
     result.context = std::move(released.context);
     result.module = std::move(released.module);

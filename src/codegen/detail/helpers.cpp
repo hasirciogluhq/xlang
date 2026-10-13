@@ -139,7 +139,7 @@ const Function* findFunctionDefinition(const Program& program, const std::string
 const Function* findUniqueFunctionByName(const Program& program, const std::string& name) {
     const Function* match = nullptr;
     for (const Function& function : program.functions) {
-        if (function.name != name || function.syscall) {
+        if (function.name != name) {
             continue;
         }
         if (function.body.statements.empty() && !function.external) {

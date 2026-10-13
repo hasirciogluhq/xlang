@@ -93,7 +93,7 @@ llvm::Value* Codegen::asI64(const Type& ty, llvm::Value* value) {
     if (ty.kind == TypeKind::Bool || ty.kind == TypeKind::Char) {
         return b().emitZExt(value, b().i64Ty());
     }
-    throw XlangError("@syscall arguments must be integer types");
+    throw XlangError("syscall arguments must be integer types");
 }
 
 llvm::Value* Codegen::boolToI1(llvm::Value* value) {

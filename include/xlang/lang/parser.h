@@ -55,7 +55,6 @@ class Parser {
     GlobalVar parseDeclareGlobal(const ItemModifiers& modifiers);
     Function parseFunction(const ItemModifiers& modifiers);
     Function parseDeclareFunction(const ItemModifiers& modifiers);
-    Function parseDeclareSyscall();
     ParamList parseParams();
     Block parseBlock();
     Stmt parseStatement();

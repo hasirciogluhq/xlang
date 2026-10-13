@@ -215,10 +215,6 @@ struct Function {
     Block body;
     bool exported{false};
     bool external{false};
-    /// `declare syscall <n> name(...)` — CPU-native trap; not an external C symbol.
-    bool syscall{false};
-    /// Kernel syscall number when `syscall` is true.
-    std::int64_t syscall_number{0};
     bool variadic{false};
     Span span{};
 };

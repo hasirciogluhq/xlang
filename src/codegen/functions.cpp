@@ -37,11 +37,6 @@ void Codegen::emitDeclareFunction(const FunctionSignature& function) {
 }
 
 void Codegen::emitDeclareFunction(const Function& function) {
-    if (function.syscall) {
-        emitNativeSyscallFunction(function);
-        return;
-    }
-
     // Plain `declare name(...)` / external — blind LLVM declare, raw C ABI symbol.
     std::vector<llvm::Type*> params;
     for (const TypedName& p : function.params) {
@@ -50,59 +45,6 @@ void Codegen::emitDeclareFunction(const Function& function) {
     b().declareFunction(function.name,
                         b().functionType(llvmType(function.return_type), params,
                                          function.variadic));
-}
-
-void Codegen::emitNativeSyscallFunction(const Function& function) {
-    // declare syscall <n> name(args): ret
-    // Define a real function that issues the CPU trap (not an external C call).
-    syscalls_.insert(function.name);
-
-    std::vector<llvm::Type*> param_tys;
-    for (const TypedName& p : function.params) {
-        param_tys.push_back(llvmType(p.type));
-    }
-    llvm::FunctionType* fty =
-        b().functionType(llvmType(function.return_type), param_tys, function.variadic);
-    llvm::Function* fn =
-        b().createFunction(function.name, fty, llvm::Function::InternalLinkage);
-    current_function_ = fn;
-
-    for (std::size_t i = 0; i < function.params.size(); ++i) {
-        fn->getArg(i)->setName(function.params[i].name);
-    }
-
-    llvm::BasicBlock* entry = b().createBlock(fn, "entry");
-    b().setInsertPoint(entry);
-
-    std::vector<llvm::Value*> args_i64;
-    args_i64.reserve(function.params.size());
-    for (std::size_t i = 0; i < function.params.size(); ++i) {
-        args_i64.push_back(asI64(function.params[i].type, fn->getArg(i)));
-    }
-
-    llvm::Value* result =
-        b().emitNativeSyscall(b().constI64(function.syscall_number), args_i64);
-
-    if (function.return_type.kind == TypeKind::Void) {
-        b().emitRetVoid();
-    } else if (function.return_type.kind == TypeKind::Int64) {
-        b().emitRet(result);
-    } else if (function.return_type.kind == TypeKind::Int32) {
-        b().emitRet(b().emitTrunc(result, b().i32Ty()));
-    } else if (function.return_type.kind == TypeKind::Bool ||
-               function.return_type.kind == TypeKind::Char) {
-        b().emitRet(b().emitTrunc(result, b().i8Ty()));
-    } else if (function.return_type.kind == TypeKind::Pointer ||
-               function.return_type.kind == TypeKind::String ||
-               function.return_type.kind == TypeKind::Struct) {
-        b().emitRet(b().emitIntToPtr(result, b().ptrTy()));
-    } else {
-        throw XlangError(std::format(
-            "declare syscall `{}` has unsupported return type `{}`", function.name,
-            typeToString(function.return_type)));
-    }
-
-    current_function_ = nullptr;
 }
 
 void Codegen::emitFunction(const Function& function) {

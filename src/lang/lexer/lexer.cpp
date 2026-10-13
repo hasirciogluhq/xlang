@@ -20,7 +20,6 @@ namespace {
         {"reinterpret", TokenKind::Reinterpret},
         {"export", TokenKind::Export},
         {"external", TokenKind::External},
-        {"syscall", TokenKind::Syscall},
         {"declare", TokenKind::Declare},
         {"struct", TokenKind::Struct},
         {"new", TokenKind::New},

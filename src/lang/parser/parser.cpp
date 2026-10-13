@@ -95,11 +95,6 @@ Program Parser::parseProgram() {
 
         if (modifiers.declare) {
             validateModifiers(modifiers, "declare");
-            if (match(TokenKind::Syscall)) {
-                // declare syscall <number> name(...) — CPU-native trap
-                program.functions.push_back(parseDeclareSyscall());
-                continue;
-            }
             // declare [fn] name(...) — blind external C ABI symbol
             // declare name: type — external global
             if (check(TokenKind::Fn) ||
@@ -351,41 +346,6 @@ Function Parser::parseFunction(const ItemModifiers& modifiers) {
     return function;
 }
 
-Function Parser::parseDeclareSyscall() {
-    // declare syscall <number> name(params): ret
-    // Emits a CPU-native trap (x86_64: syscall / aarch64: svc), not a C ABI call.
-    const Span start = currentSpan();
-    if (!check(TokenKind::Number)) {
-        throw error("expected syscall number after `declare syscall` "
-                    "(C ABI symbols use plain `declare name(...)`)");
-    }
-    const Token number = consume(TokenKind::Number, "expected syscall number");
-    if (match(TokenKind::Fn)) {
-    }
-    const Token name = consume(TokenKind::Ident, "expected syscall name");
-    consume(TokenKind::LParen, "expected '('");
-    const ParamList parsed = parseParams();
-    std::vector<TypedName> params = parsed.params;
-    const bool variadic = parsed.variadic;
-    consume(TokenKind::RParen, "expected ')'");
-    Type return_type = defaultType();
-    if (match(TokenKind::Colon)) {
-        return_type = parseType();
-    }
-    consumeEndOfStatement();
-
-    Function function;
-    function.name = name.text;
-    function.params = std::move(params);
-    function.return_type = return_type;
-    function.variadic = variadic;
-    function.syscall = true;
-    function.syscall_number = number.number;
-    function.span = start;
-    registerFunction(function.name);
-    return function;
-}
-
 Function Parser::parseDeclareFunction(const ItemModifiers& modifiers) {
     // declare [fn] name(params): ret — blind external C ABI (raw symbol name).
     const Span start = currentSpan();
@@ -630,7 +590,7 @@ void Parser::consumeEndOfStatement() {
     const TokenKind k = peek().kind;
     if (k == TokenKind::Fn || k == TokenKind::Local || k == TokenKind::Return ||
         k == TokenKind::Import || k == TokenKind::From || k == TokenKind::Ident ||
-        k == TokenKind::Export || k == TokenKind::External || k == TokenKind::Syscall ||
+        k == TokenKind::Export || k == TokenKind::External ||
         k == TokenKind::Declare || k == TokenKind::Struct || k == TokenKind::Delete ||
         k == TokenKind::New || k == TokenKind::If || k == TokenKind::While ||
         k == TokenKind::Go || k == TokenKind::Star || k == TokenKind::Amp ||
@@ -850,26 +810,20 @@ std::unique_ptr<Expr> Parser::parsePrimary() {
         return parseNewExpr(span);
     }
 
-    if (match(TokenKind::At)) {
-        const Token name = consume(TokenKind::Ident, "expected 'syscall' after '@'");
-        if (name.text != "syscall") {
-            throw error("expected '@syscall'");
-        }
-        consume(TokenKind::LParen, "expected '(' after @syscall");
-        auto number = parseExpr();
-        std::vector<std::unique_ptr<Expr>> args;
-        while (match(TokenKind::Comma)) {
-            args.push_back(parseExpr());
-        }
-        consume(TokenKind::RParen, "expected ')' after @syscall arguments");
-        return Expr::makeNativeSyscall(std::move(number), std::move(args), span);
-    }
-
     if (match(TokenKind::Ident)) {
         const std::string name = previous().text;
         if (match(TokenKind::LParen)) {
             auto args = parseCallArgs();
             consume(TokenKind::RParen, "expected ')'");
+            if (name == "syscall") {
+                // Compiler builtin: syscall(nr, a0..a5) — lowered straight to the CPU trap.
+                if (args.empty()) {
+                    throw error("syscall requires a syscall number as first argument");
+                }
+                auto number = std::move(args.front());
+                args.erase(args.begin());
+                return Expr::makeNativeSyscall(std::move(number), std::move(args), span);
+            }
             return Expr::makeCall(name, std::move(args), span);
         }
         if (check(TokenKind::Dot)) {

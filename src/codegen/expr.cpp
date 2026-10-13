@@ -369,7 +369,7 @@ std::pair<Type, llvm::Value*> Codegen::emitExpr(const Expr& expr, const LocalMap
     }
     case Expr::Kind::NativeSyscall: {
         if (!expr.left) {
-            throw XlangError("@syscall requires a syscall number");
+            throw XlangError("syscall requires a syscall number");
         }
         const auto [nr_ty, nr_val] = emitExpr(*expr.left, locals);
         std::vector<llvm::Value*> args;
@@ -468,8 +468,8 @@ std::pair<Type, llvm::Value*> Codegen::emitExpr(const Expr& expr, const LocalMap
         if (const Function* definition =
                 findFunctionDefinition(*program_, resolved->name, paramTypes(resolved->params));
             definition != nullptr &&
-            (definition->syscall || definition->external || definition->body.statements.empty())) {
-            // Native-syscall wrappers and external C symbols keep the raw name.
+            (definition->external || definition->body.statements.empty())) {
+            // External C symbols keep the raw name.
             llvm_name = definition->name;
         }
 

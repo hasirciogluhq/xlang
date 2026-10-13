@@ -148,7 +148,6 @@ Function cloneFunction(const Function& function) {
     copy.span = function.span;
     copy.exported = function.exported;
     copy.external = function.external;
-    copy.syscall = function.syscall;
     copy.variadic = function.variadic;
     copy.body.span = function.body.span;
     for (const Stmt& stmt : function.body.statements) {
@@ -252,7 +251,7 @@ const Function* findFunction(const Program& program, const std::string& name) {
 }
 
 [[nodiscard]] bool isImportableSymbol(const Function& function) {
-    return function.syscall || isImportableFunction(function);
+    return isImportableFunction(function);
 }
 
 std::string prefixed(const std::string& alias, const std::string& name) {
@@ -606,7 +605,7 @@ void ModuleLoader::mergeAll(Program& into, const Program& from) {
         addGlobal(into, cloneGlobal(global));
     }
     for (const Function& function : from.functions) {
-        if (function.body.statements.empty() && !function.external && !function.syscall) {
+        if (function.body.statements.empty() && !function.external) {
             continue;
         }
         if (hasFunctionOverload(into, function)) {
@@ -632,14 +631,7 @@ void ModuleLoader::mergePrefixed(Program& into, const Program& from, const std::
     }
 
     for (const Function& function : from.functions) {
-        if (function.body.statements.empty() && !function.external && !function.syscall) {
-            continue;
-        }
-        if (function.syscall) {
-            if (hasFunctionOverload(into, function)) {
-                continue;
-            }
-            addFunction(into, cloneFunction(function));
+        if (function.body.statements.empty() && !function.external) {
             continue;
         }
         if (isImportableFunction(function)) {
@@ -704,9 +696,6 @@ void mergeSelectiveImportSupport(Program& into, const Program& dep) {
     }
 
     for (const Function& function : dep.functions) {
-        if (function.syscall) {
-            continue;
-        }
         if (isImportableFunction(function)) {
             if (hasFunctionOverload(into, function)) {
                 continue;
@@ -729,7 +718,7 @@ void mergeSelectiveImportSupport(Program& into, const Program& dep) {
         if (function.name != name) {
             continue;
         }
-        if (isImportableFunction(function) || function.syscall) {
+        if (isImportableFunction(function)) {
             return true;
         }
     }
@@ -793,17 +782,11 @@ void ModuleLoader::mergeFromClauses(Program& into, ImportDecl& import,
             if (target != spec.name) {
                 Function copy = cloneFunction(*function);
                 copy.name = target;
-                copy.syscall = function->syscall;
                 copy.external = function->external;
                 if (!hasFunctionOverload(into, copy)) {
                     addFunction(into, std::move(copy));
                 }
-            } else if (function->syscall && !hasFunctionOverload(into, *function)) {
-                Function copy = cloneFunction(*function);
-                copy.syscall = function->syscall;
-                copy.external = function->external;
-                addFunction(into, std::move(copy));
-            } else if (!hasExportedFunctionNamed(dep_program, spec.name) && !function->syscall) {
+            } else if (!hasExportedFunctionNamed(dep_program, spec.name)) {
                 throw XlangError(std::format("symbol not found in module `{}`: {}", import.module, spec.name));
             }
             continue;
@@ -832,7 +815,6 @@ void ModuleLoader::mergeSelected(Program& into, const Program& from, const Impor
             }
             Function copy = cloneFunction(*function);
             copy.name = target;
-            copy.syscall = function->syscall;
             copy.external = function->external;
             addFunction(into, std::move(copy));
             continue;

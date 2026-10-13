@@ -23,14 +23,6 @@ using namespace xlang::codegen_detail;
 
 namespace xlang {
 
-void Codegen::collectSyscalls(const Program& program) {
-    for (const Function& function : program.functions) {
-        if (function.syscall) {
-            syscalls_.insert(function.name);
-        }
-    }
-}
-
 void Codegen::emitPrelude(const Program& program) {
     if (needs_heap_) {
         ensureFn("malloc", b().functionType(b().ptrTy(), {b().i64Ty()}));

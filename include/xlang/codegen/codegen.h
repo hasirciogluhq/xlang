@@ -43,7 +43,6 @@ struct CodegenResult {
     std::unique_ptr<llvm::Module> module;
     /// Set when TargetMachine object emit ran (`object_output` was set).
     std::string object_path;
-    std::unordered_set<std::string> syscalls;
 
     /// Debug dump of the Module (for --emit-ir). Not the compile product path.
     [[nodiscard]] std::string dumpIr() const;
@@ -59,7 +58,6 @@ private:
 
     explicit Codegen(CodegenOptions options);
 
-    void collectSyscalls(const Program& program);
     void emitPrelude(const Program& program);
     void emitStructTypes(const Program& program);
     void emitGlobals(const Program& program);
@@ -68,7 +66,6 @@ private:
     void emitDeclareFunction(const FunctionSignature& function);
     void emitDeclareFunction(const Function& function);
     /// `declare syscall <n> name` → real function body with CPU-native trap.
-    void emitNativeSyscallFunction(const Function& function);
     void preemitStringLiterals(const Program& program);
     void collectStringLiteralsFromExpr(const Expr& expr);
     void collectStringLiteralsFromStmt(const Stmt& stmt);
@@ -130,7 +127,6 @@ private:
     std::unordered_map<std::string, Type> global_types_;
     std::unordered_map<std::string, llvm::GlobalVariable*> global_vars_;
     std::unordered_set<std::string> defined_functions_;
-    std::unordered_set<std::string> syscalls_;
     bool needs_global_init_{false};
     bool needs_heap_{false};
     bool needs_strings_{false};

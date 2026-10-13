@@ -21,7 +21,6 @@ enum class TokenKind {
     Reinterpret,
     Export,
     External,
-    Syscall,
     Declare,
     Struct,
     New,
