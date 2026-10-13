@@ -30,8 +30,13 @@
 - **Do not read or adapt to `examples/`, `test/xlang/`, or stdlib/runtime `.xlang` files.** They are disposable
   and will be rewritten once the compiler reaches its target.
 - **Do not read anything under `.cursor/`** (rules or plans).
-- The compiler knows only the language and CPU primitives (syscall, atomics, function pointers, inline asm).
-  OS, thread, scheduler, print and malloc concepts do not belong in the compiler; they are xlang stdlib.
+- The compiler knows only the language, CPU primitives (syscall, atomics, function pointers, inline asm) and the
+  closed builtin function list (the `__builtin_` atomics and fence). A builtin's body is provided by the compiler itself; if
+  the compiler will not directly support something, it is not a builtin and goes to the stdlib. `memcpy` family,
+  `malloc`/`free`/the allocator are NOT builtins: they come from the stdlib (`std/memory`, `std/mem`).
+  Thread, scheduler and print concepts do not belong in the compiler; they are xlang stdlib.
+- **libc is forbidden**, absolutely: never used, never called, never imitated. Do not suggest it, do not put it in
+  examples (`puts`, `FILE`, `environ`, ...).
 - Do not invent features or design beyond what the user asked for. If a decision is needed, record it in
   the "pending decisions" part of `PLAN.md` or ask.
 - Use the default tools (Read/Edit/Write) for file changes; use bulk regex/python/sed only when necessary.
@@ -64,17 +69,26 @@ No filler praise; state weaknesses plainly. For each feature cover:
   `if` expression syntax; body on the same line means no `#endif`, body on a later line requires `#endif`;
   inactive regions are only lexed. CLI: `-D`, `-U`, `--target`, `-O`, `-g`.
 - Type alias: `type Name = T` (transparent). Macros: `define N = const`, `define f(x: expr) { ... }`, call `f!(...)`;
-  brace-delimited body, no `\` and no `#`/`##`, typed parameters, hygienic, `stringify!`.
+  brace-delimited body, no `\` and no `#`/`##`, typed parameters, hygienic. There is no `stringify!`.
 - Source extension `.xl`. No default export; `export` (between xl modules) and `export(c)` (unmangled C symbol).
 - Name mangling is on by default; overrides: `--mangle=`, `@file(mangle = ...)`, `@mangle(...)` (fn > file > project).
 - Safety: `*T` unchecked, `ref T` generation-checked (`--safety=checked|unchecked`); no borrow checker.
 - Outputs: `--emit=obj|ir|bc|header|exe|static|shared`; linking with C++ is done by the user's build script (xmake).
-- Minimal global namespace: only `syscall`, atomics/`fence`, `size_of`-style queries, `static_assert`, `stringify!`.
-  `memcpy`/`print`/`alloc` are not global; they come from the stdlib via import.
+- Atomics are builtins with the `__builtin_` prefix: `__builtin_atomic_load/store/xchg/cas/add`, `__builtin_fence`.
+  Inline asm is `__builtin_asm("template", in(reg) x, out(reg) y, clobber("memory"))` (syntax in `PLAN.eg.md`
+  §12.1; a proposal, details pending); the template is target-specific and chosen with `#if arch`.
+  `mutex` exists in the stdlib (`std/sync`, built on the atomics + OS wait); there is no `lock_guard`/RAII guard.
+- Global namespace is a closed builtin list: `syscall`, atomics/`fence`, `size_of`-style queries, `static_assert`,
+  and the memory order constants (`relaxed`, `acquire`, `release`, `acq_rel`, `seq_cst`).
+  Builtins come in two spellings: `__builtin_xx` (atomics, fence, asm) and unprefixed (`syscall`, `size_of` family,
+  ...); not all carry the `__builtin_` prefix. `syscall` is always plain `syscall`. Builtins are compiler-level and global; the stdlib is never global.
+  `print` and anything not in the builtin list come from the stdlib via import. Which builtin uses which spelling
+  is a pending decision.
 - `declare` is a single prefix: `declare fn/global/struct/class/interface/type`; no special global syntax; attributes
   (`@repr(c)`, `@mangle`, ...) are the same as for normal declarations; it is only for things coming from other
   objects/libraries.
-- No libc: xl has its own stdlib; `memcpy` etc. are written in xl in the stdlib and exported with `export(c)`.
+- No libc: xl has its own stdlib; `memcpy/memset/memmove/memcmp` (LLVM emits implicit calls)
+  are written in xl in the stdlib and exported with `export(c)`; `alloc/free` live in the stdlib too.
 - The language takes no external libraries (no libc, libSystem, kernel32, pthread library). The stdlib calls each
   OS's kernel ABI with raw `syscall` + `#if os` (including macOS/Windows; stability is not a concern). Do not ask again.
 - Stdlib is optional: `--no-std`, `--std=<path>`; the default stdlib is embedded and contains a Go-like M:N scheduler.
@@ -94,7 +108,9 @@ No filler praise; state weaknesses plainly. For each feature cover:
   `export { a, b as c } from "m"`, `export * from "m" except a`. `import "std"` provides everything.
 - Import: both `from "m" import x` and `import x from "m"` are valid; also `import * from "m"` and
   `import * as a from "m"`.
-- Syscall: builtin `syscall(nr, args...)`.
+- Syscall: builtin `syscall(nr, args...)`. The argument count is dynamic: the compiler forwards exactly the number
+  given, with no fixed limit in the language. The per-target maximum (from the target OS/arch table) is checked
+  at compile time and exceeding it is a compile error. Do not write "0-6" or similar fixed counts anywhere.
 
 ## Build
 

@@ -11,7 +11,8 @@
 [6 Struct ve bellek düzeni](#6-struct-ve-bellek-düzeni) · [7 Class](#7-class) · [8 Interface](#8-interface) ·
 [9 Koşullu derleme](#9-koşullu-derleme) · [9.1 type](#91-tip-takma-adı-type) ·
 [9.2 define/macro](#92-define-ve-macro) · [10 CLI](#10-cli) · [11 Syscall](#11-syscall) ·
-[12 Atomic ve fonksiyon pointer'ı](#12-atomic-ve-fonksiyon-pointerı) · [13 Modüller](#13-modüller) ·
+[12 Atomic ve fonksiyon pointer'ı](#12-atomic-ve-fonksiyon-pointerı) · [12.1 Inline asm](#121-inline-asm) ·
+[13 Modüller](#13-modüller) ·
 [14 Harici (C) semboller](#14-harici-c-semboller) · [15 Stdlib ile thread](#15-stdlib-ile-thread) · [16 Name mangling](#16-name-mangling) ·
 [17 Güvenli referans](#17-güvenli-referans-ref-t) · [18 C++ ile kullanım](#18-c-ile-kullanım-ve-çıktı-biçimleri) · [19 Tanılar](#19-tanılar-ve-uyarılar) ·
 [20 Düzen geçmişi](#20-bellek-düzeni-geçmişi)
@@ -500,7 +501,7 @@ Macro gövdesi ifade, statement, bildirim ve hatta `import` içerebilir. Macro b
 define with_logging(name: ident, body: block) {
     import "std/io" as io
     fn name() {
-        io.print("enter {}\n", stringify!(name))
+        io.print("enter\n")
         body
     }
 }
@@ -518,20 +519,20 @@ with_logging!(startup, {
 | Dışa açma | `export define ...`; `from "m" import square` ile alınır, `square!(...)` olarak çağrılır |
 | Koşullu | `#if` içinde tanımlanabilir, macro gövdesinde `#if` kullanılabilir |
 
-### `#` ve `##` yerine adlandırılmış yardımcılar
+### `#` ve `##` yoktur
 
 ```xlang
 define assert(cond: expr) {
     if !(cond) {
-        panic(stringify!(cond))      // kaynak metnini string yapar
+        panic("assertion failed")
     }
 }
 ```
 
-| Yardımcı | Anlam |
-|----------|-------|
-| `stringify!(parça)` | Parçanın kaynak metnini string literal yapar |
-| Tanımlayıcı birleştirme (`##`) | **Yok**; gerekirse macro parametresi olarak `ident` geçirilir |
+| C önişlemcisi | xl |
+|---------------|----|
+| `#` (parçayı metne çevirme) | **Yok** |
+| `##` (tanımlayıcı birleştirme) | **Yok**; gerekirse macro parametresi olarak `ident` geçirilir |
 
 ---
 
@@ -571,16 +572,25 @@ xlang build main.xl --print-cfg                     # çözülmüş tüm tanıml
 ## 11. Syscall
 
 Compiler yalnızca **numarayı ve argümanları CPU trap'ine yerleştirir**; hangi syscall olduğunu bilmez.
-Argüman sayısı 0–6 olabilir. Dönüş her zaman `i64`'tür.
+Argüman sayısı **dinamiktir**: compiler kaç argüman verildiyse onu olduğu gibi iletir (3 verildiyse 3).
+Sabit bir sınır yoktur; izin verilen en fazla argüman sayısı derlenen hedefin OS/arch'ına göre değişir ve
+bu sınır aşılırsa **derleme hatası** verilir. Dönüş her zaman `i64`'tür.
 
 ```xlang
 fn getpid() -> i64 {
-    return syscall(39)                    // Linux x86_64: getpid
+    return syscall(39)                    // 0 argüman: yalnızca numara
 }
 
 fn write_all(fd: i64, buf: *ui8, n: usize) -> i64 {
-    return syscall(1, fd, buf as i64, n as i64)    // write(fd, buf, n)
+    return syscall(1, fd, buf as i64, n as i64)    // 3 argüman iletilir
 }
+```
+
+```
+error: `syscall` çağrısında 8 argüman var; hedef `x86_64-linux` en fazla 6 argüman alıyor
+  --> sys.xl:12:12
+   |
+12 |     return syscall(9, a, b, c, d, e, f, g, h)    <======= 8 argüman; bu hedef için sınır 6
 ```
 
 | Hedef | Komut | Numara | Argümanlar | Dönüş |
@@ -597,16 +607,17 @@ Numaralar hedefe özeldir; bunları bir stdlib katmanı `#if os == ...` ile seç
 
 ## 12. Atomic ve fonksiyon pointer'ı
 
-Thread/mutex gibi şeyler compiler'da yoktur; yazılabilmeleri için yalnızca atomic işlemler ve
-fonksiyon pointer'ı vardır.
+Thread/mutex gibi şeyler compiler'da yoktur; yazılabilmeleri için yalnızca atomic işlemler,
+fonksiyon pointer'ı ve [inline asm](#121-inline-asm) vardır. Atomic fonksiyonlar compiler builtin'idir ve **`__builtin_` önekiyle**
+global olarak bulunur. `mutex` stdlib'dedir (`std/sync`), altında bu atomic'leri kullanır.
 
 ```xlang
 fn spin_lock(flag: *ui32) {
-    while atomic_cas(flag, 0, 1, seq_cst) != 0 { }
+    while __builtin_atomic_cas(flag, 0, 1, seq_cst) != 0 { }
 }
 
 fn spin_unlock(flag: *ui32) {
-    atomic_store(flag, 0, release)
+    __builtin_atomic_store(flag, 0, release)
 }
 
 fn call_twice(f: fn(i32) -> i32, v: i32) -> i32 {
@@ -622,15 +633,70 @@ fn main() -> i32 {
 
 | Builtin | Anlam |
 |---------|-------|
-| `atomic_load(p, order)` | Atomik okuma |
-| `atomic_store(p, v, order)` | Atomik yazma |
-| `atomic_xchg(p, v, order)` | Değiştir, eskiyi döndür |
-| `atomic_cas(p, expected, new, order)` | Karşılaştır-değiştir, eski değeri döndür |
-| `atomic_add(p, v, order)` | Ekle, eskiyi döndür |
-| `fence(order)` | Bellek bariyeri |
+| `__builtin_atomic_load(p, order)` | Atomik okuma |
+| `__builtin_atomic_store(p, v, order)` | Atomik yazma |
+| `__builtin_atomic_xchg(p, v, order)` | Değiştir, eskiyi döndür |
+| `__builtin_atomic_cas(p, expected, new, order)` | Karşılaştır-değiştir, eski değeri döndür |
+| `__builtin_atomic_add(p, v, order)` | Ekle, eskiyi döndür |
+| `__builtin_fence(order)` | Bellek bariyeri |
 | `&fn_name` | Fonksiyon adresi (`fn(...) -> R` tipli) |
 
-Order değerleri: `relaxed`, `acquire`, `release`, `acq_rel`, `seq_cst`.
+Order değerleri (global sabitler, import gerekmez): `relaxed`, `acquire`, `release`, `acq_rel`, `seq_cst`.
+
+---
+
+## 12.1 Inline asm
+
+Compiler'ın ifade edemeyeceği tek CPU talimatları ve stdlib'in thread trampoline'i ile scheduler bağlam
+değişimi için **inline asm** zorunludur. Atomic'ler gibi compiler builtin'idir: **`__builtin_` önekli**, global.
+
+```xlang
+fn cpu_relax() {
+#if arch == "x86_64"
+    __builtin_asm("pause")
+#elif arch == "aarch64"
+    __builtin_asm("yield")
+#endif
+}
+
+fn read_sp() -> usize {
+    local sp: usize = 0
+#if arch == "x86_64"
+    __builtin_asm("mov {0}, rsp", out(reg) sp)
+#elif arch == "aarch64"
+    __builtin_asm("mov {0}, sp", out(reg) sp)
+#endif
+    return sp
+}
+
+fn swap_marker(a: *ui64, v: ui64) -> ui64 {
+    local old: ui64 = 0
+#if arch == "x86_64"
+    __builtin_asm("xchg {0}, [{1}]", inout(reg) v, in(reg) a, clobber("memory"))
+    old = v
+#endif
+    return old
+}
+```
+
+| Parça | Yazım | Anlam |
+|-------|-------|-------|
+| Çağrı | `__builtin_asm("şablon", işlenenler...)` | Şablon metni olduğu gibi hedef assembler'a gider |
+| Yer tutucu | `{0}`, `{1}`, ... | İşlenenler sırasıyla |
+| Giriş | `in(reg) ifade` | İfadenin değeri bir register'a konur |
+| Çıkış | `out(reg) değişken` | Register'ın sonucu değişkene yazılır |
+| Giriş+çıkış | `inout(reg) değişken` | Önce okunur, sonra aynı register'dan yazılır |
+| Sabit register | `in("rax") ifade` | Belirli register (hedefe özel ad) |
+| Clobber | `clobber("memory")`, `clobber("rcx")` | Talimatın bozduğu şeyler (compiler bunlara güvenmez) |
+
+Kurallar:
+
+| Kural | Açıklama |
+|-------|----------|
+| Hedefe özel | Şablon o hedefin assembly'sidir; `#if arch == ...` ile seçilir, compiler şablonun içini yorumlamaz |
+| Silinmez | Asm bloğu optimizasyonla kaldırılmaz ve yeniden sıralanmaz |
+| Hata | Geçersiz register veya şablon hatası hedef assembler'dan gelir ve derleme hatasıdır |
+| Kullanım | Çoğunlukla stdlib'de (`std/sys`, `std/sched`); uygulama kodunda gerekmez |
 
 ---
 
@@ -726,18 +792,17 @@ Giriş dosyası alt modülleri yeniden dışa aktararak "hepsini" verir.
 
 ```
 std/
-  index.xl            # export * as memory from "memory"; export * from "cpu"; ...
+  index.xl            # export * from "memory"; export * as cpu from "cpu"; ...
   memory.xl           # (veya memory/index.xl)
   cpu/
     index.xl
-    atomic.xl
   gpu.xl
 ```
 
 ```xlang
 // std/index.xl
 export * from "memory"                 // memory'nin tüm export'ları düz biçimde std'ye girer
-export * as cpu from "cpu"             // std.cpu.atomic_add(...) olarak erişilir
+export * as cpu from "cpu"             // std.cpu.<ad>(...) olarak erişilir
 export { launch, Device as GpuDevice } from "gpu"   // seçili + yeniden adlandırma
 ```
 
@@ -751,7 +816,7 @@ export { launch, Device as GpuDevice } from "gpu"   // seçili + yeniden adland�
 
 ```xlang
 // kullanıcı
-import "std" as std                       // hepsi: std.memcpy, std.cpu.atomic_add, std.GpuDevice
+import "std" as std                       // hepsi: std.memcpy, std.cpu.<ad>, std.GpuDevice
 from "std/memory" import memcpy           // yalnızca bir alt modül
 import "std/cpu" as cpu
 ```
@@ -798,7 +863,7 @@ Düzen belirtilmemiş bir `declare` struct/class/global için sıra:
 | 3 | Hiçbiri yok | C düzeni varsayılır **ve uyarı** basılır (`W0201`) |
 
 ```xlang
-declare fn puts(s: *ui8) -> i32
+declare fn api_log(s: *ui8) -> i32
 declare fn api_add(a: i32, b: i32) -> i32       // api.o (C++/Rust/xl) içinden
 
 @repr(c)
@@ -807,10 +872,10 @@ declare struct Point { x: f64, y: f64 }          // C: struct Point { double x, 
 declare fn point_len(p: *Point) -> f64           // C: double point_len(const struct Point*)
 
 @repr(c)
-declare global environ: **ui8                    // C: extern char** environ;
+declare global api_argv: **ui8                   // C: extern char** api_argv;
 
-declare struct FILE                              // opak: C'nin FILE'ı, alanlar bilinmez
-declare fn fclose(f: *FILE) -> i32
+declare struct ApiHandle                         // opak: dış tarafın tipi, alanlar bilinmez
+declare fn api_close(h: *ApiHandle) -> i32
 
 // C++ sınıfı: metodlar C++ mangling'iyle bağlanır, adı @mangle ile verilir
 @repr(c)
@@ -826,24 +891,38 @@ C/C++ ile veri paylaşılacak struct'ların düzeni için `@repr(c)` en sağlam 
 
 ### Global isimler
 
-Kaynak koduna hiçbir import olmadan gelen isimler **çok azdır** (kapalı liste). Diğer her şey
-stdlib'den import edilir. xl **libc kullanmaz**: stdlib kendi içinde tamdır (aşağıya bak).
+Kaynak koduna hiçbir import olmadan gelen isimler **kapalı bir builtin listesidir**. Diğer her şey
+stdlib'den import edilir; stdlib hiçbir zaman global olamaz. **libc yasaktır**: builtin'ler compiler'ın
+kendisindendir (aşağıya bak).
 
 | Global (import gerekmez) | Neden global |
 |--------------------------|--------------|
-| `syscall(nr, ...)` | CPU trap'i, başka yolla ifade edilemez |
-| `atomic_*`, `fence` | Tek CPU talimatları (kesin liste Faz 6'da) |
+| `syscall(nr, ...)` | CPU trap'i, başka yolla ifade edilemez; öneksiz, doğrudan `syscall` |
+| `__builtin_atomic_*`, `__builtin_fence` | Tek CPU talimatları; `__builtin_` önekli (kesin liste Faz 6'da) |
+| `__builtin_asm` | Inline asm ([12.1](#121-inline-asm)); `__builtin_` önekli |
+| `relaxed`, `acquire`, `release`, `acq_rel`, `seq_cst` | Atomic işlemlerin memory order sabitleri |
 | `size_of`, `align_of`, `offset_of`, `static_assert` | Derleme zamanı sorguları |
-| `stringify!` | Macro yerleşiği |
+
+Builtin fonksiyonlar atomic'ler, `fence` ve `__builtin_asm`'dir, hepsi `__builtin_` önekli. `memcpy`, `malloc`, `free` builtin
+değildir, global de değildir: stdlib'den import edilir. Builtin'ler iki biçimde yazılır ve **hepsi
+`__builtin_` önekini taşımaz**: atomic'ler, `fence`, `__builtin_asm` önekli; `syscall`, `size_of` ailesi, `static_assert`
+öneksizdir. `syscall` her zaman doğrudan `syscall` olarak yazılır. Builtin'in gövdesini compiler'ın kendisi
+sağlar; compiler'ın doğrudan desteklemeyeceği bir şey builtin olmaz, stdlib'e gider. Bkz. `PLAN.md`
+"Karar bekleyen".
 
 ```xlang
-// std/memory.xl: xl'in kendi standart kütüphanesi, libc yok
-export(c) fn memcpy(dst: *void, src: *void, n: usize) -> *void {
-    // xl ile yazılmış gerçek gövde
+from "std/mem" import alloc, free              // stdlib: global değil, import gerekir
+from "std/memory" import memcpy
+
+fn clone_header(src: *Header) -> *Header {
+    local p: *Header = alloc(size_of(Header)) as *Header
+    memcpy(p as *void, src as *void, size_of(Header))
+    return p
 }
 
-// kullanıcı
-from "std/memory" import memcpy
+fn drop_header(h: *Header) {
+    free(h as *void)
+}
 ```
 
 `memcpy`, `memset`, `memmove`, `memcmp` stdlib'in içinde **xl ile yazılmıştır** ve `export(c)` ile C adıyla
@@ -916,7 +995,7 @@ xlang stdlib            thread · sync · sched · io · mem
    ▼
 std/sys/{linux,macos,windows}     yalnızca syscall(...), dış kütüphane yok
    ▼
-compiler çekirdeği:  syscall · atomic_* · fn pointer · inline asm
+compiler çekirdeği:  syscall · __builtin_atomic_* · fn pointer · inline asm
 ```
 
 `go`/`spawn` anahtar sözcüğü yoktur; hepsi stdlib fonksiyonudur.
@@ -1004,6 +1083,8 @@ ham pointer `*T` C gibi aynen çalışır. Üstüne, kullanım-sonrası-serbest 
 | `ref T` | 16 B (`ptr` + `gen`) | her erişimde nesil kontrolü | güvenli kod |
 
 ```xlang
+from "std/mem" import free               // stdlib: global değil, import gerekir
+
 struct Node { value: i32 }
 
 fn main() -> i32 {
