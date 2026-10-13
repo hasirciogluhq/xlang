@@ -36,8 +36,9 @@
   `static_assert`; `MemoryOrder`) and the roles bound with
   `register` (`panic`, `allocator`). A builtin's body is provided by the compiler itself; if the compiler will not
   directly support something, it is not a builtin and goes to the stdlib. `memcpy` family, `malloc`/`free`/the
-  allocator are NOT builtins: they come from the stdlib (`std/memory`, `std/mem`). The compiler never treats
-  the stdlib specially (no precedence rules). Thread, scheduler and print concepts do not belong in the
+  allocator are NOT builtins: they come from the stdlib (`std/memory`, `std/mem`). The compiler loads the default
+  stdlib (a driver decision: `--no-std` / `--std=<path>` change it) but never gives special treatment to any name,
+  type or function inside it (no precedence rules; roles bind only via `register`). Thread, scheduler and print concepts do not belong in the
   compiler; they are xlang stdlib.
 - **libc is forbidden**, absolutely: never used, never called, never imitated. Do not suggest it, do not put it in
   examples (`puts`, `FILE`, `environ`, ...).

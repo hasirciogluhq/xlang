@@ -13,7 +13,11 @@
    7'de). `memcpy/memset/memmove/memcmp`, `malloc`/`free` ve allocator builtin değildir, stdlib'dendir;
    `new` allocator'ı kayıtlı `register(allocator)` global'inden ya da açıkça verilen `a`'dan alır
    (4.11, 4.12). Compiler doğrudan destekleyemeyeceği bir şeyi builtin yapmaz; o şey stdlib'e gider.
-   **Compiler stdlib'e özel muamele yapmaz**: stdlib sıradan xl kodudur, `register` her modülde aynı çalışır.
+   **Compiler stdlib içindeki tip/fonksiyonlara özel muamele yapmaz**: onları ada ya da yola göre tanımaz,
+   stdlib sıradan xl kodudur, `register` her modülde aynı çalışır; `panic`/allocator gibi roller yalnızca
+   `register` kaydıyla bağlanır. Compiler varsayılan stdlib'i **yükler** (bu sürücü seviyesinde bir karardır:
+   `--no-std` ya da `--std=<yol>` ile kapatılır/değiştirilir) ve yüklenen stdlib'in kayıtları diğer her
+   modülünki gibi sayılır.
 5. **Önce compiler doğru çalışsın.** Stdlib/example işleri compiler hedefine ulaştıktan sonra gelir.
 6. **Plan ve dil şeması senkron kalır:** dil seviyesini etkileyen her plan değişikliği
    `plan/eg/`'yi de günceller (bkz. `CLAUDE.md`).

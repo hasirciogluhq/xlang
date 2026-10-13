@@ -57,8 +57,9 @@
   `alloc` `null` dönerse `new` `null` döndürür.
 - [ ] **4.12** `register[(rol)] bildirim`: `declare` gibi tek önek. Bildirilen ad, modül derlemeye girer
   girmez **global** olur (import gerekmez; `register` `export` anlamına da gelir). Kayıtlar modül
-  yüklenirken toplanır: yalnızca import grafiğindeki modüller ve stdlib açıkken her zaman yüklenen
-  `std/runtime` sayılır; yüklenmeyen modülün kaydı yoktur. Roller:
+  yüklenirken toplanır: import grafiğindeki modüller ve stdlib açıkken (varsayılan; `--no-std` kapatır)
+  stdlib kökünün (`index.xl`) yüklediği modüller sayılır; yüklenmeyen modülün kaydı yoktur. Stdlib'in
+  yüklenmesi sürücü kararıdır, yüklenen modüller içindeki isimlere compiler özel muamele yapmaz. Roller:
   - `panic`: `fn(msg: *ui8)`; geri dönmez (compiler çağrıdan sonrasını ulaşılamaz sayar). Compiler'ın
     ürettiği hata yolları (2.2 sıfıra bölme, 2.5 dizi sınırı, 4.10 `ref` uyuşmazlığı) onu çağırır; kayıtlı
     yoksa doğrudan trap talimatı üretir.
