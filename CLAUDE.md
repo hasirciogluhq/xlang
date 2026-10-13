@@ -72,7 +72,13 @@ No filler praise; state weaknesses plainly. For each feature cover:
 - `enum Name: T { A, B = 5 }`: `T` is any type that can hold a constant (integers, floats, bool, `*ui8` strings);
   defaults to `i32`; access `Name.A`; conversions with explicit `as`. `MemoryOrder` is a builtin enum.
 - Diagnostic codes: `W` = warning, `E` = error (e.g. `E0302` non-C type in `export(c)`, `E0501` no allocator for
-  `new`, `E0502` duplicate `register`, `E0503` role contract not met, `W0402` local name shadows a registered one).
+  `new`, `E0502` duplicate `register`, `E0503` role contract not met, `W0402` local name shadows a registered one,
+  `E0601` implicit signedness-changing conversion, `W0601` implicit signed int -> float conversion).
+- Implicit conversions (no `as` written): same-signedness integer widening is implicit; signed integer -> `f32/f64`
+  is implicit with `W0601` (silence with `as`, `@allow(W0601)` on a statement/block/fn/file, or `--allow`);
+  `ui <-> i` implicit is error `E0601`, allowed only inside an `unsafe { ... }` block (same or wider target;
+  narrowing always needs `as`). `unsafe` relaxes nothing else (`--safety`, `*T`, `ref T` are unaffected).
+  Everything else is explicit `as`. Pending: `ui -> f` (see `plan/03-*`).
 - `register(role) decl` / `register decl`: a single prefix like `declare`, opposite direction: the declared name
   becomes **global** (no import) as soon as the module enters the compilation, and implies `export`. Roles:
   `panic` (`fn(msg: *ui8)`, noreturn; the compiler's inserted failure paths — division by zero, array bounds,

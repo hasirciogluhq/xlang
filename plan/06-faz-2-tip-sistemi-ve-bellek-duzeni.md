@@ -2,8 +2,11 @@
 
 - [ ] **2.1** Tip modeli: boyut/hizalama (`size_of`, `align_of`) hedefe (`DataLayout`/pointer genişliği) göre hesaplanır.
 - [ ] **2.2** İşaretli/işaretsiz semantik: `sdiv/udiv`, `srem/urem`, `sext/zext`, `icmp slt/ult`,
-  `ashr/lshr` — tip bazlı seçim. Örtük dönüşüm kuralları sema'da (tek yerde). Sıfıra bölme kayıtlı
-  `panic` rolünü çağırır (kayıtlı yoksa trap).
+  `ashr/lshr` — tip bazlı seçim. Örtük dönüşüm kuralları sema'da (tek yerde): aynı işaretlilikte
+  genişleme örtük; işaretli tamsayı → kayan nokta örtük + `W0601`; işaretlilik değiştiren (`ui ↔ i`) örtük
+  dönüşüm `E0601` hatası, `unsafe` bloğu içinde (aynı ya da daha geniş hedefe) geçer; karışık işaretli
+  ikili işlem `E0601`; kalan her şey `as`. HIR'da dönüşümler açık `Cast`'tır (4.3). Sıfıra bölme kayıtlı `panic` rolünü çağırır
+  (kayıtlı yoksa trap).
 - [ ] **2.3** Layout motoru (yeni `src/sema/layout.cpp`):
   - `@repr(c)`: alanlar bildirim sırasında, C kurallarıyla hizalama/padding, `sizeof` = C `sizeof`.
   - varsayılan: derleyici serbestçe sıralayabilir (ör. büyükten küçüğe) — spesifikasyon verilmez.

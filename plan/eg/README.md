@@ -10,6 +10,7 @@ Her özellik ayrı dosyadadır:
 
 - [1. Tipler](01-tipler.md)
 - [2. Tip dönüşümü](02-tip-donusumu.md)
+- [2.1 `unsafe` bloğu](02.1-unsafe.md)
 - [3. Fonksiyonlar](03-fonksiyonlar.md)
 - [4. Değişkenler ve kontrol akışı](04-degiskenler-ve-kontrol-akisi.md)
 - [5. Pointer](05-pointer.md)

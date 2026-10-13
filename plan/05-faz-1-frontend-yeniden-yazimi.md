@@ -1,11 +1,12 @@
 ## Faz 1 — Frontend yeniden yazımı (yeni sözdizimi)
 
 - [ ] **1.1** Lexer: `->`, `#if/#elif/#else`, `@attr`, yeni tip anahtar sözcükleri (`i8..i64`, `ui8..ui64`,
-  `isize`, `usize`, `f32`, `f64`), `class`, `interface`, `impl`/`:` kalıtım sözdizimi.
+  `isize`, `usize`, `f32`, `f64`), `class`, `interface`, `impl`/`:` kalıtım sözdizimi, `unsafe`.
 - [ ] **1.2** Parser: `fn ... -> T`, öznitelikler (`@repr(c)`, `@align(N)`, `@packed`), `class`/`interface`
   bildirimleri, `declare fn ... -> T`, fonksiyon pointer tipi `fn(A, B) -> R`, dizi tipi `[T; N]`,
   dizi literal'i `[a, b]` / `[v; N]`, indeksleme `a[i]`, `enum Ad: T { ... }`, `new T { ... }` /
-  `new(a) T { ... }` ifadesi, `register[(rol)]` öneki.
+  `new(a) T { ... }` ifadesi, `register[(rol)]` öneki, `unsafe { ... }` statement bloğu, statement/blok
+  üzerinde öznitelik (`@allow(KOD) local ...`).
 - [ ] **1.2b** Import biçimleri: `import "m" as a`, `import * from "m"`, `import * as a from "m"`,
   `from "m" import x [as y], ...` ve
   `import x [as y], ... from "m"`; ikincisi birincisiyle aynı `ImportDecl` düğümüne iner.
@@ -24,7 +25,7 @@
 - [ ] **1.4** Diagnostics altyapısı (`include/xlang/util/diagnostics.h`): `Diagnostic{code, severity, span,
   message, detail, reason, fix, notes}`, snippet'li çıktı, birden fazla hata toplama. Her uyarı
   `ne + detay + neden + nasıl düzeltilir` taşır. Kodlar (`W0201`...) bir kayıt tablosunda; `--allow=KOD`,
-  `--deny=KOD`, `-Wno-KOD`, `--warn-all`, `--allow-all`, `--explain KOD`, `@allow(KOD)` (bildirim/dosya kapsamı).
+  `--deny=KOD`, `-Wno-KOD`, `--warn-all`, `--allow-all`, `--explain KOD`, `@allow(KOD)` (statement/blok/bildirim/dosya kapsamı).
   Compiler kısıtlamaz: `declare` ile bağlanan dış şeyler (xl/C++/Rust/`.o`/statik) yalnızca uyarı üretir.
   - **Nokta atışı gösterim:** tanı, hatalı satırın sonuna `<======= yorum` ile işaretlenir; olayın birden
     fazla yeri varsa (ör. çakışmanın iki tarafı) her biri kendi satırında kendi yorumuyla gösterilir; aynı

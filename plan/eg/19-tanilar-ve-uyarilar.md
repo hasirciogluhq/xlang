@@ -118,7 +118,7 @@ Susturulan (`@allow`/`--allow`) uyarılar ekrandan düşer ama `--diag-log` aç�
 | Susturma | Kapsam |
 |----------|--------|
 | `--allow=W0201` / `-Wno-W0201` | Tüm derleme |
-| `@allow(W0201)` | Bildirimin, fonksiyonun veya dosyanın üstünde; o kapsam |
+| `@allow(W0201)` | Statement'ın, bloğun, bildirimin, fonksiyonun veya dosyanın üstünde; o kapsam |
 | `--deny=W0201` | Uyarıyı hataya çevirir |
 | `--warn-all` / `--allow-all` | Hepsini aç / hepsini sustur |
 | `--explain W0201` | Uyarının uzun açıklamasını yazdırır |
@@ -138,3 +138,5 @@ Susturulan (`@allow`/`--allow`) uyarılar ekrandan düşer ama `--diag-log` aç�
 | `E0502` | Aynı rol ya da aynı global ad iki kez `register` edilmiş | **hata** |
 | `E0503` | `register` rolünün sözleşmesi sağlanmamış (ör. `allocator`'da `alloc` ya da `free` yok) | **hata** |
 | `W0402` | Yerel tanım ya da import, `register`'lı bir global adı gölgeliyor | uyarı |
+| `E0601` | İşaretlilik değiştiren örtük dönüşüm (`ui ↔ i`, ya da işaretlilikleri karışık ikili işlem); `unsafe { }` içinde ya da `as` ile geçer ([2.1](02.1-unsafe.md#21-unsafe-bloğu)) | **hata** |
+| `W0601` | İşaretli tamsayı → `f32/f64` örtük dönüşüm, duyarlılık kaybolabilir ([2](02-tip-donusumu.md#i--f-uyarısı)) | uyarı |

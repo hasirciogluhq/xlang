@@ -26,3 +26,8 @@
 - **`register` ayrıntıları:** `define` (macro) kaydı kapsam dışı; `register` ile kaydedilen sembolün
   başka bir kaydı gölgelemesi/çakışması `E0502`; rol sayısı (şu an `panic`, `allocator`) yeni ihtiyaçta
   genişler, her yeni rol bu listeye ve 4.12'ye yazılmalı.
+- **`unsafe` ayrıntıları:** yalnızca `unsafe { }` bloğu var; `unsafe fn` ya da bildirim düzeyi işaret yok
+  (blok başına yazmak ağır gelirse eklenir). `unsafe` şu an tek kuralı gevşetir (`ui ↔ i` örtük, iki yön aynı);
+  `*T` dönüşümleri, `@unchecked fn` ve `--safety` ile ilişkisi bilerek ayrı tutuldu. `W0601` yalnızca
+  **işaretli** tamsayı → float için; **işaretsiz → float** (`ui32 → f64`) için henüz karar yok (şu an `as`
+  ister). `f32 → f64` genişlemesi bu kuralın dışındadır (örtük, uyarısız).
