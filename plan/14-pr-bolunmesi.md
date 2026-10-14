@@ -12,7 +12,7 @@
 8. Sema + scope + modül yükleme (4.1–4.2, 4.6)
 9. HIR + codegen taşıma (4.3, 4.7)
 10. Class (4.4), Interface (4.5)
-10b. Görünürlük + mangling + `ref T` + `new` + `register` (4.8–4.12)
+10b. Görünürlük + mangling + `new` + `register` (4.8–4.9, 4.11–4.12)
 11. Alloca/PassBuilder/Darwin syscall/debug info (5.1–5.5)
 11b. Çıktı biçimleri + header + static/shared + varsayılan `exe` ve linker sürücüsü (5.6–5.9)
 12. Atomic + fnptr + asm (6)

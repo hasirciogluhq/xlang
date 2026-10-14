@@ -65,7 +65,7 @@
   `options(...)` düz çağrıdır. Anlamı Faz 6'dadır.
 - **Makro argümanları ve gövdesi:** ham token listesi olarak saklanır (`macro_args`, `DefineMacroDecl::body`);
   parametre türü doğrulaması ve parse genişleme anındadır (3.7).
-- **Tip ağacı:** parser `Void/Bool/Int/Float/Pointer/Ref/FnPtr/Array/Named` üretir; `Enum/Struct/Class/Interface`
+- **Tip ağacı:** parser `Void/Bool/Int/Float/Pointer/FnPtr/Array/Named` üretir; `Enum/Struct/Class/Interface`
   sema'nın `Named`'i çözmesiyle dolar. `isize`/`usize` `bits = 0` (işaretçi genişliği).
 - **Tanı kodları:** sözdizimi için `E0001` (sözcüksel) ve `E0002` (sözdizimi) kayıt tablosuna eklendi;
   `src/util/diagnostics.cpp` içindeki tablo tek kaynaktır, `--explain` oradan okur. Hata/uyarı sıraya konup

@@ -84,12 +84,12 @@ No filler praise; state weaknesses plainly. For each feature cover:
   is implicit with `W0601` (silence with `as`, `@allow(W0601)` on a statement/block/fn, `@file(allow = W0601)` for a whole file, or `--allow`);
   unsigned <-> signed implicit is error `E0601` for every type, floats included (floats count as signed, so
   `ui -> f` is `E0601`); allowed only inside an `unsafe { ... }` block (same or wider target; narrowing always
-  needs `as`). `unsafe` relaxes nothing else (`--safety`, `*T`, `ref T` are unaffected). Everything else is
+  needs `as`). `unsafe` relaxes nothing else (`--safety`, `*T` are unaffected). Everything else is
   explicit `as`.
 - `register(role) decl` / `register decl`: a single prefix like `declare`, opposite direction: the declared name
   becomes **global** (no import) as soon as the module enters the compilation, and implies `export`. Roles:
-  `panic` (`fn(msg: *ui8)`, noreturn; the compiler's inserted failure paths — division by zero, array bounds,
-  `ref` generation mismatch — call it, plain trap if unregistered) and `allocator` (a mutable global whose type is
+  `panic` (`fn(msg: *ui8)`, noreturn; the compiler's inserted failure paths — division by zero, array bounds —
+  call it, plain trap if unregistered) and `allocator` (a mutable global whose type is
   the `Allocator` interface or a type with `impl Allocator for T`; `new T` calls its `alloc`). One registration per role. Registered names are
   shadowed (with `W0402`) by local definitions. `panic` lives in `std/runtime`, `assert!` in `std/assert`.
 - Memory layout: default xlang layout; `@repr(c)` gives C/C++ layout.
@@ -109,12 +109,11 @@ No filler praise; state weaknesses plainly. For each feature cover:
   `currentAllocator` under the std feature `default-allocator` (on by default); a user either calls
   `std/mem.setAllocator(a)` once at the start of `main` (set-once, second call panics; `new` and `free` follow)
   or turns the feature off with `--std-features=-default-allocator` and registers their own. With no
-  registration, `new T` is error `E0501` (use `new(a) T`). `sqrt` and math come from `std/math`. The relation of
-  `new` to `ref T` is a pending decision.
+  registration, `new T` is error `E0501` (use `new(a) T`). `sqrt` and math come from `std/math`.
 - Global variable initializers are compile-time constants (static init, no runtime init order): literals, `define`
   constants, enum members, `sizeOf`-style queries, `&global`, `&global[const]`, `as` casts, constant struct/class/
   array literals; no function calls or reads of other globals. No initializer means zero-initialized.
-- Safety: `*T` unchecked, `ref T` generation-checked (`--safety=checked|unchecked`); no borrow checker.
+- Safety: `*T` unchecked; arrays bounds-checked (`--safety=checked|unchecked`); no borrow checker. There is no `ref T` (removed from the plan).
 - Outputs: `--emit=obj|ir|bc|header|exe|static|shared`, default `exe`. The compiler produces every output itself and
   runs the rest of the pipeline to the end by default (calling LLVM + linker/archiver when needed); `ir`/`bc`/`obj`/
   `header` stop at that stage. It links only its own output (no libc/external libs). Linking into a C++ project is

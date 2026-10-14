@@ -30,7 +30,6 @@ Her özellik ayrı dosyadadır:
 - [14.1 `register`](14.1-register.md)
 - [15. Stdlib ile thread](15-stdlib-ile-thread.md)
 - [16. Name mangling](16-name-mangling.md)
-- [17. Güvenli referans (`ref T`)](17-guvenli-referans.md)
 - [18. C++ ile kullanım ve çıktı biçimleri](18-c-ile-kullanim-ve-cikti-bicimleri.md)
 - [19. Tanılar ve uyarılar](19-tanilar-ve-uyarilar.md)
 - [20. Bellek düzeni geçmişi](20-bellek-duzeni-gecmisi.md)

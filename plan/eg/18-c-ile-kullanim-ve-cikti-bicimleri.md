@@ -84,4 +84,4 @@ target("app")
 | Yalnızca xl programı/kütüphanesi | `xlang build` (varsayılan `exe`, ya da `static`/`shared`): compiler linker'ı kendisi çağırır |
 
 `export(c)` imzalarında yalnızca C uyumlu tipler (`i8..i64`, `ui8..ui64`, `f32/f64`, `bool`, `*T`, `@repr(c)` struct,
-fonksiyon pointer'ı, tamsayı alt tipli enum) geçebilir; `class`, `interface`, `ref T` bu imzada derleme hatasıdır.
+fonksiyon pointer'ı, tamsayı alt tipli enum) geçebilir; `class` ve `interface` bu imzada derleme hatasıdır.

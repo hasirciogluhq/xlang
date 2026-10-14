@@ -27,7 +27,7 @@
   | `-g` | Debug info (`debug = true`) |
   | `--emit=ir\|bc\|obj\|header\|exe\|static\|shared` | Çıktı biçimi/aşaması; varsayılan `exe` |
   | `--mangle=xl\|none` | Proje seviyesi mangling varsayılanı |
-  | `--safety=checked\|unchecked` | `ref T` nesil kontrolleri ve dizi sınır kontrolleri |
+  | `--safety=checked\|unchecked` | dizi sınır kontrolleri |
   | `--print-cfg` | Çözülmüş tüm tanımları yazdır |
   | `--explain KOD` | Tanı kodunun uzun açıklamasını yazdır (kayıt tablosu `src/util/diagnostics.cpp`) |
   | `--cpu <name>` | Hedef CPU (varsayılan `generic`) |

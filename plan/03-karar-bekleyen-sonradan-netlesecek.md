@@ -8,9 +8,8 @@
   sağlayabiliyor mu" ölçütüne tabidir.
 - **Builtin adı çakışması:** kullanıcı/stdlib bir builtin adını (ör. `sizeOf`) tanımlarsa hata mı,
   gölgeleme mi? (`register` adları için gölgeleme `W0402` ile karara bağlandı.)
-- **`new` ve `ref T`:** `new T{}` `*T` döndürür; `ref T`'ye atamak için `gen` başlığı (4.10) gerekir:
-  kayıtlı allocator'ın ref-uyumlu olması mı, ayrı bir yazım mı belirlenmedi (§17 örneği `new Node{}`'u
-  `ref Node`'a atıyor).
+- **Güvenli referans (`ref T`):** plandan çıkarıldı (nesil kontrollü `{ptr, gen}` fikri). İleride istenirse
+  ayrı bir özellik olarak sıfırdan tasarlanır; şu an dilde ve planda yoktur.
 - **String literal:** `panic`/`print` string'in `*ui8` olduğunu ve sonunun 0 ile bittiğini varsayıyor;
   string literal'in dil seviyesinde kuralı yazılmadı, uzunluk taşıyan ayrı bir `str` tipi planlanmadı.
 - **`setAllocator` sınırı:** ilk `new`'den sonra çağrılırsa önceki bloklar yeni allocator'a bırakılabilir;

@@ -38,15 +38,11 @@
   başka modülden erişilemez (sema hatası); LLVM linkage'ı `InternalLinkage`. `export` →
   `ExternalLinkage` (xl mangling'li); `export(c)` → `ExternalLinkage`, C ABI adı.
   `export(c)` imzasında yalnızca C uyumlu tipler (tamsayılar, `f32/f64`, `bool`, `*T`, `@repr(c)` struct,
-  fonksiyon pointer'ı, tamsayı alt tipli enum); `class`/`interface`/`ref T`/string enum hata (`E0302`).
+  fonksiyon pointer'ı, tamsayı alt tipli enum); `class`/`interface`/string enum hata (`E0302`).
 - [ ] **4.9** Name mangling: tek modül (`src/sema/mangle.cpp`) — `xl` şeması (`_xl$modül$ad$imza`);
   `@file(mangle = ...)`, `@mangle(none|"ad")`, `--mangle=`; öncelik fn > dosya > proje.
   Mangling kapalıyken sembol çakışması derleme hatası.
-- [ ] **4.10** `ref T`: `{ptr, gen}` 16 B; allocator `gen` başlığını yönetir (stdlib `std/mem`), compiler
-  her erişimde `ref.gen == obj.gen` kontrolü yapar, uyuşmazlıkta kayıtlı `panic`'i çağırır (kayıtlı yoksa
-  trap). `&local`'dan ref'in kaçışı derleme hatası
-  (basit escape kontrolü, borrow checker değil). `@unchecked fn` ve `--safety=unchecked` kontrolleri kaldırır.
-  `ref T` `@repr(c)` alanında ve `export(c)` imzasında yasak.
+- [ ] **4.10** (boş: güvenli referans tipi `ref T` plandan çıkarıldı; numara korunuyor)
 - [ ] **4.11** `new T { alanlar }` ve `new(a) T { alanlar }`: dil ifadesi; `a.alloc(sizeOf(T),
   alignOf(T))` çağırır, alanları yazar ve `*T` döndürür. Allocator, `std/mem`'in **`Allocator` interface'i**dir
   (`alloc(self, size: usize, align: usize) -> *void` ve `free(self, p: *void)`); `a` ya `Allocator` değeridir
@@ -67,7 +63,7 @@
   stdlib kökünün (`index.xl`) yüklediği modüller sayılır; yüklenmeyen modülün kaydı yoktur. Stdlib'in
   yüklenmesi sürücü kararıdır, yüklenen modüller içindeki isimlere compiler özel muamele yapmaz. Roller:
   - `panic`: `fn(msg: *ui8)`; geri dönmez (compiler çağrıdan sonrasını ulaşılamaz sayar). Compiler'ın
-    ürettiği hata yolları (2.2 sıfıra bölme, 2.5 dizi sınırı, 4.10 `ref` uyuşmazlığı) onu çağırır; kayıtlı
+    ürettiği hata yolları (2.2 sıfıra bölme, 2.5 dizi sınırı) onu çağırır; kayıtlı
     yoksa doğrudan trap talimatı üretir.
   - `allocator`: tipi `Allocator` interface'i olan ya da `impl Allocator for T` yazılmış bir `T` olan
     **global değişken** (4.11); `new T` onun `alloc`'unu çağırır.
