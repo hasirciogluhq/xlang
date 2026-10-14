@@ -7,6 +7,7 @@
 #include <filesystem>
 #include <iostream>
 #include <regex>
+#include <csignal>
 #include <set>
 #include <sys/wait.h>
 #include <unistd.h>
@@ -200,7 +201,17 @@ struct Palette {
 
 /// Runs `argv` and waits; the child inherits stdout/stderr. Returns the exit status (128+signal when
 /// killed by a signal, -1 when the process could not be started).
-int runProcess(const std::vector<std::string>& args) {
+volatile sig_atomic_t g_forward_pid = 0;
+
+void forwardSignal(int sig) {
+    if (g_forward_pid > 0) {
+        ::kill(static_cast<pid_t>(g_forward_pid), sig);
+    }
+}
+
+/// With `forward` set, SIGINT/SIGTERM/SIGHUP received by this process are passed on to the child, so
+/// killing `xlang run` does not leave the program running (and holding e.g. its listening port).
+int runProcess(const std::vector<std::string>& args, bool forward = false) {
     std::vector<char*> argv;
     for (const std::string& a : args) {
         argv.push_back(const_cast<char*>(a.c_str()));
@@ -217,7 +228,19 @@ int runProcess(const std::vector<std::string>& args) {
         ::_exit(127);
     }
     int status = 0;
+    if (forward) {
+        g_forward_pid = pid;
+        ::signal(SIGINT, forwardSignal);
+        ::signal(SIGTERM, forwardSignal);
+        ::signal(SIGHUP, forwardSignal);
+    }
     while (::waitpid(pid, &status, 0) < 0) {
+    }
+    if (forward) {
+        g_forward_pid = 0;
+        ::signal(SIGINT, SIG_DFL);
+        ::signal(SIGTERM, SIG_DFL);
+        ::signal(SIGHUP, SIG_DFL);
     }
     if (WIFEXITED(status)) {
         return WEXITSTATUS(status);
@@ -257,7 +280,7 @@ int runProgram(const std::string& self, const std::string& file, const std::vect
     build.insert(build.end(), build_args.begin(), build_args.end());
     int code = runProcess(build);
     if (code == 0) {
-        code = runProcess({exe.string()});
+        code = runProcess({exe.string()}, true);
     }
     fs::remove(exe, ec);
     return code;

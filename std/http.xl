@@ -3,6 +3,7 @@
 // (`Connection: close`). No fixed limits: the route table and the request buffer grow on demand.
 from "sys" import sysTcpSocket, sysTcpConnect, sysTcpListen, sysTcpAccept, sysClose, sysRead, sysWrite, sysUnmap
 from "memory" import strlen, mapGrow
+from "io" import eprint
 
 /// What a handler sees. `method`, `path` and `body` point into the request buffer.
 export struct Context {
@@ -285,8 +286,12 @@ fn dispatch(r: *Router, fd: i32, buf: *ui8, n: usize) {
 /// forever. Returns -1 when the socket could not be set up.
 export fn routerServe(r: *Router, ip: ui32, port: ui16, onListen: fn()) -> i32 {
     local fd: i32 = sysTcpSocket()
-    if fd < 0 { return -1 }
+    if fd < 0 {
+        eprint("routerServe: cannot create socket\n")
+        return -1
+    }
     if sysTcpListen(fd, ip, port) < 0 {
+        eprint("routerServe: cannot bind/listen (port already in use?)\n")
         sysClose(fd)
         return -1
     }
