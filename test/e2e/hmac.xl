@@ -1,0 +1,76 @@
+// HMAC-SHA256 (RFC 4231 case 1) and HKDF-SHA256 (RFC 5869 test 1).
+from "std/hmac" import hmacSha256, hkdfExtract, hkdfExpand
+from "std" import println, print
+
+fn hexDigit(v: ui8) -> ui8 {
+    if v < 10 { return 48 + v }
+    return 87 + v
+}
+
+fn toHex(d: *ui8, n: usize, out: *ui8) {
+    local i: usize = 0
+    while i < n {
+        out[i * 2] = hexDigit(d[i] >> 4)
+        out[i * 2 + 1] = hexDigit(d[i] & 15)
+        i = i + 1
+    }
+    out[n * 2] = 0
+}
+
+fn same(a: *ui8, b: *ui8) -> bool {
+    local i: usize = 0
+    while a[i] != 0 || b[i] != 0 {
+        if a[i] != b[i] { return false }
+        i = i + 1
+    }
+    return true
+}
+
+global failures: i32 = 0
+
+fn expect(name: *ui8, d: *ui8, n: usize, want: *ui8) {
+    local hex: [ui8; 129]
+    toHex(d, n, &hex[0])
+    if !same(&hex[0], want) {
+        failures = failures + 1
+        print("FAIL ")
+        println(name)
+        println(&hex[0])
+    }
+}
+
+fn main() -> i32 {
+    local key: [ui8; 22]
+    local i: usize = 0
+    while i < 22 {
+        key[i] = 0x0b
+        i = i + 1
+    }
+    local mac: [ui8; 32]
+    hmacSha256(&key[0], 20, "Hi There", 8, &mac[0])
+    expect("hmac", &mac[0], 32, "b0344c61d8db38535ca8afceaf0bf12b881dc200c9833da726e9376c2e32cff7")
+
+    local salt: [ui8; 13]
+    i = 0
+    while i < 13 {
+        salt[i] = i as ui8
+        i = i + 1
+    }
+    local info: [ui8; 10]
+    i = 0
+    while i < 10 {
+        info[i] = (0xf0 + i) as ui8
+        i = i + 1
+    }
+    local prk: [ui8; 32]
+    hkdfExtract(&salt[0], 13, &key[0], 22, &prk[0])
+    expect("hkdf prk", &prk[0], 32, "077709362c2e32df0ddc3f0dc47bba6390b6c73bb50f9c3122ec844ad7c2b3e5")
+    local okm: [ui8; 42]
+    hkdfExpand(&prk[0], &info[0], 10, &okm[0], 42)
+    expect("hkdf okm", &okm[0], 42, "3cb25f25faacd57a90434f64d0362f2a2d2d0a90cf1a5a4c5db02d56ecc4c5bf34007208d5b887185865")
+    if failures == 0 {
+        println("hmac ok")
+        return 0
+    }
+    return 1
+}

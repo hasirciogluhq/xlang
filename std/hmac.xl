@@ -1,0 +1,107 @@
+// std/hmac: HMAC-SHA256 (RFC 2104), HKDF-SHA256 (RFC 5869) and the TLS 1.3 `HKDF-Expand-Label`
+// (RFC 8446 7.1). Messages are limited to 1024 bytes (everything TLS key derivation feeds it fits).
+from "sha256" import sha256
+
+define HMAC_MAX_MSG = 1024
+
+fn zero(p: *ui8, n: usize) {
+    local i: usize = 0
+    while i < n {
+        p[i] = 0
+        i = i + 1
+    }
+}
+
+fn copy(dst: *ui8, src: *ui8, n: usize) {
+    local i: usize = 0
+    while i < n {
+        dst[i] = src[i]
+        i = i + 1
+    }
+}
+
+/// `out[0..32]` = HMAC-SHA256(key[0..klen], msg[0..mlen]); false when `mlen` exceeds the limit.
+export fn hmacSha256(key: *ui8, klen: usize, msg: *ui8, mlen: usize, out: *ui8) -> bool {
+    if mlen > HMAC_MAX_MSG { return false }
+    local k: [ui8; 64]
+    zero(&k[0], 64)
+    if klen > 64 {
+        sha256(key, klen, &k[0])
+    } else {
+        copy(&k[0], key, klen)
+    }
+    local inner: [ui8; 1088]
+    local i: usize = 0
+    while i < 64 {
+        inner[i] = k[i] ^ 0x36
+        i = i + 1
+    }
+    copy(&inner[64], msg, mlen)
+    local ih: [ui8; 32]
+    sha256(&inner[0], 64 + mlen, &ih[0])
+    local outer: [ui8; 96]
+    i = 0
+    while i < 64 {
+        outer[i] = k[i] ^ 0x5c
+        i = i + 1
+    }
+    copy(&outer[64], &ih[0], 32)
+    sha256(&outer[0], 96, out)
+    return true
+}
+
+/// HKDF-Extract: `prk[0..32]` = HMAC(salt, ikm).
+export fn hkdfExtract(salt: *ui8, slen: usize, ikm: *ui8, ilen: usize, prk: *ui8) {
+    local zeros: [ui8; 32]
+    if slen == 0 {
+        zero(&zeros[0], 32)
+        hmacSha256(&zeros[0], 32, ikm, ilen, prk)
+    } else {
+        hmacSha256(salt, slen, ikm, ilen, prk)
+    }
+}
+
+/// HKDF-Expand: `okm[0..len]` (len <= 255 * 32) from a 32-byte `prk` and `info`.
+export fn hkdfExpand(prk: *ui8, info: *ui8, ilen: usize, okm: *ui8, len: usize) -> bool {
+    if ilen > 256 || len > 255 * 32 { return false }
+    local buf: [ui8; 32 + 256 + 1]
+    local t: [ui8; 32]
+    local produced: usize = 0
+    local tlen: usize = 0
+    local counter: ui8 = 1
+    while produced < len {
+        copy(&buf[0], &t[0], tlen)
+        copy(&buf[tlen], info, ilen)
+        buf[tlen + ilen] = counter
+        hmacSha256(prk, 32, &buf[0], tlen + ilen + 1, &t[0])
+        tlen = 32
+        local n: usize = len - produced
+        if n > 32 { n = 32 }
+        copy(&okm[produced], &t[0], n)
+        produced = produced + n
+        counter = counter + 1
+    }
+    return true
+}
+
+/// TLS 1.3 HKDF-Expand-Label(secret, label, context, length) with the `"tls13 "` prefix; `label` is
+/// NUL-terminated without the prefix, `ctx` may be empty.
+export fn hkdfExpandLabel(secret: *ui8, label: *ui8, ctx: *ui8, clen: usize, out: *ui8, len: usize) {
+    local info: [ui8; 2 + 1 + 6 + 32 + 1 + 64]
+    local n: usize = 0
+    info[0] = ((len / 256) % 256) as ui8
+    info[1] = (len % 256) as ui8
+    local ll: usize = 0
+    while label[ll] != 0 { ll = ll + 1 }
+    info[2] = (6 + ll) as ui8
+    n = 3
+    copy(&info[n], "tls13 ", 6)
+    n = n + 6
+    copy(&info[n], label, ll)
+    n = n + ll
+    info[n] = clen as ui8
+    n = n + 1
+    copy(&info[n], ctx, clen)
+    n = n + clen
+    hkdfExpand(secret, &info[0], n, out, len)
+}
