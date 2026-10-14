@@ -118,6 +118,10 @@ constexpr std::size_t kLeadWidth = 40;
          "The back end could not lower the program: an unresolved external reference, a syscall "
          "form the target does not support, or a generated module that failed LLVM verification "
          "(an internal error)."},
+        {"W0701", Severity::Warning, "missing return",
+         "Control can fall off the end of a function that returns a value: some path has no "
+         "`return` (a loop that ends with `break`, an `if` without `else`, ...). Add a `return`, "
+         "or end the path with a call to the registered `panic`."},
         {"W0601", Severity::Warning, "implicit signed integer to float conversion",
          "A signed integer is implicitly converted to `f32`/`f64` and precision may be lost. "
          "Write `as f64`, or silence with `@allow(W0601)` / `--allow=W0601`."},

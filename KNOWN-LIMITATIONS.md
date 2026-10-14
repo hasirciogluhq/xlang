@@ -29,14 +29,26 @@ Everything in the original plan is implemented; this file lists what is intentio
 - **Itanium typeinfo:** the vtable of an `@repr(c)` class has a `null` typeinfo slot; no `_ZTI...` symbol.
 
 ## Language/stdlib
-- No compound assignment (`+=`, `<<=`), `break` or `for`; `continue` exists (jumps to the innermost `while`'s
-  condition; outside a loop it is `E0709`). The stdlib was written before it and mostly does not use it.
+- Control flow: `while`, `do { } while c`, `for init; cond; step { }`, `for i in lo..hi { }` (`hi` exclusive,
+  integer bounds, evaluated once), `break`, `continue`, labels (`outer: while ...`, `break outer`, `continue outer`;
+  `continue` in a `for` runs the step), `switch v { case a, b { } default { } }` (integers, bools, enums; no
+  fallthrough; a `break` inside a `switch` leaves the enclosing loop, the `switch` is not a break target),
+  `defer stmt` (runs when the enclosing block is left, including by `return`/`break`/`continue`, last-in
+  first-out; the deferred statement cannot itself `return`, jump, declare a variable or `defer`; `return v`
+  computes `v` before the deferred statements run), `cond ? a : b`, compound assignment (`+= -= *= /= %= &= |= ^=
+  <<= >>=`) and statement-level `x++` / `x--`. `a op= b` is `a = a op b`; a target containing a call is
+  evaluated once through a hidden pointer. `++`/`--` are lexed as tokens, so `a--b` no longer parses as `a - -b`:
+  write `a - -b`. Break/continue across a `switch` or `for` header are not otherwise restricted.
+- No generics, no tuples/multiple return values (design decisions are open: syntax, constraints, monomorphization
+  versus erasure). Not added because the plan does not define them.
+- `W0701`: a function with a return type can reach its end without `return`. The analysis is syntactic: every
+  path must end in `return`, an infinite `while true` without `break`, `__builtin_asm(..., options("noreturn"))` or
+  a call to the registered `panic`. Other `noreturn` callees are not recognized (a warning, not an error).
 - Bit operators `& | ^ ~ << >>` exist with Go-style precedence (`& << >>` bind like `*`, `| ^` like `+`,
   so `a & b == c` is `(a & b) == c`). Shifts: the result has the left operand's type, the count may be any
   integer type, a count >= the bit width gives 0 (`>>` of a negative signed value gives -1), `>>` on signed
   types is arithmetic. In `define`/global constants `~x` is the untyped `-x - 1`; cast the result.
 - `HIR` does not fold constant expressions (`N * 2` is constant in global initializers but folded later).
-- No flow analysis for falling off the end of a value-returning function.
 - Module resolution: `std`/`std/x` come from the stdlib root; other paths from the importing file's
   directory, then the root file's directory. `import "x"` without alias binds the last path segment.
   No package or search-path strategies.

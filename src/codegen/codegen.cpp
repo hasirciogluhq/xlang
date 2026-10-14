@@ -136,7 +136,11 @@ private:
     llvm::Function* cur_fn_{nullptr};
     std::vector<llvm::Value*> locals_;
     llvm::Value* sret_{nullptr};
-    std::vector<llvm::BasicBlock*> loop_conds_;  ///< condition blocks of the enclosing `while`s (for `continue`)
+    struct LoopTargets {
+        llvm::BasicBlock* cont;  ///< where `continue` goes (step block, or the condition)
+        llvm::BasicBlock* brk;   ///< where `break` goes
+    };
+    std::vector<LoopTargets> loops_;  ///< enclosing loops, innermost last
     bool failed_{false};
 
     // debug info
@@ -856,24 +860,37 @@ void Gen::genStmt(const hir::Stmt& s) {
         llvm::BasicBlock* cond_bb = llvm::BasicBlock::Create(ctx_, "while.cond", cur_fn_);
         llvm::BasicBlock* body_bb = llvm::BasicBlock::Create(ctx_, "while.body", cur_fn_);
         llvm::BasicBlock* end_bb = llvm::BasicBlock::Create(ctx_, "while.end", cur_fn_);
-        B_.CreateBr(cond_bb);
+        llvm::BasicBlock* step_bb =
+            s.step.empty() ? nullptr : llvm::BasicBlock::Create(ctx_, "while.step", cur_fn_);
+        // `continue` runs the step (a `for`), then re-tests the condition.
+        llvm::BasicBlock* next_bb = step_bb != nullptr ? step_bb : cond_bb;
+        B_.CreateBr(s.post_test ? body_bb : cond_bb);
         B_.SetInsertPoint(cond_bb);
         setLoc(s.span);
         llvm::Value* c = genScalar(*s.value);
         B_.CreateCondBr(c, body_bb, end_bb);
         B_.SetInsertPoint(body_bb);
-        loop_conds_.push_back(cond_bb);
+        loops_.push_back({next_bb, end_bb});
         genStmts(s.body);
-        loop_conds_.pop_back();
+        loops_.pop_back();
         if (!hasTerminator(B_.GetInsertBlock())) {
-            B_.CreateBr(cond_bb);
+            B_.CreateBr(next_bb);
+        }
+        if (step_bb != nullptr) {
+            B_.SetInsertPoint(step_bb);
+            genStmts(s.step);
+            if (!hasTerminator(B_.GetInsertBlock())) {
+                B_.CreateBr(cond_bb);
+            }
         }
         B_.SetInsertPoint(end_bb);
         break;
     }
-    case hir::StmtKind::Continue: {
-        B_.CreateBr(loop_conds_.back());
-        llvm::BasicBlock* dead = llvm::BasicBlock::Create(ctx_, "after.continue", cur_fn_);
+    case hir::StmtKind::Continue:
+    case hir::StmtKind::Break: {
+        const LoopTargets& t = loops_[loops_.size() - 1 - s.depth];
+        B_.CreateBr(s.kind == hir::StmtKind::Break ? t.brk : t.cont);
+        llvm::BasicBlock* dead = llvm::BasicBlock::Create(ctx_, "after.jump", cur_fn_);
         B_.SetInsertPoint(dead);
         break;
     }
@@ -984,6 +1001,21 @@ void Gen::genInto(const hir::Expr& e, llvm::Value* dest) {
                 storeScalar(e.lhs->type, genScalar(*e.lhs), addr);
             }
         }
+        return;
+    }
+    case hir::ExprKind::Select: {
+        llvm::Value* c = genScalar(*e.lhs);
+        llvm::BasicBlock* then_bb = llvm::BasicBlock::Create(ctx_, "sel.then", cur_fn_);
+        llvm::BasicBlock* else_bb = llvm::BasicBlock::Create(ctx_, "sel.else", cur_fn_);
+        llvm::BasicBlock* end_bb = llvm::BasicBlock::Create(ctx_, "sel.end", cur_fn_);
+        B_.CreateCondBr(c, then_bb, else_bb);
+        B_.SetInsertPoint(then_bb);
+        genInto(*e.rhs, dest);
+        B_.CreateBr(end_bb);
+        B_.SetInsertPoint(else_bb);
+        genInto(*e.args[0], dest);
+        B_.CreateBr(end_bb);
+        B_.SetInsertPoint(end_bb);
         return;
     }
     case hir::ExprKind::ToInterface: {
@@ -1692,6 +1724,26 @@ llvm::Value* Gen::genScalar(const hir::Expr& e) {
         return e.type.kind == TypeKind::Float ? B_.CreateFNeg(v) : B_.CreateNeg(v);
     }
     case hir::ExprKind::Binary: return genBinary(e);
+    case hir::ExprKind::Select: {
+        llvm::Value* c = genScalar(*e.lhs);
+        llvm::BasicBlock* then_bb = llvm::BasicBlock::Create(ctx_, "sel.then", cur_fn_);
+        llvm::BasicBlock* else_bb = llvm::BasicBlock::Create(ctx_, "sel.else", cur_fn_);
+        llvm::BasicBlock* end_bb = llvm::BasicBlock::Create(ctx_, "sel.end", cur_fn_);
+        B_.CreateCondBr(c, then_bb, else_bb);
+        B_.SetInsertPoint(then_bb);
+        llvm::Value* a = genScalar(*e.rhs);
+        llvm::BasicBlock* then_end = B_.GetInsertBlock();
+        B_.CreateBr(end_bb);
+        B_.SetInsertPoint(else_bb);
+        llvm::Value* b = genScalar(*e.args[0]);
+        llvm::BasicBlock* else_end = B_.GetInsertBlock();
+        B_.CreateBr(end_bb);
+        B_.SetInsertPoint(end_bb);
+        llvm::PHINode* phi = B_.CreatePHI(a->getType(), 2);
+        phi->addIncoming(a, then_end);
+        phi->addIncoming(b, else_end);
+        return phi;
+    }
     case hir::ExprKind::Cast: return genCast(e);
     case hir::ExprKind::New: return genNew(e);
     case hir::ExprKind::Call:

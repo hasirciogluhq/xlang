@@ -67,6 +67,7 @@ struct Expr {
         ArrayRepeat,   ///< [lhs; rhs]
         StructLiteral, ///< type { fields }
         New,           ///< new T { fields } / new(lhs) T { fields }; lhs null = registered allocator
+        Ternary,       ///< lhs ? rhs : args[0]
         MacroCall,     ///< text!( macro_args... ), arguments kept as raw token lists
         AsmOperand,    ///< `in(reg) x` / `out("rax") y` / `inout(reg) z` inside `__builtin_asm(...)`:
                        ///< text = in|out|inout, lhs = register spec, rhs = operand
@@ -90,30 +91,54 @@ struct Expr {
 };
 
 struct Block;
+struct Stmt;
+
+/// One arm of a `switch`: `case a, b { ... }` or `default { ... }`.
+struct SwitchCase {
+    Span span;
+    bool is_default{false};
+    std::vector<ExprPtr> values;
+    std::unique_ptr<Block> body;
+};
 
 struct Stmt {
     enum class Kind {
         Local,   ///< local name [: type] [= expr]
-        Assign,  ///< target = expr
+        Assign,  ///< target = expr; compound (`+=` ...) when `has_compound_op`
         Return,  ///< return [expr]
         Expr,    ///< expr
         If,      ///< if expr { then } [else { else_body }]
-        While,   ///< while expr { body }
-        Continue,  ///< continue (re-evaluates the innermost `while` condition)
+        While,   ///< [label:] while expr { body }
+        DoWhile, ///< [label:] do { body } while expr
+        For,     ///< [label:] for [init]; [cond]; [step] { body }
+        ForRange,///< [label:] for name in expr .. rhs { body }   (rhs exclusive)
+        Switch,  ///< switch expr { case a, b { } ... default { } }
+        Defer,   ///< defer stmt (runs when the enclosing block is left)
+        Continue,  ///< continue [label] (jumps to the loop's next iteration)
+        Break,   ///< break [label]
         Unsafe,  ///< unsafe { body }
         Block,   ///< { body }
     } kind{Kind::Expr};
 
     Span span;
     std::vector<Attribute> attributes;
+    /// Local/ForRange: the variable. Break/Continue: the target label (empty = innermost loop).
     std::string name;
+    /// While/DoWhile/For/ForRange: the label written before the loop (empty = none).
+    std::string label;
     bool has_type{false};
     Type type;
     ExprPtr target;
-    ExprPtr expr;
-    std::unique_ptr<Block> body;       ///< If: then block; While/Unsafe/Block: the block
+    ExprPtr expr;      ///< Assign value / conditions / ForRange lower bound / Switch scrutinee
+    ExprPtr expr2;     ///< ForRange: exclusive upper bound
+    bool has_compound_op{false};
+    BinaryOp compound_op{BinaryOp::Add};
+    std::unique_ptr<Block> body;       ///< If: then block; loops/Unsafe/Block: the block
     std::unique_ptr<Block> else_body;  ///< If: else block (an `else if` is a block holding one If)
     bool else_is_if{false};
+    std::unique_ptr<Stmt> init;        ///< For: initializer (Local or simple statement), may be null
+    std::unique_ptr<Stmt> step;        ///< For: step (simple statement), may be null; Defer: the statement
+    std::vector<SwitchCase> cases;     ///< Switch
 };
 
 struct Block {

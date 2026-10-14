@@ -37,6 +37,7 @@ enum class ExprKind {
     External,       ///< text = module, member = name; unresolved until module loading (4.6)
     Unary,          ///< unary_op (Neg, Not); lhs
     Binary,         ///< binary_op; lhs, rhs already converted to a common type; `checked` for int / %
+    Select,         ///< lhs ? rhs : args[0]; only the chosen branch is evaluated
     Cast,           ///< lhs -> type; `implicit` when the compiler inserted it
     Call,           ///< direct call: text = function name, args (methods: args[0] is `self`)
     CallIndirect,   ///< lhs = function pointer value, args
@@ -111,7 +112,7 @@ struct Expr {
     bool noreturn{false};  ///< Asm: `options("noreturn")`
 };
 
-enum class StmtKind { Local, Assign, Return, Expr, If, While, Continue, Block };
+enum class StmtKind { Local, Assign, Return, Expr, If, While, Continue, Break, Block };
 
 struct Stmt {
     StmtKind kind{StmtKind::Expr};
@@ -121,6 +122,13 @@ struct Stmt {
     ExprPtr value;       ///< Local init / Assign value / Return value / Expr / If,While condition
     std::vector<Stmt> body;
     std::vector<Stmt> else_body;
+    /// While: statements run after the body on every iteration, including after `continue`
+    /// (the step of a `for`). Empty for a plain `while`.
+    std::vector<Stmt> step;
+    /// While: the condition is tested after the body (`do { } while c`).
+    bool post_test{false};
+    /// Break/Continue: how many enclosing loops to leave (0 = the innermost one).
+    std::uint32_t depth{0};
 };
 
 struct Function {

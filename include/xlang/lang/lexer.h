@@ -27,6 +27,12 @@ enum class TokenKind {
     Else,
     While,
     Continue,
+    Break,
+    Do,
+    Switch,
+    Case,
+    Default,
+    Defer,
     Unsafe,
     Import,
     From,
@@ -85,6 +91,20 @@ enum class TokenKind {
     Ge,
     AndAnd,
     OrOr,
+    DotDot,        ///< `..` (range in `for i in a..b`)
+    Question,      ///< `?` (ternary)
+    PlusAssign,    ///< `+=`
+    MinusAssign,   ///< `-=`
+    StarAssign,    ///< `*=`
+    SlashAssign,   ///< `/=`
+    PercentAssign, ///< `%=`
+    AmpAssign,     ///< `&=`
+    PipeAssign,    ///< `|=`
+    CaretAssign,   ///< `^=`
+    ShlAssign,     ///< `<<=`
+    ShrAssign,     ///< `>>=`
+    PlusPlus,      ///< `++` (statement only)
+    MinusMinus,    ///< `--` (statement only)
 
     // Conditional-compilation directives (`#if` ...). The lexer only recognizes them; the
     // preprocessor (plan phase 3) consumes them.

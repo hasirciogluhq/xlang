@@ -60,6 +60,7 @@ void dumpExpr(std::ostream& out, const Function* fn, const Expr& e) {
     case ExprKind::ExternalCall: out << "(call.external " << e.text << '.' << e.member; break;
     case ExprKind::Syscall: sub("syscall"); break;
     case ExprKind::Field: out << std::format("(field{} {}", e.through_pointer ? ".ptr" : "", e.text); break;
+    case ExprKind::Select: sub("select"); break;
     case ExprKind::Index: sub(e.checked ? "index.checked" : "index"); break;
     case ExprKind::Deref: sub("deref"); break;
     case ExprKind::AddrOf: sub("addr"); break;
@@ -148,13 +149,20 @@ void dumpStmt(std::ostream& out, const Function& fn, const Stmt& s, int indent) 
         }
         break;
     case StmtKind::While:
-        out << "while ";
+        out << (s.post_test ? "do-while " : "while ");
         dumpExpr(out, &fn, *s.value);
         out << '\n';
         dumpStmts(out, fn, s.body, indent + 1);
+        if (!s.step.empty()) {
+            out << pad << "step\n";
+            dumpStmts(out, fn, s.step, indent + 1);
+        }
         break;
     case StmtKind::Continue:
-        out << "continue\n";
+        out << "continue" << (s.depth != 0 ? std::format(" depth={}", s.depth) : std::string()) << '\n';
+        break;
+    case StmtKind::Break:
+        out << "break" << (s.depth != 0 ? std::format(" depth={}", s.depth) : std::string()) << '\n';
         break;
     case StmtKind::Block:
         out << "block\n";

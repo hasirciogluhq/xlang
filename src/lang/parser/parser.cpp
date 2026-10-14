@@ -377,7 +377,24 @@ class Parser {
     // ------------------------------------------------------------------------------------
     // Expressions
 
-    ExprPtr parseExpr() { return parseOr(); }
+    ExprPtr parseExpr() { return parseTernary(); }
+
+    /// `cond ? a : b` (right associative, lowest precedence).
+    ExprPtr parseTernary() {
+        ExprPtr cond = parseOr();
+        if (at(TokenKind::Question) && continues()) {
+            advance();
+            ExprPtr then_value = parseTernary();
+            expect(TokenKind::Colon, "`:` between the two branches of `?`");
+            ExprPtr else_value = parseTernary();
+            ExprPtr e = makeExpr(Expr::Kind::Ternary, Span::merge(cond->span, else_value->span));
+            e->lhs = std::move(cond);
+            e->rhs = std::move(then_value);
+            e->args.push_back(std::move(else_value));
+            return e;
+        }
+        return cond;
+    }
 
     ExprPtr makeBinary(BinaryOp op, ExprPtr lhs, ExprPtr rhs) {
         const Span span = Span::merge(lhs->span, rhs->span);
@@ -908,6 +925,9 @@ class Parser {
         if (at(TokenKind::End) || at(TokenKind::RBrace) || cur().newline_before) {
             return;
         }
+        if (for_header_ && (at(TokenKind::Semicolon) || at(TokenKind::LBrace))) {
+            return;  // `for init; cond; step {`
+        }
         failAt(cur(),
                std::format("unexpected {} after the end of a statement", describeToken(cur())),
                "a statement ends at a line break",
@@ -928,6 +948,16 @@ class Parser {
 
     Stmt parseStatementBody() {
         Stmt stmt;
+        // `label: while|do|for ...`
+        if (at(TokenKind::Ident) && peekKind(1) == TokenKind::Colon &&
+            (peekKind(2) == TokenKind::While || peekKind(2) == TokenKind::Do ||
+             peekKind(2) == TokenKind::For)) {
+            std::string label = advance().text;
+            advance();  // ':'
+            Stmt loop = parseStatementBody();
+            loop.label = std::move(label);
+            return loop;
+        }
         switch (cur().kind) {
         case TokenKind::Local: {
             advance();
@@ -963,9 +993,34 @@ class Parser {
             stmt.body = parseBlockPtr();
             return stmt;
         }
-        case TokenKind::Continue: {
+        case TokenKind::Do: {
             advance();
-            stmt.kind = Stmt::Kind::Continue;
+            stmt.kind = Stmt::Kind::DoWhile;
+            stmt.body = parseBlockPtr();
+            if (!at(TokenKind::While)) {
+                expected("`while` and the condition after the `do` block");
+            }
+            advance();
+            stmt.expr = parseExpr();
+            endOfStatement();
+            return stmt;
+        }
+        case TokenKind::For:
+            return parseFor();
+        case TokenKind::Switch:
+            return parseSwitch();
+        case TokenKind::Defer: {
+            advance();
+            stmt.kind = Stmt::Kind::Defer;
+            stmt.step = std::make_unique<Stmt>(parseStatement());
+            return stmt;
+        }
+        case TokenKind::Continue:
+        case TokenKind::Break: {
+            stmt.kind = advance().kind == TokenKind::Break ? Stmt::Kind::Break : Stmt::Kind::Continue;
+            if (at(TokenKind::Ident) && !cur().newline_before) {
+                stmt.name = advance().text;
+            }
             endOfStatement();
             return stmt;
         }
@@ -984,8 +1039,40 @@ class Parser {
             break;
         }
 
+        return parseSimpleStatement();
+    }
+
+    /// `target = v`, `target op= v`, `target++`, `target--` or an expression statement.
+    Stmt parseSimpleStatement() {
+        Stmt stmt;
+        stmt.span = cur().span;
         ExprPtr lhs = parseExpr();
-        if (at(TokenKind::Assign) && continues()) {
+        std::optional<BinaryOp> compound;
+        bool incdec = false;
+        if (continues()) {
+            switch (cur().kind) {
+            case TokenKind::PlusAssign: compound = BinaryOp::Add; break;
+            case TokenKind::MinusAssign: compound = BinaryOp::Sub; break;
+            case TokenKind::StarAssign: compound = BinaryOp::Mul; break;
+            case TokenKind::SlashAssign: compound = BinaryOp::Div; break;
+            case TokenKind::PercentAssign: compound = BinaryOp::Mod; break;
+            case TokenKind::AmpAssign: compound = BinaryOp::BitAnd; break;
+            case TokenKind::PipeAssign: compound = BinaryOp::BitOr; break;
+            case TokenKind::CaretAssign: compound = BinaryOp::BitXor; break;
+            case TokenKind::ShlAssign: compound = BinaryOp::Shl; break;
+            case TokenKind::ShrAssign: compound = BinaryOp::Shr; break;
+            case TokenKind::PlusPlus:
+                compound = BinaryOp::Add;
+                incdec = true;
+                break;
+            case TokenKind::MinusMinus:
+                compound = BinaryOp::Sub;
+                incdec = true;
+                break;
+            default: break;
+            }
+        }
+        if ((at(TokenKind::Assign) && continues()) || compound) {
             switch (lhs->kind) {
             case Expr::Kind::Name:
             case Expr::Kind::Field:
@@ -1005,13 +1092,122 @@ class Parser {
             advance();
             stmt.kind = Stmt::Kind::Assign;
             stmt.target = std::move(lhs);
-            stmt.expr = parseExpr();
+            if (incdec) {
+                stmt.has_compound_op = true;
+                stmt.compound_op = *compound;
+                stmt.expr = makeExpr(Expr::Kind::IntLiteral, prev().span);
+                stmt.expr->int_value = 1;
+            } else {
+                stmt.has_compound_op = compound.has_value();
+                stmt.compound_op = compound.value_or(BinaryOp::Add);
+                stmt.expr = parseExpr();
+            }
             endOfStatement();
             return stmt;
         }
         stmt.kind = Stmt::Kind::Expr;
         stmt.expr = std::move(lhs);
         endOfStatement();
+        return stmt;
+    }
+
+    /// `for init; cond; step { body }` (every part optional) or `for i in lo..hi { body }`.
+    Stmt parseFor() {
+        Stmt stmt;
+        advance();  // 'for'
+        const bool saved_no_struct = no_struct_;
+        const bool saved_header = for_header_;
+        no_struct_ = true;
+        if (at(TokenKind::Ident) && peekKind(1) == TokenKind::Ident && peek(1).text == "in") {
+            stmt.kind = Stmt::Kind::ForRange;
+            stmt.name = advance().text;
+            advance();  // 'in'
+            stmt.expr = parseExpr();
+            expect(TokenKind::DotDot, "`..` between the bounds of the range");
+            stmt.expr2 = parseExpr();
+            no_struct_ = saved_no_struct;
+            stmt.body = parseBlockPtr();
+            return stmt;
+        }
+        stmt.kind = Stmt::Kind::For;
+        for_header_ = true;
+        if (!at(TokenKind::Semicolon)) {
+            stmt.init = std::make_unique<Stmt>(parseForClause());
+        }
+        expect(TokenKind::Semicolon, "`;` after the `for` initializer");
+        if (!at(TokenKind::Semicolon)) {
+            stmt.expr = parseExpr();
+        }
+        expect(TokenKind::Semicolon, "`;` after the `for` condition");
+        if (!at(TokenKind::LBrace)) {
+            stmt.step = std::make_unique<Stmt>(parseSimpleStatement());
+        }
+        for_header_ = saved_header;
+        no_struct_ = saved_no_struct;
+        stmt.body = parseBlockPtr();
+        return stmt;
+    }
+
+    Stmt parseForClause() {
+        if (!at(TokenKind::Local)) {
+            return parseSimpleStatement();
+        }
+        Stmt stmt;
+        stmt.span = cur().span;
+        advance();
+        stmt.kind = Stmt::Kind::Local;
+        stmt.name = expectIdent("a variable name");
+        if (match(TokenKind::Colon)) {
+            stmt.has_type = true;
+            stmt.type = parseType();
+        }
+        if (match(TokenKind::Assign)) {
+            stmt.expr = parseExpr();
+        } else if (!stmt.has_type) {
+            expected("`:` with a type or `=` with an initializer");
+        }
+        return stmt;
+    }
+
+    /// `switch v { case a, b { ... } default { ... } }`
+    Stmt parseSwitch() {
+        Stmt stmt;
+        stmt.kind = Stmt::Kind::Switch;
+        advance();  // 'switch'
+        stmt.expr = parseCondition();
+        expect(TokenKind::LBrace, "`{` opening the `switch` body");
+        const int saved_depth = nl_depth_;
+        const bool saved_no_struct = no_struct_;
+        nl_depth_ = 0;
+        const auto restore = [&] {
+            nl_depth_ = saved_depth;
+            no_struct_ = saved_no_struct;
+        };
+        while (!at(TokenKind::RBrace)) {
+            if (at(TokenKind::End)) {
+                restore();
+                failAt(cur(), "unexpected end of file in a `switch`", "the `switch` opened here is never closed");
+            }
+            SwitchCase arm;
+            arm.span = cur().span;
+            if (match(TokenKind::Default)) {
+                arm.is_default = true;
+            } else if (match(TokenKind::Case)) {
+                no_struct_ = true;
+                do {
+                    arm.values.push_back(parseExpr());
+                } while (match(TokenKind::Comma));
+                no_struct_ = false;
+            } else {
+                restore();
+                expected("`case` or `default` inside a `switch`");
+            }
+            arm.body = parseBlockPtr();
+            arm.span = spanFrom(arm.span);
+            stmt.cases.push_back(std::move(arm));
+        }
+        restore();
+        advance();  // '}'
         return stmt;
     }
 
@@ -1768,6 +1964,7 @@ class Parser {
     std::size_t pos_{0};
     int nl_depth_{0};
     bool no_struct_{false};
+    bool for_header_{false};  ///< parsing the init/step statements of a `for` header
 };
 
 } // namespace

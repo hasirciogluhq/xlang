@@ -142,6 +142,16 @@ private:
     // --- statements
     void lowerBlock(const Block& block, std::vector<hir::Stmt>& out, bool new_scope);
     void lowerStmt(const Stmt& s, std::vector<hir::Stmt>& out);
+    void lowerAssign(const Expr& target, const Expr& value, const Span& span, std::vector<hir::Stmt>& out);
+    void lowerCompound(const Stmt& s, std::vector<hir::Stmt>& out);
+    void lowerFor(const Stmt& s, std::vector<hir::Stmt>& out);
+    void lowerForRange(const Stmt& s, std::vector<hir::Stmt>& out);
+    void lowerSwitch(const Stmt& s, std::vector<hir::Stmt>& out);
+    void lowerJump(const Stmt& s, std::vector<hir::Stmt>& out);
+    /// Appends clones of the deferred statements of the frames `[from, defers_.size())`, innermost first.
+    void emitDefers(std::size_t from, std::vector<hir::Stmt>& out) const;
+    EP ternaryExpr(const Expr& e, const Type* expected);
+    hir::LocalId hiddenLocal(const char* prefix, const Type& type, const Span& span);
     hir::LocalId addLocal(const std::string& name, const Type& type, bool is_param, const Span& span);
     void bindLocal(const std::string& name, hir::LocalId id, const Type& type, const Span& span);
 
@@ -209,7 +219,14 @@ private:
     hir::Function* fn_{nullptr};
     Type ret_;
     int unsafe_{0};
-    int loops_{0};  ///< enclosing `while` depth of the statement being lowered (for `continue`)
+    struct LoopCtx {
+        std::string label;
+        std::size_t defer_mark;  ///< `defers_.size()` when the loop was entered
+    };
+    std::vector<LoopCtx> loops_;  ///< enclosing loops of the statement being lowered, innermost last
+    /// One frame per block being lowered: the lowered `defer` statements registered in it, in order.
+    std::vector<std::vector<hir::Stmt>> defers_;
+    unsigned hidden_counter_{0};  ///< unique suffix for compiler-made locals
     bool star_import_{false};
     std::set<std::string> registered_names_;
     std::map<std::string, ScopeEntry> extra_entries_;  ///< registered globals / namespace members
@@ -217,6 +234,222 @@ private:
 
 // ---------------------------------------------------------------------------------------------
 // Helpers
+
+/// Deep copy of an AST expression (used to desugar `a op= b` and `switch`).
+static ExprPtr cloneAst(const Expr& e) {
+    auto c = std::make_unique<Expr>();
+    c->kind = e.kind;
+    c->span = e.span;
+    c->int_value = e.int_value;
+    c->float_value = e.float_value;
+    c->bool_value = e.bool_value;
+    c->text = e.text;
+    c->unary_op = e.unary_op;
+    c->binary_op = e.binary_op;
+    c->type = e.type;
+    c->macro_args = e.macro_args;
+    if (e.lhs) {
+        c->lhs = cloneAst(*e.lhs);
+    }
+    if (e.rhs) {
+        c->rhs = cloneAst(*e.rhs);
+    }
+    for (const ExprPtr& a : e.args) {
+        c->args.push_back(cloneAst(*a));
+    }
+    for (const FieldInit& f : e.fields) {
+        c->fields.push_back({f.name, cloneAst(*f.value), f.span});
+    }
+    return c;
+}
+
+/// An expression whose evaluation may have side effects (so it must not be evaluated twice).
+static bool astHasSideEffects(const Expr& e) {
+    switch (e.kind) {
+    case Expr::Kind::Call:
+    case Expr::Kind::MacroCall:
+    case Expr::Kind::New:
+        return true;
+    default: break;
+    }
+    if (e.lhs && astHasSideEffects(*e.lhs)) {
+        return true;
+    }
+    if (e.rhs && astHasSideEffects(*e.rhs)) {
+        return true;
+    }
+    for (const ExprPtr& a : e.args) {
+        if (astHasSideEffects(*a)) {
+            return true;
+        }
+    }
+    for (const FieldInit& f : e.fields) {
+        if (astHasSideEffects(*f.value)) {
+            return true;
+        }
+    }
+    return false;
+}
+
+static ExprPtr astName(const std::string& name, const Span& span) {
+    auto e = std::make_unique<Expr>();
+    e->kind = Expr::Kind::Name;
+    e->text = name;
+    e->span = span;
+    return e;
+}
+
+static ExprPtr astUnary(UnaryOp op, ExprPtr operand, const Span& span) {
+    auto e = std::make_unique<Expr>();
+    e->kind = Expr::Kind::Unary;
+    e->unary_op = op;
+    e->lhs = std::move(operand);
+    e->span = span;
+    return e;
+}
+
+static ExprPtr astBinary(BinaryOp op, ExprPtr lhs, ExprPtr rhs, const Span& span) {
+    auto e = std::make_unique<Expr>();
+    e->kind = Expr::Kind::Binary;
+    e->binary_op = op;
+    e->lhs = std::move(lhs);
+    e->rhs = std::move(rhs);
+    e->span = span;
+    return e;
+}
+
+static hir::ExprPtr cloneHirExpr(const hir::Expr& e) {
+    auto c = std::make_unique<hir::Expr>();
+    c->kind = e.kind;
+    c->type = e.type;
+    c->span = e.span;
+    c->lvalue = e.lvalue;
+    c->int_value = e.int_value;
+    c->float_value = e.float_value;
+    c->bool_value = e.bool_value;
+    c->text = e.text;
+    c->member = e.member;
+    c->local = e.local;
+    c->unary_op = e.unary_op;
+    c->binary_op = e.binary_op;
+    c->clobbers = e.clobbers;
+    c->target = e.target;
+    c->index = e.index;
+    c->implicit = e.implicit;
+    c->checked = e.checked;
+    c->through_pointer = e.through_pointer;
+    c->registered = e.registered;
+    c->nomem = e.nomem;
+    c->noreturn = e.noreturn;
+    if (e.lhs) {
+        c->lhs = cloneHirExpr(*e.lhs);
+    }
+    if (e.rhs) {
+        c->rhs = cloneHirExpr(*e.rhs);
+    }
+    for (const hir::ExprPtr& a : e.args) {
+        c->args.push_back(cloneHirExpr(*a));
+    }
+    for (const hir::FieldInit& f : e.fields) {
+        c->fields.push_back({f.name, f.index, cloneHirExpr(*f.value)});
+    }
+    for (const hir::AsmOperand& op : e.asm_operands) {
+        c->asm_operands.push_back({op.kind, op.reg, cloneHirExpr(*op.value)});
+    }
+    return c;
+}
+
+static hir::Stmt cloneHirStmt(const hir::Stmt& s) {
+    hir::Stmt c;
+    c.kind = s.kind;
+    c.span = s.span;
+    c.local = s.local;
+    c.post_test = s.post_test;
+    c.depth = s.depth;
+    if (s.target) {
+        c.target = cloneHirExpr(*s.target);
+    }
+    if (s.value) {
+        c.value = cloneHirExpr(*s.value);
+    }
+    for (const hir::Stmt& b : s.body) {
+        c.body.push_back(cloneHirStmt(b));
+    }
+    for (const hir::Stmt& b : s.else_body) {
+        c.else_body.push_back(cloneHirStmt(b));
+    }
+    for (const hir::Stmt& b : s.step) {
+        c.step.push_back(cloneHirStmt(b));
+    }
+    return c;
+}
+
+/// Does `body` contain a `break` that leaves the loop whose body it is (nesting level `level`)?
+static bool breaksOut(const std::vector<hir::Stmt>& body, std::uint32_t level) {
+    for (const hir::Stmt& s : body) {
+        switch (s.kind) {
+        case hir::StmtKind::Break:
+            if (s.depth == level) {
+                return true;
+            }
+            break;
+        case hir::StmtKind::If:
+            if (breaksOut(s.body, level) || breaksOut(s.else_body, level)) {
+                return true;
+            }
+            break;
+        case hir::StmtKind::Block:
+            if (breaksOut(s.body, level)) {
+                return true;
+            }
+            break;
+        case hir::StmtKind::While:
+            if (breaksOut(s.body, level + 1)) {
+                return true;
+            }
+            break;
+        default: break;
+        }
+    }
+    return false;
+}
+
+/// True when control cannot fall off the end of `body` (every path returns, loops forever or
+/// calls a `noreturn` function).
+static bool terminates(const std::vector<hir::Stmt>& body, const std::string& panic_fn) {
+    for (const hir::Stmt& s : body) {
+        switch (s.kind) {
+        case hir::StmtKind::Return:
+            return true;
+        case hir::StmtKind::Block:
+            if (terminates(s.body, panic_fn)) {
+                return true;
+            }
+            break;
+        case hir::StmtKind::If:
+            if (!s.else_body.empty() && terminates(s.body, panic_fn) && terminates(s.else_body, panic_fn)) {
+                return true;
+            }
+            break;
+        case hir::StmtKind::While:
+            if (s.value && s.value->kind == hir::ExprKind::BoolConst && s.value->bool_value &&
+                !breaksOut(s.body, 0)) {
+                return true;
+            }
+            break;
+        case hir::StmtKind::Expr:
+            if (s.value->kind == hir::ExprKind::Asm && s.value->noreturn) {
+                return true;
+            }
+            if (s.value->kind == hir::ExprKind::Call && !panic_fn.empty() && s.value->text == panic_fn) {
+                return true;
+            }
+            break;
+        default: break;
+        }
+    }
+    return false;
+}
 
 void Lowerer::err(const char* code, const Span& at, std::string message, std::string label) {
     s_.error(code, at, std::move(message), std::move(label));
@@ -870,7 +1103,8 @@ void Lowerer::lowerFunction(const FnDecl& f, const Modifiers& mods, const std::s
     fn_ = &out;
     ret_ = out.ret;
     unsafe_ = 0;
-    loops_ = 0;
+    loops_.clear();
+    defers_.clear();
     scopes_.push(ScopeKind::Function);
     std::vector<Type> param_types;
     for (const Param& p : f.params) {
@@ -903,6 +1137,11 @@ void Lowerer::lowerFunction(const FnDecl& f, const Modifiers& mods, const std::s
     assignSymbol(attrs, mods.export_c, mods.declared, local_name, param_types, out.symbol, f.name_span);
     if (f.has_body) {
         lowerBlock(f.body, out.body, false);
+        if (!out.ret.isVoid() && !isUnknown(out.ret) && !terminates(out.body, mod_.panic_function)) {
+            s_.diag_.warning("W0701", f.name_span,
+                             std::format("`{}` can reach the end without returning a value", f.name),
+                             "not every path returns");
+        }
     }
     scopes_.pop();
     fn_ = nullptr;
@@ -1089,12 +1328,361 @@ void Lowerer::lowerBlock(const Block& block, std::vector<hir::Stmt>& out, bool n
     if (new_scope) {
         scopes_.push(ScopeKind::Block);
     }
+    defers_.emplace_back();
     for (const Stmt& s : block.statements) {
         lowerStmt(s, out);
     }
+    // Deferred statements run when the block is left by falling off its end; `return`, `break`
+    // and `continue` emit them at the jump.
+    const bool jumps = !out.empty() && (out.back().kind == hir::StmtKind::Return ||
+                                        out.back().kind == hir::StmtKind::Break ||
+                                        out.back().kind == hir::StmtKind::Continue);
+    if (!jumps) {
+        emitDefers(defers_.size() - 1, out);
+    }
+    defers_.pop_back();
     if (new_scope) {
         scopes_.pop();
     }
+}
+
+void Lowerer::emitDefers(std::size_t from, std::vector<hir::Stmt>& out) const {
+    for (std::size_t f = defers_.size(); f-- > from;) {
+        const auto& frame = defers_[f];
+        for (std::size_t i = frame.size(); i-- > 0;) {
+            out.push_back(cloneHirStmt(frame[i]));
+        }
+    }
+}
+
+hir::LocalId Lowerer::hiddenLocal(const char* prefix, const Type& type, const Span& span) {
+    return addLocal(std::format("${}{}", prefix, hidden_counter_++), type, false, span);
+}
+
+void Lowerer::lowerAssign(const Expr& target_ast, const Expr& value_ast, const Span& span,
+                          std::vector<hir::Stmt>& out) {
+    EP target = expr(target_ast, nullptr);
+    if (target && !target->lvalue && !isUnknown(target->type)) {
+        err("E0709", target_ast.span, "cannot assign to this expression", "not a place (variable, `*p`, field or element)");
+        target.reset();
+    }
+    const Type want = target ? target->type : unknownType();
+    EP value = expr(value_ast, target ? &want : nullptr);
+    if (target && value) {
+        value = coerce(std::move(value), want, value_ast.span);
+    }
+    if (!target || !value) {
+        return;
+    }
+    hir::Stmt h;
+    h.span = span;
+    h.kind = hir::StmtKind::Assign;
+    h.target = std::move(target);
+    h.value = std::move(value);
+    out.push_back(std::move(h));
+}
+
+/// `t op= v`  =>  `t = t op v`; a target with side effects is evaluated once through a pointer.
+void Lowerer::lowerCompound(const Stmt& s, std::vector<hir::Stmt>& out) {
+    if (!astHasSideEffects(*s.target)) {
+        const ExprPtr bin = astBinary(s.compound_op, cloneAst(*s.target), cloneAst(*s.expr), s.span);
+        lowerAssign(*s.target, *bin, s.span, out);
+        return;
+    }
+    EP target = expr(*s.target, nullptr);
+    if (!target) {
+        return;
+    }
+    if (!target->lvalue && !isUnknown(target->type)) {
+        err("E0709", s.target->span, "cannot assign to this expression", "not a place (variable, `*p`, field or element)");
+        return;
+    }
+    if (isUnknown(target->type)) {
+        return;
+    }
+    const Type ptr = Type::makePointer(target->type);
+    const hir::LocalId id = hiddenLocal("lhs", ptr, s.span);
+    const std::string name = fn_->locals[id].name;
+    hir::Stmt decl;
+    decl.kind = hir::StmtKind::Local;
+    decl.span = s.span;
+    decl.local = id;
+    EP addr = mk(hir::ExprKind::AddrOf, ptr, s.span);
+    addr->lhs = std::move(target);
+    decl.value = std::move(addr);
+    out.push_back(std::move(decl));
+    bindLocal(name, id, ptr, s.span);
+    const ExprPtr place = astUnary(UnaryOp::Deref, astName(name, s.target->span), s.target->span);
+    const ExprPtr bin = astBinary(s.compound_op, astUnary(UnaryOp::Deref, astName(name, s.target->span), s.target->span),
+                                  cloneAst(*s.expr), s.span);
+    lowerAssign(*place, *bin, s.span, out);
+}
+
+void Lowerer::lowerJump(const Stmt& s, std::vector<hir::Stmt>& out) {
+    const bool is_break = s.kind == Stmt::Kind::Break;
+    const char* word = is_break ? "break" : "continue";
+    if (loops_.empty()) {
+        err("E0709", s.span, std::format("`{}` outside of a loop", word), "there is no enclosing loop");
+        return;
+    }
+    std::size_t target = loops_.size() - 1;
+    if (!s.name.empty()) {
+        bool found = false;
+        for (std::size_t i = loops_.size(); i-- > 0;) {
+            if (loops_[i].label == s.name) {
+                target = i;
+                found = true;
+                break;
+            }
+        }
+        if (!found) {
+            err("E0709", s.span, std::format("no enclosing loop is labeled `{}`", s.name),
+                "write `label: while ...` on the loop first");
+            return;
+        }
+    }
+    emitDefers(loops_[target].defer_mark, out);
+    hir::Stmt h;
+    h.span = s.span;
+    h.kind = is_break ? hir::StmtKind::Break : hir::StmtKind::Continue;
+    h.depth = static_cast<std::uint32_t>(loops_.size() - 1 - target);
+    out.push_back(std::move(h));
+}
+
+void Lowerer::lowerFor(const Stmt& s, std::vector<hir::Stmt>& out) {
+    const Type boolean = Type::makeBool();
+    hir::Stmt block;
+    block.kind = hir::StmtKind::Block;
+    block.span = s.span;
+    scopes_.push(ScopeKind::Block);
+    defers_.emplace_back();  // the header scope (no defers can land here, but keeps frames aligned)
+    if (s.init) {
+        lowerStmt(*s.init, block.body);
+    }
+    hir::Stmt loop;
+    loop.kind = hir::StmtKind::While;
+    loop.span = s.span;
+    if (s.expr) {
+        loop.value = coerce(expr(*s.expr, &boolean), boolean, s.expr->span);
+    } else {
+        loop.value = mk(hir::ExprKind::BoolConst, boolean, s.span);
+        loop.value->bool_value = true;
+    }
+    loops_.push_back({s.label, defers_.size()});
+    lowerBlock(*s.body, loop.body, true);
+    loops_.pop_back();
+    if (s.step) {
+        lowerStmt(*s.step, loop.step);
+    }
+    defers_.pop_back();
+    scopes_.pop();
+    if (!loop.value) {
+        return;
+    }
+    block.body.push_back(std::move(loop));
+    out.push_back(std::move(block));
+}
+
+void Lowerer::lowerForRange(const Stmt& s, std::vector<hir::Stmt>& out) {
+    const Type boolean = Type::makeBool();
+    EP lo = expr(*s.expr, nullptr);
+    if (!lo) {
+        (void)expr(*s.expr2, nullptr);
+        return;
+    }
+    const Type t = lo->type;
+    EP hi = expr(*s.expr2, &t);
+    if (!isUnknown(t) && t.kind != TypeKind::Int) {
+        err("E0708", s.expr->span, std::format("a range needs integer bounds, found `{}`", typeToString(t)),
+            "write `for i in 0..n`");
+        return;
+    }
+    hi = hi ? coerce(std::move(hi), t, s.expr2->span) : nullptr;
+    if (!hi || isUnknown(t)) {
+        return;
+    }
+    hir::Stmt block;
+    block.kind = hir::StmtKind::Block;
+    block.span = s.span;
+    scopes_.push(ScopeKind::Block);
+    defers_.emplace_back();
+
+    const hir::LocalId var = addLocal(s.name, t, false, s.span);
+    const hir::LocalId end = hiddenLocal("end", t, s.span);
+    {
+        hir::Stmt d;
+        d.kind = hir::StmtKind::Local;
+        d.span = s.span;
+        d.local = var;
+        d.value = std::move(lo);
+        block.body.push_back(std::move(d));
+        hir::Stmt e;
+        e.kind = hir::StmtKind::Local;
+        e.span = s.span;
+        e.local = end;
+        e.value = std::move(hi);
+        block.body.push_back(std::move(e));
+    }
+    bindLocal(s.name, var, t, s.span);
+
+    const auto ref = [&](hir::LocalId id) {
+        EP r = mk(hir::ExprKind::LocalRef, t, s.span);
+        r->local = id;
+        r->lvalue = true;
+        return r;
+    };
+    hir::Stmt loop;
+    loop.kind = hir::StmtKind::While;
+    loop.span = s.span;
+    EP cond = mk(hir::ExprKind::Binary, boolean, s.span);
+    cond->binary_op = BinaryOp::Lt;
+    cond->lhs = ref(var);
+    cond->rhs = ref(end);
+    loop.value = std::move(cond);
+    loops_.push_back({s.label, defers_.size()});
+    lowerBlock(*s.body, loop.body, true);
+    loops_.pop_back();
+    {
+        hir::Stmt step;
+        step.kind = hir::StmtKind::Assign;
+        step.span = s.span;
+        step.target = ref(var);
+        EP add = mk(hir::ExprKind::Binary, t, s.span);
+        add->binary_op = BinaryOp::Add;
+        add->lhs = ref(var);
+        add->rhs = intConst(1, t, s.span);
+        step.value = std::move(add);
+        loop.step.push_back(std::move(step));
+    }
+    defers_.pop_back();
+    scopes_.pop();
+    block.body.push_back(std::move(loop));
+    out.push_back(std::move(block));
+}
+
+void Lowerer::lowerSwitch(const Stmt& s, std::vector<hir::Stmt>& out) {
+    const Type boolean = Type::makeBool();
+    EP scrutinee = expr(*s.expr, nullptr);
+    const bool usable = scrutinee && (scrutinee->type.kind == TypeKind::Int || scrutinee->type.kind == TypeKind::Bool ||
+                                      scrutinee->type.kind == TypeKind::Enum);
+    if (scrutinee && !usable && !isUnknown(scrutinee->type)) {
+        err("E0708", s.expr->span,
+            std::format("cannot `switch` on `{}`", typeToString(scrutinee->type)),
+            "integers, bools and enums can be switched on; use `if` for other types");
+    }
+    hir::Stmt block;
+    block.kind = hir::StmtKind::Block;
+    block.span = s.span;
+    scopes_.push(ScopeKind::Block);
+    const Type st = usable ? scrutinee->type : unknownType();
+    const hir::LocalId id = hiddenLocal("sw", st, s.span);
+    const std::string name = fn_->locals[id].name;
+    if (usable) {
+        hir::Stmt d;
+        d.kind = hir::StmtKind::Local;
+        d.span = s.span;
+        d.local = id;
+        d.value = std::move(scrutinee);
+        block.body.push_back(std::move(d));
+    }
+    bindLocal(name, id, st, s.span);
+
+    struct Arm {
+        EP cond;
+        std::vector<hir::Stmt> body;
+    };
+    std::vector<Arm> arms;
+    std::vector<hir::Stmt> default_body;
+    bool has_default = false;
+    std::set<std::uint64_t> seen;
+    for (const SwitchCase& c : s.cases) {
+        Arm arm;
+        if (c.is_default) {
+            if (has_default) {
+                err("E0709", c.span, "a `switch` has more than one `default`", "remove the duplicate");
+            }
+            has_default = true;
+            lowerBlock(*c.body, default_body, true);
+            continue;
+        }
+        if (c.values.empty()) {
+            err("E0709", c.span, "`case` needs at least one value", "write `case 1, 2 { ... }`");
+        }
+        ExprPtr cond_ast;
+        for (const ExprPtr& v : c.values) {
+            ExprPtr eq = astBinary(BinaryOp::Eq, astName(name, v->span), cloneAst(*v), v->span);
+            cond_ast = cond_ast ? astBinary(BinaryOp::Or, std::move(cond_ast), std::move(eq), v->span)
+                                : std::move(eq);
+            if (v->kind == Expr::Kind::IntLiteral && !seen.insert(v->int_value).second) {
+                err("E0709", v->span, "duplicate `case` value", "this value is already handled by an earlier `case`");
+            }
+        }
+        if (cond_ast && usable) {
+            arm.cond = coerce(expr(*cond_ast, &boolean), boolean, c.span);
+        }
+        lowerBlock(*c.body, arm.body, true);
+        if (arm.cond) {
+            arms.push_back(std::move(arm));
+        }
+    }
+    scopes_.pop();
+
+    std::vector<hir::Stmt> chain = std::move(default_body);
+    for (std::size_t i = arms.size(); i-- > 0;) {
+        hir::Stmt ifs;
+        ifs.kind = hir::StmtKind::If;
+        ifs.span = s.span;
+        ifs.value = std::move(arms[i].cond);
+        ifs.body = std::move(arms[i].body);
+        ifs.else_body = std::move(chain);
+        chain.clear();
+        chain.push_back(std::move(ifs));
+    }
+    if (!usable) {
+        return;
+    }
+    for (hir::Stmt& c : chain) {
+        block.body.push_back(std::move(c));
+    }
+    out.push_back(std::move(block));
+}
+
+Lowerer::EP Lowerer::ternaryExpr(const Expr& e, const Type* expected) {
+    const Type boolean = Type::makeBool();
+    EP cond = coerce(expr(*e.lhs, &boolean), boolean, e.lhs->span);
+    const Expr& then_ast = *e.rhs;
+    const Expr& else_ast = *e.args[0];
+    const auto isLit = [](const Expr& x) {
+        return x.kind == Expr::Kind::IntLiteral || x.kind == Expr::Kind::FloatLiteral;
+    };
+    EP a;
+    EP b;
+    if (isLit(then_ast) && !isLit(else_ast)) {
+        b = expr(else_ast, expected);
+        const Type want = b ? b->type : unknownType();
+        a = expr(then_ast, b ? &want : expected);
+    } else {
+        a = expr(then_ast, expected);
+        const Type want = a ? a->type : unknownType();
+        b = expr(else_ast, a ? &want : expected);
+    }
+    if (!cond || !a || !b) {
+        return nullptr;
+    }
+    if (a->type.isVoid() || isUnknown(a->type)) {
+        err("E0708", e.span, "the branches of `?:` need a value", "a `void` or unknown expression cannot be selected");
+        return nullptr;
+    }
+    const Type t = a->type;
+    b = coerce(std::move(b), t, else_ast.span);
+    if (!b) {
+        return nullptr;
+    }
+    EP sel = mk(hir::ExprKind::Select, t, e.span);
+    sel->lhs = std::move(cond);
+    sel->rhs = std::move(a);
+    sel->args.push_back(std::move(b));
+    return sel;
 }
 
 void Lowerer::lowerStmt(const Stmt& s, std::vector<hir::Stmt>& out) {
@@ -1130,25 +1718,13 @@ void Lowerer::lowerStmt(const Stmt& s, std::vector<hir::Stmt>& out) {
         bindLocal(s.name, h.local, t, s.span);  // after the initializer: `local x = x` sees the outer `x`
         break;
     }
-    case Stmt::Kind::Assign: {
-        EP target = expr(*s.target, nullptr);
-        if (target && !target->lvalue && !isUnknown(target->type)) {
-            err("E0709", s.target->span, "cannot assign to this expression", "not a place (variable, `*p`, field or element)");
-            target.reset();
+    case Stmt::Kind::Assign:
+        if (s.has_compound_op) {
+            lowerCompound(s, out);
+        } else {
+            lowerAssign(*s.target, *s.expr, s.span, out);
         }
-        const Type want = target ? target->type : unknownType();
-        EP value = expr(*s.expr, target ? &want : nullptr);
-        if (target && value) {
-            value = coerce(std::move(value), want, s.expr->span);
-        }
-        if (!target || !value) {
-            return;
-        }
-        h.kind = hir::StmtKind::Assign;
-        h.target = std::move(target);
-        h.value = std::move(value);
-        break;
-    }
+        return;
     case Stmt::Kind::Return: {
         h.kind = hir::StmtKind::Return;
         if (s.expr) {
@@ -1164,7 +1740,67 @@ void Lowerer::lowerStmt(const Stmt& s, std::vector<hir::Stmt>& out) {
         } else if (!ret_.isVoid() && !isUnknown(ret_)) {
             err("E0708", s.span, std::format("`return` needs a value of type `{}`", typeToString(ret_)), "missing value");
         }
+        const bool pending = std::ranges::any_of(defers_, [](const auto& f) { return !f.empty(); });
+        if (pending) {
+            // The returned value is computed before the deferred statements run.
+            if (h.value) {
+                const Type vt = h.value->type;
+                const hir::LocalId id = hiddenLocal("ret", vt, s.span);
+                hir::Stmt keep;
+                keep.kind = hir::StmtKind::Local;
+                keep.span = s.span;
+                keep.local = id;
+                keep.value = std::move(h.value);
+                out.push_back(std::move(keep));
+                EP ref = mk(hir::ExprKind::LocalRef, vt, s.span);
+                ref->local = id;
+                ref->lvalue = true;
+                h.value = std::move(ref);
+            }
+            emitDefers(0, out);
+        }
         break;
+    }
+    case Stmt::Kind::DoWhile: {
+        h.kind = hir::StmtKind::While;
+        h.post_test = true;
+        loops_.push_back({s.label, defers_.size()});
+        lowerBlock(*s.body, h.body, true);
+        loops_.pop_back();
+        h.value = coerce(expr(*s.expr, &boolean), boolean, s.expr->span);
+        if (!h.value) {
+            return;
+        }
+        break;
+    }
+    case Stmt::Kind::For:
+        lowerFor(s, out);
+        return;
+    case Stmt::Kind::ForRange:
+        lowerForRange(s, out);
+        return;
+    case Stmt::Kind::Switch:
+        lowerSwitch(s, out);
+        return;
+    case Stmt::Kind::Defer: {
+        const Stmt& inner = *s.step;
+        switch (inner.kind) {
+        case Stmt::Kind::Return:
+        case Stmt::Kind::Break:
+        case Stmt::Kind::Continue:
+        case Stmt::Kind::Defer:
+        case Stmt::Kind::Local:
+            err("E0709", inner.span, "this statement cannot be deferred",
+                "a `defer` runs when the block is left; it cannot return, jump, declare a variable or defer again");
+            return;
+        default: break;
+        }
+        std::vector<hir::Stmt> lowered;
+        lowerStmt(inner, lowered);
+        for (hir::Stmt& d : lowered) {
+            defers_.back().push_back(std::move(d));
+        }
+        return;
     }
     case Stmt::Kind::Expr: {
         if (s.expr->kind == Expr::Kind::Call && s.expr->lhs->kind == Expr::Kind::Name &&
@@ -1195,21 +1831,18 @@ void Lowerer::lowerStmt(const Stmt& s, std::vector<hir::Stmt>& out) {
     case Stmt::Kind::While: {
         h.kind = hir::StmtKind::While;
         h.value = coerce(expr(*s.expr, &boolean), boolean, s.expr->span);
-        ++loops_;
+        loops_.push_back({s.label, defers_.size()});
         lowerBlock(*s.body, h.body, true);
-        --loops_;
+        loops_.pop_back();
         if (!h.value) {
             return;
         }
         break;
     }
     case Stmt::Kind::Continue:
-        if (loops_ == 0) {
-            err("E0709", s.span, "`continue` outside of a loop", "there is no enclosing `while`");
-            return;
-        }
-        h.kind = hir::StmtKind::Continue;
-        break;
+    case Stmt::Kind::Break:
+        lowerJump(s, out);
+        return;
     case Stmt::Kind::Unsafe:
         ++unsafe_;
         h.kind = hir::StmtKind::Block;
@@ -1432,6 +2065,7 @@ Lowerer::EP Lowerer::expr(const Expr& e, const Type* expected) {
     case Expr::Kind::Field: return fieldExpr(e);
     case Expr::Kind::Unary: return unaryExpr(e, expected);
     case Expr::Kind::Binary: return binaryExpr(e, expected);
+    case Expr::Kind::Ternary: return ternaryExpr(e, expected);
     case Expr::Kind::Cast: return castExpr(e);
     case Expr::Kind::Call: return callExpr(e, expected);
     case Expr::Kind::Index: return indexExpr(e);

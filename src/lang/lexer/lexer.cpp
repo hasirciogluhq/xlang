@@ -19,7 +19,10 @@ namespace {
         {"fn", TokenKind::Fn},         {"local", TokenKind::Local},
         {"return", TokenKind::Return}, {"if", TokenKind::If},
         {"else", TokenKind::Else},     {"while", TokenKind::While},
-        {"continue", TokenKind::Continue},
+        {"continue", TokenKind::Continue}, {"break", TokenKind::Break},
+        {"do", TokenKind::Do},         {"switch", TokenKind::Switch},
+        {"case", TokenKind::Case},     {"default", TokenKind::Default},
+        {"defer", TokenKind::Defer},
         {"unsafe", TokenKind::Unsafe}, {"import", TokenKind::Import},
         {"from", TokenKind::From},     {"as", TokenKind::As},
         {"export", TokenKind::Export}, {"declare", TokenKind::Declare},
@@ -189,15 +192,52 @@ private:
         case ',': single(TokenKind::Comma); return;
         case ':': single(TokenKind::Colon); return;
         case ';': single(TokenKind::Semicolon); return;
-        case '.': single(TokenKind::Dot); return;
+        case '.':
+            if (peek(1) == '.') {
+                single(TokenKind::DotDot, 2);
+            } else {
+                single(TokenKind::Dot);
+            }
+            return;
         case '@': single(TokenKind::At); return;
-        case '+': single(TokenKind::Plus); return;
-        case '*': single(TokenKind::Star); return;
-        case '/': single(TokenKind::Slash); return;
-        case '%': single(TokenKind::Percent); return;
+        case '?': single(TokenKind::Question); return;
+        case '+':
+            if (peek(1) == '=') {
+                single(TokenKind::PlusAssign, 2);
+            } else if (peek(1) == '+') {
+                single(TokenKind::PlusPlus, 2);
+            } else {
+                single(TokenKind::Plus);
+            }
+            return;
+        case '*':
+            if (peek(1) == '=') {
+                single(TokenKind::StarAssign, 2);
+            } else {
+                single(TokenKind::Star);
+            }
+            return;
+        case '/':
+            if (peek(1) == '=') {
+                single(TokenKind::SlashAssign, 2);
+            } else {
+                single(TokenKind::Slash);
+            }
+            return;
+        case '%':
+            if (peek(1) == '=') {
+                single(TokenKind::PercentAssign, 2);
+            } else {
+                single(TokenKind::Percent);
+            }
+            return;
         case '-':
             if (peek(1) == '>') {
                 single(TokenKind::Arrow, 2);
+            } else if (peek(1) == '=') {
+                single(TokenKind::MinusAssign, 2);
+            } else if (peek(1) == '-') {
+                single(TokenKind::MinusMinus, 2);
             } else {
                 single(TokenKind::Minus);
             }
@@ -219,6 +259,8 @@ private:
         case '<':
             if (peek(1) == '=') {
                 single(TokenKind::Le, 2);
+            } else if (peek(1) == '<' && peek(2) == '=') {
+                single(TokenKind::ShlAssign, 3);
             } else if (peek(1) == '<') {
                 single(TokenKind::Shl, 2);
             } else {
@@ -228,17 +270,27 @@ private:
         case '>':
             if (peek(1) == '=') {
                 single(TokenKind::Ge, 2);
+            } else if (peek(1) == '>' && peek(2) == '=') {
+                single(TokenKind::ShrAssign, 3);
             } else if (peek(1) == '>') {
                 single(TokenKind::Shr, 2);
             } else {
                 single(TokenKind::Gt);
             }
             return;
-        case '^': single(TokenKind::Caret); return;
+        case '^':
+            if (peek(1) == '=') {
+                single(TokenKind::CaretAssign, 2);
+            } else {
+                single(TokenKind::Caret);
+            }
+            return;
         case '~': single(TokenKind::Tilde); return;
         case '&':
             if (peek(1) == '&') {
                 single(TokenKind::AndAnd, 2);
+            } else if (peek(1) == '=') {
+                single(TokenKind::AmpAssign, 2);
             } else {
                 single(TokenKind::Amp);
             }
@@ -246,6 +298,8 @@ private:
         case '|':
             if (peek(1) == '|') {
                 single(TokenKind::OrOr, 2);
+            } else if (peek(1) == '=') {
+                single(TokenKind::PipeAssign, 2);
             } else {
                 single(TokenKind::Pipe);
             }
@@ -501,6 +555,12 @@ const char* tokenKindName(TokenKind kind) {
     case TokenKind::Else: return "else";
     case TokenKind::While: return "while";
     case TokenKind::Continue: return "continue";
+    case TokenKind::Break: return "break";
+    case TokenKind::Do: return "do";
+    case TokenKind::Switch: return "switch";
+    case TokenKind::Case: return "case";
+    case TokenKind::Default: return "default";
+    case TokenKind::Defer: return "defer";
     case TokenKind::Unsafe: return "unsafe";
     case TokenKind::Import: return "import";
     case TokenKind::From: return "from";
@@ -557,6 +617,20 @@ const char* tokenKindName(TokenKind kind) {
     case TokenKind::Ge: return ">=";
     case TokenKind::AndAnd: return "&&";
     case TokenKind::OrOr: return "||";
+    case TokenKind::DotDot: return "..";
+    case TokenKind::Question: return "?";
+    case TokenKind::PlusAssign: return "+=";
+    case TokenKind::MinusAssign: return "-=";
+    case TokenKind::StarAssign: return "*=";
+    case TokenKind::SlashAssign: return "/=";
+    case TokenKind::PercentAssign: return "%=";
+    case TokenKind::AmpAssign: return "&=";
+    case TokenKind::PipeAssign: return "|=";
+    case TokenKind::CaretAssign: return "^=";
+    case TokenKind::ShlAssign: return "<<=";
+    case TokenKind::ShrAssign: return ">>=";
+    case TokenKind::PlusPlus: return "++";
+    case TokenKind::MinusMinus: return "--";
     case TokenKind::DirIf: return "#if";
     case TokenKind::DirElif: return "#elif";
     case TokenKind::DirElse: return "#else";

@@ -169,6 +169,8 @@ public:
             }
             return out + ")";
         }
+        case Expr::Kind::Ternary:
+            return std::format("({} ? {} : {})", expr(*e.lhs), expr(*e.rhs), expr(*e.args[0]));
         case Expr::Kind::Index: return std::format("{}[{}]", expr(*e.lhs), expr(*e.rhs));
         case Expr::Kind::Field: return std::format("{}.{}", expr(*e.lhs), e.text);
         case Expr::Kind::Cast: return std::format("({} as {})", expr(*e.lhs), typeToString(e.type));
@@ -243,6 +245,10 @@ public:
         return out;
     }
 
+    static std::string labelPrefix(const Stmt& s) {
+        return s.label.empty() ? std::string() : s.label + ": ";
+    }
+
     void stmt(const Stmt& s) {
         const std::string attrs = attributes(s.attributes);
         switch (s.kind) {
@@ -252,7 +258,8 @@ public:
                              s.expr ? " = " + expr(*s.expr) : std::string()));
             break;
         case Stmt::Kind::Assign:
-            line(std::format("{}{} = {}", attrs, expr(*s.target), expr(*s.expr)));
+            line(std::format("{}{} {}= {}", attrs, expr(*s.target),
+                             s.has_compound_op ? binaryOpName(s.compound_op) : "", expr(*s.expr)));
             break;
         case Stmt::Kind::Return:
             line(std::format("{}return{}", attrs, s.expr ? " " + expr(*s.expr) : std::string()));
@@ -280,13 +287,68 @@ public:
             break;
         }
         case Stmt::Kind::While: {
-            line(std::format("{}while {}", attrs, expr(*s.expr)));
+            line(std::format("{}{}while {}", attrs, labelPrefix(s), expr(*s.expr)));
             Scope scope(*this);
             block(*s.body);
             break;
         }
+        case Stmt::Kind::DoWhile: {
+            line(std::format("{}{}do-while {}", attrs, labelPrefix(s), expr(*s.expr)));
+            Scope scope(*this);
+            block(*s.body);
+            break;
+        }
+        case Stmt::Kind::For: {
+            line(std::format("{}{}for", attrs, labelPrefix(s)));
+            Scope scope(*this);
+            if (s.init) {
+                line("init");
+                Scope inner(*this);
+                stmt(*s.init);
+            }
+            if (s.expr) {
+                line("cond " + expr(*s.expr));
+            }
+            if (s.step) {
+                line("step");
+                Scope inner(*this);
+                stmt(*s.step);
+            }
+            block(*s.body);
+            break;
+        }
+        case Stmt::Kind::ForRange: {
+            line(std::format("{}{}for {} in {} .. {}", attrs, labelPrefix(s), s.name, expr(*s.expr),
+                             expr(*s.expr2)));
+            Scope scope(*this);
+            block(*s.body);
+            break;
+        }
+        case Stmt::Kind::Switch: {
+            line(std::format("{}switch {}", attrs, expr(*s.expr)));
+            Scope scope(*this);
+            for (const SwitchCase& c : s.cases) {
+                std::string head = c.is_default ? "default" : "case";
+                for (std::size_t i = 0; i < c.values.size(); ++i) {
+                    head += (i != 0 ? ", " : " ") + expr(*c.values[i]);
+                }
+                line(head);
+                Scope inner(*this);
+                block(*c.body);
+            }
+            break;
+        }
+        case Stmt::Kind::Defer: {
+            line(attrs + "defer");
+            Scope scope(*this);
+            stmt(*s.step);
+            break;
+        }
         case Stmt::Kind::Continue:
-            line(attrs + "continue");
+            line(attrs + "continue" + (s.name.empty() ? std::string() : " " + s.name));
+            break;
+        case Stmt::Kind::Break:
+            line(attrs + "break" + (s.name.empty() ? std::string() : " " + s.name));
             break;
         case Stmt::Kind::Unsafe: {
             line(attrs + "unsafe");
