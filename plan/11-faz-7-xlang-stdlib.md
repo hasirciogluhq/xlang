@@ -48,9 +48,6 @@ kullanıcı kodu → std/{thread,sync,sched,io,memory} → std/sys/{linux,macos,
   `spawn(fn, arg)`, `waitAll()`, `cpu()`, bloklayıcı I/O için OS olay mekanizması entegrasyonu
   (epoll/kqueue/IOCP benzeri; 7.1 syscall'larıyla). Compiler scheduler'ı bilmez.
 - [ ] **7.6** xmake `std` hedefi: stdlib'i derleyip compiler modül arama yoluna kurar.
-- [ ] **7.7** Doğrulama: compiler'da `spawn`/`go`, `print` özel işleme, `malloc/free/printf` prelude izi
-  yoktur (eski hat silindi); `new` dilde kalır (4.11, kayıtlı ya da açık allocator), `delete` yoktur.
-  Eski example/lib'ler yeni dile göre yeniden yazılır (bu aşamada).
 
 **Kabul:** compiler kaynağında `spawn`, `thread`, `pthread`, `printf`, `malloc` geçmez (link bayrakları
 hariç); stdlib hiçbir dış kütüphane çağırmaz (yalnızca `syscall`); Linux ve macOS'ta

@@ -16,4 +16,4 @@
 11. Alloca/PassBuilder/Darwin syscall/debug info (5.1–5.5)
 11b. Çıktı biçimleri + header + static/shared + varsayılan `exe` ve linker sürücüsü (5.6–5.9)
 12. Atomic + fnptr + asm (6)
-13. Stdlib (7.1–7.6, 7.2b), ardından compiler'dan kaldırma (7.7)
+13. Stdlib (7.1–7.6, 7.2b)
