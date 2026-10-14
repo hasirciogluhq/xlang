@@ -2,7 +2,7 @@
 
 - [ ] **4.1** Sembol tablosu/scope: modül, fonksiyon, blok; nitelikli isim (`alias.name`).
 - [ ] **4.2** Sema: isim çözümleme, tip kontrolü, overload yok/var kararı (önerim: overload yok, ad bazlı
-  tek tanım, mangling basit), `syscall(...)` argüman doğrulaması (nr + argümanlar tamsayı/pointer; sayı sabit değil, hedef OS/arch'ın
+  tek tanım, mangling basit), `syscall(...)` argüman doğrulaması (nr + argümanlar herhangi bir tamsayı tipi ya da `*T`, `as` gerekmez, compiler register genişliğine çevirir; sayı sabit değil, hedef OS/arch'ın
   en fazla argüman sayısına göre 5.3'teki tablodan denetlenir, aşılırsa hata), `staticAssert`.
 - [ ] **4.3** HIR (`include/xlang/hir/hir.h`): tipler çözülmüş, örtük dönüşümler açık `Cast`,
   sugar düşürülmüş, sınıf metodları `fn(self: *T, ...)`, interface çağrıları açık itable çağrısı.

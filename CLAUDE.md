@@ -158,7 +158,7 @@ No filler praise; state weaknesses plainly. For each feature cover:
 - Syscall: builtin `syscall(nr, args...)`. The argument count is dynamic: the compiler forwards exactly the number
   given, with no fixed limit in the language. The per-target maximum (from the target OS/arch table) is checked
   at compile time and exceeding it is a compile error. Do not write "0-6" or similar fixed counts anywhere.
-  The return is always `i64` with errors as negative `-errno` on every target (macOS carry flag is normalized by
+  Arguments may be any integer type or `*T` with no `as` (the compiler converts to register width; this exception is `syscall`-only). The return is always `i64` with errors as negative `-errno` on every target (macOS carry flag is normalized by
   the compiler; Windows returns the NTSTATUS sign-extended).
 
 ## Build

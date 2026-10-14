@@ -5,13 +5,17 @@ Argüman sayısı **dinamiktir**: compiler kaç argüman verildiyse onu olduğu 
 Sabit bir sınır yoktur; izin verilen en fazla argüman sayısı derlenen hedefin OS/arch'ına göre değişir ve
 bu sınır aşılırsa **derleme hatası** verilir. Dönüş her zaman `i64`'tür.
 
+**Argüman tipleri:** numara ve argümanlar herhangi bir tamsayı tipi ya da `*T` olabilir; **`as` yazılmaz**,
+compiler hepsini hedefin register genişliğine kendisi çevirir (pointer adres olarak, tamsayı genişletilerek).
+Bu yalnızca `syscall` argümanları için geçerlidir; dilin başka yerinde pointer↔sayı dönüşümü hâlâ açık `as` ister.
+
 ```xlang
 fn getpid() -> i64 {
     return syscall(39)                    // 0 argüman: yalnızca numara
 }
 
 fn writeAll(fd: i64, buf: *ui8, n: usize) -> i64 {
-    return syscall(1, fd, buf as i64, n as i64)    // 3 argüman iletilir
+    return syscall(1, fd, buf, n)    // 3 argüman iletilir; buf pointer, as gerekmez
 }
 ```
 

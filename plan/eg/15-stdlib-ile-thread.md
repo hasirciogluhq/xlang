@@ -11,12 +11,12 @@ Compiler thread/scheduler bilmez. Varsayılan stdlib (xl ile yazılmış) her OS
 #if os == "linux"
     // clone(flags, stack, ptid, ctid, tls)
     fn osThreadCreate(stack: *void, entry: fn(*void), arg: *void) -> i64 {
-        return syscall(CLONE_NR, CLONE_FLAGS, stack as i64, 0, 0, 0)
+        return syscall(CLONE_NR, CLONE_FLAGS, stack, 0, 0, 0)
     }
 #elif os == "macos"
     // bsdthread_create(func, arg, stack, pthread, flags)
     fn osThreadCreate(stack: *void, entry: fn(*void), arg: *void) -> i64 {
-        return syscall(BSDTHREAD_CREATE_NR, entry as i64, arg as i64, stack as i64, 0, 0)
+        return syscall(BSDTHREAD_CREATE_NR, entry, arg, stack, 0, 0)
     }
 #elif os == "windows"
     // NtCreateThreadEx(...); SSN, -D WIN_BUILD ile seçilen tablodan gelir
