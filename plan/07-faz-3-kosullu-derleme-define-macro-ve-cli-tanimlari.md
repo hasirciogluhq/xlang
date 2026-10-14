@@ -25,10 +25,11 @@
   | `--target <triple>` | Hedef triple; `os/arch/pointerWidth` buradan türer |
   | `-O0..-O3` | Optimizasyon seviyesi (`optLevel`) |
   | `-g` | Debug info (`debug = true`) |
-  | `--emit=ir\|bc\|obj\|hir\|header\|exe\|static\|shared` | Çıktı biçimi/aşaması; varsayılan `exe` |
+  | `--emit=ir\|bc\|obj\|header\|exe\|static\|shared` | Çıktı biçimi/aşaması; varsayılan `exe` |
   | `--mangle=xl\|none` | Proje seviyesi mangling varsayılanı |
-  | `--safety=checked\|unchecked` | `ref T` kontrolleri |
+  | `--safety=checked\|unchecked` | `ref T` nesil kontrolleri ve dizi sınır kontrolleri |
   | `--print-cfg` | Çözülmüş tüm tanımları yazdır |
+  | `--explain KOD` | Tanı kodunun uzun açıklamasını yazdır (kayıt tablosu `src/util/diagnostics.cpp`) |
   | `--cpu <name>` | Hedef CPU (varsayılan `generic`) |
   | `--no-std` / `--std=<yol>` / `--std-features=...` | Stdlib seçimi (varsayılan: gömülü stdlib) |
 

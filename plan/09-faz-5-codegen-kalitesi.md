@@ -25,7 +25,7 @@
   compiler carry set ise sonucu `-errno`'ya çevirir (dönüş değeri ABI'sidir, hangi syscall olduğunu bilmek
   gerekmez). Windows'ta NTSTATUS (`eax`) olduğu gibi dönüş değeridir, `i64`'e işaret genişletilir.
 - [ ] **5.4** Debug info (`DIBuilder`): compile unit, subprogram, satır konumları, struct/class tipleri.
-- [ ] **5.5** Pointer↔integer dönüşümleri yalnızca `syscall` sınırında ve açık `as`'ta.
+- [ ] **5.5** Pointer↔integer dönüşümleri örtük değildir; her yerde (syscall argümanları dahil) açık `as` ile yazılır.
 - [ ] **5.6** Çıktı biçimleri: `--emit=obj` (nesne), `ir` (`.ll`, `clang++` ile derlenebilir; hedef triple
   ve data layout yazılı), `bc` (bitcode). Kaynak: yalnızca LLVM Module; farklı yazıcılar. Bu çıktılar
   üretilir ve compiler orada durur (başka araç çağrılmaz).

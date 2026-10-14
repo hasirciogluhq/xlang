@@ -24,7 +24,7 @@ xlang build main.xl --print-cfg                     # çözülmüş tüm tanıml
 | `--target <triple>` | Hedef platform; `os`, `arch`, `pointerWidth` buradan gelir |
 | `-O0` … `-O3` | Optimizasyon seviyesi (`optLevel`) |
 | `-g` | Debug info; `debug = true` |
-| `--emit=ir\|bc\|obj\|hir\|header\|exe\|static\|shared` | Çıktı biçimi; **varsayılan `exe`** ([18](18-c-ile-kullanim-ve-cikti-bicimleri.md#18-c-ile-kullanım-ve-çıktı-biçimleri)) |
+| `--emit=ir\|bc\|obj\|header\|exe\|static\|shared` | Çıktı biçimi; **varsayılan `exe`** ([18](18-c-ile-kullanim-ve-cikti-bicimleri.md#18-c-ile-kullanım-ve-çıktı-biçimleri)) |
 | `--mangle=xl\|none` | Proje seviyesi mangling varsayılanı ([16](16-name-mangling.md#16-name-mangling)) |
 | `--safety=checked\|unchecked` | `ref T` nesil kontrolleri ve dizi sınır kontrolleri açık/kapalı; varsayılan `checked` ([17](17-guvenli-referans.md#17-güvenli-referans-ref-t), [6](06-struct-ve-bellek-duzeni.md#sabit-boyutlu-dizi-t-n)) |
 | `--cpu <ad>` | Hedef CPU (varsayılan `generic`) |

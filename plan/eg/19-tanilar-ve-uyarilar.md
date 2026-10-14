@@ -76,7 +76,7 @@ Uyarı (±2):
 warning[W0401]: `lorem` aynı varlık olarak iki yoldan import edildi
   --> app.xl
     |
-  3 | import std from "std"
+  3 | import "std" as std
   4 |
   5 | import * from "a"      <======= `lorem` burada a üzerinden geliyor (asıl tanım: c.xl:7)
   6 | import * from "b"      <======= ve burada b üzerinden de geliyor (aynı tanım: c.xl:7)
@@ -91,7 +91,7 @@ error[E0401]: `lorem` çift import
   --> app.xl
     |
   1 | // app.xl
-  2 | import std from "std"
+  2 | import "std" as std
   ⋮   (üstte 10 satıra kadar bağlam)
  11 | import * from "a"      <======= `lorem` burada a.xl:12'den geliyor
  12 | import * from "b"      <======= ve burada b.xl:30'dan da geliyor: çakışma

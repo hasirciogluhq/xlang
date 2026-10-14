@@ -50,6 +50,8 @@ local p: *T = a.alloc(sizeOf(T), alignOf(T)) as *T
 ```
 
 ```xlang
+from "std/mem" import Allocator              // Allocator global değil, stdlib'den gelir
+
 class Bump {
     base: *ui8
     used: usize

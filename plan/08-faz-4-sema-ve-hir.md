@@ -31,8 +31,8 @@
 - [ ] **4.6b** `declare` semantiği: gövdesiz dış öğe, kod üretmez; düzen çözümü sırası: nesne içi düzen kaydı → `xl.layout`
   geçmişi → C varsayımı + `W0201`; `@repr(c)` zorunlu değil; opak tipler yalnızca pointer ile kullanılır; `declare class` metodları dış sembol (`@mangle` ile ad verilir).
 - [ ] **4.6** Modül yükleme: AST klonlama yerine modül başına `Program` + sembol tablosu; mangling tek yerde.
-- [ ] **4.7** Codegen'i HIR'a taşı; `resolve.cpp`/`print.cpp`/`expr.cpp`'deki tip çözümleme mantığı
-  sema'ya gider. Eski AST→LLVM yolu silinir (yan yana yaşatılmaz).
+- [ ] **4.7** Codegen'i HIR üzerinde sıfırdan yaz (eski AST→LLVM hattı silindi); tip çözümleme sema'dadır,
+  codegen yalnızca tipli HIR'ı görür. `verifyModule` (0.1) ilk iş olarak buraya eklenir.
 
 - [ ] **4.8** Görünürlük: `export` olmayan hiçbir sembole (fonksiyon, tip, global, `define`, `type`)
   başka modülden erişilemez (sema hatası); LLVM linkage'ı `InternalLinkage`. `export` →

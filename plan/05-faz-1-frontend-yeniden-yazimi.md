@@ -48,16 +48,14 @@
 - **Dosya düzeni:** `include/xlang/lang/{lexer,ast,types,parser}.h`, `include/xlang/util/{source,diagnostics,error}.h`;
   `src/lang/{lexer,parser,ast,types}/`, `src/util/{source,diagnostics}.cpp`. Eski `include/xlang/*.h` cephe
   başlıkları silindi.
-- **Eski hat derlemeden çıkarıldı:** `src/codegen`, `src/compiler`, `src/host`, `src/platform` eski AST'ye
-  bağlıydı; yeni AST ile derlenmez. xmake hedefinden çıkarıldı, dosyalar yerinde duruyor ve 4.7'de (HIR'a taşıma /
-  eski yolu silme) yeniden yazılır ya da silinir. Faz 1 boyunca `xlang build/run/test` **yoktur**; yalnızca
-  `xlang parse` ve `xlang --explain` vardır. LLVM bağımlılığı hedeften çıkarıldı (frontend LLVM'siz).
+- **Eski hat silindi:** `src/codegen`, `src/compiler`, `src/host`, `src/platform` eski AST'ye bağlıydı; yeni
+  AST ile derlenmedikleri için kaldırıldı. Yeni codegen 4.7'de sıfırdan yazılır. Frontend hattında `xlang build/run/test`
+  yoktur; frontend komutları `parse`, `check`, `layout` ve `--explain`'dir. Frontend LLVM'siz derlenir.
 - **Newline anlamlıdır:** deyim ve bildirim satır sonunda biter; `;` yoktur. İfade yalnızca `(...)`/`[...]`
   içinde ya da bir ikili operatörden sonra alt satıra geçebilir (`*a = *b` satırı bir önceki `local`'in devamı
   olmaz). Lexer `Token.newline_before` taşır.
-- **`#if` ailesi:** lexer direktifleri token olarak üretir (`DirIf`...); değerlendirme 3.1'dedir. Parser
-  direktif görürse `E0002` ("henüz desteklenmiyor") verip bildirim/deyim sınırına senkronize olur. Yani
-  `#if` içeren dosyalar Faz 3'e kadar parse edilmez.
+- **`#if` ailesi:** lexer direktifleri token olarak üretir (`DirIf`...); değerlendirme ve eleme önişlemede
+  (3.1) yapılır, parser'a elenmiş token akışı gelir.
 - **Struct literal belirsizliği:** `if`/`while` koşulunda struct literal kapalıdır (`{` bloğu başlatır);
   başka yerde `Ad {` yalnızca `}` ya da `ad :` ile devam ediyorsa literal sayılır. Parantez içinde yeniden açılır.
 - **Tip argümanı:** `sizeOf(i32)` gibi çağrılarda ilkel tip adı ifade olarak `Name` düğümü olur; `sizeOf([T; N])`

@@ -26,7 +26,7 @@ kullanıcı kodu → std/{thread,sync,sched,io,memory} → std/sys/{linux,macos,
   - Numara/yapı tabloları xl içinde (compiler görmez). POSIX uyumlu semantik hedeflenir (pthread benzeri
     thread/mutex/cond davranışı), ama pthread kütüphanesi çağrılmaz.
 - [ ] **7.1b** Stdlib yerleşimi: `std/index.xl` (giriş; alt modülleri `export * from` / `export * as` ile
-  toplar), `std/memory`, `std/mem`, `std/runtime`, `std/assert`, `std/math` (`sqrt` vb.; xl ile yazılır,
+  toplar), `std/memory`, `std/mem`, `std/io`, `std/thread`, `std/sync`, `std/sched`, `std/runtime`, `std/assert`, `std/math` (`sqrt` vb.; xl ile yazılır,
   libm yok), `std/cpu`, `std/gpu`, `std/sys/*`. `import "std"` hepsini, `import "std/cpu"` yalnızca ilgili parçayı verir.
 - [ ] **7.2** `std/mem`: `interface Allocator { alloc, free }`, varsayılan `Heap` (OS'tan sayfa alan,
   syscall'larla), `register(allocator) global currentAllocator: Allocator` (stdlib özelliği
@@ -48,8 +48,8 @@ kullanıcı kodu → std/{thread,sync,sched,io,memory} → std/sys/{linux,macos,
   `spawn(fn, arg)`, `waitAll()`, `cpu()`, bloklayıcı I/O için OS olay mekanizması entegrasyonu
   (epoll/kqueue/IOCP benzeri; 7.1 syscall'larıyla). Compiler scheduler'ı bilmez.
 - [ ] **7.6** xmake `std` hedefi: stdlib'i derleyip compiler modül arama yoluna kurar.
-- [ ] **7.7** Compiler'dan kaldır: `spawn`/`go`, `print` özel işleme, `malloc/free/printf` prelude,
-  `needs_heap_`/`needs_strings_`; `new` dilde kalır (4.11, kayıtlı ya da açık allocator), `delete` yoktur.
+- [ ] **7.7** Doğrulama: compiler'da `spawn`/`go`, `print` özel işleme, `malloc/free/printf` prelude izi
+  yoktur (eski hat silindi); `new` dilde kalır (4.11, kayıtlı ya da açık allocator), `delete` yoktur.
   Eski example/lib'ler yeni dile göre yeniden yazılır (bu aşamada).
 
 **Kabul:** compiler kaynağında `spawn`, `thread`, `pthread`, `printf`, `malloc` geçmez (link bayrakları

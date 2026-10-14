@@ -83,5 +83,5 @@ target("app")
 | C++ projesine bağlama | Kullanıcının toolchain'i; bunun için `--emit=obj` alınır |
 | Yalnızca xl programı/kütüphanesi | `xlang build` (varsayılan `exe`, ya da `static`/`shared`): compiler linker'ı kendisi çağırır |
 
-`export(c)` imzalarında yalnızca C uyumlu tipler (`ui8..i64`, `f32/f64`, `bool`, `*T`, `@repr(c)` struct,
-fonksiyon pointer'ı) geçebilir; `class`, `interface`, `ref T` bu imzada derleme hatasıdır.
+`export(c)` imzalarında yalnızca C uyumlu tipler (`i8..i64`, `ui8..ui64`, `f32/f64`, `bool`, `*T`, `@repr(c)` struct,
+fonksiyon pointer'ı, tamsayı alt tipli enum) geçebilir; `class`, `interface`, `ref T` bu imzada derleme hatasıdır.
