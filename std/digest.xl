@@ -1,0 +1,32 @@
+// std/digest: hash selection by algorithm id for the signature code (RSA, X.509, TLS).
+from "sha256" import sha256
+from "sha512" import sha512, sha384
+
+export define DIGEST_SHA256 = 1
+export define DIGEST_SHA384 = 2
+export define DIGEST_SHA512 = 3
+
+/// Output size of `alg` in bytes, 0 for an unknown id.
+export fn digestLen(alg: i32) -> usize {
+    if alg == DIGEST_SHA256 { return 32 }
+    if alg == DIGEST_SHA384 { return 48 }
+    if alg == DIGEST_SHA512 { return 64 }
+    return 0
+}
+
+/// Hashes `data[0..n]` with `alg` into `out` (`digestLen(alg)` bytes). False for an unknown id.
+export fn digest(alg: i32, data: *ui8, n: usize, out: *ui8) -> bool {
+    if alg == DIGEST_SHA256 {
+        sha256(data, n, out)
+        return true
+    }
+    if alg == DIGEST_SHA384 {
+        sha384(data, n, out)
+        return true
+    }
+    if alg == DIGEST_SHA512 {
+        sha512(data, n, out)
+        return true
+    }
+    return false
+}

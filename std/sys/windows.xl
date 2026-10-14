@@ -126,3 +126,12 @@ export fn sysTcpListen(fd: i32, ip: ui32, port: ui16) -> i32 {
 export fn sysTcpAccept(fd: i32) -> i32 {
     return -1
 }
+
+// No entropy source or clock without NT system service numbers: the TLS client cannot run here.
+export fn sysRandom(buf: *ui8, n: usize) -> bool {
+    return false
+}
+
+export fn sysClockSeconds() -> i64 {
+    return -1
+}

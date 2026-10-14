@@ -1,0 +1,287 @@
+// std/ecdsa: ECDSA signature verification over NIST P-256 and P-384 (FIPS 186-4), on top of
+// `std/bignum`. Verification only (public inputs), so nothing here is constant-time. Points are
+// uncompressed affine big-endian coordinates; hashes are passed in already computed.
+from "bignum" import Mont, montInit, montMul, montTo, montFrom, montPow, modAdd, modSub
+from "bignum" import bnZero, bnCopy, bnIsZero, bnCmp, bnSub, bnFromBytes
+
+export define ECDSA_P256 = 1
+export define ECDSA_P384 = 2
+
+/// Jacobian point in Montgomery form; infinity has z == 0.
+struct Pt {
+    x: [ui32; 12]
+    y: [ui32; 12]
+    z: [ui32; 12]
+}
+
+fn hexVal(c: ui8) -> ui8 {
+    if c >= 97 { return c - 87 }
+    return c - 48
+}
+
+/// Parses a hex string of 2*`bytes` digits into `n` limbs.
+fn hexLimbs(out: *ui32, n: usize, hex: *ui8, bytes: usize) {
+    local buf: [ui8; 48]
+    local i: usize = 0
+    while i < bytes {
+        buf[i] = (hexVal(hex[i * 2]) * 16) + hexVal(hex[i * 2 + 1])
+        i = i + 1
+    }
+    bnFromBytes(out, n, &buf[0], bytes)
+}
+
+fn isInf(p: *Pt) -> bool {
+    return bnIsZero(&p.z[0], 12)
+}
+
+fn setInf(p: *Pt) {
+    bnZero(&p.x[0], 12)
+    bnZero(&p.y[0], 12)
+    bnZero(&p.z[0], 12)
+}
+
+fn copyPt(d: *Pt, s: *Pt, n: usize) {
+    bnCopy(&d.x[0], &s.x[0], n)
+    bnCopy(&d.y[0], &s.y[0], n)
+    bnCopy(&d.z[0], &s.z[0], n)
+}
+
+fn pointDouble(c: *Mont, r: *Pt, p: *Pt) {
+    local n: usize = c.n
+    if isInf(p) {
+        setInf(r)
+        return
+    }
+    local delta: [ui32; 12]
+    local gamma: [ui32; 12]
+    local beta: [ui32; 12]
+    local alpha: [ui32; 12]
+    local t: [ui32; 12]
+    local t2: [ui32; 12]
+    local nx: [ui32; 12]
+    local ny: [ui32; 12]
+    local nz: [ui32; 12]
+    montMul(c, &delta[0], &p.z[0], &p.z[0])
+    montMul(c, &gamma[0], &p.y[0], &p.y[0])
+    montMul(c, &beta[0], &p.x[0], &gamma[0])
+    modSub(c, &t[0], &p.x[0], &delta[0])
+    modAdd(c, &t2[0], &p.x[0], &delta[0])
+    montMul(c, &alpha[0], &t[0], &t2[0])
+    modAdd(c, &t[0], &alpha[0], &alpha[0])
+    modAdd(c, &alpha[0], &t[0], &alpha[0])      // alpha = 3 (x - delta)(x + delta)
+    montMul(c, &nx[0], &alpha[0], &alpha[0])
+    modAdd(c, &t[0], &beta[0], &beta[0])
+    modAdd(c, &t[0], &t[0], &t[0])              // 4 beta
+    modAdd(c, &t2[0], &t[0], &t[0])             // 8 beta
+    modSub(c, &nx[0], &nx[0], &t2[0])
+    modAdd(c, &t2[0], &p.y[0], &p.z[0])
+    montMul(c, &nz[0], &t2[0], &t2[0])
+    modSub(c, &nz[0], &nz[0], &gamma[0])
+    modSub(c, &nz[0], &nz[0], &delta[0])
+    modSub(c, &t[0], &t[0], &nx[0])             // 4 beta - x3
+    montMul(c, &ny[0], &alpha[0], &t[0])
+    montMul(c, &t2[0], &gamma[0], &gamma[0])
+    modAdd(c, &t2[0], &t2[0], &t2[0])
+    modAdd(c, &t2[0], &t2[0], &t2[0])
+    modAdd(c, &t2[0], &t2[0], &t2[0])           // 8 gamma^2
+    modSub(c, &ny[0], &ny[0], &t2[0])
+    bnCopy(&r.x[0], &nx[0], n)
+    bnCopy(&r.y[0], &ny[0], n)
+    bnCopy(&r.z[0], &nz[0], n)
+}
+
+fn pointAdd(c: *Mont, r: *Pt, p: *Pt, q: *Pt) {
+    local n: usize = c.n
+    if isInf(p) {
+        copyPt(r, q, n)
+        return
+    }
+    if isInf(q) {
+        copyPt(r, p, n)
+        return
+    }
+    local z1z1: [ui32; 12]
+    local z2z2: [ui32; 12]
+    local u1: [ui32; 12]
+    local u2: [ui32; 12]
+    local s1: [ui32; 12]
+    local s2: [ui32; 12]
+    local h: [ui32; 12]
+    local i: [ui32; 12]
+    local j: [ui32; 12]
+    local rr: [ui32; 12]
+    local v: [ui32; 12]
+    local t: [ui32; 12]
+    local nx: [ui32; 12]
+    local ny: [ui32; 12]
+    local nz: [ui32; 12]
+    montMul(c, &z1z1[0], &p.z[0], &p.z[0])
+    montMul(c, &z2z2[0], &q.z[0], &q.z[0])
+    montMul(c, &u1[0], &p.x[0], &z2z2[0])
+    montMul(c, &u2[0], &q.x[0], &z1z1[0])
+    montMul(c, &t[0], &q.z[0], &z2z2[0])
+    montMul(c, &s1[0], &p.y[0], &t[0])
+    montMul(c, &t[0], &p.z[0], &z1z1[0])
+    montMul(c, &s2[0], &q.y[0], &t[0])
+    modSub(c, &h[0], &u2[0], &u1[0])
+    modSub(c, &rr[0], &s2[0], &s1[0])
+    if bnIsZero(&h[0], n) {
+        if bnIsZero(&rr[0], n) {
+            pointDouble(c, r, p)
+        } else {
+            setInf(r)
+        }
+        return
+    }
+    modAdd(c, &rr[0], &rr[0], &rr[0])           // r = 2 (S2 - S1)
+    modAdd(c, &t[0], &h[0], &h[0])
+    montMul(c, &i[0], &t[0], &t[0])             // I = (2H)^2
+    montMul(c, &j[0], &h[0], &i[0])             // J = H I
+    montMul(c, &v[0], &u1[0], &i[0])            // V = U1 I
+    montMul(c, &nx[0], &rr[0], &rr[0])
+    modSub(c, &nx[0], &nx[0], &j[0])
+    modSub(c, &nx[0], &nx[0], &v[0])
+    modSub(c, &nx[0], &nx[0], &v[0])            // X3 = r^2 - J - 2V
+    modSub(c, &t[0], &v[0], &nx[0])
+    montMul(c, &ny[0], &rr[0], &t[0])
+    montMul(c, &t[0], &s1[0], &j[0])
+    modAdd(c, &t[0], &t[0], &t[0])
+    modSub(c, &ny[0], &ny[0], &t[0])            // Y3 = r (V - X3) - 2 S1 J
+    modAdd(c, &t[0], &p.z[0], &q.z[0])
+    montMul(c, &nz[0], &t[0], &t[0])
+    modSub(c, &nz[0], &nz[0], &z1z1[0])
+    modSub(c, &nz[0], &nz[0], &z2z2[0])
+    montMul(c, &nz[0], &nz[0], &h[0])           // Z3 = ((Z1+Z2)^2 - Z1Z1 - Z2Z2) H
+    bnCopy(&r.x[0], &nx[0], n)
+    bnCopy(&r.y[0], &ny[0], n)
+    bnCopy(&r.z[0], &nz[0], n)
+}
+
+/// r = k * p (plain scalar of `n` limbs, MSB-first double-and-add).
+fn pointMul(c: *Mont, r: *Pt, k: *ui32, p: *Pt) {
+    local acc: Pt
+    setInf(&acc)
+    local bits: usize = c.n * 32
+    while bits > 0 {
+        bits = bits - 1
+        pointDouble(c, &acc, &acc)
+        if ((k[bits / 32] >> ((bits % 32) as ui32)) & 1) != 0 {
+            pointAdd(c, &acc, &acc, p)
+        }
+    }
+    copyPt(r, &acc, c.n)
+}
+
+/// Verifies the signature (`r`, `s`, each `size` bytes big-endian) over `hash[0..hlen]` against the
+/// public key (`qx`, `qy`) on `curve` (`ECDSA_P256` or `ECDSA_P384`).
+export fn ecdsaVerify(curve: i32, qx: *ui8, qy: *ui8, hash: *ui8, hlen: usize, r: *ui8, s: *ui8) -> bool {
+    local size: usize = 32
+    if curve == ECDSA_P384 { size = 48 }
+    if curve != ECDSA_P256 && curve != ECDSA_P384 { return false }
+    local n: usize = size / 4
+
+    local p: [ui32; 12]
+    local ord: [ui32; 12]
+    local b: [ui32; 12]
+    local gx: [ui32; 12]
+    local gy: [ui32; 12]
+    if curve == ECDSA_P256 {
+        hexLimbs(&p[0], n, "ffffffff00000001000000000000000000000000ffffffffffffffffffffffff", 32)
+        hexLimbs(&ord[0], n, "ffffffff00000000ffffffffffffffffbce6faada7179e84f3b9cac2fc632551", 32)
+        hexLimbs(&b[0], n, "5ac635d8aa3a93e7b3ebbd55769886bc651d06b0cc53b0f63bce3c3e27d2604b", 32)
+        hexLimbs(&gx[0], n, "6b17d1f2e12c4247f8bce6e563a440f277037d812deb33a0f4a13945d898c296", 32)
+        hexLimbs(&gy[0], n, "4fe342e2fe1a7f9b8ee7eb4a7c0f9e162bce33576b315ececbb6406837bf51f5", 32)
+    } else {
+        hexLimbs(&p[0], n, "fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffeffffffff0000000000000000ffffffff", 48)
+        hexLimbs(&ord[0], n, "ffffffffffffffffffffffffffffffffffffffffffffffffc7634d81f4372ddf581a0db248b0a77aecec196accc52973", 48)
+        hexLimbs(&b[0], n, "b3312fa7e23ee7e4988e056be3f82d19181d9c6efe8141120314088f5013875ac656398d8a2ed19d2a85c8edd3ec2aef", 48)
+        hexLimbs(&gx[0], n, "aa87ca22be8b05378eb1c71ef320ad746e1d3b628ba79b9859f741e082542a385502f25dbf55296c3a545e3872760ab7", 48)
+        hexLimbs(&gy[0], n, "3617de4a96262c6f5d9e98bf9292dc29f8f41dbd289a147ce9da3113b5f0b8c00a60b1ce1d7e819d7a431d7c90ea0e5f", 48)
+    }
+
+    local rl: [ui32; 12]
+    local sl: [ui32; 12]
+    local qxl: [ui32; 12]
+    local qyl: [ui32; 12]
+    if !bnFromBytes(&rl[0], n, r, size) || !bnFromBytes(&sl[0], n, s, size) { return false }
+    if !bnFromBytes(&qxl[0], n, qx, size) || !bnFromBytes(&qyl[0], n, qy, size) { return false }
+    if bnIsZero(&rl[0], n) || bnIsZero(&sl[0], n) { return false }
+    if bnCmp(&rl[0], &ord[0], n) >= 0 || bnCmp(&sl[0], &ord[0], n) >= 0 { return false }
+    if bnCmp(&qxl[0], &p[0], n) >= 0 || bnCmp(&qyl[0], &p[0], n) >= 0 { return false }
+
+    // e = leftmost `size` bytes of the hash, reduced mod the order
+    local el: [ui32; 12]
+    local ehl: usize = hlen
+    if ehl > size { ehl = size }
+    bnFromBytes(&el[0], n, hash, ehl)
+    if bnCmp(&el[0], &ord[0], n) >= 0 { bnSub(&el[0], &el[0], &ord[0], n) }
+
+    local fc: Mont
+    local oc: Mont
+    montInit(&fc, &p[0], n)
+    montInit(&oc, &ord[0], n)
+
+    // Q must be on the curve: y^2 = x^3 - 3x + b
+    local gQ: Pt
+    montTo(&fc, &gQ.x[0], &qxl[0])
+    montTo(&fc, &gQ.y[0], &qyl[0])
+    bnZero(&gQ.z[0], 12)
+    bnCopy(&gQ.z[0], &fc.one[0], n)
+    local lhs: [ui32; 12]
+    local rhs: [ui32; 12]
+    local t: [ui32; 12]
+    local bm: [ui32; 12]
+    montMul(&fc, &lhs[0], &gQ.y[0], &gQ.y[0])
+    montMul(&fc, &rhs[0], &gQ.x[0], &gQ.x[0])
+    montMul(&fc, &rhs[0], &rhs[0], &gQ.x[0])
+    modAdd(&fc, &t[0], &gQ.x[0], &gQ.x[0])
+    modAdd(&fc, &t[0], &t[0], &gQ.x[0])
+    modSub(&fc, &rhs[0], &rhs[0], &t[0])
+    montTo(&fc, &bm[0], &b[0])
+    modAdd(&fc, &rhs[0], &rhs[0], &bm[0])
+    if bnCmp(&lhs[0], &rhs[0], n) != 0 { return false }
+
+    // w = s^-1 mod order; u1 = e w, u2 = r w
+    local two: [ui32; 12]
+    local exp: [ui32; 12]
+    bnZero(&two[0], 12)
+    two[0] = 2
+    bnSub(&exp[0], &ord[0], &two[0], n)
+    local sm: [ui32; 12]
+    local wm: [ui32; 12]
+    montTo(&oc, &sm[0], &sl[0])
+    montPow(&oc, &wm[0], &sm[0], &exp[0], n)
+    local em: [ui32; 12]
+    local rm: [ui32; 12]
+    local u1: [ui32; 12]
+    local u2: [ui32; 12]
+    montTo(&oc, &em[0], &el[0])
+    montTo(&oc, &rm[0], &rl[0])
+    montMul(&oc, &u1[0], &em[0], &wm[0])
+    montMul(&oc, &u2[0], &rm[0], &wm[0])
+    montFrom(&oc, &u1[0], &u1[0])
+    montFrom(&oc, &u2[0], &u2[0])
+
+    local g: Pt
+    montTo(&fc, &g.x[0], &gx[0])
+    montTo(&fc, &g.y[0], &gy[0])
+    bnZero(&g.z[0], 12)
+    bnCopy(&g.z[0], &fc.one[0], n)
+    local a1: Pt
+    local a2: Pt
+    local sum: Pt
+    pointMul(&fc, &a1, &u1[0], &g)
+    pointMul(&fc, &a2, &u2[0], &gQ)
+    pointAdd(&fc, &sum, &a1, &a2)
+    if isInf(&sum) { return false }
+
+    // x = X / Z^2 (affine), compared with r mod order
+    bnSub(&exp[0], &p[0], &two[0], n)
+    local zi: [ui32; 12]
+    montPow(&fc, &zi[0], &sum.z[0], &exp[0], n)
+    montMul(&fc, &zi[0], &zi[0], &zi[0])
+    montMul(&fc, &t[0], &sum.x[0], &zi[0])
+    montFrom(&fc, &t[0], &t[0])
+    if bnCmp(&t[0], &ord[0], n) >= 0 { bnSub(&t[0], &t[0], &ord[0], n) }
+    return bnCmp(&t[0], &rl[0], n) == 0
+}

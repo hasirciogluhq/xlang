@@ -1,0 +1,148 @@
+// std/x25519: Curve25519 Diffie-Hellman (RFC 7748) on top of `std/bignum`. The ladder swaps with a
+// mask, but the underlying Montgomery arithmetic is not constant-time (see std/bignum): fine for
+// ephemeral TLS keys against network attackers, not hardened against local timing attacks.
+from "bignum" import Mont, montInit, montMul, montTo, montFrom, montPow, modAdd, modSub
+from "bignum" import bnZero, bnCopy, bnFromBytes, bnToBytes, bnSub
+
+fn cswap(swap: ui32, a: *ui32, b: *ui32, n: usize) {
+    local mask: ui32 = 0 - swap
+    local i: usize = 0
+    while i < n {
+        local t: ui32 = mask & (a[i] ^ b[i])
+        a[i] = a[i] ^ t
+        b[i] = b[i] ^ t
+        i = i + 1
+    }
+}
+
+fn reverse32(src: *ui8, dst: *ui8) {
+    local i: usize = 0
+    while i < 32 {
+        dst[i] = src[31 - i]
+        i = i + 1
+    }
+}
+
+/// out = X25519(scalar, u); all three are 32 little-endian bytes. False if the result is all zero
+/// (a low-order input point), which callers must treat as failure.
+export fn x25519(out: *ui8, scalar: *ui8, u: *ui8) -> bool {
+    local k: [ui8; 32]
+    local i: usize = 0
+    while i < 32 {
+        k[i] = scalar[i]
+        i = i + 1
+    }
+    k[0] = k[0] & 248
+    k[31] = (k[31] & 127) | 64
+
+    local ub: [ui8; 32]
+    reverse32(u, &ub[0])
+    ub[0] = ub[0] & 127
+
+    local p: [ui32; 8]
+    // p = 2^255 - 19
+    i = 0
+    while i < 8 {
+        p[i] = 0xffffffff
+        i = i + 1
+    }
+    p[7] = 0x7fffffff
+    p[0] = 0xffffffed
+    local c: Mont
+    montInit(&c, &p[0], 8)
+
+    local ul: [ui32; 8]
+    bnFromBytes(&ul[0], 8, &ub[0], 32)
+    if ul[7] >= 0x80000000 { ul[7] = ul[7] & 0x7fffffff }
+
+    local x1: [ui32; 8]
+    local x2: [ui32; 8]
+    local z2: [ui32; 8]
+    local x3: [ui32; 8]
+    local z3: [ui32; 8]
+    montTo(&c, &x1[0], &ul[0])
+    bnCopy(&x2[0], &c.one[0], 8)
+    bnZero(&z2[0], 8)
+    bnCopy(&x3[0], &x1[0], 8)
+    bnCopy(&z3[0], &c.one[0], 8)
+
+    local a24l: [ui32; 8]
+    local a24: [ui32; 8]
+    bnZero(&a24l[0], 8)
+    a24l[0] = 121665
+    montTo(&c, &a24[0], &a24l[0])
+
+    local a: [ui32; 8]
+    local aa: [ui32; 8]
+    local b: [ui32; 8]
+    local bb: [ui32; 8]
+    local e: [ui32; 8]
+    local cc: [ui32; 8]
+    local d: [ui32; 8]
+    local da: [ui32; 8]
+    local cb: [ui32; 8]
+    local t: [ui32; 8]
+    local swap: ui32 = 0
+    local bit: usize = 255
+    while bit > 0 {
+        bit = bit - 1
+        local kt: ui32 = ((k[bit / 8] >> ((bit % 8) as ui8)) & 1) as ui32
+        swap = swap ^ kt
+        cswap(swap, &x2[0], &x3[0], 8)
+        cswap(swap, &z2[0], &z3[0], 8)
+        swap = kt
+        modAdd(&c, &a[0], &x2[0], &z2[0])
+        montMul(&c, &aa[0], &a[0], &a[0])
+        modSub(&c, &b[0], &x2[0], &z2[0])
+        montMul(&c, &bb[0], &b[0], &b[0])
+        modSub(&c, &e[0], &aa[0], &bb[0])
+        modAdd(&c, &cc[0], &x3[0], &z3[0])
+        modSub(&c, &d[0], &x3[0], &z3[0])
+        montMul(&c, &da[0], &d[0], &a[0])
+        montMul(&c, &cb[0], &cc[0], &b[0])
+        modAdd(&c, &t[0], &da[0], &cb[0])
+        montMul(&c, &x3[0], &t[0], &t[0])
+        modSub(&c, &t[0], &da[0], &cb[0])
+        montMul(&c, &t[0], &t[0], &t[0])
+        montMul(&c, &z3[0], &x1[0], &t[0])
+        montMul(&c, &x2[0], &aa[0], &bb[0])
+        montMul(&c, &t[0], &a24[0], &e[0])
+        modAdd(&c, &t[0], &aa[0], &t[0])
+        montMul(&c, &z2[0], &e[0], &t[0])
+    }
+    cswap(swap, &x2[0], &x3[0], 8)
+    cswap(swap, &z2[0], &z3[0], 8)
+
+    // result = x2 * z2^(p-2)
+    local two: [ui32; 8]
+    local exp: [ui32; 8]
+    bnZero(&two[0], 8)
+    two[0] = 2
+    bnSub(&exp[0], &p[0], &two[0], 8)
+    local zi: [ui32; 8]
+    montPow(&c, &zi[0], &z2[0], &exp[0], 8)
+    montMul(&c, &x2[0], &x2[0], &zi[0])
+    montFrom(&c, &x2[0], &x2[0])
+    local be: [ui8; 32]
+    bnToBytes(&x2[0], 8, &be[0], 32)
+    reverse32(&be[0], out)
+    local nz: ui8 = 0
+    i = 0
+    while i < 32 {
+        nz = nz | out[i]
+        i = i + 1
+    }
+    return nz != 0
+}
+
+/// out = X25519(scalar, 9): the public key for a private scalar.
+export fn x25519Base(out: *ui8, scalar: *ui8) -> bool {
+    local nine: [ui8; 32]
+    local i: usize = 0
+    while i < 32 {
+        nine[i] = 0
+        i = i + 1
+    }
+    nine[0] = 9
+    return x25519(out, scalar, &nine[0])
+}

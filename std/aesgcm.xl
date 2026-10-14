@@ -1,0 +1,318 @@
+// std/aesgcm: AES-128-GCM (FIPS 197, NIST SP 800-38D) with a 12-byte nonce and a 16-byte tag, the
+// TLS 1.3 mandatory-to-implement AEAD. Table-driven S-box built on first use; the GHASH multiply is
+// bitwise. Not constant-time (the S-box lookups are data dependent): intended for a client whose
+// peers cannot observe its cache, like the rest of this stdlib's crypto. `ct`/`pt` may alias.
+
+global sbox: [ui8; 256]
+global sboxReady: bool
+
+fn rotl8(x: ui8, n: ui8) -> ui8 {
+    return (x << n) | (x >> (8 - n))
+}
+
+fn buildSbox() {
+    // Walks the multiplicative group of GF(2^8) with generator 3, keeping q = p^-1.
+    local p: ui8 = 1
+    local q: ui8 = 1
+    local first: bool = true
+    while first || p != 1 {
+        first = false
+        local hi: ui8 = 0
+        if (p & 0x80) != 0 { hi = 0x1b }
+        p = p ^ (p << 1) ^ hi
+        q = q ^ (q << 1)
+        q = q ^ (q << 2)
+        q = q ^ (q << 4)
+        if (q & 0x80) != 0 { q = q ^ 0x09 }
+        sbox[p] = q ^ rotl8(q, 1) ^ rotl8(q, 2) ^ rotl8(q, 3) ^ rotl8(q, 4) ^ 0x63
+    }
+    sbox[0] = 0x63
+    sboxReady = true
+}
+
+fn xtime(x: ui8) -> ui8 {
+    local hi: ui8 = 0
+    if (x & 0x80) != 0 { hi = 0x1b }
+    return (x << 1) ^ hi
+}
+
+/// Expands a 16-byte key into 11 round keys (176 bytes).
+fn expandKey(key: *ui8, rk: *ui8) {
+    local i: usize = 0
+    while i < 16 {
+        rk[i] = key[i]
+        i = i + 1
+    }
+    local rcon: ui8 = 1
+    i = 16
+    while i < 176 {
+        local t0: ui8 = rk[i - 4]
+        local t1: ui8 = rk[i - 3]
+        local t2: ui8 = rk[i - 2]
+        local t3: ui8 = rk[i - 1]
+        if i % 16 == 0 {
+            local r: ui8 = t0
+            t0 = sbox[t1] ^ rcon
+            t1 = sbox[t2]
+            t2 = sbox[t3]
+            t3 = sbox[r]
+            rcon = xtime(rcon)
+        }
+        rk[i] = rk[i - 16] ^ t0
+        rk[i + 1] = rk[i - 15] ^ t1
+        rk[i + 2] = rk[i - 14] ^ t2
+        rk[i + 3] = rk[i - 13] ^ t3
+        i = i + 4
+    }
+}
+
+/// Encrypts one block: `out[0..16] = AES(rk, in[0..16])`.
+fn encryptBlock(rk: *ui8, in: *ui8, out: *ui8) {
+    local s: [ui8; 16]
+    local t: [ui8; 16]
+    local i: usize = 0
+    while i < 16 {
+        s[i] = in[i] ^ rk[i]
+        i = i + 1
+    }
+    local round: usize = 1
+    while round <= 10 {
+        // SubBytes + ShiftRows (state is column-major: byte index = 4 * column + row)
+        i = 0
+        while i < 16 {
+            local col: usize = i / 4
+            local row: usize = i % 4
+            t[i] = sbox[s[((col + row) % 4) * 4 + row]]
+            i = i + 1
+        }
+        if round < 10 {
+            // MixColumns
+            local c: usize = 0
+            while c < 4 {
+                local a0: ui8 = t[c * 4]
+                local a1: ui8 = t[c * 4 + 1]
+                local a2: ui8 = t[c * 4 + 2]
+                local a3: ui8 = t[c * 4 + 3]
+                local all: ui8 = a0 ^ a1 ^ a2 ^ a3
+                s[c * 4] = a0 ^ all ^ xtime(a0 ^ a1)
+                s[c * 4 + 1] = a1 ^ all ^ xtime(a1 ^ a2)
+                s[c * 4 + 2] = a2 ^ all ^ xtime(a2 ^ a3)
+                s[c * 4 + 3] = a3 ^ all ^ xtime(a3 ^ a0)
+                c = c + 1
+            }
+        } else {
+            i = 0
+            while i < 16 {
+                s[i] = t[i]
+                i = i + 1
+            }
+        }
+        i = 0
+        while i < 16 {
+            s[i] = s[i] ^ rk[round * 16 + i]
+            i = i + 1
+        }
+        round = round + 1
+    }
+    i = 0
+    while i < 16 {
+        out[i] = s[i]
+        i = i + 1
+    }
+}
+
+fn load64(p: *ui8) -> ui64 {
+    local v: ui64 = 0
+    local i: usize = 0
+    while i < 8 {
+        v = (v << 8) | (p[i] as ui64)
+        i = i + 1
+    }
+    return v
+}
+
+fn store64(p: *ui8, v: ui64) {
+    local i: usize = 0
+    while i < 8 {
+        p[i] = ((v >> (((7 - i) * 8) as ui64)) & 0xff) as ui8
+        i = i + 1
+    }
+}
+
+/// GHASH state: `y = (y xor block) * h` in GF(2^128) with the GCM bit order.
+struct Ghash {
+    hh: ui64
+    hl: ui64
+    yh: ui64
+    yl: ui64
+}
+
+fn ghashBlock(g: *Ghash, block: *ui8) {
+    local xh: ui64 = g.yh ^ load64(block)
+    local xl: ui64 = g.yl ^ load64(&block[8])
+    local zh: ui64 = 0
+    local zl: ui64 = 0
+    local vh: ui64 = g.hh
+    local vl: ui64 = g.hl
+    local i: usize = 0
+    while i < 128 {
+        local bit: ui64 = 0
+        if i < 64 {
+            bit = (xh >> ((63 - i) as ui64)) & 1
+        } else {
+            bit = (xl >> ((127 - i) as ui64)) & 1
+        }
+        if bit != 0 {
+            zh = zh ^ vh
+            zl = zl ^ vl
+        }
+        local lsb: ui64 = vl & 1
+        vl = (vl >> 1) | (vh << 63)
+        vh = vh >> 1
+        if lsb != 0 { vh = vh ^ 0xe100000000000000 }
+        i = i + 1
+    }
+    g.yh = zh
+    g.yl = zl
+}
+
+/// Absorbs `n` bytes, zero-padded to a multiple of 16.
+fn ghashData(g: *Ghash, data: *ui8, n: usize) {
+    local block: [ui8; 16]
+    local at: usize = 0
+    while at < n {
+        local take: usize = n - at
+        if take > 16 { take = 16 }
+        local i: usize = 0
+        while i < 16 {
+            block[i] = 0
+            if i < take { block[i] = data[at + i] }
+            i = i + 1
+        }
+        ghashBlock(g, &block[0])
+        at = at + 16
+    }
+}
+
+fn incCounter(ctr: *ui8) {
+    local i: usize = 15
+    local carry: bool = true
+    while carry && i >= 12 {
+        ctr[i] = ctr[i] + 1
+        carry = ctr[i] == 0
+        i = i - 1
+    }
+}
+
+/// CTR keystream starting at counter block `start` (already incremented past J0).
+fn ctrXor(rk: *ui8, ctr: *ui8, in: *ui8, n: usize, out: *ui8) {
+    local ks: [ui8; 16]
+    local at: usize = 0
+    while at < n {
+        encryptBlock(rk, ctr, &ks[0])
+        incCounter(ctr)
+        local take: usize = n - at
+        if take > 16 { take = 16 }
+        local i: usize = 0
+        while i < take {
+            out[at + i] = in[at + i] ^ ks[i]
+            i = i + 1
+        }
+        at = at + 16
+    }
+}
+
+fn tagFor(rk: *ui8, nonce: *ui8, aad: *ui8, alen: usize, ct: *ui8, n: usize, tag: *ui8) {
+    local zero: [ui8; 16]
+    local hb: [ui8; 16]
+    local i: usize = 0
+    while i < 16 {
+        zero[i] = 0
+        i = i + 1
+    }
+    encryptBlock(rk, &zero[0], &hb[0])
+    local g: Ghash
+    g.hh = load64(&hb[0])
+    g.hl = load64(&hb[8])
+    g.yh = 0
+    g.yl = 0
+    ghashData(&g, aad, alen)
+    ghashData(&g, ct, n)
+    local lens: [ui8; 16]
+    store64(&lens[0], (alen as ui64) * 8)
+    store64(&lens[8], (n as ui64) * 8)
+    ghashBlock(&g, &lens[0])
+    // tag = E(K, J0) xor GHASH
+    local j0: [ui8; 16]
+    i = 0
+    while i < 12 {
+        j0[i] = nonce[i]
+        i = i + 1
+    }
+    j0[12] = 0
+    j0[13] = 0
+    j0[14] = 0
+    j0[15] = 1
+    local ej: [ui8; 16]
+    encryptBlock(rk, &j0[0], &ej[0])
+    local gb: [ui8; 16]
+    store64(&gb[0], g.yh)
+    store64(&gb[8], g.yl)
+    i = 0
+    while i < 16 {
+        tag[i] = ej[i] ^ gb[i]
+        i = i + 1
+    }
+}
+
+fn startCounter(nonce: *ui8, ctr: *ui8) {
+    local i: usize = 0
+    while i < 12 {
+        ctr[i] = nonce[i]
+        i = i + 1
+    }
+    ctr[12] = 0
+    ctr[13] = 0
+    ctr[14] = 0
+    ctr[15] = 2          // J0 + 1
+}
+
+/// Block cipher check value: `out[0..16] = AES-128(key, in[0..16])` (exported for known-answer tests).
+export fn aes128EncryptBlock(key: *ui8, in: *ui8, out: *ui8) {
+    if !sboxReady { buildSbox() }
+    local rk: [ui8; 176]
+    expandKey(key, &rk[0])
+    encryptBlock(&rk[0], in, out)
+}
+
+/// Encrypts `pt[0..n]` into `ct` (may alias) and writes the 16-byte `tag`. `key` is 16 bytes,
+/// `nonce` 12 bytes.
+export fn aesGcmSeal(key: *ui8, nonce: *ui8, aad: *ui8, alen: usize, pt: *ui8, n: usize, ct: *ui8, tag: *ui8) {
+    if !sboxReady { buildSbox() }
+    local rk: [ui8; 176]
+    expandKey(key, &rk[0])
+    local ctr: [ui8; 16]
+    startCounter(nonce, &ctr[0])
+    ctrXor(&rk[0], &ctr[0], pt, n, ct)
+    tagFor(&rk[0], nonce, aad, alen, ct, n, tag)
+}
+
+/// Verifies the tag and, only if it matches, decrypts `ct[0..n]` into `pt` (may alias).
+export fn aesGcmOpen(key: *ui8, nonce: *ui8, aad: *ui8, alen: usize, ct: *ui8, n: usize, tag: *ui8, pt: *ui8) -> bool {
+    if !sboxReady { buildSbox() }
+    local rk: [ui8; 176]
+    expandKey(key, &rk[0])
+    local want: [ui8; 16]
+    tagFor(&rk[0], nonce, aad, alen, ct, n, &want[0])
+    local diff: ui8 = 0
+    local i: usize = 0
+    while i < 16 {
+        diff = diff | (want[i] ^ tag[i])
+        i = i + 1
+    }
+    if diff != 0 { return false }
+    local ctr: [ui8; 16]
+    startCounter(nonce, &ctr[0])
+    ctrXor(&rk[0], &ctr[0], ct, n, pt)
+    return true
+}

@@ -279,3 +279,28 @@ export fn sysTcpListen(fd: i32, ip: ui32, port: ui16) -> i32 {
 export fn sysTcpAccept(fd: i32) -> i32 {
     return syscall(SYS_ACCEPT, fd, 0, 0) as i32
 }
+
+// ---- entropy and wall clock --------------------------------------------------------------------
+
+define SYS_GETENTROPY = 500
+define SYS_GETTIMEOFDAY = 116
+
+/// Fills `buf[0..n]` with kernel random bytes (getentropy, at most 256 bytes per call).
+export fn sysRandom(buf: *ui8, n: usize) -> bool {
+    local done: usize = 0
+    while done < n {
+        local take: usize = n - done
+        if take > 256 { take = 256 }
+        if syscall(SYS_GETENTROPY, &buf[done], take) < 0 { return false }
+        done = done + take
+    }
+    return true
+}
+
+/// Seconds since 1970-01-01 UTC (gettimeofday); negative on failure.
+export fn sysClockSeconds() -> i64 {
+    local tv: [i64; 2]
+    tv[0] = -1
+    if syscall(SYS_GETTIMEOFDAY, &tv[0], 0, 0) < 0 { return -1 }
+    return tv[0]
+}

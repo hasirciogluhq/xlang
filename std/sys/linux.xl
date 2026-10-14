@@ -32,6 +32,14 @@ define SYS_EPOLL_WAIT = 22
 #endif
 
 #if arch == "x86_64"
+define SYS_GETRANDOM = 318
+define SYS_CLOCK_GETTIME = 228
+#else
+define SYS_GETRANDOM = 278
+define SYS_CLOCK_GETTIME = 113
+#endif
+
+#if arch == "x86_64"
 define SYS_PIPE2 = 293
 define EPOLL_DATA_OFFSET = 4       // struct epoll_event is packed on x86_64
 define EPOLL_STRIDE = 12
@@ -306,4 +314,24 @@ export fn sysTcpListen(fd: i32, ip: ui32, port: ui16) -> i32 {
 /// Blocks for a connection; negative errno on failure.
 export fn sysTcpAccept(fd: i32) -> i32 {
     return syscall(SYS_ACCEPT, fd, 0, 0) as i32
+}
+
+// ---- entropy and wall clock --------------------------------------------------------------------
+
+/// Fills `buf[0..n]` with kernel random bytes (getrandom, blocking until the pool is ready).
+export fn sysRandom(buf: *ui8, n: usize) -> bool {
+    local done: usize = 0
+    while done < n {
+        local r: i64 = syscall(SYS_GETRANDOM, &buf[done], n - done, 0)
+        if r <= 0 { return false }
+        done = done + (r as usize)
+    }
+    return true
+}
+
+/// Seconds since 1970-01-01 UTC (CLOCK_REALTIME); negative on failure.
+export fn sysClockSeconds() -> i64 {
+    local ts: [i64; 2]
+    if syscall(SYS_CLOCK_GETTIME, 0, &ts[0]) < 0 { return -1 }
+    return ts[0]
 }

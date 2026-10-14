@@ -1,0 +1,556 @@
+// std/x509: a DER reader and X.509 v3 certificate parser (RFC 5280) for the TLS client. It reads
+// exactly what chain validation needs: names, validity, public key (RSA, EC P-256 / P-384), the
+// signature, basicConstraints / keyUsage / subjectAltName. Nothing is copied or allocated: a `Cert`
+// holds pointers into the DER buffer it was parsed from, which must outlive it.
+// Not handled: nameConstraints, policies, extended key usage, critical-extension rejection.
+from "digest" import digest, digestLen, DIGEST_SHA256, DIGEST_SHA384, DIGEST_SHA512
+from "rsa" import rsaVerifyPkcs1, rsaVerifyPss
+from "ecdsa" import ecdsaVerify, ECDSA_P256, ECDSA_P384
+
+// Signature algorithms (certificate signatures and TLS 1.3 SignatureScheme values map onto these).
+export define SIG_NONE = 0
+export define SIG_RSA_PKCS1_SHA256 = 1
+export define SIG_RSA_PKCS1_SHA384 = 2
+export define SIG_RSA_PKCS1_SHA512 = 3
+export define SIG_ECDSA_SHA256 = 4
+export define SIG_ECDSA_SHA384 = 5
+export define SIG_ECDSA_SHA512 = 6
+export define SIG_RSA_PSS_SHA256 = 7
+export define SIG_RSA_PSS_SHA384 = 8
+export define SIG_RSA_PSS_SHA512 = 9
+
+export define KEY_NONE = 0
+export define KEY_RSA = 1
+export define KEY_EC_P256 = 2
+export define KEY_EC_P384 = 3
+
+/// keyUsage bit 5: keyCertSign.
+define KU_KEY_CERT_SIGN = 4
+
+/// A view of a certificate; every pointer points into `der`.
+export struct Cert {
+    der: *ui8
+    derLen: usize
+    tbs: *ui8                 // the whole TBSCertificate TLV: what the signature covers
+    tbsLen: usize
+    sigAlg: i32
+    sig: *ui8                 // signature bytes (BIT STRING content without the unused-bits byte)
+    sigLen: usize
+    issuer: *ui8              // whole Name TLV
+    issuerLen: usize
+    subject: *ui8
+    subjectLen: usize
+    notBefore: i64            // seconds since 1970-01-01 UTC
+    notAfter: i64
+    keyType: i32
+    rsaN: *ui8
+    rsaNLen: usize
+    rsaE: *ui8
+    rsaELen: usize
+    ecPoint: *ui8             // 04 || X || Y
+    ecPointLen: usize
+    hasBasic: bool            // basicConstraints present
+    isCa: bool
+    pathLen: i32              // -1 when absent
+    hasKeyUsage: bool
+    keyCertSign: bool
+    san: *ui8                 // content of the subjectAltName GeneralNames SEQUENCE
+    sanLen: usize
+}
+
+// ---- DER ---------------------------------------------------------------------------------------
+
+/// One TLV: `tag`, the content at `body[0..len]`, and `total` bytes including the header.
+export struct Tlv {
+    tag: ui8
+    body: *ui8
+    len: usize
+    total: usize
+}
+
+/// Reads one TLV at `p` with `avail` bytes remaining. False on truncation or an unsupported length
+/// form (indefinite, or more than 4 length bytes).
+export fn derRead(p: *ui8, avail: usize, out: *Tlv) -> bool {
+    if avail < 2 { return false }
+    out.tag = p[0]
+    local l: usize = p[1] as usize
+    local hdr: usize = 2
+    if l >= 128 {
+        local nb: usize = l - 128
+        if nb == 0 || nb > 4 || avail < 2 + nb { return false }
+        l = 0
+        local i: usize = 0
+        while i < nb {
+            l = l * 256 + (p[2 + i] as usize)
+            i = i + 1
+        }
+        hdr = 2 + nb
+    }
+    if l > avail - hdr { return false }
+    out.body = &p[hdr]
+    out.len = l
+    out.total = hdr + l
+    return true
+}
+
+fn same(a: *ui8, b: *ui8, n: usize) -> bool {
+    local i: usize = 0
+    while i < n {
+        if a[i] != b[i] { return false }
+        i = i + 1
+    }
+    return true
+}
+
+fn oidIs(t: *Tlv, oid: *ui8, n: usize) -> bool {
+    return t.tag == 0x06 && t.len == n && same(t.body, oid, n)
+}
+
+// ---- time --------------------------------------------------------------------------------------
+
+fn digit2(p: *ui8) -> i64 {
+    if p[0] < 48 || p[0] > 57 || p[1] < 48 || p[1] > 57 { return -1 }
+    return ((p[0] - 48) as i64) * 10 + ((p[1] - 48) as i64)
+}
+
+/// Days since 1970-01-01 of a proleptic Gregorian date (Howard Hinnant's algorithm).
+fn daysFromCivil(y0: i64, m: i64, d: i64) -> i64 {
+    local y: i64 = y0
+    if m <= 2 { y = y - 1 }
+    local era: i64 = y / 400
+    if y < 0 { era = (y - 399) / 400 }
+    local yoe: i64 = y - era * 400
+    local mp: i64 = m + 9
+    if m > 2 { mp = m - 3 }
+    local doy: i64 = (153 * mp + 2) / 5 + d - 1
+    local doe: i64 = yoe * 365 + yoe / 4 - yoe / 100 + doy
+    return era * 146097 + doe - 719468
+}
+
+/// UTCTime (`YYMMDDHHMMSSZ`) or GeneralizedTime (`YYYYMMDDHHMMSSZ`); -1 when malformed.
+fn parseTime(t: *Tlv) -> i64 {
+    local p: *ui8 = t.body
+    local year: i64 = 0
+    local at: usize = 0
+    if t.tag == 0x17 && t.len == 13 {
+        local yy: i64 = digit2(&p[0])
+        if yy < 0 { return -1 }
+        year = 2000 + yy
+        if yy >= 50 { year = 1900 + yy }
+        at = 2
+    } else if t.tag == 0x18 && t.len == 15 {
+        local hi: i64 = digit2(&p[0])
+        local lo: i64 = digit2(&p[2])
+        if hi < 0 || lo < 0 { return -1 }
+        year = hi * 100 + lo
+        at = 4
+    } else {
+        return -1
+    }
+    local mon: i64 = digit2(&p[at])
+    local day: i64 = digit2(&p[at + 2])
+    local hour: i64 = digit2(&p[at + 4])
+    local min: i64 = digit2(&p[at + 6])
+    local sec: i64 = digit2(&p[at + 8])
+    if mon < 1 || mon > 12 || day < 1 || day > 31 || hour < 0 || hour > 23 { return -1 }
+    if min < 0 || min > 59 || sec < 0 || sec > 60 { return -1 }
+    if p[at + 10] != 90 { return -1 }          // must be 'Z'
+    return daysFromCivil(year, mon, day) * 86400 + hour * 3600 + min * 60 + sec
+}
+
+// ---- parsing -----------------------------------------------------------------------------------
+
+fn sigAlgOf(oid: *Tlv) -> i32 {
+    local rsa: [ui8; 8]
+    rsa[0] = 0x2a
+    rsa[1] = 0x86
+    rsa[2] = 0x48
+    rsa[3] = 0x86
+    rsa[4] = 0xf7
+    rsa[5] = 0x0d
+    rsa[6] = 0x01
+    rsa[7] = 0x01
+    if oid.tag == 0x06 && oid.len == 9 && same(oid.body, &rsa[0], 8) {
+        // 1.2.840.113549.1.1.{11,12,13}: sha256/384/512WithRSAEncryption
+        local last: ui8 = oid.body[8]
+        if last == 11 { return SIG_RSA_PKCS1_SHA256 }
+        if last == 12 { return SIG_RSA_PKCS1_SHA384 }
+        if last == 13 { return SIG_RSA_PKCS1_SHA512 }
+        return SIG_NONE
+    }
+    local ec: [ui8; 7]
+    ec[0] = 0x2a
+    ec[1] = 0x86
+    ec[2] = 0x48
+    ec[3] = 0xce
+    ec[4] = 0x3d
+    ec[5] = 0x04
+    ec[6] = 0x03
+    if oid.tag == 0x06 && oid.len == 8 && same(oid.body, &ec[0], 7) {
+        // 1.2.840.10045.4.3.{2,3,4}: ecdsa-with-SHA256/384/512
+        local last: ui8 = oid.body[7]
+        if last == 2 { return SIG_ECDSA_SHA256 }
+        if last == 3 { return SIG_ECDSA_SHA384 }
+        if last == 4 { return SIG_ECDSA_SHA512 }
+    }
+    return SIG_NONE
+}
+
+/// SubjectPublicKeyInfo: the algorithm, and the key bytes.
+fn parseSpki(c: *Cert, spki: *Tlv) -> bool {
+    local algSeq: Tlv
+    local bits: Tlv
+    if !derRead(spki.body, spki.len, &algSeq) || algSeq.tag != 0x30 { return false }
+    if !derRead(&spki.body[algSeq.total], spki.len - algSeq.total, &bits) || bits.tag != 0x03 { return false }
+    if bits.len < 1 || bits.body[0] != 0 { return false }
+    local key: *ui8 = &bits.body[1]
+    local keyLen: usize = bits.len - 1
+
+    local alg: Tlv
+    if !derRead(algSeq.body, algSeq.len, &alg) || alg.tag != 0x06 { return false }
+
+    // rsaEncryption 1.2.840.113549.1.1.1
+    local rsaOid: [ui8; 9]
+    rsaOid[0] = 0x2a
+    rsaOid[1] = 0x86
+    rsaOid[2] = 0x48
+    rsaOid[3] = 0x86
+    rsaOid[4] = 0xf7
+    rsaOid[5] = 0x0d
+    rsaOid[6] = 0x01
+    rsaOid[7] = 0x01
+    rsaOid[8] = 0x01
+    if oidIs(&alg, &rsaOid[0], 9) {
+        local seq: Tlv
+        local n: Tlv
+        local e: Tlv
+        if !derRead(key, keyLen, &seq) || seq.tag != 0x30 { return false }
+        if !derRead(seq.body, seq.len, &n) || n.tag != 0x02 { return false }
+        if !derRead(&seq.body[n.total], seq.len - n.total, &e) || e.tag != 0x02 { return false }
+        c.keyType = KEY_RSA
+        c.rsaN = n.body
+        c.rsaNLen = n.len
+        c.rsaE = e.body
+        c.rsaELen = e.len
+        return true
+    }
+
+    // id-ecPublicKey 1.2.840.10045.2.1 with a namedCurve parameter
+    local ecOid: [ui8; 7]
+    ecOid[0] = 0x2a
+    ecOid[1] = 0x86
+    ecOid[2] = 0x48
+    ecOid[3] = 0xce
+    ecOid[4] = 0x3d
+    ecOid[5] = 0x02
+    ecOid[6] = 0x01
+    if oidIs(&alg, &ecOid[0], 7) {
+        local curve: Tlv
+        if !derRead(&algSeq.body[alg.total], algSeq.len - alg.total, &curve) || curve.tag != 0x06 { return false }
+        local p256: [ui8; 8]
+        p256[0] = 0x2a
+        p256[1] = 0x86
+        p256[2] = 0x48
+        p256[3] = 0xce
+        p256[4] = 0x3d
+        p256[5] = 0x03
+        p256[6] = 0x01
+        p256[7] = 0x07
+        local p384: [ui8; 5]
+        p384[0] = 0x2b
+        p384[1] = 0x81
+        p384[2] = 0x04
+        p384[3] = 0x00
+        p384[4] = 0x22
+        if oidIs(&curve, &p256[0], 8) && keyLen == 65 && key[0] == 4 {
+            c.keyType = KEY_EC_P256
+        } else if oidIs(&curve, &p384[0], 5) && keyLen == 97 && key[0] == 4 {
+            c.keyType = KEY_EC_P384
+        } else {
+            return true         // some other curve: parsed, but `keyType` stays KEY_NONE
+        }
+        c.ecPoint = key
+        c.ecPointLen = keyLen
+        return true
+    }
+    return true                 // unknown key algorithm: KEY_NONE
+}
+
+fn parseExtensions(c: *Cert, exts: *Tlv) -> bool {
+    // basicConstraints 2.5.29.19, keyUsage 2.5.29.15, subjectAltName 2.5.29.17
+    local pos: usize = 0
+    while pos < exts.len {
+        local ext: Tlv
+        if !derRead(&exts.body[pos], exts.len - pos, &ext) || ext.tag != 0x30 { return false }
+        pos = pos + ext.total
+        local oid: Tlv
+        if !derRead(ext.body, ext.len, &oid) || oid.tag != 0x06 { return false }
+        local at: usize = oid.total
+        local f: Tlv
+        if !derRead(&ext.body[at], ext.len - at, &f) { return false }
+        if f.tag == 0x01 {              // critical BOOLEAN
+            at = at + f.total
+            if !derRead(&ext.body[at], ext.len - at, &f) { return false }
+        }
+        if f.tag != 0x04 { return false }       // extnValue OCTET STRING
+        local val: *ui8 = f.body
+        local vlen: usize = f.len
+        if oid.len == 3 && oid.body[0] == 0x55 && oid.body[1] == 0x1d {
+            local which: ui8 = oid.body[2]
+            if which == 19 {
+                local bc: Tlv
+                if !derRead(val, vlen, &bc) || bc.tag != 0x30 { return false }
+                c.hasBasic = true
+                c.isCa = false
+                c.pathLen = -1
+                local q: usize = 0
+                local item: Tlv
+                if bc.len > 0 && derRead(bc.body, bc.len, &item) && item.tag == 0x01 {
+                    c.isCa = item.len == 1 && item.body[0] != 0
+                    q = item.total
+                }
+                if q < bc.len && derRead(&bc.body[q], bc.len - q, &item) && item.tag == 0x02 && item.len == 1 {
+                    c.pathLen = item.body[0] as i32
+                }
+            } else if which == 15 {
+                local ku: Tlv
+                if !derRead(val, vlen, &ku) || ku.tag != 0x03 || ku.len < 2 { return false }
+                c.hasKeyUsage = true
+                // bit 5 (keyCertSign) is bit 2 of the first content byte, MSB-first numbering
+                c.keyCertSign = (ku.body[1] & (0x80 >> KU_KEY_CERT_SIGN)) != 0
+            } else if which == 17 {
+                local gn: Tlv
+                if !derRead(val, vlen, &gn) || gn.tag != 0x30 { return false }
+                c.san = gn.body
+                c.sanLen = gn.len
+            }
+        }
+    }
+    return true
+}
+
+/// Parses the certificate in `der[0..len]` (trailing bytes are rejected). False when malformed.
+export fn x509Parse(c: *Cert, der: *ui8, len: usize) -> bool {
+    c.der = der
+    c.derLen = len
+    c.keyType = KEY_NONE
+    c.sigAlg = SIG_NONE
+    c.hasBasic = false
+    c.isCa = false
+    c.pathLen = -1
+    c.hasKeyUsage = false
+    c.keyCertSign = false
+    c.san = nil
+    c.sanLen = 0
+    c.ecPoint = nil
+    c.ecPointLen = 0
+
+    local cert: Tlv
+    if !derRead(der, len, &cert) || cert.tag != 0x30 || cert.total != len { return false }
+    local tbs: Tlv
+    if !derRead(cert.body, cert.len, &tbs) || tbs.tag != 0x30 { return false }
+    c.tbs = cert.body
+    c.tbsLen = tbs.total
+
+    local at: usize = tbs.total
+    local alg: Tlv
+    local sigBits: Tlv
+    if !derRead(&cert.body[at], cert.len - at, &alg) || alg.tag != 0x30 { return false }
+    at = at + alg.total
+    if !derRead(&cert.body[at], cert.len - at, &sigBits) || sigBits.tag != 0x03 { return false }
+    if sigBits.len < 1 || sigBits.body[0] != 0 { return false }
+    c.sig = &sigBits.body[1]
+    c.sigLen = sigBits.len - 1
+    local algOid: Tlv
+    if !derRead(alg.body, alg.len, &algOid) { return false }
+    c.sigAlg = sigAlgOf(&algOid)
+
+    // TBSCertificate ::= [0] version, serial, signature, issuer, validity, subject, spki, ... exts
+    local p: *ui8 = tbs.body
+    local n: usize = tbs.len
+    local pos: usize = 0
+    local f: Tlv
+    if !derRead(&p[pos], n - pos, &f) { return false }
+    if f.tag == 0xa0 { pos = pos + f.total }                    // version
+    if !derRead(&p[pos], n - pos, &f) || f.tag != 0x02 { return false }
+    pos = pos + f.total                                         // serialNumber
+    if !derRead(&p[pos], n - pos, &f) || f.tag != 0x30 { return false }
+    pos = pos + f.total                                         // signature (repeated algorithm)
+    if !derRead(&p[pos], n - pos, &f) || f.tag != 0x30 { return false }
+    c.issuer = &p[pos]
+    c.issuerLen = f.total
+    pos = pos + f.total
+    if !derRead(&p[pos], n - pos, &f) || f.tag != 0x30 { return false }
+    pos = pos + f.total
+    local validity: Tlv = f
+    local nb: Tlv
+    local na: Tlv
+    if !derRead(validity.body, validity.len, &nb) { return false }
+    if !derRead(&validity.body[nb.total], validity.len - nb.total, &na) { return false }
+    c.notBefore = parseTime(&nb)
+    c.notAfter = parseTime(&na)
+    if c.notBefore < 0 || c.notAfter < 0 { return false }
+    if !derRead(&p[pos], n - pos, &f) || f.tag != 0x30 { return false }
+    c.subject = &p[pos]
+    c.subjectLen = f.total
+    pos = pos + f.total
+    if !derRead(&p[pos], n - pos, &f) || f.tag != 0x30 { return false }
+    pos = pos + f.total
+    if !parseSpki(c, &f) { return false }
+    // optional issuerUniqueID [1], subjectUniqueID [2], extensions [3]
+    while pos < n {
+        if !derRead(&p[pos], n - pos, &f) { return false }
+        pos = pos + f.total
+        if f.tag == 0xa3 {
+            local seq: Tlv
+            if !derRead(f.body, f.len, &seq) || seq.tag != 0x30 { return false }
+            if !parseExtensions(c, &seq) { return false }
+        }
+    }
+    return true
+}
+
+// ---- signatures --------------------------------------------------------------------------------
+
+fn hashOf(alg: i32) -> i32 {
+    if alg == SIG_RSA_PKCS1_SHA256 || alg == SIG_ECDSA_SHA256 || alg == SIG_RSA_PSS_SHA256 { return DIGEST_SHA256 }
+    if alg == SIG_RSA_PKCS1_SHA384 || alg == SIG_ECDSA_SHA384 || alg == SIG_RSA_PSS_SHA384 { return DIGEST_SHA384 }
+    if alg == SIG_RSA_PKCS1_SHA512 || alg == SIG_ECDSA_SHA512 || alg == SIG_RSA_PSS_SHA512 { return DIGEST_SHA512 }
+    return 0
+}
+
+fn isEcdsa(alg: i32) -> bool {
+    return alg == SIG_ECDSA_SHA256 || alg == SIG_ECDSA_SHA384 || alg == SIG_ECDSA_SHA512
+}
+
+fn isPss(alg: i32) -> bool {
+    return alg == SIG_RSA_PSS_SHA256 || alg == SIG_RSA_PSS_SHA384 || alg == SIG_RSA_PSS_SHA512
+}
+
+/// Copies a DER INTEGER (leading zero bytes stripped) right-aligned into `out[0..size]`.
+fn intToFixed(t: *Tlv, out: *ui8, size: usize) -> bool {
+    if t.tag != 0x02 || t.len == 0 { return false }
+    local p: *ui8 = t.body
+    local n: usize = t.len
+    while n > 1 && p[0] == 0 {
+        p = &p[1]
+        n = n - 1
+    }
+    if n > size { return false }
+    local i: usize = 0
+    while i < size {
+        out[i] = 0
+        i = i + 1
+    }
+    i = 0
+    while i < n {
+        out[size - n + i] = p[i]
+        i = i + 1
+    }
+    return true
+}
+
+/// Verifies `sig` (`slen` bytes) over `msg[0..mlen]` with the public key of `key` under `alg`.
+export fn x509VerifySignature(key: *Cert, alg: i32, msg: *ui8, mlen: usize, sig: *ui8, slen: usize) -> bool {
+    local h: i32 = hashOf(alg)
+    if h == 0 { return false }
+    local hl: usize = digestLen(h)
+    local hash: [ui8; 64]
+    if !digest(h, msg, mlen, &hash[0]) { return false }
+
+    if isEcdsa(alg) {
+        local curve: i32 = 0
+        local size: usize = 0
+        if key.keyType == KEY_EC_P256 {
+            curve = ECDSA_P256
+            size = 32
+        } else if key.keyType == KEY_EC_P384 {
+            curve = ECDSA_P384
+            size = 48
+        } else {
+            return false
+        }
+        local seq: Tlv
+        local r: Tlv
+        local s: Tlv
+        if !derRead(sig, slen, &seq) || seq.tag != 0x30 || seq.total != slen { return false }
+        if !derRead(seq.body, seq.len, &r) { return false }
+        if !derRead(&seq.body[r.total], seq.len - r.total, &s) { return false }
+        if r.total + s.total != seq.len { return false }
+        local rb: [ui8; 48]
+        local sb: [ui8; 48]
+        if !intToFixed(&r, &rb[0], size) || !intToFixed(&s, &sb[0], size) { return false }
+        return ecdsaVerify(curve, &key.ecPoint[1], &key.ecPoint[1 + size], &hash[0], hl, &rb[0], &sb[0])
+    }
+    if key.keyType != KEY_RSA { return false }
+    if isPss(alg) {
+        return rsaVerifyPss(key.rsaN, key.rsaNLen, key.rsaE, key.rsaELen, sig, slen, h, &hash[0], hl)
+    }
+    return rsaVerifyPkcs1(key.rsaN, key.rsaNLen, key.rsaE, key.rsaELen, sig, slen, h, &hash[0], hl)
+}
+
+/// True when `issuer`'s key verifies `c`'s signature (`c.sigAlg`) over its TBSCertificate.
+export fn x509CheckSignedBy(c: *Cert, issuer: *Cert) -> bool {
+    if c.sigAlg == SIG_NONE { return false }
+    return x509VerifySignature(issuer, c.sigAlg, c.tbs, c.tbsLen, c.sig, c.sigLen)
+}
+
+/// Do `c`'s issuer and `parent`'s subject name the same entity (byte-wise DER comparison)?
+export fn x509IssuedBy(c: *Cert, parent: *Cert) -> bool {
+    return c.issuerLen == parent.subjectLen && same(c.issuer, parent.subject, c.issuerLen)
+}
+
+// ---- names -------------------------------------------------------------------------------------
+
+fn lower(c: ui8) -> ui8 {
+    if c >= 65 && c <= 90 { return c + 32 }
+    return c
+}
+
+/// Does the dNSName `pat[0..plen]` match `host[0..hlen]`? Case-insensitive; a leading `*.` matches
+/// exactly one label (and the pattern must have at least two more labels).
+fn dnsMatch(pat: *ui8, plen: usize, host: *ui8, hlen: usize) -> bool {
+    if plen == 0 || hlen == 0 { return false }
+    local pi: usize = 0
+    local hi: usize = 0
+    if plen > 2 && pat[0] == 42 && pat[1] == 46 {
+        // wildcard: the host's first label is skipped, the rest must equal the pattern after `*.`
+        local dots: usize = 0
+        local k: usize = 2
+        while k < plen {
+            if pat[k] == 46 { dots = dots + 1 }
+            k = k + 1
+        }
+        if dots < 1 { return false }
+        while hi < hlen && host[hi] != 46 { hi = hi + 1 }
+        if hi == 0 || hi >= hlen { return false }
+        pi = 1                      // compare "." + rest against host[hi..]
+    }
+    if plen - pi != hlen - hi { return false }
+    while pi < plen {
+        if lower(pat[pi]) != lower(host[hi]) { return false }
+        pi = pi + 1
+        hi = hi + 1
+    }
+    return true
+}
+
+/// Is `host` (NUL-terminated DNS name) covered by a dNSName entry of the subjectAltName extension?
+export fn x509MatchesHost(c: *Cert, host: *ui8) -> bool {
+    if c.san == nil { return false }
+    local hlen: usize = 0
+    while host[hlen] != 0 { hlen = hlen + 1 }
+    local pos: usize = 0
+    while pos < c.sanLen {
+        local e: Tlv
+        if !derRead(&c.san[pos], c.sanLen - pos, &e) { return false }
+        pos = pos + e.total
+        if e.tag == 0x82 && dnsMatch(e.body, e.len, host, hlen) { return true }
+    }
+    return false
+}
+
+/// Is `now` inside the certificate's validity period?
+export fn x509ValidAt(c: *Cert, now: i64) -> bool {
+    return now >= c.notBefore && now <= c.notAfter
+}

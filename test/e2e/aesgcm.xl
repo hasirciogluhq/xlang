@@ -1,0 +1,87 @@
+// AES-128 (FIPS 197 appendix C.1) and AES-128-GCM (the original GCM spec's test cases 1, 2 and 4)
+// known-answer tests, plus a tamper check.
+from "std/aesgcm" import aes128EncryptBlock, aesGcmSeal, aesGcmOpen
+from "std" import println
+
+fn hexVal(c: ui8) -> ui8 {
+    if c >= 97 { return c - 87 }
+    return c - 48
+}
+
+fn unhex(hex: *ui8, out: *ui8) -> usize {
+    local n: usize = 0
+    while hex[n * 2] != 0 {
+        out[n] = hexVal(hex[n * 2]) * 16 + hexVal(hex[n * 2 + 1])
+        n = n + 1
+    }
+    return n
+}
+
+fn same(a: *ui8, b: *ui8, n: usize) -> bool {
+    local i: usize = 0
+    while i < n {
+        if a[i] != b[i] { return false }
+        i = i + 1
+    }
+    return true
+}
+
+global failures: i32 = 0
+
+fn check(name: *ui8, ok: bool) {
+    if !ok {
+        println(name)
+        failures = failures + 1
+    }
+}
+
+fn gcm(name: *ui8, key: *ui8, iv: *ui8, aad: *ui8, pt: *ui8, ct: *ui8, tag: *ui8) {
+    local k: [ui8; 16]
+    local n: [ui8; 12]
+    local a: [ui8; 32]
+    local p: [ui8; 64]
+    local c: [ui8; 64]
+    local t: [ui8; 16]
+    unhex(key, &k[0])
+    unhex(iv, &n[0])
+    local alen: usize = unhex(aad, &a[0])
+    local plen: usize = unhex(pt, &p[0])
+    unhex(ct, &c[0])
+    unhex(tag, &t[0])
+    local got: [ui8; 64]
+    local gtag: [ui8; 16]
+    aesGcmSeal(&k[0], &n[0], &a[0], alen, &p[0], plen, &got[0], &gtag[0])
+    check(name, same(&got[0], &c[0], plen) && same(&gtag[0], &t[0], 16))
+    local back: [ui8; 64]
+    check(name, aesGcmOpen(&k[0], &n[0], &a[0], alen, &got[0], plen, &t[0], &back[0]))
+    check(name, same(&back[0], &p[0], plen))
+    if plen > 0 {
+        got[0] = got[0] ^ 1
+        check(name, !aesGcmOpen(&k[0], &n[0], &a[0], alen, &got[0], plen, &t[0], &back[0]))
+    }
+}
+
+fn main() -> i32 {
+    local key: [ui8; 16]
+    local pt: [ui8; 16]
+    local want: [ui8; 16]
+    local out: [ui8; 16]
+    unhex("000102030405060708090a0b0c0d0e0f", &key[0])
+    unhex("00112233445566778899aabbccddeeff", &pt[0])
+    unhex("69c4e0d86a7b0430d8cdb78070b4c55a", &want[0])
+    aes128EncryptBlock(&key[0], &pt[0], &out[0])
+    check("aes block", same(&out[0], &want[0], 16))
+
+    gcm("gcm case 1", "00000000000000000000000000000000", "000000000000000000000000", "", "", "",
+        "58e2fccefa7e3061367f1d57a4e7455a")
+    gcm("gcm case 2", "00000000000000000000000000000000", "000000000000000000000000", "",
+        "00000000000000000000000000000000", "0388dace60b6a392f328c2b971b2fe78",
+        "ab6e47d42cec13bdf53a67b21257bddf")
+    gcm("gcm case 4", "feffe9928665731c6d6a8f9467308308", "cafebabefacedbaddecaf888",
+        "feedfacedeadbeeffeedfacedeadbeefabaddad2",
+        "d9313225f88406e5a55909c5aff5269a86a7a9531534f7da2e4c303d8a318a721c3c0c95956809532fcf0e2449a6b525b16aedf5aa0de657ba637b39",
+        "42831ec2217774244b7221b784d0d49ce3aa212f2c02a4e035c17e2329aca12e21d514b25466931c7d8f6a5aac84aa051ba30b396a0aac973d58e091",
+        "5bc94fbc3221a5db94fae95ae7121a47")
+    if failures == 0 { println("aesgcm ok") }
+    return failures
+}

@@ -92,7 +92,16 @@ export fn bnFromBytes(out: *ui32, n: usize, bytes: *ui8, len: usize) -> bool {
 }
 
 /// Limbs -> big-endian bytes, exactly `len` bytes (high bytes beyond `len` are dropped).
-export fn bnToBytes(a: *ui32, n: usize, out: *u8, len: usize) {
+export fn bnToBytes(a: *ui32, n: usize, out: *ui8, len: usize) {
+    local i: usize = 0
+    while i < len {
+        local v: ui8 = 0
+        if i / 4 < n {
+            v = ((a[i / 4] >> (((i % 4) * 8) as ui32)) & 0xff) as ui8
+        }
+        out[len - 1 - i] = v
+        i = i + 1
+    }
 }
 
 fn mulInv32(m0: ui32) -> ui32 {

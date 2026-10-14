@@ -1,5 +1,6 @@
-// std/sha256: SHA-256 (FIPS 180-4). One-shot `sha256(data, n, out)` with a 32-byte digest; the
-// streaming state is not exposed yet. Pure xl, no tables outside `K`, no allocation.
+// std/sha256: SHA-256 (FIPS 180-4). One-shot `sha256(data, n, out)` with a 32-byte digest, and a
+// streaming `Sha256` state (init / update / final; copy the struct to snapshot a running hash).
+// Pure xl, no tables outside `K`, no allocation.
 
 global K: [ui32; 64] = [
     0x428a2f98, 0x71374491, 0xb5c0fbcf, 0xe9b5dba5, 0x3956c25b, 0x59f111f1, 0x923f82a4, 0xab1c5ed5,
@@ -67,54 +68,79 @@ fn block(h: *ui32, p: *ui8) {
     h[7] = h[7] + hh
 }
 
+/// Streaming SHA-256 state. A plain struct copy (`*a = *b`) snapshots a running hash.
+export struct Sha256 {
+    h: [ui32; 8]
+    buf: [ui8; 64]
+    used: usize
+    total: ui64
+}
+
+export fn sha256Init(s: *Sha256) {
+    s.h[0] = 0x6a09e667
+    s.h[1] = 0xbb67ae85
+    s.h[2] = 0x3c6ef372
+    s.h[3] = 0xa54ff53a
+    s.h[4] = 0x510e527f
+    s.h[5] = 0x9b05688c
+    s.h[6] = 0x1f83d9ab
+    s.h[7] = 0x5be0cd19
+    s.used = 0
+    s.total = 0
+}
+
+export fn sha256Update(s: *Sha256, data: *ui8, n: usize) {
+    s.total = s.total + (n as ui64)
+    local i: usize = 0
+    while i < n {
+        s.buf[s.used] = data[i]
+        s.used = s.used + 1
+        i = i + 1
+        if s.used == 64 {
+            block(&s.h[0], &s.buf[0])
+            s.used = 0
+        }
+    }
+}
+
+/// Finishes a copy of the state: `s` itself keeps absorbing afterwards.
+export fn sha256Final(s: *Sha256, out: *ui8) {
+    local c: Sha256 = *s
+    local bits: ui64 = c.total << 3
+    c.buf[c.used] = 0x80
+    c.used = c.used + 1
+    if c.used > 56 {
+        while c.used < 64 {
+            c.buf[c.used] = 0
+            c.used = c.used + 1
+        }
+        block(&c.h[0], &c.buf[0])
+        c.used = 0
+    }
+    while c.used < 56 {
+        c.buf[c.used] = 0
+        c.used = c.used + 1
+    }
+    local i: usize = 0
+    while i < 8 {
+        c.buf[63 - i] = ((bits >> ((i as ui64) * 8)) & 0xff) as ui8
+        i = i + 1
+    }
+    block(&c.h[0], &c.buf[0])
+    i = 0
+    while i < 8 {
+        out[i * 4] = (c.h[i] >> 24) as ui8
+        out[i * 4 + 1] = ((c.h[i] >> 16) & 0xff) as ui8
+        out[i * 4 + 2] = ((c.h[i] >> 8) & 0xff) as ui8
+        out[i * 4 + 3] = (c.h[i] & 0xff) as ui8
+        i = i + 1
+    }
+}
+
 /// SHA-256 of `data[0..n]` into the 32 bytes at `out`.
 export fn sha256(data: *ui8, n: usize, out: *ui8) {
-    local h: [ui32; 8]
-    h[0] = 0x6a09e667
-    h[1] = 0xbb67ae85
-    h[2] = 0x3c6ef372
-    h[3] = 0xa54ff53a
-    h[4] = 0x510e527f
-    h[5] = 0x9b05688c
-    h[6] = 0x1f83d9ab
-    h[7] = 0x5be0cd19
-
-    local done: usize = 0
-    while n - done >= 64 {
-        block(&h[0], &data[done])
-        done = done + 64
-    }
-    // Final one or two blocks: remaining bytes, 0x80, zero padding, 64-bit bit length.
-    local tail: [ui8; 128]
-    local rest: usize = n - done
-    local i: usize = 0
-    while i < 128 {
-        tail[i] = 0
-        i = i + 1
-    }
-    i = 0
-    while i < rest {
-        tail[i] = data[done + i]
-        i = i + 1
-    }
-    tail[rest] = 0x80
-    local total: usize = 64
-    if rest >= 56 { total = 128 }
-    local bits: ui64 = (n as ui64) << 3
-    i = 0
-    while i < 8 {
-        tail[total - 1 - i] = ((bits >> ((i as ui64) * 8)) & 0xff) as ui8
-        i = i + 1
-    }
-    block(&h[0], &tail[0])
-    if total == 128 { block(&h[0], &tail[64]) }
-
-    i = 0
-    while i < 8 {
-        out[i * 4] = (h[i] >> 24) as ui8
-        out[i * 4 + 1] = ((h[i] >> 16) & 0xff) as ui8
-        out[i * 4 + 2] = ((h[i] >> 8) & 0xff) as ui8
-        out[i * 4 + 3] = (h[i] & 0xff) as ui8
-        i = i + 1
-    }
+    local s: Sha256
+    sha256Init(&s)
+    sha256Update(&s, data, n)
+    sha256Final(&s, out)
 }
