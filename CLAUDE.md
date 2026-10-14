@@ -11,6 +11,15 @@
 - `KNOWN-LIMITATIONS.md`: what is intentionally incomplete and the open decisions. The original plan
   (`plan/`, `plan/eg/`) was completed and removed; it remains in git history.
 - `src/README.md`: source layout. `std/`: the standard library. `test/e2e/`: end-to-end programs.
+- `docs/`: documentation for humans, one markdown file per topic (what it is, rules, exact behavior,
+  examples, restrictions, how it works). Written in English, accurate to the implementation: verify every
+  stated behavior against the compiler before writing it.
+- `docs-ai/`: documentation for AI readers, one markdown file per topic, named like the matching `docs/`
+  file. Format rules: a title line, then a few plain sentences that summarize the topic's logic (about 5 to 10
+  one-line sentences, no more); prose only, no code blocks, no examples, no tables, no lists; no quotation
+  marks, no apostrophes (write `cannot`, not `can't`) and no backticks; name keywords and error codes as
+  plain words; no filler, no motivation, no history. Every sentence states a rule or a behavior. Update the
+  matching `docs/` and `docs-ai/` files in the same change that alters the feature.
 
 ## Working rules
 
