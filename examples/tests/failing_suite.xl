@@ -1,4 +1,4 @@
-// Intentionally failing: used to check that `xlang test` reports failures (test/e2e/run.sh).
+// Intentionally failing: used to check that `xlang test` reports failures (`xlang test test/e2e/failing_suite.xl` in test/e2e/run.sh).
 from "std/testing" import Suite, T, suiteInit, test, suiteRun, expectEq
 
 fn good(t: *T) { expectEq(t, 2 + 2, 4) }

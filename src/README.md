@@ -4,7 +4,8 @@ Context folders — each concern owns its tree.
 
 ```
 src/
-  cli/                 # xlang CLI entry (`parse`, `check`, `layout`, `--explain`)
+  cli/                 # xlang CLI entry (`parse`, `check`, `build`, `layout`, `run`, `test`, `--explain`)
+    test_runner.cpp    # `xlang run` and `xlang test`: file/glob/regex selection, build + run per file, colored report
   lang/
     lexer/             # tokens; `#if` ... directives are lexed here
     preprocess/        # conditional compilation on the token stream

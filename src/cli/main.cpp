@@ -1,3 +1,4 @@
+#include "test_runner.h"
 #include "xlang/codegen/codegen.h"
 #include "xlang/codegen/link.h"
 #include "xlang/lang/ast.h"
@@ -12,6 +13,7 @@
 #include <CLI/CLI.hpp>
 
 #include <cctype>
+#include <cstdlib>
 #include <cstdint>
 #include <filesystem>
 #include <format>
@@ -163,6 +165,51 @@ xlang::BuildConfig toBuildConfig(const BuildCliOptions& o) {
     return config;
 }
 
+/// The build options typed on a subcommand, re-spelled for a `xlang build` child process.
+std::vector<std::string> forwardBuildArgs(const CLI::App* cmd, const BuildCliOptions& b) {
+    std::vector<std::string> a;
+    for (const std::string& d : b.defines) {
+        a.push_back("-D");
+        a.push_back(d);
+    }
+    for (const std::string& u : b.undefs) {
+        a.push_back("-U");
+        a.push_back(u);
+    }
+    if (!b.target.empty()) {
+        a.push_back("--target=" + b.target);
+    }
+    if (!b.opt.empty()) {
+        a.push_back("-O" + b.opt);
+    }
+    if (b.debug) {
+        a.push_back("-g");
+    }
+    if (cmd->count("--cpu") != 0) {
+        a.push_back("--cpu=" + b.cpu);
+    }
+    if (cmd->count("--mangle") != 0) {
+        a.push_back("--mangle=" + b.mangle);
+    }
+    if (cmd->count("--safety") != 0) {
+        a.push_back("--safety=" + b.safety);
+    }
+    if (b.no_std) {
+        a.push_back("--no-std");
+    }
+    if (!b.std_path.empty()) {
+        a.push_back("--std=" + b.std_path);
+    }
+    if (!b.std_features.empty()) {
+        std::string joined;
+        for (const std::string& f : b.std_features) {
+            joined += (joined.empty() ? "" : ",") + f;
+        }
+        a.push_back("--std-features=" + joined);
+    }
+    return a;
+}
+
 void printConfig(const xlang::BuildConfig& config) {
     std::cout << "target = \"" << config.target.triple << "\"\n";
     for (const auto& [name, value] : config.resolved()) {
@@ -252,6 +299,25 @@ int main(int argc, char** argv) {
     addBuildOptions(layout, build_options);
     addDiagOptions(layout, diag_options);
 
+    xlang::cli::TestRunOptions test_options;
+    bool test_no_color = false;
+    BuildCliOptions test_build_options;
+    CLI::App* test = app.add_subcommand(
+        "test",
+        "Build and run test files (`*.test.xl`); patterns: file, directory, glob (`**`, `*`, `?`), "
+        "`re:<regex>` or a path substring");
+    test->add_option("patterns", test_options.patterns, "Tests to run (default: **/*.test.xl)");
+    test->add_option("-x,--exclude", test_options.excludes, "Skip files matching this pattern (repeatable)");
+    test->add_flag("--list", test_options.list_only, "Only print the matching test files");
+    test->add_flag("--no-color", test_no_color, "Plain output");
+    addBuildOptions(test, test_build_options);
+
+    std::filesystem::path run_input;
+    BuildCliOptions run_build_options;
+    CLI::App* run = app.add_subcommand("run", "Build a program into a temporary file, run it and exit with its status");
+    run->add_option("file", run_input, "Source file (.xl)")->required();
+    addBuildOptions(run, run_build_options);
+
     try {
         app.parse(static_cast<int>(raw.size()), raw.data());
     } catch (const CLI::ParseError& e) {
@@ -267,6 +333,20 @@ int main(int argc, char** argv) {
             }
             std::cout << text;
             return 0;
+        }
+
+        if (run->parsed()) {
+            return xlang::cli::runProgram(xlang::cli::selfExecutable(argv[0]),
+                                          run_input.string(),
+                                          forwardBuildArgs(run, run_build_options));
+        }
+
+        if (test->parsed()) {
+            const char* no_color_env = std::getenv("NO_COLOR");
+            test_options.color =
+                !test_no_color && ::isatty(1) != 0 && (no_color_env == nullptr || *no_color_env == '\0');
+            test_options.build_args = forwardBuildArgs(test, test_build_options);
+            return xlang::cli::runTests(test_options, xlang::cli::selfExecutable(argv[0]));
         }
 
         CLI::App* active = parse->parsed()   ? parse

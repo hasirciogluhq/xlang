@@ -30,13 +30,23 @@ Everything in the original plan is implemented; this file lists what is intentio
 
 ## Stdlib: files, JSON, HTTP
 - **`std/http` is plain HTTP only:** no TLS and no DNS (the client takes an IPv4 address), so `https://` URLs
-  cannot be fetched. The server handles one connection at a time (blocking `accept`, `Connection: close`),
-  needs the request line and headers within 8 KiB, and does not read request bodies beyond what arrived
-  with the headers. Routes match the exact path; there are no route groups or path parameters.
+  cannot be fetched. The server handles one connection at a time (blocking `accept`, `Connection: close`).
+  Routes match the exact path; there are no route groups or path parameters. Route table and request
+  buffer grow on demand with no upper bound (a client can make the server map arbitrary memory).
 - **`std/json` is read-only and flat:** lookups of top-level members of an object in a NUL-terminated buffer;
   no nested paths, no `\u` escapes, no validation, no writer.
 - **`std/fs` has no directories or metadata** beyond existence and size; the caller supplies all buffers.
 - **Windows:** the new file and TCP calls in `std/sys/windows.xl` are stubs returning -1 (no NT SSNs).
+
+## Testing
+- **`std/testing` has no discovery:** a test file registers its tests explicitly (`test(&s, "name", fn)`) and
+  returns `suiteRun`. Auto-discovery of `fn test*` would need reflection or a compiler-side convention.
+- **No chained matchers** (`expect(x).toEqual(y)`): there are no generics, so the matchers are typed
+  functions (`expectEq` for `i64`, `expectEqUInt`, `expectEqStr`, `expectNear`, ...).
+- **A failed expectation does not stop the test** (no unwinding); a `panic` ends the whole file's run, which
+  `xlang test` reports as that file failing.
+- **`xlang test` runs files sequentially** (no `--jobs`) and has no per-test name filter; granularity is the
+  file. Windows is not supported by the runner (POSIX `fork`).
 
 ## Tooling
 - Debug info has compile unit, subprograms, line locations and basic types; no struct/class types.

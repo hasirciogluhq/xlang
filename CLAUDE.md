@@ -154,7 +154,10 @@ No filler praise; state weaknesses plainly. For each feature cover:
 - Build system is xmake: `xmake build`; output `build/xlang`. LLVM comes from `llvm-config` (`$LLVM_CONFIG`
   or Homebrew's `llvm`); the compiler links it statically.
 - `xlang build <file> [-o out] [--emit=exe|obj|ir|bc|header|static|shared] [--incremental]`, `xlang parse <file>
-  [--ast]`, `xlang check <file> [--hir]`, `xlang layout <file> [Type]`, `xlang --explain <CODE>`; build options
+  [--ast]`, `xlang check <file> [--hir]`, `xlang layout <file> [Type]`, `xlang run <file>` (build to a temp executable, run it, exit with its status),
+  `xlang test [patterns...] [-x pattern] [--list] [--no-color]`
+  (`*.test.xl` files using `std/testing`; patterns: file, directory, glob with `**`/`*`/`?`, `re:<regex>`, path
+  substring), `xlang --explain <CODE>`; build options
   `-D/-U/--target/-O/-g/--cpu/--mangle/--safety/--no-std/--std/--std-features/--print-cfg`.
 - The standard library is xl source in `std/`, embedded into the compiler at build time (`--std=<dir>` overrides);
   `xmake build std` type-checks it.

@@ -81,5 +81,25 @@ for t in "${tests[@]}"; do
   fi
 done
 
+# `xlang test`: a passing selection exits 0, a failing suite exits 1 and is reported as FAIL.
+cd "$root"
+if "$xlang" test test/std --no-color >"$work/test.out" 2>&1; then
+  echo "ok   [xlang test/pass]"; pass=$((pass+1))
+else
+  echo "FAIL [xlang test/pass]"; tail -15 "$work/test.out"; fail=$((fail+1))
+fi
+if "$xlang" test test/e2e/failing_suite.xl --no-color >"$work/test.out" 2>&1; then
+  echo "FAIL [xlang test/fail] expected a nonzero exit"; fail=$((fail+1))
+elif grep -q "FAIL" "$work/test.out" && grep -q "expected 5, got 4" "$work/test.out"; then
+  echo "ok   [xlang test/fail]"; pass=$((pass+1))
+else
+  echo "FAIL [xlang test/fail] report lacks the failure"; tail -10 "$work/test.out"; fail=$((fail+1))
+fi
+if [ "$("$xlang" test 'test/**/js*.test.xl' --list)" = "test/std/json.test.xl" ]; then
+  echo "ok   [xlang test/glob]"; pass=$((pass+1))
+else
+  echo "FAIL [xlang test/glob]"; fail=$((fail+1))
+fi
+
 echo "e2e: $pass passed, $fail failed"
 [ "$fail" = 0 ]

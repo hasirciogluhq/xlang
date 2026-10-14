@@ -1,0 +1,36 @@
+// std/fs on a scratch file in the current directory.
+from "std" import fsWrite, fsAppend, fsReadAll, fsExists, fsSize, fsRemove
+from "std/testing" import Suite, T, suiteInit, test, suiteRun, expectEq, expectEqStr, expectTrue, expectFalse
+
+global path: *ui8 = "xlang_fs_test.tmp"
+global buf: [ui8; 128]
+
+fn writeRead(t: *T) {
+    expectTrue(t, fsWrite(path, "hello "))
+    expectTrue(t, fsAppend(path, "world"))
+    expectTrue(t, fsExists(path))
+    expectEq(t, fsSize(path), 11)
+    expectEq(t, fsReadAll(path, &buf[0], 128) as i64, 11)
+    expectEqStr(t, &buf[0], "hello world")
+}
+
+fn remove(t: *T) {
+    expectTrue(t, fsRemove(path))
+    expectFalse(t, fsExists(path))
+    expectEq(t, fsSize(path), -1)
+}
+
+fn tooSmall(t: *T) {
+    fsWrite(path, "0123456789")
+    expectTrue(t, fsReadAll(path, &buf[0], 4) < 0)
+    fsRemove(path)
+}
+
+fn main() -> i32 {
+    local s: Suite
+    suiteInit(&s)
+    test(&s, "write, append, read", writeRead)
+    test(&s, "remove", remove)
+    test(&s, "buffer too small", tooSmall)
+    return suiteRun(&s)
+}
