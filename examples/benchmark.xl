@@ -1,0 +1,15 @@
+// Strings are NUL-terminated `*ui8`; there is no concatenation operator and no format string.
+from "std" import print, println, printInt, strlen
+
+fn main() -> i32 {
+    local i: i64 = 0
+    local sum: i64 = 0
+    println("yey")
+    while i < 100000000 {
+        sum = sum + i
+        i = i + 1
+    }
+    println("ok")
+
+    return 0
+}
