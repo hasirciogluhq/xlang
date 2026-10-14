@@ -1109,7 +1109,10 @@ void Sema::checkStatements(const Block& block) {
 }
 
 void Sema::checkStaticAssert(const TopLevelCallDecl& call) {
-    const Expr& c = *call.call;
+    checkStaticAssertCall(*call.call);
+}
+
+void Sema::checkStaticAssertCall(const Expr& c) {
     if (c.lhs->kind != Expr::Kind::Name || c.lhs->text != "staticAssert") {
         return;
     }

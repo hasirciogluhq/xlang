@@ -1,10 +1,10 @@
 ## Faz 4 — Sema ve HIR
 
-- [ ] **4.1** Sembol tablosu/scope: modül, fonksiyon, blok; nitelikli isim (`alias.name`).
-- [ ] **4.2** Sema: isim çözümleme, tip kontrolü, overload yok/var kararı (önerim: overload yok, ad bazlı
+- [x] **4.1** Sembol tablosu/scope: modül, fonksiyon, blok; nitelikli isim (`alias.name`).
+- [x] **4.2** Sema: isim çözümleme, tip kontrolü, overload yok/var kararı (önerim: overload yok, ad bazlı
   tek tanım, mangling basit), `syscall(...)` argüman doğrulaması (nr + argümanlar herhangi bir tamsayı tipi ya da `*T`, `as` gerekmez, compiler register genişliğine çevirir; sayı sabit değil, hedef OS/arch'ın
   en fazla argüman sayısına göre 5.3'teki tablodan denetlenir, aşılırsa hata), `staticAssert`.
-- [ ] **4.3** HIR (`include/xlang/hir/hir.h`): tipler çözülmüş, örtük dönüşümler açık `Cast`,
+- [x] **4.3** HIR (`include/xlang/hir/hir.h`): tipler çözülmüş, örtük dönüşümler açık `Cast`,
   sugar düşürülmüş, sınıf metodları `fn(self: *T, ...)`, interface çağrıları açık itable çağrısı.
 - [ ] **4.4** Class:
   - Tek kalıtım, `class B : A`; `virtual` metod, `override`; vptr nesnenin başında.
@@ -71,6 +71,17 @@
   yerel tanım/import kayıtlı adı gölgeler ve `W0402` uyarısı verir; rol bağı addan değil kayıttan
   olduğundan gölgeleme rolü bozmaz. Compiler `register`'ı modül stdlib'den mi kullanıcıdan mı geliyor diye
   ayırt etmez.
+
+> **Durum notu (4.1–4.3):** `include/xlang/sema/scope.h` (`ScopeStack`: modül → fonksiyon → blok, iç kapsam
+> dış kapsamı gölgeler, aynı kapsamda ikinci bağlama `E0401`), `src/sema/lower.cpp` (gövde tip denetimi ve HIR
+> üretimi **tek geçiş**: `Sema::lower()`) ve `include/xlang/hir/hir.h` yazıldı; `xlang check <dosya> --hir` tipli
+> HIR'ı basar. Hata kodları: `E0708` tip uyuşmazlığı, `E0709` geçersiz işlem (bilinmeyen alan/metod, adres
+> alınamaz, atanamaz...), `E0710` argüman sayısı / `syscall` sınırı; `E0601`, `W0601`, `E0701`, `E0501`–`E0504`,
+> `W0402` ilgili yerlerde kullanılır. Kapsam dışı bırakılanlar: modül yükleme (4.6: `import` ile gelen adlar
+> `External` düğümü ve bilinmeyen tip olur, hata verilmez), vtable slot numaraları (`CallVirtual` yalnızca
+> `Sınıf.metod` taşır; 4.4), `impl` metod kümesinin interface ile doğrulanması (4.5), `__builtin_*` ve inline asm
+> (Faz 6; şimdilik "desteklenmiyor" hatası), `W0201`/`W0301`/`E0302`/`E0401` modül düzeyi kontrolleri (4.6b, 4.8).
+> Düzen dönüşü: HIR dizi tipleri sabit uzunluğu literal olarak taşır.
 
 **Kabul:** class/interface/vtable içeren küçük programlar çalışır; `@repr(c)` class'ın nesne düzeni
 ve vtable'ı clang ile birebir uyuşur (tek kalıtım).

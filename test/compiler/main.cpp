@@ -473,9 +473,11 @@ void testOperatorPrecedenceAndCasts() {
 }  // namespace
 
 void runSemaTests();
+void runLowerTests();
 
 int main() {
     runSemaTests();
+    runLowerTests();
     testWarningContextAndTwoSidedLabels();
     testErrorContextIsWiderAndGutterIsAligned();
     testDistantMarksAreSeparatedAndNearOnesMerged();

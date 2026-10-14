@@ -53,7 +53,6 @@ struct Expr {
         FloatLiteral,
         BoolLiteral,
         StringLiteral,
-        NullLiteral,
         Name,          ///< identifier, including `self`
         Unary,
         Binary,

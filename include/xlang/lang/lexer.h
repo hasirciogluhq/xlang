@@ -49,7 +49,6 @@ enum class TokenKind {
     Except,
     True,
     False,
-    Null,
 
     // Punctuation
     LParen,

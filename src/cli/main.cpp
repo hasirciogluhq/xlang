@@ -192,6 +192,8 @@ int main(int argc, char** argv) {
     std::filesystem::path check_input;
     CLI::App* check = app.add_subcommand("check", "Parse and run the module checks (types, enums, layouts, staticAssert)");
     check->add_option("file", check_input, "Source file (.xl)")->required();
+    bool dump_hir = false;
+    check->add_flag("--hir", dump_hir, "Print the typed HIR after a successful check");
     addBuildOptions(check, build_options);
     addDiagOptions(check, diag_options);
 
@@ -261,6 +263,14 @@ int main(int argc, char** argv) {
         xlang::Sema sema(program, config, diagnostics, &history);
         if (!diagnostics.hasErrors()) {
             sema.analyze();
+        }
+
+        if (check->parsed() && !diagnostics.hasErrors()) {
+            xlang::hir::Module module = sema.lower();
+            if (dump_hir && !diagnostics.hasErrors()) {
+                diagnostics.flush();
+                xlang::hir::dumpModule(std::cout, module);
+            }
         }
 
         if (layout->parsed() && !diagnostics.hasErrors()) {

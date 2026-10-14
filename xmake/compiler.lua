@@ -41,6 +41,9 @@ target("xlang-frontend")
         "$(projectdir)/src/sema/sema.cpp",
         "$(projectdir)/src/sema/layout.cpp",
         "$(projectdir)/src/sema/conversion.cpp",
+        "$(projectdir)/src/sema/scope.cpp",
+        "$(projectdir)/src/sema/lower.cpp",
+        "$(projectdir)/src/hir/hir.cpp",
         "$(projectdir)/src/util/source.cpp",
         "$(projectdir)/src/util/diagnostics.cpp"
     )
@@ -62,6 +65,7 @@ target("xlang-tests")
     set_kind("binary")
     set_default(false)
     set_enabled(not cross)
-    add_files("$(projectdir)/test/compiler/main.cpp", "$(projectdir)/test/compiler/sema_test.cpp")
+    add_files("$(projectdir)/test/compiler/main.cpp", "$(projectdir)/test/compiler/sema_test.cpp",
+              "$(projectdir)/test/compiler/lower_test.cpp")
     add_deps("xlang-frontend")
     add_tests("frontend")

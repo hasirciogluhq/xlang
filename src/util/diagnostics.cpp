@@ -94,6 +94,16 @@ constexpr std::size_t kLeadWidth = 40;
         {"E0707", Severity::Error, "not a compile-time constant",
          "A constant expression (array length, enum value, `staticAssert`, `sizeOf` argument) "
          "uses something that cannot be evaluated at compile time."},
+        {"E0708", Severity::Error, "type mismatch",
+         "A value does not have the type its context needs and no implicit conversion exists "
+         "(`as` is required for narrowing, float to integer, pointer casts and so on)."},
+        {"E0709", Severity::Error, "invalid operation",
+         "An operator, field access, index, call or assignment does not apply to the operand: "
+         "unknown field or method, dereferencing a non-pointer, assigning to a non-place, "
+         "`&` of a temporary, arithmetic on pointers, and similar."},
+        {"E0710", Severity::Error, "wrong number of arguments",
+         "A call has a different number of arguments than the callee declares, or a `syscall` "
+         "has more arguments than the target allows."},
         {"W0601", Severity::Warning, "implicit signed integer to float conversion",
          "A signed integer is implicitly converted to `f32`/`f64` and precision may be lost. "
          "Write `as f64`, or silence with `@allow(W0601)` / `--allow=W0601`."},

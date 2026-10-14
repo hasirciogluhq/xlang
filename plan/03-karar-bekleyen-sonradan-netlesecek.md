@@ -46,3 +46,12 @@
   belirlenmedi.
 - **Bildirim kodlarının sınırları:** `E0001` (sözcüksel) ve `E0002` (sözdizimi) yalnızca "genel sözdizimi hatası"
   için açıldı; ayrı kodlara bölme ihtiyacı doğarsa kayıt tablosunda yapılır.
+- **`syscall` argüman sınırı (Windows):** 5.3 tablosu Linux/macOS (x86_64, aarch64) için en fazla 6 argüman
+  verir; Windows NT için sınır yazılı değil (4'ten fazlası stack'e taşar). Sema şu an Windows'ta sınır
+  **uygulamıyor** (`E0710` yalnızca tablodaki hedeflerde). Sayısal bir üst sınır istenirse tabloya yazılmalı.
+- **`nil`:** builtin sabittir, anahtar sözcük değildir (lexer'da `null` yok); sema `nil` adını çözer, yerel
+  tanımla gölgelenebilir.
+- **Sabit katlama:** HIR'da `N * 2` gibi sabit ifadeler katlanmaz (global başlatıcıda sabit sayılır, katlama
+  codegen'e/ileride bir sadeleştirmeye kalır).
+- **Bildirilmeyen dönüş yolu:** değer döndüren fonksiyonun sonuna "düşmesi" için akış analizi yapılmıyor
+  (planda yok); gerekirse ayrı karar.

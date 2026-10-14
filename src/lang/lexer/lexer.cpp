@@ -31,7 +31,6 @@ namespace {
         {"self", TokenKind::SelfKw},   {"for", TokenKind::For},
         {"except", TokenKind::Except},
         {"true", TokenKind::True},     {"false", TokenKind::False},
-        {"null", TokenKind::Null},
     };
     return table;
 }
@@ -516,7 +515,6 @@ const char* tokenKindName(TokenKind kind) {
     case TokenKind::Except: return "except";
     case TokenKind::True: return "true";
     case TokenKind::False: return "false";
-    case TokenKind::Null: return "null";
     case TokenKind::LParen: return "(";
     case TokenKind::RParen: return ")";
     case TokenKind::LBrace: return "{";

@@ -1,6 +1,7 @@
 #pragma once
 
 #include "xlang/lang/ast.h"
+#include "xlang/hir/hir.h"
 #include "xlang/lang/config.h"
 #include "xlang/sema/layout.h"
 #include "xlang/util/diagnostics.h"
@@ -12,6 +13,8 @@
 #include <vector>
 
 namespace xlang {
+
+class Lowerer;
 
 using Int128 = __int128;
 
@@ -61,9 +64,16 @@ public:
     [[nodiscard]] std::optional<ConstValue> enumMember(const std::string& enum_name,
                                                        const std::string& member, const Span& at);
 
+    /// Plan 4.1-4.3: scopes, name resolution and type checking of every function body, lowered to
+    /// HIR in the same pass. Run `analyze()` first; diagnostics go to the engine, the returned
+    /// module is only meaningful when no error was reported.
+    [[nodiscard]] hir::Module lower();
+
     [[nodiscard]] const BuildConfig& config() const { return config_; }
 
 private:
+    friend class Lowerer;
+
     struct Symbol {
         enum class Kind { Struct, Class, Interface, Enum, Alias, Define, Global, Fn, Macro } kind;
         const Item* item{nullptr};
@@ -76,6 +86,7 @@ private:
     void checkEnum(const EnumDecl& decl);
     void checkAggregate(const Item& item);
     void checkStaticAssert(const TopLevelCallDecl& call);
+    void checkStaticAssertCall(const Expr& call);
 
     [[nodiscard]] const Symbol* find(const std::string& name) const;
     [[nodiscard]] std::optional<Type> exprToType(const Expr& expr);

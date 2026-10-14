@@ -152,7 +152,6 @@ public:
         }
         case Expr::Kind::BoolLiteral: return e.bool_value ? "true" : "false";
         case Expr::Kind::StringLiteral: return "\"" + escape(e.text) + "\"";
-        case Expr::Kind::NullLiteral: return "null";
         case Expr::Kind::Name: return e.text;
         case Expr::Kind::Unary: return std::format("({}{})", unaryOpName(e.unary_op), expr(*e.lhs));
         case Expr::Kind::Binary:

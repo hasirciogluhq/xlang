@@ -710,10 +710,6 @@ private:
             advance();
             return e;
         }
-        case TokenKind::Null: {
-            advance();
-            return makeExpr(Expr::Kind::NullLiteral, start);
-        }
         case TokenKind::Ident: {
             ExprPtr e = makeExpr(Expr::Kind::Name, start);
             e->text = tok.text;

@@ -163,7 +163,7 @@ No filler praise; state weaknesses plainly. For each feature cover:
 ## Build
 
 - Build system is xmake: `xmake build`; output `build/xlang`.
-- `xlang parse <file> [--ast]`, `xlang check <file>`, `xlang layout <file> [Type]`, `xlang --explain <CODE>`;
+- `xlang parse <file> [--ast]`, `xlang check <file> [--hir]`, `xlang layout <file> [Type]`, `xlang --explain <CODE>`;
   build options `-D/-U/--target/-O/-g/--print-cfg` (frontend only, no codegen yet).
 - Unit tests: `xmake build xlang-tests && xmake run xlang-tests` (`test/compiler/`).
 - The old codegen/compiler/host/platform sources, `examples/` and `test/xlang/` were deleted; codegen returns in
