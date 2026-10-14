@@ -1,0 +1,64 @@
+// SHA-256 known-answer tests (FIPS 180-4 / NIST vectors).
+from "std/sha256" import sha256
+from "std" import println, print, printUInt, strlen
+
+fn hexDigit(v: ui8) -> ui8 {
+    if v < 10 { return 48 + v }
+    return 87 + v
+}
+
+fn toHex(d: *ui8, out: *ui8) {
+    local i: usize = 0
+    while i < 32 {
+        out[i * 2] = hexDigit(d[i] >> 4)
+        out[i * 2 + 1] = hexDigit(d[i] & 15)
+        i = i + 1
+    }
+    out[64] = 0
+}
+
+fn same(a: *ui8, b: *ui8) -> bool {
+    local i: usize = 0
+    while a[i] != 0 || b[i] != 0 {
+        if a[i] != b[i] { return false }
+        i = i + 1
+    }
+    return true
+}
+
+global failures: i32 = 0
+
+fn check(name: *ui8, msg: *ui8, n: usize, want: *ui8) {
+    local d: [ui8; 32]
+    local hex: [ui8; 65]
+    sha256(msg, n, &d[0])
+    toHex(&d[0], &hex[0])
+    if !same(&hex[0], want) {
+        failures = failures + 1
+        print("FAIL ")
+        println(name)
+        println(&hex[0])
+    }
+}
+
+fn main() -> i32 {
+    check("empty", "", 0, "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855")
+    check("abc", "abc", 3, "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad")
+    local two: *ui8 = "abcdbcdecdefdefgefghfghighijhijkijkljklmklmnlmnomnopnopq"
+    check("two-block", two, strlen(two), "248d6a61d20638b8e5c026930c3e6039a33ce45964ff2167f6ecedd419db06c1")
+    // 55/56/64 byte lengths exercise the padding edge cases
+    local z: [ui8; 64]
+    local i: usize = 0
+    while i < 64 {
+        z[i] = 97
+        i = i + 1
+    }
+    check("55a", &z[0], 55, "9f4390f8d30c2dd92ec9f095b65e2b9ae9b0a925a5258e241c9f1e910f734318")
+    check("56a", &z[0], 56, "b35439a4ac6f0948b6d6f9e3c6af0f5f590ce20f1bde7090ef7970686ec6738a")
+    check("64a", &z[0], 64, "ffe054fe7ae0cb6dc65c3af9b61d5209f439851db43d0ba5997337df154668eb")
+    if failures == 0 {
+        println("sha256 ok")
+        return 0
+    }
+    return 1
+}

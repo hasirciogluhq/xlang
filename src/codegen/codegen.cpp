@@ -1127,6 +1127,25 @@ llvm::Value* Gen::genBinary(const hir::Expr& e) {
         }
         return sign ? B_.CreateSRem(l, r) : B_.CreateURem(l, r);
     }
+    case BinaryOp::BitAnd: return B_.CreateAnd(l, r);
+    case BinaryOp::BitOr: return B_.CreateOr(l, r);
+    case BinaryOp::BitXor: return B_.CreateXor(l, r);
+    case BinaryOp::Shl:
+    case BinaryOp::Shr: {
+        // A count >= the bit width gives 0 (`>>` of a negative signed value: -1), never poison.
+        const unsigned bits = l->getType()->getIntegerBitWidth();
+        llvm::Value* zero = llvm::ConstantInt::get(l->getType(), 0);
+        llvm::Value* over = B_.CreateICmpUGE(r, llvm::ConstantInt::get(r->getType(), bits));
+        llvm::Value* count = B_.CreateSelect(over, zero, r);
+        if (op == BinaryOp::Shl) {
+            return B_.CreateSelect(over, zero, B_.CreateShl(l, count));
+        }
+        if (sign) {
+            llvm::Value* fill = B_.CreateAShr(l, llvm::ConstantInt::get(l->getType(), bits - 1));
+            return B_.CreateSelect(over, fill, B_.CreateAShr(l, count));
+        }
+        return B_.CreateSelect(over, zero, B_.CreateLShr(l, count));
+    }
     case BinaryOp::Eq:
         return is_float ? B_.CreateFCmpOEQ(l, r) : B_.CreateICmpEQ(l, r);
     case BinaryOp::Ne:
@@ -1658,7 +1677,7 @@ llvm::Value* Gen::genScalar(const hir::Expr& e) {
     }
     case hir::ExprKind::Unary: {
         llvm::Value* v = genScalar(*e.lhs);
-        if (e.unary_op == UnaryOp::Not) {
+        if (e.unary_op == UnaryOp::Not || e.unary_op == UnaryOp::BitNot) {
             return B_.CreateNot(v);
         }
         return e.type.kind == TypeKind::Float ? B_.CreateFNeg(v) : B_.CreateNeg(v);

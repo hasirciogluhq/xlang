@@ -107,6 +107,14 @@ export fn sysTcpSocket() -> i32 {
     return -1
 }
 
+export fn sysUdpSocket() -> i32 {
+    return -1
+}
+
+export fn sysSetRecvTimeout(fd: i32, ms: i32) -> i32 {
+    return -1
+}
+
 export fn sysTcpConnect(fd: i32, ip: ui32, port: ui16) -> i32 {
     return -1
 }

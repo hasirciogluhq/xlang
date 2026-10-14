@@ -16,9 +16,12 @@ namespace xlang {
 // AST nodes are tagged structs (Kind) with static factory helpers; declarations are a variant
 // of structs deriving from `DeclBase`. Types live in `types.h` (`Type` tree).
 
-enum class UnaryOp { Neg, Not, Deref, AddrOf };
+enum class UnaryOp { Neg, Not, Deref, AddrOf, BitNot };
 
-enum class BinaryOp { Add, Sub, Mul, Div, Mod, Eq, Ne, Lt, Le, Gt, Ge, And, Or };
+enum class BinaryOp {
+    Add, Sub, Mul, Div, Mod, Eq, Ne, Lt, Le, Gt, Ge, And, Or,
+    BitAnd, BitOr, BitXor, Shl, Shr
+};
 
 [[nodiscard]] const char* unaryOpName(UnaryOp op);
 [[nodiscard]] const char* binaryOpName(BinaryOp op);

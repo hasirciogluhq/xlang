@@ -13,6 +13,7 @@ const char* unaryOpName(UnaryOp op) {
     case UnaryOp::Not: return "!";
     case UnaryOp::Deref: return "*";
     case UnaryOp::AddrOf: return "&";
+    case UnaryOp::BitNot: return "~";
     }
     return "?";
 }
@@ -32,6 +33,11 @@ const char* binaryOpName(BinaryOp op) {
     case BinaryOp::Ge: return ">=";
     case BinaryOp::And: return "&&";
     case BinaryOp::Or: return "||";
+    case BinaryOp::BitAnd: return "&";
+    case BinaryOp::BitOr: return "|";
+    case BinaryOp::BitXor: return "^";
+    case BinaryOp::Shl: return "<<";
+    case BinaryOp::Shr: return ">>";
     }
     return "?";
 }

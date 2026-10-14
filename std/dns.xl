@@ -1,0 +1,273 @@
+// std/dns: a small blocking IPv4 resolver. `dnsResolve("example.com", &ip)` checks, in order, an IPv4
+// literal, `/etc/hosts` and then asks the nameserver from `/etc/resolv.conf` (A records over UDP,
+// compressed names and CNAME chains handled, 3 attempts of 2 s each). IPv4 only, no TCP fallback, no
+// caching, no EDNS. Addresses are host-order `ui32` (`127.0.0.1` = 2130706433), as in `std/http`.
+// Nothing allocates. The query id is a counter, not random: this is not hardened against spoofing.
+from "sys" import sysUdpSocket, sysTcpConnect, sysSetRecvTimeout, sysClose, sysRead, sysWrite
+from "memory" import strlen
+from "fs" import fsReadAll
+
+/// Server used when `/etc/resolv.conf` has no usable `nameserver` line (1.1.1.1).
+define DNS_FALLBACK_SERVER = 16843009
+define DNS_TIMEOUT_MS = 2000
+define DNS_ATTEMPTS = 3
+define DNS_TYPE_A = 1
+
+global queryId: ui32 = 19000
+
+fn lower(c: ui8) -> ui8 {
+    if c >= 65 && c <= 90 { return c + 32 }
+    return c
+}
+
+fn isSpace(c: ui8) -> bool {
+    return c == 32 || c == 9 || c == 13
+}
+
+fn isDigit(c: ui8) -> bool {
+    return c >= 48 && c <= 57
+}
+
+/// Parses a dotted-quad IPv4 literal that ends at NUL, whitespace or newline. Returns the index just
+/// past it, or 0 when `s` is not an IPv4 literal.
+fn parseIPv4At(s: *ui8, start: usize, out: *ui32) -> usize {
+    local i: usize = start
+    local value: ui32 = 0
+    local part: usize = 0
+    while part < 4 {
+        if !isDigit(s[i]) { return 0 }
+        local n: ui32 = 0
+        local digits: usize = 0
+        while isDigit(s[i]) {
+            n = n * 10 + ((s[i] - 48) as ui32)
+            if n > 255 { return 0 }
+            digits = digits + 1
+            i = i + 1
+        }
+        value = value * 256 + n
+        part = part + 1
+        if part < 4 {
+            if s[i] != 46 { return 0 }
+            i = i + 1
+        }
+    }
+    if s[i] != 0 && !isSpace(s[i]) && s[i] != 10 { return 0 }
+    *out = value
+    return i
+}
+
+/// `s` is a dotted-quad IPv4 literal (`"10.0.0.7"`) and nothing else.
+export fn dnsParseIPv4(s: *ui8, out: *ui32) -> bool {
+    local end: usize = parseIPv4At(s, 0, out)
+    return end != 0 && s[end] == 0
+}
+
+/// Case-insensitive: does the token at `s[at..]` (ends at whitespace/newline/NUL) equal `name`?
+fn tokenEquals(s: *ui8, at: usize, name: *ui8) -> bool {
+    local i: usize = 0
+    while name[i] != 0 {
+        if lower(s[at + i]) != lower(name[i]) { return false }
+        i = i + 1
+    }
+    local c: ui8 = s[at + i]
+    return c == 0 || isSpace(c) || c == 10
+}
+
+fn skipLine(s: *ui8, i: usize) -> usize {
+    local p: usize = i
+    while s[p] != 0 && s[p] != 10 { p = p + 1 }
+    if s[p] == 10 { p = p + 1 }
+    return p
+}
+
+/// First `nameserver` of `/etc/resolv.conf`; the fallback server when there is none.
+export fn dnsServer(out: *ui32) -> bool {
+    local buf: [ui8; 4096]
+    *out = DNS_FALLBACK_SERVER
+    if fsReadAll("/etc/resolv.conf", &buf[0], 4096) <= 0 { return false }
+    local p: usize = 0
+    while buf[p] != 0 {
+        local q: usize = p
+        while isSpace(buf[q]) { q = q + 1 }
+        if tokenEquals(&buf[0], q, "nameserver") {
+            q = q + 10
+            while isSpace(buf[q]) { q = q + 1 }
+            local ip: ui32 = 0
+            if parseIPv4At(&buf[0], q, &ip) != 0 {
+                *out = ip
+                return true
+            }
+        }
+        p = skipLine(&buf[0], p)
+    }
+    return false
+}
+
+/// Looks `name` up in `/etc/hosts` (IPv4 entries only, aliases included).
+export fn dnsHostsLookup(name: *ui8, out: *ui32) -> bool {
+    local buf: [ui8; 4096]
+    if fsReadAll("/etc/hosts", &buf[0], 4096) <= 0 { return false }
+    local p: usize = 0
+    while buf[p] != 0 {
+        local q: usize = p
+        while isSpace(buf[q]) { q = q + 1 }
+        local ip: ui32 = 0
+        local after: usize = 0
+        if buf[q] != 35 { after = parseIPv4At(&buf[0], q, &ip) }
+        if after != 0 {
+            local r: usize = after
+            while buf[r] != 0 && buf[r] != 10 && buf[r] != 35 {
+                while isSpace(buf[r]) { r = r + 1 }
+                if buf[r] != 0 && buf[r] != 10 && buf[r] != 35 {
+                    if tokenEquals(&buf[0], r, name) {
+                        *out = ip
+                        return true
+                    }
+                    while buf[r] != 0 && !isSpace(buf[r]) && buf[r] != 10 { r = r + 1 }
+                }
+            }
+        }
+        p = skipLine(&buf[0], p)
+    }
+    return false
+}
+
+/// Writes the question for `name` (A, class IN) into `pkt`; returns the length, 0 when the name is
+/// empty, has a label over 63 bytes or does not fit.
+fn buildQuery(pkt: *ui8, cap: usize, id: ui32, name: *ui8) -> usize {
+    local n: usize = strlen(name)
+    if n == 0 || n + 18 > cap { return 0 }
+    pkt[0] = ((id / 256) % 256) as ui8
+    pkt[1] = (id % 256) as ui8
+    pkt[2] = 1      // RD
+    pkt[3] = 0
+    pkt[4] = 0
+    pkt[5] = 1      // QDCOUNT
+    local k: usize = 6
+    while k < 12 {
+        pkt[k] = 0
+        k = k + 1
+    }
+    local out: usize = 12
+    local i: usize = 0
+    while i < n {
+        local labelAt: usize = out
+        out = out + 1
+        local len: usize = 0
+        while i < n && name[i] != 46 {
+            pkt[out] = name[i]
+            out = out + 1
+            len = len + 1
+            i = i + 1
+        }
+        if len == 0 || len > 63 { return 0 }
+        pkt[labelAt] = len as ui8
+        if i < n { i = i + 1 }
+    }
+    pkt[out] = 0
+    pkt[out + 1] = 0
+    pkt[out + 2] = DNS_TYPE_A as ui8
+    pkt[out + 3] = 0
+    pkt[out + 4] = 1    // IN
+    return out + 5
+}
+
+/// Index just past the (possibly compressed) name at `i`; `n + 1` when it runs off the packet.
+fn skipName(p: *ui8, n: usize, i: usize) -> usize {
+    local at: usize = i
+    while at < n {
+        local c: ui8 = p[at]
+        if c == 0 { return at + 1 }
+        if c >= 192 { return at + 2 }
+        at = at + 1 + (c as usize)
+    }
+    return n + 1
+}
+
+/// Collects up to `max` A records of the response `p[0..n]` into `out`; returns how many, or -1 when
+/// the packet is not an answer to `id` / the server reported an error.
+fn parseAnswer(p: *ui8, n: usize, id: ui32, out: *ui32, max: usize) -> isize {
+    if n < 12 { return -1 }
+    if (p[0] as ui32) * 256 + (p[1] as ui32) != id { return -1 }
+    if p[2] < 128 { return -1 }         // not a response
+    if p[3] % 16 != 0 { return -1 }     // RCODE
+    local qd: usize = (p[4] as usize) * 256 + (p[5] as usize)
+    local an: usize = (p[6] as usize) * 256 + (p[7] as usize)
+    local at: usize = 12
+    local k: usize = 0
+    while k < qd {
+        at = skipName(p, n, at) + 4
+        k = k + 1
+    }
+    local found: usize = 0
+    k = 0
+    while k < an && at < n {
+        at = skipName(p, n, at)
+        if at + 10 > n { return found as isize }
+        local rtype: usize = (p[at] as usize) * 256 + (p[at + 1] as usize)
+        local rdlen: usize = (p[at + 8] as usize) * 256 + (p[at + 9] as usize)
+        at = at + 10
+        if at + rdlen > n { return found as isize }
+        if rtype == DNS_TYPE_A && rdlen == 4 && found < max {
+            local v: ui32 = (p[at] as ui32) * 16777216 + (p[at + 1] as ui32) * 65536
+            v = v + (p[at + 2] as ui32) * 256 + (p[at + 3] as ui32)
+            out[found] = v
+            found = found + 1
+        }
+        at = at + rdlen
+        k = k + 1
+    }
+    return found as isize
+}
+
+/// Asks `server` (UDP port 53) for the A records of `name`; fills up to `max` addresses and returns
+/// the count (0 = the name exists but has no A record, or it does not exist / the server never
+/// answered).
+export fn dnsQuery(server: ui32, name: *ui8, out: *ui32, max: usize) -> usize {
+    local pkt: [ui8; 512]
+    local resp: [ui8; 1500]
+    queryId = (queryId + 1) % 65536
+    local id: ui32 = queryId
+    local len: usize = buildQuery(&pkt[0], 512, id, name)
+    if len == 0 { return 0 }
+    local fd: i32 = sysUdpSocket()
+    if fd < 0 { return 0 }
+    if sysTcpConnect(fd, server, 53) < 0 {
+        sysClose(fd)
+        return 0
+    }
+    sysSetRecvTimeout(fd, DNS_TIMEOUT_MS)
+    local attempt: i32 = 0
+    local result: usize = 0
+    local done: bool = false
+    while !done && attempt < DNS_ATTEMPTS {
+        attempt = attempt + 1
+        if sysWrite(fd, &pkt[0], len) > 0 {
+            local got: isize = sysRead(fd, &resp[0], 1500)
+            if got > 0 {
+                local count: isize = parseAnswer(&resp[0], got as usize, id, out, max)
+                if count >= 0 {
+                    result = count as usize
+                    done = true
+                }
+            }
+        }
+    }
+    sysClose(fd)
+    return result
+}
+
+/// Resolves `name` to up to `max` IPv4 addresses: literal, then `/etc/hosts`, then DNS.
+export fn dnsResolveAll(name: *ui8, out: *ui32, max: usize) -> usize {
+    if max == 0 { return 0 }
+    if dnsParseIPv4(name, &out[0]) { return 1 }
+    if dnsHostsLookup(name, &out[0]) { return 1 }
+    local server: ui32 = 0
+    dnsServer(&server)
+    return dnsQuery(server, name, out, max)
+}
+
+/// Resolves `name` to its first IPv4 address; false when it cannot be resolved.
+export fn dnsResolve(name: *ui8, out: *ui32) -> bool {
+    return dnsResolveAll(name, out, 1) > 0
+}

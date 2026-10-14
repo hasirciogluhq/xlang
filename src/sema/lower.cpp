@@ -1586,6 +1586,21 @@ Lowerer::EP Lowerer::unaryExpr(const Expr& e, const Type* expected) {
         n->lhs = std::move(v);
         return n;
     }
+    case UnaryOp::BitNot: {
+        EP v = expr(*e.lhs, expected);
+        if (!v || isUnknown(v->type)) {
+            return v;
+        }
+        if (v->type.kind != TypeKind::Int) {
+            err("E0709", e.span, std::format("cannot apply `~` to `{}`", typeToString(v->type)),
+                "bitwise not needs an integer");
+            return nullptr;
+        }
+        EP n = mk(hir::ExprKind::Unary, v->type, e.span);
+        n->unary_op = UnaryOp::BitNot;
+        n->lhs = std::move(v);
+        return n;
+    }
     case UnaryOp::Not: {
         const Type boolean = Type::makeBool();
         EP v = coerce(expr(*e.lhs, &boolean), boolean, e.lhs->span);
@@ -1687,6 +1702,27 @@ Lowerer::EP Lowerer::binaryExpr(const Expr& e, const Type* expected) {
         return b;
     }
 
+    if (op == BinaryOp::Shl || op == BinaryOp::Shr) {
+        // The result has the type of the left operand; the count may be any integer type and is
+        // converted to it. A count >= the bit width yields 0 (`>>` of a negative signed value: -1).
+        if (l->type.kind != TypeKind::Int || r->type.kind != TypeKind::Int) {
+            err("E0709", e.span,
+                std::format("operator `{}` does not apply to `{}` and `{}`", binaryOpName(op),
+                            typeToString(l->type), typeToString(r->type)),
+                "shifts need integer operands");
+            return nullptr;
+        }
+        if (!sameType(l->type, r->type)) {
+            EP c = mk(hir::ExprKind::Cast, l->type, e.rhs->span);
+            c->lhs = std::move(r);
+            r = std::move(c);
+        }
+        EP b = mk(hir::ExprKind::Binary, l->type, e.span);
+        b->binary_op = op;
+        b->lhs = std::move(l);
+        b->rhs = std::move(r);
+        return b;
+    }
     Type common;
     if (isNumeric(l->type) && isNumeric(r->type)) {
         const CommonTypeResult c = commonBinaryType(l->type, r->type, ptrBits());
@@ -1737,9 +1773,15 @@ Lowerer::EP Lowerer::binaryExpr(const Expr& e, const Type* expected) {
         err("E0709", e.span, "`%` needs integer operands", "floats have no remainder operator");
         return nullptr;
     }
+    if ((op == BinaryOp::BitAnd || op == BinaryOp::BitOr || op == BinaryOp::BitXor) &&
+        common.kind != TypeKind::Int) {
+        err("E0709", e.span, std::format("operator `{}` needs integer operands", binaryOpName(op)),
+            "bitwise operators apply to integers only");
+        return nullptr;
+    }
     EP b = mk(hir::ExprKind::Binary, is_cmp ? boolean : common, e.span);
     b->binary_op = op;
-    b->checked = (op == BinaryOp::Div || op == BinaryOp::Mod) && common.kind == TypeKind::Int;
+    b->checked =(op == BinaryOp::Div || op == BinaryOp::Mod) && common.kind == TypeKind::Int;
     b->lhs = std::move(l);
     b->rhs = std::move(r);
     return b;

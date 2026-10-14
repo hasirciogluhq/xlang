@@ -441,8 +441,25 @@ class Parser {
 
     ExprPtr parseAdditive() {
         ExprPtr lhs = parseMultiplicative();
-        while ((at(TokenKind::Plus) || at(TokenKind::Minus)) && continues()) {
-            const BinaryOp op = advance().kind == TokenKind::Plus ? BinaryOp::Add : BinaryOp::Sub;
+        // Go-style levels: `+ - | ^` here, `* / % << >> &` in parseMultiplicative.
+        while ((at(TokenKind::Plus) || at(TokenKind::Minus) || at(TokenKind::Pipe) ||
+                at(TokenKind::Caret)) &&
+               continues()) {
+            BinaryOp op = BinaryOp::Add;
+            switch (advance().kind) {
+            case TokenKind::Plus:
+                op = BinaryOp::Add;
+                break;
+            case TokenKind::Minus:
+                op = BinaryOp::Sub;
+                break;
+            case TokenKind::Pipe:
+                op = BinaryOp::BitOr;
+                break;
+            default:
+                op = BinaryOp::BitXor;
+                break;
+            }
             lhs = makeBinary(op, std::move(lhs), parseMultiplicative());
         }
         return lhs;
@@ -450,7 +467,8 @@ class Parser {
 
     ExprPtr parseMultiplicative() {
         ExprPtr lhs = parseCast();
-        while ((at(TokenKind::Star) || at(TokenKind::Slash) || at(TokenKind::Percent)) &&
+        while ((at(TokenKind::Star) || at(TokenKind::Slash) || at(TokenKind::Percent) ||
+                at(TokenKind::Shl) || at(TokenKind::Shr) || at(TokenKind::Amp)) &&
                continues()) {
             BinaryOp op = BinaryOp::Mul;
             switch (advance().kind) {
@@ -459,6 +477,15 @@ class Parser {
                 break;
             case TokenKind::Slash:
                 op = BinaryOp::Div;
+                break;
+            case TokenKind::Shl:
+                op = BinaryOp::Shl;
+                break;
+            case TokenKind::Shr:
+                op = BinaryOp::Shr;
+                break;
+            case TokenKind::Amp:
+                op = BinaryOp::BitAnd;
                 break;
             default:
                 op = BinaryOp::Mod;
@@ -491,6 +518,9 @@ class Parser {
             break;
         case TokenKind::Bang:
             op = UnaryOp::Not;
+            break;
+        case TokenKind::Tilde:
+            op = UnaryOp::BitNot;
             break;
         case TokenKind::Star:
             op = UnaryOp::Deref;

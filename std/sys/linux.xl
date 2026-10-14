@@ -77,6 +77,8 @@ define O_WRONLY_CREAT_TRUNC = 577      // O_WRONLY | O_CREAT | O_TRUNC
 define O_WRONLY_CREAT_APPEND = 1089    // O_WRONLY | O_CREAT | O_APPEND
 define AF_INET = 2
 define SOCK_STREAM = 1
+define SOCK_DGRAM = 2
+define SO_RCVTIMEO = 20
 define SOL_SOCKET = 1
 define SO_REUSEADDR = 2
 
@@ -252,6 +254,20 @@ export fn sysFileSize(fd: i32) -> i64 {
 /// A TCP socket; negative errno on failure.
 export fn sysTcpSocket() -> i32 {
     return syscall(SYS_SOCKET, AF_INET, SOCK_STREAM, 0) as i32
+}
+
+/// A UDP socket; negative errno on failure. After `sysTcpConnect` (which only fixes the peer for UDP)
+/// plain `sysWrite`/`sysRead` send and receive datagrams.
+export fn sysUdpSocket() -> i32 {
+    return syscall(SYS_SOCKET, AF_INET, SOCK_DGRAM, 0) as i32
+}
+
+/// Receive timeout in milliseconds (0 = none); 0 on success.
+export fn sysSetRecvTimeout(fd: i32, ms: i32) -> i32 {
+    local tv: [i64; 2]
+    tv[0] = (ms / 1000) as i64
+    tv[1] = ((ms % 1000) * 1000) as i64
+    return syscall(SYS_SETSOCKOPT, fd, SOL_SOCKET, SO_RCVTIMEO, &tv[0], 16) as i32
 }
 
 /// `ip` is host order (`127.0.0.1` = 2130706433).

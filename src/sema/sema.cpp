@@ -532,6 +532,8 @@ std::optional<ConstValue> Sema::evalConst(const Expr& expr) {
             if (v->kind == ConstValue::Kind::Float) {
                 return ConstValue::makeFloat(-v->float_value);
             }
+        } else if (expr.unary_op == UnaryOp::BitNot && v->kind == ConstValue::Kind::Int) {
+            return ConstValue::makeInt(~v->int_value);
         } else if (expr.unary_op == UnaryOp::Not && v->kind == ConstValue::Kind::Bool) {
             return ConstValue::makeBool(!v->bool_value);
         }
@@ -626,6 +628,18 @@ std::optional<ConstValue> Sema::evalBinary(const Expr& expr) {
                 return std::nullopt;
             }
             return ConstValue::makeInt(expr.binary_op == BinaryOp::Div ? a / b : a % b);
+        case BinaryOp::BitAnd: return ConstValue::makeInt(a & b);
+        case BinaryOp::BitOr: return ConstValue::makeInt(a | b);
+        case BinaryOp::BitXor: return ConstValue::makeInt(a ^ b);
+        case BinaryOp::Shl:
+        case BinaryOp::Shr:
+            if (b < 0 || b > 126) {
+                error("E0707", expr.span, "shift count out of range in a constant expression",
+                      "the count must be between 0 and 126");
+                return std::nullopt;
+            }
+            return ConstValue::makeInt(expr.binary_op == BinaryOp::Shl ? a << static_cast<int>(b)
+                                                                       : a >> static_cast<int>(b));
         default: break;
         }
     }

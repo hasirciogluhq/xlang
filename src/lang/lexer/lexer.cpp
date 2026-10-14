@@ -218,6 +218,8 @@ private:
         case '<':
             if (peek(1) == '=') {
                 single(TokenKind::Le, 2);
+            } else if (peek(1) == '<') {
+                single(TokenKind::Shl, 2);
             } else {
                 single(TokenKind::Lt);
             }
@@ -225,10 +227,14 @@ private:
         case '>':
             if (peek(1) == '=') {
                 single(TokenKind::Ge, 2);
+            } else if (peek(1) == '>') {
+                single(TokenKind::Shr, 2);
             } else {
                 single(TokenKind::Gt);
             }
             return;
+        case '^': single(TokenKind::Caret); return;
+        case '~': single(TokenKind::Tilde); return;
         case '&':
             if (peek(1) == '&') {
                 single(TokenKind::AndAnd, 2);
@@ -239,9 +245,10 @@ private:
         case '|':
             if (peek(1) == '|') {
                 single(TokenKind::OrOr, 2);
-                return;
+            } else {
+                single(TokenKind::Pipe);
             }
-            break;
+            return;
         default: break;
         }
 
@@ -534,6 +541,11 @@ const char* tokenKindName(TokenKind kind) {
     case TokenKind::Slash: return "/";
     case TokenKind::Percent: return "%";
     case TokenKind::Amp: return "&";
+    case TokenKind::Pipe: return "|";
+    case TokenKind::Caret: return "^";
+    case TokenKind::Tilde: return "~";
+    case TokenKind::Shl: return "<<";
+    case TokenKind::Shr: return ">>";
     case TokenKind::Assign: return "=";
     case TokenKind::EqEq: return "==";
     case TokenKind::NotEq: return "!=";
