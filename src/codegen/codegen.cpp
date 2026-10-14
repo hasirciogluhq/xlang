@@ -136,6 +136,7 @@ private:
     llvm::Function* cur_fn_{nullptr};
     std::vector<llvm::Value*> locals_;
     llvm::Value* sret_{nullptr};
+    std::vector<llvm::BasicBlock*> loop_conds_;  ///< condition blocks of the enclosing `while`s (for `continue`)
     bool failed_{false};
 
     // debug info
@@ -861,11 +862,19 @@ void Gen::genStmt(const hir::Stmt& s) {
         llvm::Value* c = genScalar(*s.value);
         B_.CreateCondBr(c, body_bb, end_bb);
         B_.SetInsertPoint(body_bb);
+        loop_conds_.push_back(cond_bb);
         genStmts(s.body);
+        loop_conds_.pop_back();
         if (!hasTerminator(B_.GetInsertBlock())) {
             B_.CreateBr(cond_bb);
         }
         B_.SetInsertPoint(end_bb);
+        break;
+    }
+    case hir::StmtKind::Continue: {
+        B_.CreateBr(loop_conds_.back());
+        llvm::BasicBlock* dead = llvm::BasicBlock::Create(ctx_, "after.continue", cur_fn_);
+        B_.SetInsertPoint(dead);
         break;
     }
     case hir::StmtKind::Block:

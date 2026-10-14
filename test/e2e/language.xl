@@ -60,12 +60,30 @@ fn sum(p: *i32, n: i32) -> i32 {
     return s
 }
 
+/// Sum of the odd numbers below `n`, skipping even ones with `continue` (also through a nested loop).
+fn sumOdd(n: i32) -> i32 {
+    local s: i32 = 0
+    local i: i32 = 0
+    while i < n {
+        i = i + 1
+        if i % 2 == 0 { continue }
+        local j: i32 = 0
+        while j < 2 {
+            j = j + 1
+            if j == 1 { continue }
+            s = s + i
+        }
+    }
+    return s
+}
+
 fn describe(s: Shape) -> i32 { return s.area() }
 fn sound(a: *Animal) -> i32 { return a.sound() }
 
 fn main() -> i32 {
     check(fib(10) == 55)
     check(apply(twice, 21) == 42)
+    check(sumOdd(10) == 25)
 
     local r: Rect = Rect { w: 3, h: 4 }
     check(r.area() == 12)

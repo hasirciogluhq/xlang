@@ -99,6 +99,7 @@ struct Stmt {
         Expr,    ///< expr
         If,      ///< if expr { then } [else { else_body }]
         While,   ///< while expr { body }
+        Continue,  ///< continue (re-evaluates the innermost `while` condition)
         Unsafe,  ///< unsafe { body }
         Block,   ///< { body }
     } kind{Kind::Expr};

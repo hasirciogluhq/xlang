@@ -19,6 +19,7 @@ namespace {
         {"fn", TokenKind::Fn},         {"local", TokenKind::Local},
         {"return", TokenKind::Return}, {"if", TokenKind::If},
         {"else", TokenKind::Else},     {"while", TokenKind::While},
+        {"continue", TokenKind::Continue},
         {"unsafe", TokenKind::Unsafe}, {"import", TokenKind::Import},
         {"from", TokenKind::From},     {"as", TokenKind::As},
         {"export", TokenKind::Export}, {"declare", TokenKind::Declare},
@@ -499,6 +500,7 @@ const char* tokenKindName(TokenKind kind) {
     case TokenKind::If: return "if";
     case TokenKind::Else: return "else";
     case TokenKind::While: return "while";
+    case TokenKind::Continue: return "continue";
     case TokenKind::Unsafe: return "unsafe";
     case TokenKind::Import: return "import";
     case TokenKind::From: return "from";

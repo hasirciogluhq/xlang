@@ -26,6 +26,7 @@ enum class TokenKind {
     If,
     Else,
     While,
+    Continue,
     Unsafe,
     Import,
     From,

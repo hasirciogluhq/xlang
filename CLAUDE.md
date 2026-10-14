@@ -65,6 +65,8 @@ No filler praise; state weaknesses plainly. For each feature cover:
 ## Language decisions (summary)
 
 - Functions: `fn name(a: i32) -> i32 { }` (no `->` means `void`).
+- Loops: `while cond { }` and `continue` (re-evaluates the innermost `while` condition; outside a loop `E0709`).
+  No `break` and no `for` yet.
 - Naming (no snake_case in xl names): types are `PascalCase` (`Point`, `Allocator`, `MemoryOrder`); functions, methods,
   variables, fields and builtins are `camelCase` (`setAllocator`, `sizeOf`, `staticAssert`, `MemoryOrder.seqCst`);
   the `__builtin_` prefix stays and the rest is camelCase (`__builtin_atomicLoad`, `__builtin_asm`). Names that

@@ -153,6 +153,9 @@ void dumpStmt(std::ostream& out, const Function& fn, const Stmt& s, int indent) 
         out << '\n';
         dumpStmts(out, fn, s.body, indent + 1);
         break;
+    case StmtKind::Continue:
+        out << "continue\n";
+        break;
     case StmtKind::Block:
         out << "block\n";
         dumpStmts(out, fn, s.body, indent + 1);

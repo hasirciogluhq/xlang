@@ -209,6 +209,7 @@ private:
     hir::Function* fn_{nullptr};
     Type ret_;
     int unsafe_{0};
+    int loops_{0};  ///< enclosing `while` depth of the statement being lowered (for `continue`)
     bool star_import_{false};
     std::set<std::string> registered_names_;
     std::map<std::string, ScopeEntry> extra_entries_;  ///< registered globals / namespace members
@@ -869,6 +870,7 @@ void Lowerer::lowerFunction(const FnDecl& f, const Modifiers& mods, const std::s
     fn_ = &out;
     ret_ = out.ret;
     unsafe_ = 0;
+    loops_ = 0;
     scopes_.push(ScopeKind::Function);
     std::vector<Type> param_types;
     for (const Param& p : f.params) {
@@ -1193,12 +1195,21 @@ void Lowerer::lowerStmt(const Stmt& s, std::vector<hir::Stmt>& out) {
     case Stmt::Kind::While: {
         h.kind = hir::StmtKind::While;
         h.value = coerce(expr(*s.expr, &boolean), boolean, s.expr->span);
+        ++loops_;
         lowerBlock(*s.body, h.body, true);
+        --loops_;
         if (!h.value) {
             return;
         }
         break;
     }
+    case Stmt::Kind::Continue:
+        if (loops_ == 0) {
+            err("E0709", s.span, "`continue` outside of a loop", "there is no enclosing `while`");
+            return;
+        }
+        h.kind = hir::StmtKind::Continue;
+        break;
     case Stmt::Kind::Unsafe:
         ++unsafe_;
         h.kind = hir::StmtKind::Block;

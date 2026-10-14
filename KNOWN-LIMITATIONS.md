@@ -22,7 +22,8 @@ Everything in the original plan is implemented; this file lists what is intentio
 - **Itanium typeinfo:** the vtable of an `@repr(c)` class has a `null` typeinfo slot; no `_ZTI...` symbol.
 
 ## Language/stdlib
-- No compound assignment (`+=`, `<<=`), `break`/`continue` or `for`; the stdlib is written without them.
+- No compound assignment (`+=`, `<<=`), `break` or `for`; `continue` exists (jumps to the innermost `while`'s
+  condition; outside a loop it is `E0709`). The stdlib was written before it and mostly does not use it.
 - Bit operators `& | ^ ~ << >>` exist with Go-style precedence (`& << >>` bind like `*`, `| ^` like `+`,
   so `a & b == c` is `(a & b) == c`). Shifts: the result has the left operand's type, the count may be any
   integer type, a count >= the bit width gives 0 (`>>` of a negative signed value gives -1), `>>` on signed

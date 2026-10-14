@@ -963,6 +963,12 @@ class Parser {
             stmt.body = parseBlockPtr();
             return stmt;
         }
+        case TokenKind::Continue: {
+            advance();
+            stmt.kind = Stmt::Kind::Continue;
+            endOfStatement();
+            return stmt;
+        }
         case TokenKind::Unsafe: {
             advance();
             stmt.kind = Stmt::Kind::Unsafe;

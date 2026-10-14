@@ -285,6 +285,9 @@ public:
             block(*s.body);
             break;
         }
+        case Stmt::Kind::Continue:
+            line(attrs + "continue");
+            break;
         case Stmt::Kind::Unsafe: {
             line(attrs + "unsafe");
             Scope scope(*this);

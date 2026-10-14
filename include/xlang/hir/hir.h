@@ -111,7 +111,7 @@ struct Expr {
     bool noreturn{false};  ///< Asm: `options("noreturn")`
 };
 
-enum class StmtKind { Local, Assign, Return, Expr, If, While, Block };
+enum class StmtKind { Local, Assign, Return, Expr, If, While, Continue, Block };
 
 struct Stmt {
     StmtKind kind{StmtKind::Expr};
