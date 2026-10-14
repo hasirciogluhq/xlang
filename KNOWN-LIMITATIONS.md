@@ -25,8 +25,8 @@ Everything in the original plan is implemented; this file lists what is intentio
 - Module resolution: `std`/`std/x` come from the stdlib root; other paths from the importing file's
   directory, then the root file's directory. `import "x"` without alias binds the last path segment.
   No package or search-path strategies.
-- The default stdlib is the `std/` directory next to the compiler (`xmake install` puts it in
-  `share/xlang/std`); it is not embedded in the binary.
+- The default stdlib is embedded in the compiler (generated `build/gen/std_blob.cpp`, rebuilt when
+  `std/**/*.xl` changes); `--std=<dir>` replaces it. The compiler never searches the file system for it.
 
 ## Tooling
 - Debug info has compile unit, subprograms, line locations and basic types; no struct/class types.

@@ -24,11 +24,39 @@ local function add_target_defines()
     end
 end
 
+-- The standard library (`std/**/*.xl`) is embedded into the compiler: this generates a C++ file that
+-- holds every source as a byte array. Rewritten only when the content changes.
 -- Frontend library: lexer, preprocessor, macros, parser, AST, types, diagnostics, module checks.
 target("xlang-frontend")
     set_kind("static")
     set_default(false)
     set_enabled(not cross)
+    on_load(function (target)
+        local files = os.files(path.join(os.projectdir(), "std", "**.xl"))
+        table.sort(files)
+        local out = {"// Generated from std/**/*.xl by xmake/compiler.lua. Do not edit.\n",
+                     "#include \"xlang/lang/embedded_std.h\"\n\nnamespace xlang {\n\n"}
+        local entries = {}
+        for i, file in ipairs(files) do
+            local data = io.readfile(file)
+            local bytes = {}
+            for j = 1, #data do
+                bytes[#bytes + 1] = string.format("%d", data:byte(j))
+            end
+            out[#out + 1] = string.format("static const unsigned char kData%d[] = {%s%s};\n", i,
+                                          table.concat(bytes, ","), #bytes > 0 and "," or "")
+            local rel = path.relative(file, path.join(os.projectdir(), "std")):gsub("\\", "/")
+            entries[#entries + 1] = string.format("    {\"%s\", kData%d, %d},\n", rel, i, #data)
+        end
+        out[#out + 1] = "\nconst EmbeddedFile kEmbeddedStd[] = {\n" .. table.concat(entries) .. "};\n"
+        out[#out + 1] = string.format("const unsigned long kEmbeddedStdCount = %d;\n\n}  // namespace xlang\n", #files)
+        local content = table.concat(out)
+        local target_file = path.join(os.projectdir(), "build", "gen", "std_blob.cpp")
+        if not os.isfile(target_file) or io.readfile(target_file) ~= content then
+            io.writefile(target_file, content)
+        end
+        target:add("files", target_file)
+    end)
     add_files(
         "$(projectdir)/src/lang/ast/ast.cpp",
         "$(projectdir)/src/lang/lexer/lexer.cpp",
@@ -89,8 +117,7 @@ target("xlang-tests")
     add_tests("frontend")
 
 -- Plan 7.6: the standard library is plain xl source (`std/`). Building this target type-checks
--- it with the freshly built compiler; installing puts it under <prefix>/share/xlang/std, where
--- the compiler looks next to its own binary (`../share/xlang/std`) as well as in `std/`.
+-- it with the freshly built compiler. (The compiler itself embeds the sources: see std_blob.cpp.)
 target("std")
     set_kind("phony")
     set_default(false)
@@ -99,11 +126,6 @@ target("std")
     after_build(function (target)
         local exe = path.join(os.projectdir(), "build", "xlang")
         os.execv(exe, {"check", path.join(os.projectdir(), "std", "index.xl"), "--no-std"})
-    end)
-    on_install(function (target)
-        local dest = path.join(target:installdir(), "share", "xlang")
-        os.mkdir(dest)
-        os.cp(path.join(os.projectdir(), "std"), dest)
     end)
 
 -- End-to-end tests: `xmake run e2e` builds and runs the programs of test/e2e (natively, and on

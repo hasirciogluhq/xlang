@@ -1,5 +1,6 @@
 #include "xlang/sema/compilation.h"
 
+#include "xlang/lang/embedded_std.h"
 #include "xlang/lang/frontend.h"
 #include "xlang/util/error.h"
 
@@ -22,9 +23,11 @@ namespace {
     return slash == std::string::npos ? spec : spec.substr(slash + 1);
 }
 
-}  // namespace
+} // namespace
 
-Compilation::Compilation(SourceManager& sources, const BuildConfig& config, DiagnosticEngine& diagnostics,
+Compilation::Compilation(SourceManager& sources,
+                         const BuildConfig& config,
+                         DiagnosticEngine& diagnostics,
                          const LayoutHistory* history)
     : sources_(sources), config_(config), diag_(diagnostics), history_(history) {}
 
@@ -78,8 +81,8 @@ std::string Compilation::keyFor(const std::filesystem::path& path, bool is_root)
     return stripIndex(stem.generic_string());
 }
 
-std::optional<std::filesystem::path> Compilation::locate(const std::string& spec, const ModuleInfo* from,
-                                                         const Span& at) {
+std::optional<std::filesystem::path>
+Compilation::locate(const std::string& spec, const ModuleInfo* from, const Span& at) {
     std::vector<std::filesystem::path> bases;
     std::string rest = spec;
     if (spec == "std" || spec.starts_with("std/")) {
@@ -100,13 +103,19 @@ std::optional<std::filesystem::path> Compilation::locate(const std::string& spec
         }
     }
     for (const std::filesystem::path& base : bases) {
-        const std::filesystem::path as_file = rest.empty() ? base / "index.xl" : base / (rest + ".xl");
-        const std::filesystem::path as_dir = rest.empty() ? base / "index.xl" : base / rest / "index.xl";
+        const std::filesystem::path as_file =
+            rest.empty() ? base / "index.xl" : base / (rest + ".xl");
+        const std::filesystem::path as_dir =
+            rest.empty() ? base / "index.xl" : base / rest / "index.xl";
         const bool f = fileExists(as_file);
         const bool d = fileExists(as_dir);
         if (f && d && as_file != as_dir) {
-            diag_.error("E0711", at, std::format("module path `{}` is ambiguous", spec),
-                        std::format("both `{}` and `{}` exist", as_file.generic_string(), as_dir.generic_string()));
+            diag_.error("E0711",
+                        at,
+                        std::format("module path `{}` is ambiguous", spec),
+                        std::format("both `{}` and `{}` exist",
+                                    as_file.generic_string(),
+                                    as_dir.generic_string()));
             return std::nullopt;
         }
         if (f) {
@@ -129,19 +138,24 @@ ModuleInfo* Compilation::importTarget(ModuleInfo& from, const std::string& spec,
     if (path) {
         target = loadModule(*path, false);
     } else if (!diag_.hasErrors() || true) {
-        diag_.error("E0711", at, std::format("module `{}` not found", spec),
+        diag_.error("E0711",
+                    at,
+                    std::format("module `{}` not found", spec),
                     "no `.xl` file or `index.xl` directory with that path");
     }
     targets_[key] = target;
     return target;
 }
 
-void Compilation::collectMacros(ModuleInfo& dep, MacroTable& table, std::set<const ModuleInfo*>& seen) {
+void Compilation::collectMacros(ModuleInfo& dep,
+                                MacroTable& table,
+                                std::set<const ModuleInfo*>& seen) {
     if (!seen.insert(&dep).second) {
         return;
     }
     for (const Item& item : dep.program.items) {
-        if (const auto* m = std::get_if<DefineMacroDecl>(&item.decl); m != nullptr && item.modifiers.exported) {
+        if (const auto* m = std::get_if<DefineMacroDecl>(&item.decl);
+            m != nullptr && item.modifiers.exported) {
             MacroDef def;
             def.name = m->name;
             def.params = m->params;
@@ -191,7 +205,7 @@ ModuleInfo* Compilation::loadModule(const std::filesystem::path& path, bool is_r
     // Pass 0 (silent): find the imports so exported macros of the dependencies can be seeded.
     std::ostringstream sink;
     DiagnosticEngine quiet(sources_, sink);
-    MacroTable discard;  // pass 0 also collects the module's own macros: keep them out of the seed
+    MacroTable discard; // pass 0 also collects the module's own macros: keep them out of the seed
     Program first = parseSource(sources_, m->file, config_, quiet, discard);
     MacroTable seed;
     std::set<const ModuleInfo*> seen;
@@ -225,6 +239,16 @@ ModuleInfo* Compilation::loadModule(const std::filesystem::path& path, bool is_r
 }
 
 ModuleInfo* Compilation::loadRoot(const std::filesystem::path& path) {
+    if (!config_.no_std && std_root_.empty()) {
+        // The default stdlib is compiled into the compiler: expose it as virtual files so that
+        // `import "std/..."` resolves like any other module.
+        std_root_ = "<xlang-std>";
+        for (unsigned long i = 0; i < kEmbeddedStdCount; ++i) {
+            const EmbeddedFile& f = kEmbeddedStd[i];
+            addVirtualFile((std_root_ / f.path).generic_string(),
+                           std::string(reinterpret_cast<const char*>(f.data), f.size));
+        }
+    }
     return loadModule(path, true);
 }
 
@@ -238,7 +262,8 @@ ModuleInfo* Compilation::moduleOf(const std::string& key) {
     return it == by_key_.end() ? nullptr : it->second;
 }
 
-std::optional<Sema::EntityRef> Compilation::exportedEntity(const std::string& module_key, const std::string& name) {
+std::optional<Sema::EntityRef> Compilation::exportedEntity(const std::string& module_key,
+                                                           const std::string& name) {
     ModuleInfo* m = moduleOf(module_key);
     if (m == nullptr) {
         return std::nullopt;
@@ -279,7 +304,7 @@ void Compilation::resolveExports(ModuleInfo& m) {
         }
         const ModuleInfo::Export& old = it->second;
         if (old.module == e.module && old.name == e.name && old.is_namespace == e.is_namespace) {
-            return;  // the same entity exported twice
+            return; // the same entity exported twice
         }
         Diagnostic d;
         d.code = "E0401";
@@ -292,12 +317,15 @@ void Compilation::resolveExports(ModuleInfo& m) {
     };
 
     for (const Item& item : m.program.items) {
-        const bool exported = item.modifiers.exported || item.modifiers.export_c || item.modifiers.registered;
+        const bool exported =
+            item.modifiers.exported || item.modifiers.export_c || item.modifiers.registered;
         if (!exported) {
             continue;
         }
-        if (std::holds_alternative<ImportDecl>(item.decl) || std::holds_alternative<ExportFromDecl>(item.decl) ||
-            std::holds_alternative<ImplDecl>(item.decl) || std::holds_alternative<MacroCallDecl>(item.decl) ||
+        if (std::holds_alternative<ImportDecl>(item.decl) ||
+            std::holds_alternative<ExportFromDecl>(item.decl) ||
+            std::holds_alternative<ImplDecl>(item.decl) ||
+            std::holds_alternative<MacroCallDecl>(item.decl) ||
             std::holds_alternative<TopLevelCallDecl>(item.decl)) {
             continue;
         }
@@ -323,7 +351,8 @@ void Compilation::resolveExports(ModuleInfo& m) {
         switch (ex->form) {
         case ExportFromDecl::Form::Star: {
             for (const auto& [name, e] : target.exports) {
-                const bool skipped = std::ranges::any_of(ex->except, [&](const ImportName& x) { return x.name == name; });
+                const bool skipped = std::ranges::any_of(
+                    ex->except, [&](const ImportName& x) { return x.name == name; });
                 if (skipped) {
                     continue;
                 }
@@ -345,7 +374,9 @@ void Compilation::resolveExports(ModuleInfo& m) {
             for (const ImportName& n : ex->names) {
                 const auto found = target.exports.find(n.name);
                 if (found == target.exports.end()) {
-                    diag_.error("E0711", n.span, std::format("`{}` is not exported by `{}`", n.name, ex->module),
+                    diag_.error("E0711",
+                                n.span,
+                                std::format("`{}` is not exported by `{}`", n.name, ex->module),
                                 "only `export`ed names can be re-exported");
                     continue;
                 }
@@ -367,14 +398,18 @@ void Compilation::resolveExports(ModuleInfo& m) {
 void Compilation::linkImports(ModuleInfo& m) {
     struct Bound {
         Span span;
-        const ModuleInfo* module;  // defining module / namespace target
+        const ModuleInfo* module; // defining module / namespace target
         std::string name;
         bool is_namespace;
     };
     std::map<std::string, Bound> bound;
 
-    const auto bind = [&](const std::string& local, Sema::ImportBinding b, const ModuleInfo* module,
-                          const std::string& name, bool is_ns, const Span& span) {
+    const auto bind = [&](const std::string& local,
+                          Sema::ImportBinding b,
+                          const ModuleInfo* module,
+                          const std::string& name,
+                          bool is_ns,
+                          const Span& span) {
         if (const Sema::Symbol* own = m.sema->findLocal(local)) {
             Diagnostic d;
             d.code = "E0401";
@@ -411,20 +446,21 @@ void Compilation::linkImports(ModuleInfo& m) {
         m.sema->bindImport(local, std::move(b));
     };
 
-    const auto bindExport = [&](const std::string& local, const ModuleInfo::Export& e, const Span& span) {
-        Sema::ImportBinding b;
-        b.span = span;
-        if (e.is_namespace) {
-            b.kind = Sema::ImportBinding::Kind::Namespace;
-            b.module_key = e.module->key;
-            bind(local, std::move(b), e.module, {}, true, span);
-        } else {
-            b.kind = Sema::ImportBinding::Kind::Entity;
-            b.module_key = e.module->key;
-            b.name = e.name;
-            bind(local, std::move(b), e.module, e.name, false, span);
-        }
-    };
+    const auto bindExport =
+        [&](const std::string& local, const ModuleInfo::Export& e, const Span& span) {
+            Sema::ImportBinding b;
+            b.span = span;
+            if (e.is_namespace) {
+                b.kind = Sema::ImportBinding::Kind::Namespace;
+                b.module_key = e.module->key;
+                bind(local, std::move(b), e.module, {}, true, span);
+            } else {
+                b.kind = Sema::ImportBinding::Kind::Entity;
+                b.module_key = e.module->key;
+                b.name = e.name;
+                bind(local, std::move(b), e.module, e.name, false, span);
+            }
+        };
 
     for (const Item& item : m.program.items) {
         const auto* imp = std::get_if<ImportDecl>(&item.decl);
@@ -456,7 +492,9 @@ void Compilation::linkImports(ModuleInfo& m) {
             for (const ImportName& n : imp->names) {
                 const auto found = target.exports.find(n.name);
                 if (found == target.exports.end()) {
-                    diag_.error("E0711", n.span, std::format("`{}` is not exported by `{}`", n.name, imp->module),
+                    diag_.error("E0711",
+                                n.span,
+                                std::format("`{}` is not exported by `{}`", n.name, imp->module),
                                 "only names marked `export` can be imported");
                     continue;
                 }
@@ -485,7 +523,8 @@ void Compilation::collectRegistered() {
                 d.code = "E0502";
                 d.severity = Severity::Error;
                 d.message = std::format("`{}` is registered twice", base.name);
-                d.labels.push_back({declBase(*it->second.sym->item).name_span, "first registration"});
+                d.labels.push_back(
+                    {declBase(*it->second.sym->item).name_span, "first registration"});
                 d.labels.push_back({base.name_span, "second registration"});
                 d.fix = "register it once; turn off the std feature that registers it if needed";
                 diag_.report(std::move(d));
@@ -501,8 +540,12 @@ void Compilation::finish() {
             ModuleInfo* std_module = loadModule(std_index, false);
             (void)std_module;
         } else {
-            diag_.error("E0711", Span{}, "standard library not found",
-                        "use `--no-std`, or `--std=<dir>` with a directory that holds `index.xl`");
+            diag_.error(
+                "E0711",
+                Span{},
+                "standard library not found",
+                std::format("`{}` has no `index.xl`; pass `--std=<dir>` with one, or `--no-std`",
+                            std_root_.generic_string()));
         }
     }
     for (ModuleInfo* m : order_) {
@@ -543,10 +586,12 @@ hir::Module Compilation::lowerAll() {
         Diagnostic d;
         d.code = "W0301";
         d.severity = Severity::Warning;
-        d.message = std::format("declared {} `{}` is not defined in this compilation", what, symbol);
+        d.message =
+            std::format("declared {} `{}` is not defined in this compilation", what, symbol);
         d.labels.push_back({span, "resolved at link time"});
         d.detail = "No module of this compilation defines this symbol.";
-        d.reason = "The linker must find it in another object or library; with `--emit=obj` this is expected.";
+        d.reason = "The linker must find it in another object or library; with `--emit=obj` this "
+                   "is expected.";
         d.fix = "link the object/library that defines it, or silence with `@allow(W0301)`";
         diag_.report(std::move(d));
     };
@@ -563,4 +608,4 @@ hir::Module Compilation::lowerAll() {
     return out;
 }
 
-}  // namespace xlang
+} // namespace xlang

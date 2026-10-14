@@ -124,7 +124,7 @@ No filler praise; state weaknesses plainly. For each feature cover:
   are written in xl in the stdlib and exported with `export(c)`; `alloc/free` live in the stdlib too.
 - The language takes no external libraries (no libc, libSystem, kernel32, pthread library). The stdlib calls each
   OS's kernel ABI with raw `syscall` + `#if os` (including macOS/Windows; stability is not a concern). Do not ask again.
-- Stdlib is optional: `--no-std`, `--std=<path>`; the default stdlib (`std/`, found next to the compiler) contains
+- Stdlib is optional: `--no-std`, `--std=<path>`; the default stdlib (`std/`, embedded in the compiler) contains
   a Go-like M:N scheduler. Std features (`--std-features=a,-b`) reach `#if` as bool constants named
   `feature` + CamelCase (`default-allocator` -> `featureDefaultAllocator`).
 - The inline asm builtin is mandatory (thread trampoline, scheduler context switch).
@@ -156,7 +156,8 @@ No filler praise; state weaknesses plainly. For each feature cover:
 - `xlang build <file> [-o out] [--emit=exe|obj|ir|bc|header|static|shared] [--incremental]`, `xlang parse <file>
   [--ast]`, `xlang check <file> [--hir]`, `xlang layout <file> [Type]`, `xlang --explain <CODE>`; build options
   `-D/-U/--target/-O/-g/--cpu/--mangle/--safety/--no-std/--std/--std-features/--print-cfg`.
-- The standard library is xl source in `std/` (found next to the compiler); `xmake build std` type-checks it.
+- The standard library is xl source in `std/`, embedded into the compiler at build time (`--std=<dir>` overrides);
+  `xmake build std` type-checks it.
 - Tests: `xmake build xlang-tests && xmake run xlang-tests` (frontend + sema + HIR, `test/compiler/`) and
   `xmake run e2e` (`test/e2e/run.sh`: builds and runs programs natively and, with Docker, on Linux
   aarch64/x86_64). Scratch files go to the scratchpad; `test/e2e/*.xl` are the maintained end-to-end programs.

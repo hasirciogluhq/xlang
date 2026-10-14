@@ -6,7 +6,6 @@ set -u
 here=$(cd "$(dirname "$0")" && pwd)
 root=$(cd "$here/../.." && pwd)
 xlang=${1:-$root/build/xlang}
-std=$root/std
 work=$(mktemp -d)
 trap 'rm -rf "$work"' EXIT
 pass=0; fail=0
@@ -58,7 +57,7 @@ for t in "${tests[@]}"; do
   # native (macOS has no raw thread creation yet: the scheduler falls back to one thread)
   if [ "$threads" = 1 ] && [ "$host_os" = Darwin ]; then
     echo "skip [$host_os/$name] raw OS threads are not available on macOS"
-  elif "$xlang" build "$src" --std="$std" -o "$work/$name" 2>"$work/$name.err"; then
+  elif "$xlang" build "$src" -o "$work/$name" 2>"$work/$name.err"; then
     run_one "$host_os/$name" "$work/$name" "$want" "$text" env
   else
     echo "FAIL [$host_os/$name] build"; head -8 "$work/$name.err"; fail=$((fail+1))
@@ -67,7 +66,7 @@ for t in "${tests[@]}"; do
   if command -v docker >/dev/null 2>&1 && docker info >/dev/null 2>&1; then
     for spec in "arm64:aarch64-unknown-linux-gnu" "amd64:x86_64-unknown-linux-gnu"; do
       plat=${spec%%:*}; triple=${spec#*:}
-      if "$xlang" build "$src" --std="$std" --target "$triple" -o "$work/$name.$plat" 2>"$work/$name.$plat.err"; then
+      if "$xlang" build "$src" --target "$triple" -o "$work/$name.$plat" 2>"$work/$name.$plat.err"; then
         out=$(docker_run "$plat" "$work/$name.$plat"); code=$?
         if [ "$code" != "$want" ] || { [ -n "$text" ] && ! grep -qF "$text" <<<"$out"; }; then
           echo "FAIL [linux-$plat/$name] exit $code"; echo "$out" | head -5; fail=$((fail+1))
