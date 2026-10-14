@@ -1,14 +1,16 @@
 // std/http: a small blocking HTTP/1.1 server (router + handlers) and a plain-HTTP client, on top of
-// the raw TCP calls in `std/sys`, plus `httpsGet` (DNS + TLS 1.3 via `std/tls`). The server is HTTP
-// only. Connections are served one at a time (`Connection: close`). No fixed limits: the route table and the request buffer grow on demand.
+// the raw TCP calls in `std/sys`, plus `httpsGet` (DNS + TLS 1.3 via `std/tls`). The server speaks
+// HTTP (`routerServe`) or HTTPS (`routerServeTls`, TLS 1.3). Connections are served one at a time
+// (`Connection: close`). No fixed limits: the route table and the request buffer grow on demand.
 from "sys" import sysTcpSocket, sysTcpConnect, sysTcpListen, sysTcpAccept, sysClose, sysRead, sysWrite, sysUnmap
 from "memory" import strlen, mapGrow
 from "io" import eprint
-from "tls" import TlsConn, tlsConnectHost, tlsWrite, tlsRead, tlsClose
+from "tls" import TlsConn, TlsCredentials, tlsConnectHost, tlsWrite, tlsRead, tlsClose, tlsListen, tlsAccept
 
 /// What a handler sees. `method`, `path` and `body` point into the request buffer.
 export struct Context {
     fd: i32
+    tls: *TlsConn         // the TLS session of an HTTPS connection, nil for plain HTTP
     method: *ui8
     path: *ui8
     body: *ui8
@@ -106,17 +108,27 @@ fn append(buf: *ui8, at: usize, cap: usize, s: *ui8) -> usize {
     return n
 }
 
-fn sendAll(fd: i32, data: *ui8, n: usize) {
+fn sendAll(c: *Context, data: *ui8, n: usize) {
+    if c.tls != nil {
+        tlsWrite(c.tls, data, n)
+        return
+    }
     local done: usize = 0
     while done < n {
-        local w: isize = sysWrite(fd, &data[done], n - done)
+        local w: isize = sysWrite(c.fd, &data[done], n - done)
         if w <= 0 { return }
         done = done + (w as usize)
     }
 }
 
-fn sendStr(fd: i32, s: *ui8) {
-    sendAll(fd, s, strlen(s))
+fn sendStr(c: *Context, s: *ui8) {
+    sendAll(c, s, strlen(s))
+}
+
+/// Reads from the plain socket or the TLS session.
+fn connRead(fd: i32, tls: *TlsConn, buf: *ui8, n: usize) -> isize {
+    if tls != nil { return tlsRead(tls, buf, n) }
+    return sysRead(fd, buf, n)
 }
 
 fn reason(status: i32) -> *ui8 {
@@ -132,17 +144,17 @@ fn reason(status: i32) -> *ui8 {
 fn respond(c: *Context, status: i32, contentType: *ui8, body: *ui8) {
     local num: [ui8; 24]
     local len: usize = formatUInt(status as usize, &num[0])
-    sendStr(c.fd, "HTTP/1.1 ")
-    sendAll(c.fd, &num[0], len)
-    sendStr(c.fd, " ")
-    sendStr(c.fd, reason(status))
-    sendStr(c.fd, "\r\nContent-Type: ")
-    sendStr(c.fd, contentType)
-    sendStr(c.fd, "\r\nContent-Length: ")
+    sendStr(c, "HTTP/1.1 ")
+    sendAll(c, &num[0], len)
+    sendStr(c, " ")
+    sendStr(c, reason(status))
+    sendStr(c, "\r\nContent-Type: ")
+    sendStr(c, contentType)
+    sendStr(c, "\r\nContent-Length: ")
     len = formatUInt(strlen(body), &num[0])
-    sendAll(c.fd, &num[0], len)
-    sendStr(c.fd, "\r\nConnection: close\r\n\r\n")
-    sendStr(c.fd, body)
+    sendAll(c, &num[0], len)
+    sendStr(c, "\r\nConnection: close\r\n\r\n")
+    sendStr(c, body)
     c.responded = true
 }
 
@@ -214,7 +226,7 @@ fn contentLength(s: *ui8, end: usize) -> usize {
     return 0
 }
 
-fn serveConnection(r: *Router, fd: i32) {
+fn serveConnection(r: *Router, fd: i32, tls: *TlsConn) {
     // The buffer doubles as needed; the request is read in full (headers, then Content-Length bytes).
     local cap: usize = 4096
     local buf: *ui8 = mapGrow(nil, 0, cap) as *ui8
@@ -233,7 +245,7 @@ fn serveConnection(r: *Router, fd: i32) {
             buf = bigger
             cap = cap * 2
         }
-        local got: isize = sysRead(fd, &buf[total], cap - 1 - total)
+        local got: isize = connRead(fd, tls, &buf[total], cap - 1 - total)
         if got <= 0 {
             alive = false
         } else {
@@ -248,14 +260,15 @@ fn serveConnection(r: *Router, fd: i32) {
             }
         }
     }
-    if gotHeaders { dispatch(r, fd, buf, total) }
+    if gotHeaders { dispatch(r, fd, tls, buf, total) }
     sysUnmap(buf as *void, cap)
 }
 
-fn dispatch(r: *Router, fd: i32, buf: *ui8, n: usize) {
+fn dispatch(r: *Router, fd: i32, tls: *TlsConn, buf: *ui8, n: usize) {
     // "METHOD PATH HTTP/1.1\r\n...": split in place at the spaces.
     local c: Context
     c.fd = fd
+    c.tls = tls
     c.user = nil
     c.responded = false
     c.method = &buf[0]
@@ -300,8 +313,27 @@ export fn routerServe(r: *Router, ip: ui32, port: ui16, onListen: fn()) -> i32 {
     while true {
         local conn: i32 = sysTcpAccept(fd)
         if conn >= 0 {
-            serveConnection(r, conn)
+            serveConnection(r, conn, nil)
             sysClose(conn)
+        }
+    }
+    return 0
+}
+
+/// `routerServe` over TLS 1.3 (HTTPS): `cr` comes from `tlsLoadCredentials`. A connection whose
+/// handshake fails is dropped and the loop continues. Returns -1 when the socket could not be set up.
+export fn routerServeTls(r: *Router, ip: ui32, port: ui16, cr: *TlsCredentials, onListen: fn()) -> i32 {
+    local fd: i32 = tlsListen(ip, port)
+    if fd < 0 {
+        eprint("routerServeTls: cannot bind/listen (port already in use?)\n")
+        return -1
+    }
+    onListen()
+    while true {
+        local c: TlsConn
+        if tlsAccept(fd, cr, &c) == 0 {
+            serveConnection(r, c.fd, &c)
+            tlsClose(&c)
         }
     }
     return 0
@@ -337,7 +369,11 @@ export fn httpGet(ip: ui32, port: ui16, host: *ui8, path: *ui8, buf: *ui8, cap: 
     len = append(req, len, reqCap, " HTTP/1.1\r\nHost: ")
     len = append(req, len, reqCap, host)
     len = append(req, len, reqCap, "\r\nConnection: close\r\n\r\n")
-    sendAll(fd, req, len)
+    local sent: usize = 0
+    while sent < len {
+        local w: isize = sysWrite(fd, &req[sent], len - sent)
+        if w <= 0 { sent = len + 1 } else { sent = sent + (w as usize) }
+    }
     sysUnmap(req as *void, reqCap)
 
     local total: usize = 0

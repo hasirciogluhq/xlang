@@ -1,0 +1,71 @@
+// std/pem: PEM (RFC 7468) block extraction. A block is `-----BEGIN <label>-----`, base64 text and
+// `-----END <label>-----`; the decoded bytes are the DER structure inside. Nothing allocates.
+
+fn b64(c: ui8) -> i32 {
+    if c >= 65 && c <= 90 { return (c - 65) as i32 }
+    if c >= 97 && c <= 122 { return (c - 97 + 26) as i32 }
+    if c >= 48 && c <= 57 { return (c - 48 + 52) as i32 }
+    if c == 43 { return 62 }
+    if c == 47 { return 63 }
+    return -1
+}
+
+/// Does the NUL-terminated `s` appear in `text[0..len]` at offset `at`?
+fn matchAt(text: *ui8, len: usize, at: usize, s: *ui8) -> bool {
+    local i: usize = 0
+    while s[i] != 0 {
+        if at + i >= len || text[at + i] != s[i] { return false }
+        i = i + 1
+    }
+    return true
+}
+
+/// Decodes the next block labeled `label` (`"CERTIFICATE"`, `"PRIVATE KEY"`, ...) at or after `*pos`
+/// into `out` (capacity `cap`) and advances `*pos` past it. Returns the DER length, or 0 when there is
+/// no further block with that label; a block that is malformed or does not fit is skipped.
+export fn pemNext(text: *ui8, len: usize, pos: *usize, label: *ui8, out: *ui8, cap: usize) -> usize {
+    local ll: usize = 0
+    while label[ll] != 0 { ll = ll + 1 }
+    while true {
+        local p: usize = *pos
+        // find "-----BEGIN <label>-----"
+        local found: bool = false
+        while p + 11 + ll + 5 <= len && !found {
+            if matchAt(text, len, p, "-----BEGIN ") && matchAt(text, len, p + 11, label) &&
+               matchAt(text, len, p + 11 + ll, "-----") {
+                found = true
+            } else {
+                p = p + 1
+            }
+        }
+        if !found {
+            *pos = len
+            return 0
+        }
+        p = p + 11 + ll + 5
+        local n: usize = 0
+        local acc: ui32 = 0
+        local bits: i32 = 0
+        local ok: bool = true
+        while p < len && text[p] != 45 {                 // until the '-' of the END line
+            local v: i32 = b64(text[p])
+            if v >= 0 {
+                acc = (acc << 6) | (v as ui32)
+                bits = bits + 6
+                if bits >= 8 {
+                    bits = bits - 8
+                    if n >= cap {
+                        ok = false
+                    } else {
+                        out[n] = ((acc >> (bits as ui32)) & 0xff) as ui8
+                        n = n + 1
+                    }
+                }
+            }
+            p = p + 1
+        }
+        *pos = p
+        if ok && n > 0 { return n }
+    }
+    return 0
+}

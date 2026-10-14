@@ -1,0 +1,81 @@
+// Client half of the HTTPS server e2e: `GET /hello` over TLS 1.3 must answer `200 OK` with
+// `hello https`, then `GET /quit` stops the server. Exits 0 and prints `httpsclient ok`.
+// Build with the same `-D tlsPort=...` (and `-D tlsEc=1`) as `httpsserver.xl`.
+from "std" import println, trustSetBundlePem, tlsConnect, tlsRead, tlsWrite, tlsClose, tlsErrorText
+from "std" import TlsConn, TLS_OK, strlen
+from "tls/fixture" import rsaCert, ecCert
+
+global buf: [ui8; 8192]
+
+fn contains(s: *ui8, n: usize, p: *ui8) -> bool {
+    local pl: usize = strlen(p)
+    local i: usize = 0
+    while i + pl <= n {
+        local k: usize = 0
+        while k < pl && s[i + k] == p[k] { k = k + 1 }
+        if k == pl { return true }
+        i = i + 1
+    }
+    return false
+}
+
+/// Sends a GET for `path` and reads the whole reply into `buf`; returns its length or -1.
+fn get(path: *ui8) -> isize {
+    local c: TlsConn
+    local e: i32 = tlsConnect(&c, 2130706433, tlsPort as ui16, "localhost")
+    if e != TLS_OK {
+        println(tlsErrorText(e))
+        return -1
+    }
+    local req: [ui8; 128]
+    local n: usize = 0
+    local parts: [*ui8; 3] = ["GET ", path, " HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n"]
+    local i: usize = 0
+    while i < 3 {
+        local s: *ui8 = parts[i]
+        local k: usize = 0
+        while s[k] != 0 {
+            req[n] = s[k]
+            n = n + 1
+            k = k + 1
+        }
+        i = i + 1
+    }
+    if !tlsWrite(&c, &req[0], n) {
+        tlsClose(&c)
+        return -1
+    }
+    local total: usize = 0
+    local more: bool = true
+    while more && total < 8191 {
+        local got: isize = tlsRead(&c, &buf[total], 8191 - total)
+        if got <= 0 { more = false } else { total = total + (got as usize) }
+    }
+    tlsClose(&c)
+    return total as isize
+}
+
+fn main() -> i32 {
+#ifdef tlsEc
+    trustSetBundlePem(ecCert, strlen(ecCert))
+#else
+    trustSetBundlePem(rsaCert, strlen(rsaCert))
+#endif
+    local n: isize = get("/hello")
+    if n <= 0 || !contains(&buf[0], n as usize, "200 OK") || !contains(&buf[0], n as usize, "hello https") {
+        println("FAIL: /hello")
+        return 1
+    }
+    n = get("/nothing")
+    if n <= 0 || !contains(&buf[0], n as usize, "404") {
+        println("FAIL: 404")
+        return 2
+    }
+    n = get("/quit")
+    if n <= 0 || !contains(&buf[0], n as usize, "bye") {
+        println("FAIL: /quit")
+        return 3
+    }
+    println("httpsclient ok")
+    return 0
+}

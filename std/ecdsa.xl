@@ -1,8 +1,9 @@
 // std/ecdsa: ECDSA signature verification over NIST P-256 and P-384 (FIPS 186-4), on top of
-// `std/bignum`. Verification only (public inputs), so nothing here is constant-time. Points are
-// uncompressed affine big-endian coordinates; hashes are passed in already computed.
+// `std/bignum`. Verification handles public inputs; `ecdsaSign` (for the TLS server) takes a secret
+// scalar and nonce. Nothing here is constant-time. Points are uncompressed affine big-endian
+// coordinates; hashes are passed in already computed.
 from "bignum" import Mont, montInit, montMul, montTo, montFrom, montPow, modAdd, modSub
-from "bignum" import bnZero, bnCopy, bnIsZero, bnCmp, bnSub, bnFromBytes
+from "bignum" import bnZero, bnCopy, bnIsZero, bnCmp, bnSub, bnFromBytes, bnToBytes
 
 export define ECDSA_P256 = 1
 export define ECDSA_P384 = 2
@@ -172,6 +173,103 @@ fn pointMul(c: *Mont, r: *Pt, k: *ui32, p: *Pt) {
     copyPt(r, &acc, c.n)
 }
 
+/// Field prime, group order, `b` and the base point of `curve` into limb arrays of `size / 4` limbs.
+fn curveParams(curve: i32, n: usize, p: *ui32, ord: *ui32, b: *ui32, gx: *ui32, gy: *ui32) {
+    if curve == ECDSA_P256 {
+        hexLimbs(p, n, "ffffffff00000001000000000000000000000000ffffffffffffffffffffffff", 32)
+        hexLimbs(ord, n, "ffffffff00000000ffffffffffffffffbce6faada7179e84f3b9cac2fc632551", 32)
+        hexLimbs(b, n, "5ac635d8aa3a93e7b3ebbd55769886bc651d06b0cc53b0f63bce3c3e27d2604b", 32)
+        hexLimbs(gx, n, "6b17d1f2e12c4247f8bce6e563a440f277037d812deb33a0f4a13945d898c296", 32)
+        hexLimbs(gy, n, "4fe342e2fe1a7f9b8ee7eb4a7c0f9e162bce33576b315ececbb6406837bf51f5", 32)
+    } else {
+        hexLimbs(p, n, "fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffeffffffff0000000000000000ffffffff", 48)
+        hexLimbs(ord, n, "ffffffffffffffffffffffffffffffffffffffffffffffffc7634d81f4372ddf581a0db248b0a77aecec196accc52973", 48)
+        hexLimbs(b, n, "b3312fa7e23ee7e4988e056be3f82d19181d9c6efe8141120314088f5013875ac656398d8a2ed19d2a85c8edd3ec2aef", 48)
+        hexLimbs(gx, n, "aa87ca22be8b05378eb1c71ef320ad746e1d3b628ba79b9859f741e082542a385502f25dbf55296c3a545e3872760ab7", 48)
+        hexLimbs(gy, n, "3617de4a96262c6f5d9e98bf9292dc29f8f41dbd289a147ce9da3113b5f0b8c00a60b1ce1d7e819d7a431d7c90ea0e5f", 48)
+    }
+}
+
+/// Signs `hash[0..hlen]` with the private scalar `d` (`size` bytes big-endian) on `curve`, using the
+/// per-signature secret `k` (`size` bytes, 1 <= k < order, from a CSPRNG and never reused). Writes
+/// `r` and `s` (`size` bytes each). False when an input is out of range or this `k` gives r == 0 or
+/// s == 0 (the caller then draws another `k`). Not constant-time (double-and-add on the secret `k`).
+export fn ecdsaSign(curve: i32, d: *ui8, hash: *ui8, hlen: usize, k: *ui8, r: *ui8, s: *ui8) -> bool {
+    local size: usize = 32
+    if curve == ECDSA_P384 { size = 48 }
+    if curve != ECDSA_P256 && curve != ECDSA_P384 { return false }
+    local n: usize = size / 4
+    local p: [ui32; 12]
+    local ord: [ui32; 12]
+    local b: [ui32; 12]
+    local gx: [ui32; 12]
+    local gy: [ui32; 12]
+    curveParams(curve, n, &p[0], &ord[0], &b[0], &gx[0], &gy[0])
+
+    local dl: [ui32; 12]
+    local kl: [ui32; 12]
+    if !bnFromBytes(&dl[0], n, d, size) || !bnFromBytes(&kl[0], n, k, size) { return false }
+    if bnIsZero(&dl[0], n) || bnIsZero(&kl[0], n) { return false }
+    if bnCmp(&dl[0], &ord[0], n) >= 0 || bnCmp(&kl[0], &ord[0], n) >= 0 { return false }
+
+    local el: [ui32; 12]
+    local ehl: usize = hlen
+    if ehl > size { ehl = size }
+    bnFromBytes(&el[0], n, hash, ehl)
+    if bnCmp(&el[0], &ord[0], n) >= 0 { bnSub(&el[0], &el[0], &ord[0], n) }
+
+    local fc: Mont
+    local oc: Mont
+    montInit(&fc, &p[0], n)
+    montInit(&oc, &ord[0], n)
+
+    // R = k G; r = x(R) mod order
+    local g: Pt
+    montTo(&fc, &g.x[0], &gx[0])
+    montTo(&fc, &g.y[0], &gy[0])
+    bnZero(&g.z[0], 12)
+    bnCopy(&g.z[0], &fc.one[0], n)
+    local pt: Pt
+    pointMul(&fc, &pt, &kl[0], &g)
+    if isInf(&pt) { return false }
+    local two: [ui32; 12]
+    local exp: [ui32; 12]
+    bnZero(&two[0], 12)
+    two[0] = 2
+    bnSub(&exp[0], &p[0], &two[0], n)
+    local zi: [ui32; 12]
+    local t: [ui32; 12]
+    montPow(&fc, &zi[0], &pt.z[0], &exp[0], n)
+    montMul(&fc, &zi[0], &zi[0], &zi[0])
+    montMul(&fc, &t[0], &pt.x[0], &zi[0])
+    montFrom(&fc, &t[0], &t[0])
+    if bnCmp(&t[0], &ord[0], n) >= 0 { bnSub(&t[0], &t[0], &ord[0], n) }
+    if bnIsZero(&t[0], n) { return false }
+
+    // s = k^-1 (e + r d) mod order
+    local km: [ui32; 12]
+    local kinv: [ui32; 12]
+    local rm: [ui32; 12]
+    local dm: [ui32; 12]
+    local em: [ui32; 12]
+    local sm: [ui32; 12]
+    local sl: [ui32; 12]
+    bnSub(&exp[0], &ord[0], &two[0], n)
+    montTo(&oc, &km[0], &kl[0])
+    montPow(&oc, &kinv[0], &km[0], &exp[0], n)
+    montTo(&oc, &rm[0], &t[0])
+    montTo(&oc, &dm[0], &dl[0])
+    montTo(&oc, &em[0], &el[0])
+    montMul(&oc, &sm[0], &rm[0], &dm[0])
+    modAdd(&oc, &sm[0], &sm[0], &em[0])
+    montMul(&oc, &sm[0], &sm[0], &kinv[0])
+    montFrom(&oc, &sl[0], &sm[0])
+    if bnIsZero(&sl[0], n) { return false }
+    bnToBytes(&t[0], n, r, size)
+    bnToBytes(&sl[0], n, s, size)
+    return true
+}
+
 /// Verifies the signature (`r`, `s`, each `size` bytes big-endian) over `hash[0..hlen]` against the
 /// public key (`qx`, `qy`) on `curve` (`ECDSA_P256` or `ECDSA_P384`).
 export fn ecdsaVerify(curve: i32, qx: *ui8, qy: *ui8, hash: *ui8, hlen: usize, r: *ui8, s: *ui8) -> bool {
@@ -185,19 +283,7 @@ export fn ecdsaVerify(curve: i32, qx: *ui8, qy: *ui8, hash: *ui8, hlen: usize, r
     local b: [ui32; 12]
     local gx: [ui32; 12]
     local gy: [ui32; 12]
-    if curve == ECDSA_P256 {
-        hexLimbs(&p[0], n, "ffffffff00000001000000000000000000000000ffffffffffffffffffffffff", 32)
-        hexLimbs(&ord[0], n, "ffffffff00000000ffffffffffffffffbce6faada7179e84f3b9cac2fc632551", 32)
-        hexLimbs(&b[0], n, "5ac635d8aa3a93e7b3ebbd55769886bc651d06b0cc53b0f63bce3c3e27d2604b", 32)
-        hexLimbs(&gx[0], n, "6b17d1f2e12c4247f8bce6e563a440f277037d812deb33a0f4a13945d898c296", 32)
-        hexLimbs(&gy[0], n, "4fe342e2fe1a7f9b8ee7eb4a7c0f9e162bce33576b315ececbb6406837bf51f5", 32)
-    } else {
-        hexLimbs(&p[0], n, "fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffeffffffff0000000000000000ffffffff", 48)
-        hexLimbs(&ord[0], n, "ffffffffffffffffffffffffffffffffffffffffffffffffc7634d81f4372ddf581a0db248b0a77aecec196accc52973", 48)
-        hexLimbs(&b[0], n, "b3312fa7e23ee7e4988e056be3f82d19181d9c6efe8141120314088f5013875ac656398d8a2ed19d2a85c8edd3ec2aef", 48)
-        hexLimbs(&gx[0], n, "aa87ca22be8b05378eb1c71ef320ad746e1d3b628ba79b9859f741e082542a385502f25dbf55296c3a545e3872760ab7", 48)
-        hexLimbs(&gy[0], n, "3617de4a96262c6f5d9e98bf9292dc29f8f41dbd289a147ce9da3113b5f0b8c00a60b1ce1d7e819d7a431d7c90ea0e5f", 48)
-    }
+    curveParams(curve, n, &p[0], &ord[0], &b[0], &gx[0], &gy[0])
 
     local rl: [ui32; 12]
     local sl: [ui32; 12]

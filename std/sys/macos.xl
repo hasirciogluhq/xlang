@@ -224,7 +224,17 @@ export fn sysFileSize(fd: i32) -> i64 {
 
 /// A TCP socket; negative errno on failure.
 export fn sysTcpSocket() -> i32 {
-    return syscall(SYS_SOCKET, AF_INET, SOCK_STREAM, 0) as i32
+    local fd: i32 = syscall(SYS_SOCKET, AF_INET, SOCK_STREAM, 0) as i32
+    noSigpipe(fd)
+    return fd
+}
+
+/// SO_NOSIGPIPE: a write to a socket whose peer is gone fails with EPIPE instead of killing the
+/// process (a server meets this on every client that aborts a handshake).
+fn noSigpipe(fd: i32) {
+    if fd < 0 { return }
+    local one: i32 = 1
+    syscall(SYS_SETSOCKOPT, fd, SOL_SOCKET, 4130, &one, 4)
 }
 
 /// A UDP socket; negative errno on failure. After `sysTcpConnect` (which only fixes the peer for UDP)
@@ -277,7 +287,9 @@ export fn sysTcpListen(fd: i32, ip: ui32, port: ui16) -> i32 {
 
 /// Blocks for a connection; negative errno on failure.
 export fn sysTcpAccept(fd: i32) -> i32 {
-    return syscall(SYS_ACCEPT, fd, 0, 0) as i32
+    local conn: i32 = syscall(SYS_ACCEPT, fd, 0, 0) as i32
+    noSigpipe(conn)
+    return conn
 }
 
 // ---- entropy and wall clock --------------------------------------------------------------------

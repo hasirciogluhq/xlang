@@ -96,6 +96,17 @@ export fn trustSetBundle(path: *ui8) {
     bundleLen = 0
 }
 
+/// Like `trustSetBundle`, but the PEM text is already in memory (`pem[0..len]`, which must stay
+/// valid and unchanged). Useful for embedded roots and tests; nothing is copied.
+export fn trustSetBundlePem(pem: *ui8, len: usize) {
+    bundleOverride = nil
+    bundle = pem
+    bundleCap = len
+    bundleLen = len
+    bundleDer = false
+    bundleTried = true
+}
+
 fn loadFile(path: *ui8) -> bool {
     local size: i64 = fsSize(path)
     if size <= 0 { return false }

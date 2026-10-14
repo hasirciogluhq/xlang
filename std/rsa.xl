@@ -1,5 +1,6 @@
 // std/rsa: RSA signature verification with a public key (n, e): PKCS#1 v1.5 (RFC 8017 8.2) and PSS
-// (9.1.2, salt length = hash length as TLS 1.3 requires). Moduli up to 4096 bits. Verify only.
+// (9.1.2, salt length = hash length as TLS 1.3 requires). Moduli up to 4096 bits. Verification is
+// the main job; `rsaSignPss` signs for the TLS server (not constant-time).
 from "bignum" import Mont, montInit, montTo, montFrom, montPow, bnZero, bnFromBytes, bnToBytes, bnCmp
 from "digest" import digest, digestLen
 
@@ -200,4 +201,107 @@ export fn rsaVerifyPss(n: *ui8, nlen: usize, e: *ui8, elen: usize, sig: *ui8, sl
         i = i + 1
     }
     return diff == 0
+}
+
+/// RSASSA-PSS signing (RFC 8017 9.1.1) with the private exponent `d`: MGF1 of the same hash, salt
+/// length = hash length. `salt[0..hlen]` are random bytes from the caller and `hash` is the digest
+/// of the signed data computed with `alg`. Writes the signature (k bytes, the modulus length) to
+/// `out` and returns k; 0 when the key is malformed. Not constant-time (square-and-multiply on the
+/// secret exponent): fine for a server nobody can time locally, see KNOWN-LIMITATIONS.md.
+export fn rsaSignPss(n: *ui8, nlen: usize, d: *ui8, dlen: usize, alg: i32, hash: *ui8, hlen: usize, salt: *ui8, out: *ui8) -> usize {
+    if digestLen(alg) != hlen || hlen > 64 { return 0 }
+    local off: usize = 0
+    while off < nlen && n[off] == 0 { off = off + 1 }
+    local mod: *ui8 = &n[off]
+    local k: usize = nlen - off
+    if k < 64 || k > RSA_MAX_BYTES || (mod[k - 1] & 1) == 0 { return 0 }
+    if dlen == 0 || dlen > k { return 0 }
+    local top: ui8 = mod[0]
+    local topBits: usize = 8
+    while topBits > 0 && ((top >> ((topBits - 1) as ui8)) & 1) == 0 { topBits = topBits - 1 }
+    local modBits: usize = (k - 1) * 8 + topBits
+    local emBits: usize = modBits - 1
+    local emLen: usize = (emBits + 7) / 8
+    if emLen < hlen * 2 + 2 { return 0 }
+    local dbLen: usize = emLen - hlen - 1
+
+    // H = Hash(8 zero bytes || mHash || salt)
+    local mp: [ui8; 8 + 64 + 64]
+    local i: usize = 0
+    while i < 8 {
+        mp[i] = 0
+        i = i + 1
+    }
+    i = 0
+    while i < hlen {
+        mp[8 + i] = hash[i]
+        mp[8 + hlen + i] = salt[i]
+        i = i + 1
+    }
+    local hh: [ui8; 64]
+    digest(alg, &mp[0], 8 + hlen * 2, &hh[0])
+
+    // DB = PS || 0x01 || salt, masked with MGF1(H)
+    local db: [ui8; 512]
+    local ps: usize = dbLen - hlen - 1
+    i = 0
+    while i < ps {
+        db[i] = 0
+        i = i + 1
+    }
+    db[ps] = 1
+    i = 0
+    while i < hlen {
+        db[ps + 1 + i] = salt[i]
+        i = i + 1
+    }
+    local mask: [ui8; 512]
+    mgf1(alg, &hh[0], hlen, &mask[0], dbLen)
+    i = 0
+    while i < dbLen {
+        db[i] = db[i] ^ mask[i]
+        i = i + 1
+    }
+    local unused: usize = 8 * emLen - emBits
+    if unused > 0 { db[0] = db[0] & (0xff >> (unused as ui8)) }
+
+    // EM = maskedDB || H || 0xbc, right-aligned in k bytes
+    local em: [ui8; 512]
+    local lead: usize = k - emLen
+    i = 0
+    while i < lead {
+        em[i] = 0
+        i = i + 1
+    }
+    i = 0
+    while i < dbLen {
+        em[lead + i] = db[i]
+        i = i + 1
+    }
+    i = 0
+    while i < hlen {
+        em[lead + dbLen + i] = hh[i]
+        i = i + 1
+    }
+    em[k - 1] = 0xbc
+
+    // s = EM^d mod n
+    local limbs: usize = (k + 3) / 4
+    local m: [ui32; 130]
+    local x: [ui32; 130]
+    local ex: [ui32; 130]
+    if !bnFromBytes(&m[0], limbs, mod, k) { return 0 }
+    if !bnFromBytes(&x[0], limbs, &em[0], k) { return 0 }
+    if bnCmp(&x[0], &m[0], limbs) >= 0 { return 0 }
+    bnZero(&ex[0], 130)
+    if !bnFromBytes(&ex[0], limbs, d, dlen) { return 0 }
+    local c: Mont
+    montInit(&c, &m[0], limbs)
+    local xm: [ui32; 130]
+    local rm: [ui32; 130]
+    montTo(&c, &xm[0], &x[0])
+    montPow(&c, &rm[0], &xm[0], &ex[0], limbs)
+    montFrom(&c, &rm[0], &rm[0])
+    bnToBytes(&rm[0], limbs, out, k)
+    return k
 }

@@ -14,6 +14,7 @@ define SYS_GETTID = 186
 define SYS_EPOLL_CREATE1 = 291
 define SYS_EPOLL_CTL = 233
 define SYS_EPOLL_WAIT = 232
+define SYS_RT_SIGACTION = 13
 #elif arch == "aarch64"
 define SYS_READ = 63
 define SYS_WRITE = 64
@@ -29,6 +30,7 @@ define SYS_GETTID = 178
 define SYS_EPOLL_CREATE1 = 20
 define SYS_EPOLL_CTL = 21
 define SYS_EPOLL_WAIT = 22
+define SYS_RT_SIGACTION = 134
 #endif
 
 #if arch == "x86_64"
@@ -259,8 +261,25 @@ export fn sysFileSize(fd: i32) -> i64 {
 
 // ---- TCP over IPv4 -----------------------------------------------------------------------------
 
+global sigpipeIgnored: bool
+
+/// A write to a socket whose peer is gone must fail with EPIPE instead of killing the process (a
+/// server meets this on every client that aborts a handshake): SIGPIPE is ignored, once, the first
+/// time a socket is created or accepted.
+fn noSigpipe() {
+    if sigpipeIgnored { return }
+    sigpipeIgnored = true
+    local act: [i64; 4]         // kernel sigaction: handler, flags, (restorer,) mask: all zero but SIG_IGN
+    act[0] = 1
+    act[1] = 0
+    act[2] = 0
+    act[3] = 0
+    syscall(SYS_RT_SIGACTION, 13, &act[0], 0, 8)
+}
+
 /// A TCP socket; negative errno on failure.
 export fn sysTcpSocket() -> i32 {
+    noSigpipe()
     return syscall(SYS_SOCKET, AF_INET, SOCK_STREAM, 0) as i32
 }
 
@@ -313,6 +332,7 @@ export fn sysTcpListen(fd: i32, ip: ui32, port: ui16) -> i32 {
 
 /// Blocks for a connection; negative errno on failure.
 export fn sysTcpAccept(fd: i32) -> i32 {
+    noSigpipe()
     return syscall(SYS_ACCEPT, fd, 0, 0) as i32
 }
 

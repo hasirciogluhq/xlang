@@ -176,5 +176,7 @@ No filler praise; state weaknesses plainly. For each feature cover:
 - The standard library is xl source in `std/`, embedded into the compiler at build time (`--std=<dir>` overrides);
   `xmake build std` type-checks it.
 - Tests: `xmake build xlang-tests && xmake run xlang-tests` (frontend + sema + HIR, `test/compiler/`) and
-  `xmake run e2e` (`test/e2e/run.sh`: builds and runs programs natively and, with Docker, on Linux
-  aarch64/x86_64). Scratch files go to the scratchpad; `test/e2e/*.xl` are the maintained end-to-end programs.
+  `xmake run e2e` (`test/e2e/run.sh`: builds and runs programs natively, with Docker on Linux aarch64/x86_64,
+  and with `cxrun <exe>` (CrossOver/Wine) as Windows x86_64 executables; the TLS and HTTPS server/client pairs run
+  in every leg). Scratch files go to the scratchpad; `test/e2e/*.xl` are the maintained end-to-end programs.
+  Windows executables: `xlang build x.xl --target x86_64-pc-windows-msvc -o x.exe`, then `cxrun x.exe`.

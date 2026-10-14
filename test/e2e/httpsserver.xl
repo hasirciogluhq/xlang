@@ -1,0 +1,39 @@
+// HTTPS server e2e: `routerServeTls` on 127.0.0.1:tlsPort with the embedded test certificate.
+// `/hello` answers, `/quit` answers and ends the process (exit 0). Peer: `httpsclient.xl`, curl or
+// openssl s_client. Build with `-D tlsPort=14435` (and `-D tlsEc=1` for the ECDSA certificate).
+from "std" import println, Router, routerInit, routerGet, routerServeTls, Context, ctxString
+from "std" import tlsLoadCredentialsPem, TlsCredentials, tlsErrorText, TLS_OK, strlen
+from "std/sys" import sysExit
+from "tls/fixture" import rsaCert, rsaKey, ecCert, ecKey
+
+global cred: TlsCredentials
+global router: Router
+
+fn hello(c: *Context) {
+    ctxString(c, 200, "hello https")
+}
+
+fn quit(c: *Context) {
+    ctxString(c, 200, "bye")
+    sysExit(0)
+}
+
+fn listening() {
+    println("server: listening")
+}
+
+fn main() -> i32 {
+#ifdef tlsEc
+    local r: i32 = tlsLoadCredentialsPem(&cred, ecCert, strlen(ecCert), ecKey, strlen(ecKey))
+#else
+    local r: i32 = tlsLoadCredentialsPem(&cred, rsaCert, strlen(rsaCert), rsaKey, strlen(rsaKey))
+#endif
+    if r != TLS_OK {
+        println(tlsErrorText(r))
+        return 1
+    }
+    routerInit(&router)
+    routerGet(&router, "/hello", hello)
+    routerGet(&router, "/quit", quit)
+    return routerServeTls(&router, 2130706433, tlsPort as ui16, &cred, listening)
+}

@@ -1,26 +1,46 @@
 #!/bin/bash
 # End-to-end tests: build each program with the compiler and run it.
 #   test/e2e/run.sh [path/to/xlang]
-# Runs natively; when Docker is available, also on Linux aarch64 and x86_64 (cross-built).
+# Runs natively; when Docker is available, also on Linux aarch64 and x86_64 (cross-built); when
+# `cxrun` (CrossOver/Wine: `cxrun <exe>` runs a Windows executable and returns its exit status) is on
+# PATH, also as Windows x86_64 executables. XLANG_E2E_NET=1 adds the tests that need the Internet.
 set -u
 here=$(cd "$(dirname "$0")" && pwd)
 root=$(cd "$here/../.." && pwd)
 xlang=${1:-$root/build/xlang}
 work=$(mktemp -d)
-trap 'rm -rf "$work"' EXIT
+trap 'rm -rf "$work"; [ -n "${spid:-}" ] && kill "$spid" 2>/dev/null' EXIT
 pass=0; fail=0
 
-# name | expected exit code | expected stdout (a `grep -F` substring) | needs raw OS threads
+# name | expected exit code | expected stdout (a `grep -F` substring) | needs raw OS threads | runs on Windows
 tests=(
-  "language|0||0"
-  "stdlib|0|499500|0"
-  "fsjson|0||0"
-  "panics|134|before|0"
-  "threads|0|40000|1"
-  "sched|0|20100|0"
-  "sched_io|0|5|0"
-  "aesgcm|0|aesgcm ok|0"
+  "language|0||0|1"
+  "stdlib|0|499500|0|1"
+  "fsjson|0||0|1"
+  "panics|134|before|0|0"
+  "threads|0|40000|1|0"
+  "sched|0|20100|0|0"
+  "sched_io|0|5|0|0"
+  "bitops|0|bitops ok|0|1"
+  "sha256|0|sha256 ok|0|1"
+  "sha512|0|sha512 ok|0|1"
+  "hmac|0|hmac ok|0|1"
+  "aesgcm|0|aesgcm ok|0|1"
+  "chacha20poly1305|0|chacha20poly1305 ok|0|1"
+  "x25519|0|x25519 ok|0|1"
+  "ecdsa|0|ecdsa ok|0|1"
 )
+[ "${XLANG_E2E_NET:-}" = 1 ] && tests+=("https|0|https ok|0|1")
+
+# server program | client program | text the client prints on success. The server runs in the background
+# (it serves until the client asks it to quit); the client's exit status and output are the result.
+# Each pair runs with an RSA and an ECDSA certificate (`-D tlsEc=1`) on its own port.
+pairs=(
+  "tlsserver|tlsclient|tlsclient ok"
+  "httpsserver|httpsclient|httpsclient ok"
+)
+port=15000
+win_triple=x86_64-pc-windows-msvc
 
 host_os=$(uname -s)
 
@@ -54,7 +74,7 @@ docker_run() {  # platform binary
 }
 
 for t in "${tests[@]}"; do
-  IFS='|' read -r name want text threads <<<"$t"
+  IFS='|' read -r name want text threads win <<<"$t"
   src=$here/$name.xl
   # native (macOS has no raw thread creation yet: the scheduler falls back to one thread)
   if [ "$threads" = 1 ] && [ "$host_os" = Darwin ]; then
@@ -80,6 +100,81 @@ for t in "${tests[@]}"; do
       fi
     done
   fi
+  # Windows through CrossOver/Wine
+  if [ "$win" = 1 ] && command -v cxrun >/dev/null 2>&1; then
+    if "$xlang" build "$src" --target "$win_triple" -o "$work/$name.exe" 2>"$work/$name.exe.err"; then
+      out=$(cxrun "$work/$name.exe" 2>&1 | grep -v dosdevices; exit "${PIPESTATUS[0]}"); code=$?
+      if [ "$code" != "$want" ] || { [ -n "$text" ] && ! grep -qF "$text" <<<"$out"; }; then
+        echo "FAIL [windows/$name] exit $code (want $want)"; echo "$out" | head -5; fail=$((fail+1))
+      else
+        echo "ok   [windows/$name]"; pass=$((pass+1))
+      fi
+    else
+      echo "FAIL [windows/$name] build"; head -8 "$work/$name.exe.err"; fail=$((fail+1))
+    fi
+  fi
+done
+
+# Server/client pairs (TLS 1.3 server, HTTPS server): see `pairs` above.
+run_pair() {   # label server-bin client-bin text mode(native|docker:PLAT|windows)
+  local label=$1 srv=$2 cli=$3 text=$4 mode=$5 out code
+  case "$mode" in
+    native)
+      "$srv" >"$work/srv.log" 2>&1 & spid=$!
+      sleep 1
+      out=$("$cli" 2>&1); code=$?
+      ;;
+    docker:*)
+      local plat=${mode#docker:}
+      out=$(docker run --rm --platform "linux/$plat" -v "$(dirname "$srv")":/w alpine:3 sh -c \
+        "/w/$(basename "$srv") >/dev/null 2>&1 & sleep 1; /w/$(basename "$cli")" 2>&1); code=$?
+      ;;
+    windows)
+      cxrun "$srv" >"$work/srv.log" 2>&1 & spid=$!
+      sleep 6
+      out=$(cxrun "$cli" 2>&1 | grep -v dosdevices; exit "${PIPESTATUS[0]}"); code=$?
+      ;;
+  esac
+  if [ -n "${spid:-}" ]; then
+    # the server ends itself after `/quit`; give it a moment, then make sure it is gone
+    for _ in 1 2 3 4 5 6; do kill -0 "$spid" 2>/dev/null || break; sleep 0.5; done
+    kill "$spid" 2>/dev/null; wait "$spid" 2>/dev/null; spid=
+  fi
+  if [ "$code" != 0 ] || ! grep -qF "$text" <<<"$out"; then
+    echo "FAIL [$label] exit $code"; echo "$out" | head -5; fail=$((fail+1))
+  else
+    echo "ok   [$label]"; pass=$((pass+1))
+  fi
+}
+
+for p in "${pairs[@]}"; do
+  IFS='|' read -r srvname cliname text <<<"$p"
+  for cert in rsa ec; do
+    extra=(); [ "$cert" = ec ] && extra=(-D tlsEc=1)
+    port=$((port + 1))
+    legs=("native:$host_os")
+    command -v docker >/dev/null 2>&1 && docker info >/dev/null 2>&1 && legs+=("docker:arm64" "docker:amd64")
+    command -v cxrun >/dev/null 2>&1 && legs+=("windows:windows")
+    for leg in "${legs[@]}"; do
+      mode=${leg%%:*}; arg=${leg#*:}
+      target=(); suffix=$arg; runmode=native
+      case "$mode" in
+        docker)
+          if [ "$arg" = arm64 ]; then target=(--target aarch64-unknown-linux-gnu); else target=(--target x86_64-unknown-linux-gnu); fi
+          runmode=docker:$arg ;;
+        windows) target=(--target "$win_triple"); runmode=windows; suffix=windows ;;
+      esac
+      ext=""; [ "$mode" = windows ] && ext=.exe
+      s=$work/$srvname.$cert.$suffix$ext; c=$work/$cliname.$cert.$suffix$ext
+      # (`${a[@]+"${a[@]}"}`: an empty array is not an unbound variable under `set -u` in bash 3.2)
+      if "$xlang" build "$here/$srvname.xl" ${target[@]+"${target[@]}"} -D "tlsPort=$port" ${extra[@]+"${extra[@]}"} -o "$s" 2>"$work/pair.err" &&
+         "$xlang" build "$here/$cliname.xl" ${target[@]+"${target[@]}"} -D "tlsPort=$port" ${extra[@]+"${extra[@]}"} -o "$c" 2>>"$work/pair.err"; then
+        run_pair "$suffix/$srvname+$cliname/$cert" "$s" "$c" "$text" "$runmode"
+      else
+        echo "FAIL [$suffix/$srvname+$cliname/$cert] build"; head -8 "$work/pair.err"; fail=$((fail+1))
+      fi
+    done
+  done
 done
 
 # `xlang test`: a passing selection exits 0, a failing suite exits 1 and is reported as FAIL.

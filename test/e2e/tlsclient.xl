@@ -1,0 +1,90 @@
+// Client half of the TLS server e2e (`tlsserver.xl` must be listening on 127.0.0.1:tlsPort). The
+// test certificate is the only trusted root. Positive: a small reply, a 200000-byte stream. Negative:
+// wrong host name, untrusted root. Last it asks the server to quit. Exits 0 and prints
+// `tlsclient ok`. Build with `-D tlsPort=14433` and `-D tlsEc=1` to match the server.
+from "std" import println, printInt, trustSetBundlePem, tlsConnect, tlsRead, tlsWrite, tlsClose, tlsErrorText
+from "std" import TlsConn, TLS_OK, TLS_ERR_CERT, strlen
+from "tls/fixture" import rsaCert, ecCert
+
+global buf: [ui8; 8192]
+
+fn contains(s: *ui8, n: usize, p: *ui8) -> bool {
+    local pl: usize = strlen(p)
+    local i: usize = 0
+    while i + pl <= n {
+        local k: usize = 0
+        while k < pl && s[i + k] == p[k] { k = k + 1 }
+        if k == pl { return true }
+        i = i + 1
+    }
+    return false
+}
+
+/// Connects, sends `request`, reads until the server closes. Returns the byte count (or a negative
+/// TLS_ERR from the handshake); the first 8192 bytes of the reply stay in `buf`.
+fn fetch(host: *ui8, request: *ui8) -> isize {
+    local c: TlsConn
+    local e: i32 = tlsConnect(&c, 2130706433, tlsPort as ui16, host)
+    if e != TLS_OK { return e as isize }
+    if !tlsWrite(&c, request, strlen(request)) {
+        tlsClose(&c)
+        return -100
+    }
+    local total: isize = 0
+    local more: bool = true
+    while more {
+        local got: isize = tlsRead(&c, &buf[0], 8192)
+        if got <= 0 {
+            more = false
+        } else {
+            total = total + got
+        }
+    }
+    tlsClose(&c)
+    return total
+}
+
+fn main() -> i32 {
+#ifdef tlsEc
+    local good: *ui8 = ecCert
+    local other: *ui8 = rsaCert
+#else
+    local good: *ui8 = rsaCert
+    local other: *ui8 = ecCert
+#endif
+    trustSetBundlePem(good, strlen(good))
+
+    local n: isize = fetch("localhost", "GET /hello HTTP/1.1\r\n\r\n")
+    if n != 11 || !contains(&buf[0], 11, "hello tls13") {
+        println("FAIL: small reply")
+        return 1
+    }
+    n = fetch("localhost", "GET /big HTTP/1.1\r\n\r\n")
+    if n != 200000 {
+        println("FAIL: big reply")
+        return 2
+    }
+    // wrong host name: the certificate only covers localhost
+    n = fetch("example.invalid", "GET /hello HTTP/1.1\r\n\r\n")
+    if n != (TLS_ERR_CERT as isize) {
+        println("FAIL: wrong host accepted")
+        return 3
+    }
+    // a root that did not sign the server certificate
+    trustSetBundlePem(other, strlen(other))
+    n = fetch("localhost", "GET /hello HTTP/1.1\r\n\r\n")
+    if n != (TLS_ERR_CERT as isize) {
+        println("FAIL: untrusted root accepted")
+        printInt(n as i64)
+        println("")
+        return 4
+    }
+    trustSetBundlePem(good, strlen(good))
+    n = fetch("localhost", "GET /quit HTTP/1.1\r\n\r\n")
+    if n != 3 {
+        println("FAIL: quit")
+        return 5
+    }
+    println("tlsclient ok")
+    return 0
+}
