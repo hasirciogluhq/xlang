@@ -20,7 +20,7 @@ struct ParseAbort {};
 }
 
 class Parser {
-public:
+  public:
     Parser(std::vector<Token> tokens, FileId file, DiagnosticEngine& diagnostics)
         : tokens_(std::move(tokens)), file_(file), diag_(diagnostics) {
         if (tokens_.empty() || tokens_.back().kind != TokenKind::End) {
@@ -60,7 +60,7 @@ public:
         return program;
     }
 
-private:
+  private:
     // ------------------------------------------------------------------------------------
     // Token access
 
@@ -101,8 +101,11 @@ private:
     // ------------------------------------------------------------------------------------
     // Errors
 
-    [[noreturn]] void failAt(const Token& token, std::string message, std::string label,
-                             std::string detail = {}, std::string fix = {}) {
+    [[noreturn]] void failAt(const Token& token,
+                             std::string message,
+                             std::string label,
+                             std::string detail = {},
+                             std::string fix = {}) {
         Diagnostic d;
         d.code = "E0002";
         d.severity = Severity::Error;
@@ -115,7 +118,8 @@ private:
     }
 
     [[noreturn]] void expected(std::string_view what) {
-        failAt(cur(), std::format("expected {}, found {}", what, describeToken(cur())),
+        failAt(cur(),
+               std::format("expected {}, found {}", what, describeToken(cur())),
                std::format("expected {} here", what));
     }
 
@@ -210,11 +214,13 @@ private:
 
     void rejectDirective() {
         if (cur().kind >= TokenKind::DirIf && cur().kind <= TokenKind::DirError) {
-            failAt(cur(), std::format("`{}` is not supported yet", tokenKindName(cur().kind)),
-                   "conditional-compilation directive",
-                   "The lexer recognizes `#if`/`#elif`/`#else`/`#endif`/`#ifdef`/`#ifndef`/`#error`, "
-                   "but the preprocessor that evaluates them is not implemented yet.",
-                   "remove the directive for now");
+            failAt(
+                cur(),
+                std::format("`{}` is not supported yet", tokenKindName(cur().kind)),
+                "conditional-compilation directive",
+                "The lexer recognizes `#if`/`#elif`/`#else`/`#endif`/`#ifdef`/`#ifndef`/`#error`, "
+                "but the preprocessor that evaluates them is not implemented yet.",
+                "remove the directive for now");
         }
     }
 
@@ -234,7 +240,7 @@ private:
                 arg.span = cur().span;
                 if (at(TokenKind::Ident) && peekKind(1) == TokenKind::Assign) {
                     arg.key = advance().text;
-                    advance();  // '='
+                    advance(); // '='
                     arg.span = cur().span;
                 }
                 parseAttributeValue(arg);
@@ -347,7 +353,8 @@ private:
             no_struct_ = saved_no_struct;
             --nl_depth_;
             expect(TokenKind::RBracket, "`]` closing the array type");
-            type = Type::makeArray(std::move(element), std::shared_ptr<const Expr>(std::move(length)));
+            type =
+                Type::makeArray(std::move(element), std::shared_ptr<const Expr>(std::move(length)));
             break;
         }
         case TokenKind::Ident: {
@@ -414,10 +421,18 @@ private:
                continues()) {
             BinaryOp op = BinaryOp::Lt;
             switch (advance().kind) {
-            case TokenKind::Lt: op = BinaryOp::Lt; break;
-            case TokenKind::Le: op = BinaryOp::Le; break;
-            case TokenKind::Gt: op = BinaryOp::Gt; break;
-            default: op = BinaryOp::Ge; break;
+            case TokenKind::Lt:
+                op = BinaryOp::Lt;
+                break;
+            case TokenKind::Le:
+                op = BinaryOp::Le;
+                break;
+            case TokenKind::Gt:
+                op = BinaryOp::Gt;
+                break;
+            default:
+                op = BinaryOp::Ge;
+                break;
             }
             lhs = makeBinary(op, std::move(lhs), parseAdditive());
         }
@@ -439,9 +454,15 @@ private:
                continues()) {
             BinaryOp op = BinaryOp::Mul;
             switch (advance().kind) {
-            case TokenKind::Star: op = BinaryOp::Mul; break;
-            case TokenKind::Slash: op = BinaryOp::Div; break;
-            default: op = BinaryOp::Mod; break;
+            case TokenKind::Star:
+                op = BinaryOp::Mul;
+                break;
+            case TokenKind::Slash:
+                op = BinaryOp::Div;
+                break;
+            default:
+                op = BinaryOp::Mod;
+                break;
             }
             lhs = makeBinary(op, std::move(lhs), parseCast());
         }
@@ -465,10 +486,18 @@ private:
         const Span start = cur().span;
         std::optional<UnaryOp> op;
         switch (cur().kind) {
-        case TokenKind::Minus: op = UnaryOp::Neg; break;
-        case TokenKind::Bang: op = UnaryOp::Not; break;
-        case TokenKind::Star: op = UnaryOp::Deref; break;
-        case TokenKind::Amp: op = UnaryOp::AddrOf; break;
+        case TokenKind::Minus:
+            op = UnaryOp::Neg;
+            break;
+        case TokenKind::Bang:
+            op = UnaryOp::Not;
+            break;
+        case TokenKind::Star:
+            op = UnaryOp::Deref;
+            break;
+        case TokenKind::Amp:
+            op = UnaryOp::AddrOf;
+            break;
         case TokenKind::AndAnd: {
             // `&&x` in prefix position is two address-of operators.
             advance();
@@ -481,7 +510,8 @@ private:
             outer->lhs = std::move(mid);
             return outer;
         }
-        default: break;
+        default:
+            break;
         }
         if (op) {
             advance();
@@ -590,7 +620,7 @@ private:
         if (any || !args.empty()) {
             args.push_back(std::move(current));
         }
-        advance();  // ')'
+        advance(); // ')'
         return args;
     }
 
@@ -659,7 +689,7 @@ private:
             } else if (at(TokenKind::Bang) && peekKind(1) == TokenKind::LParen &&
                        adjacent(prev(), cur()) && adjacent(cur(), peek(1)) &&
                        !pathOf(*expr).empty()) {
-                advance();  // '!'
+                advance(); // '!'
                 ExprPtr call = makeExpr(Expr::Kind::MacroCall, expr->span);
                 call->text = pathOf(*expr);
                 call->macro_args = parseMacroArgs();
@@ -752,7 +782,7 @@ private:
 
     ExprPtr parseArrayLiteral() {
         const Span start = cur().span;
-        advance();  // '['
+        advance(); // '['
         ++nl_depth_;
         const bool saved_no_struct = no_struct_;
         no_struct_ = false;
@@ -785,7 +815,7 @@ private:
 
     ExprPtr parseNew() {
         const Span start = cur().span;
-        advance();  // 'new'
+        advance(); // 'new'
         ExprPtr e = makeExpr(Expr::Kind::New, start);
         if (at(TokenKind::LParen)) {
             advance();
@@ -821,8 +851,11 @@ private:
             if (at(TokenKind::End)) {
                 nl_depth_ = saved_depth;
                 no_struct_ = saved_no_struct;
-                failAt(cur(), "unexpected end of file in a block", "the block opened here is never closed",
-                       {}, "add a closing `}`");
+                failAt(cur(),
+                       "unexpected end of file in a block",
+                       "the block opened here is never closed",
+                       {},
+                       "add a closing `}`");
             }
             const std::size_t start = pos_;
             try {
@@ -833,21 +866,20 @@ private:
         }
         nl_depth_ = saved_depth;
         no_struct_ = saved_no_struct;
-        advance();  // '}'
+        advance(); // '}'
         block.span = spanFrom(block.span);
         return block;
     }
 
-    std::unique_ptr<Block> parseBlockPtr() {
-        return std::make_unique<Block>(parseBlock());
-    }
+    std::unique_ptr<Block> parseBlockPtr() { return std::make_unique<Block>(parseBlock()); }
 
     /// After a statement that did not end in a block: a line break or `}` must follow.
     void endOfStatement() {
         if (at(TokenKind::End) || at(TokenKind::RBrace) || cur().newline_before) {
             return;
         }
-        failAt(cur(), std::format("unexpected {} after the end of a statement", describeToken(cur())),
+        failAt(cur(),
+               std::format("unexpected {} after the end of a statement", describeToken(cur())),
                "a statement ends at a line break",
                "Statements are separated by line breaks; there is no `;` terminator.",
                "put this on a new line");
@@ -912,7 +944,8 @@ private:
             stmt.body = parseBlockPtr();
             return stmt;
         }
-        default: break;
+        default:
+            break;
         }
 
         ExprPtr lhs = parseExpr();
@@ -928,7 +961,9 @@ private:
                 }
                 [[fallthrough]];
             default:
-                failAt(cur(), "invalid assignment target", "cannot assign to this expression",
+                failAt(cur(),
+                       "invalid assignment target",
+                       "cannot assign to this expression",
                        "Only a variable, a field, an index or a dereference can be assigned to.");
             }
             advance();
@@ -957,7 +992,7 @@ private:
         Stmt stmt;
         stmt.kind = Stmt::Kind::If;
         const Span start = cur().span;
-        advance();  // 'if'
+        advance(); // 'if'
         stmt.expr = parseCondition();
         stmt.body = parseBlockPtr();
         if (at(TokenKind::Else)) {
@@ -998,8 +1033,11 @@ private:
         if (at(TokenKind::End) || at(TokenKind::RBrace) || cur().newline_before) {
             return;
         }
-        failAt(cur(), std::format("unexpected {} after the end of a declaration", describeToken(cur())),
-               "a declaration ends at a line break", {}, "put this on a new line");
+        failAt(cur(),
+               std::format("unexpected {} after the end of a declaration", describeToken(cur())),
+               "a declaration ends at a line break",
+               {},
+               "put this on a new line");
     }
 
     void parseItem(Program& program) {
@@ -1058,10 +1096,13 @@ private:
             addItem(program, s, parseTopLevelCall(s));
             return;
         default:
-            failAt(kw, std::format("expected a declaration, found {}", describeToken(kw)),
-                   "expected a declaration here", {},
-                   "declarations start with fn, global, struct, class, interface, impl, enum, type, "
-                   "define, import, from or export");
+            failAt(
+                kw,
+                std::format("expected a declaration, found {}", describeToken(kw)),
+                "expected a declaration here",
+                {},
+                "declarations start with fn, global, struct, class, interface, impl, enum, type, "
+                "define, import, from or export");
         }
     }
 
@@ -1088,7 +1129,8 @@ private:
                     const Token& abi = advance();
                     advance();
                     if (abi.text != "c") {
-                        failAt(abi, std::format("unknown export ABI `{}`", abi.text),
+                        failAt(abi,
+                               std::format("unknown export ABI `{}`", abi.text),
                                "only `export(c)` exists");
                     }
                     mods.export_c = true;
@@ -1123,7 +1165,8 @@ private:
         const DeclBase& base = declBase(item);
         const std::string kind = declKindName(item.decl);
         const auto reject = [&](std::string_view prefix) {
-            softError(base.span, std::format("`{}` cannot be applied to {} `{}`", prefix, kind, base.name),
+            softError(base.span,
+                      std::format("`{}` cannot be applied to {} `{}`", prefix, kind, base.name),
                       std::format("`{}` is not valid on {}", prefix, kind));
         };
         const bool is_import = std::holds_alternative<ImportDecl>(item.decl);
@@ -1199,9 +1242,12 @@ private:
             fn.body = parseBlock();
         } else if (!member && !s.modifiers.declared) {
             // A free function needs a body unless it is `declare`d.
-            failAt(cur(), std::format("expected `{{` starting the body of `{}`, found {}", name,
-                                      describeToken(cur())),
-                   "function body expected here", {},
+            failAt(cur(),
+                   std::format("expected `{{` starting the body of `{}`, found {}",
+                               name,
+                               describeToken(cur())),
+                   "function body expected here",
+                   {},
                    "write a body, or `declare fn` for a function defined elsewhere");
         } else {
             endOfItemLine();
@@ -1217,7 +1263,7 @@ private:
 
     GlobalDecl parseGlobal(const DeclStart& s) {
         GlobalDecl g;
-        advance();  // 'global'
+        advance(); // 'global'
         const Token& name_tok = cur();
         const std::string name = expectIdent("a global name");
         expect(TokenKind::Colon, "`:` and the type of the global");
@@ -1255,7 +1301,7 @@ private:
 
     StructDecl parseStruct(const DeclStart& s) {
         StructDecl decl;
-        advance();  // 'struct'
+        advance(); // 'struct'
         const Token& name_tok = cur();
         const std::string name = expectIdent("a struct name");
         if (at(TokenKind::LBrace)) {
@@ -1266,15 +1312,18 @@ private:
                 rejectDirective();
                 std::vector<Attribute> attrs = parseAttributes();
                 if (at(TokenKind::Fn) || at(TokenKind::Virtual) || at(TokenKind::Override)) {
-                    failAt(cur(), "structs cannot have methods", "method declared inside a struct",
+                    failAt(cur(),
+                           "structs cannot have methods",
+                           "method declared inside a struct",
                            "`struct` only carries data.",
-                           "use `class` for methods and inheritance, or an `impl` block for interfaces");
+                           "use `class` for methods and inheritance, or an `impl` block for "
+                           "interfaces");
                 }
                 decl.fields.push_back(parseField(std::move(attrs)));
                 memberSeparator();
             }
             nl_depth_ = saved_depth;
-            advance();  // '}'
+            advance(); // '}'
         } else if (s.modifiers.declared) {
             decl.opaque = true;
             endOfItemLine();
@@ -1287,7 +1336,7 @@ private:
 
     ClassDecl parseClass(const DeclStart& s) {
         ClassDecl decl;
-        advance();  // 'class'
+        advance(); // 'class'
         const Token& name_tok = cur();
         const std::string name = expectIdent("a class name");
         if (match(TokenKind::Colon)) {
@@ -1313,7 +1362,7 @@ private:
                 }
             }
             nl_depth_ = saved_depth;
-            advance();  // '}'
+            advance(); // '}'
         } else if (s.modifiers.declared) {
             decl.opaque = true;
             endOfItemLine();
@@ -1347,7 +1396,7 @@ private:
 
     InterfaceDecl parseInterface(const DeclStart& s) {
         InterfaceDecl decl;
-        advance();  // 'interface'
+        advance(); // 'interface'
         const Token& name_tok = cur();
         const std::string name = expectIdent("an interface name");
         if (at(TokenKind::LBrace)) {
@@ -1363,7 +1412,7 @@ private:
                 decl.methods.push_back(parseMethod(std::move(attrs)));
             }
             nl_depth_ = saved_depth;
-            advance();  // '}'
+            advance(); // '}'
         } else if (s.modifiers.declared) {
             decl.opaque = true;
             endOfItemLine();
@@ -1376,7 +1425,7 @@ private:
 
     ImplDecl parseImpl(const DeclStart& s) {
         ImplDecl decl;
-        advance();  // 'impl'
+        advance(); // 'impl'
         const Token& name_tok = cur();
         decl.interface_path.push_back(expectIdent("an interface name"));
         while (at(TokenKind::Dot) && peekKind(1) == TokenKind::Ident) {
@@ -1397,7 +1446,7 @@ private:
             decl.methods.push_back(parseMethod(std::move(attrs)));
         }
         nl_depth_ = saved_depth;
-        advance();  // '}'
+        advance(); // '}'
         std::string name = decl.interface_path.back();
         finishDecl(decl, s, name, name_tok.span);
         return decl;
@@ -1407,7 +1456,7 @@ private:
 
     EnumDecl parseEnum(const DeclStart& s) {
         EnumDecl decl;
-        advance();  // 'enum'
+        advance(); // 'enum'
         const Token& name_tok = cur();
         const std::string name = expectIdent("an enum name");
         if (match(TokenKind::Colon)) {
@@ -1433,14 +1482,14 @@ private:
             memberSeparator();
         }
         nl_depth_ = saved_depth;
-        advance();  // '}'
+        advance(); // '}'
         finishDecl(decl, s, name, name_tok.span);
         return decl;
     }
 
     TypeAliasDecl parseTypeAlias(const DeclStart& s) {
         TypeAliasDecl decl;
-        advance();  // 'type'
+        advance(); // 'type'
         const Token& name_tok = cur();
         const std::string name = expectIdent("a type alias name");
         expect(TokenKind::Assign, "`=` and the aliased type");
@@ -1451,7 +1500,7 @@ private:
     }
 
     Decl parseDefine(const DeclStart& s) {
-        advance();  // 'define'
+        advance(); // 'define'
         const Token& name_tok = cur();
         const std::string name = expectIdent("a define name");
         if (at(TokenKind::LParen)) {
@@ -1503,7 +1552,7 @@ private:
                 }
                 decl.body.push_back(advance());
             }
-            advance();  // closing '}'
+            advance(); // closing '}'
             finishDecl(decl, s, name, name_tok.span);
             return decl;
         }
@@ -1537,11 +1586,24 @@ private:
     }
 
     std::string parseModuleString(Span& span) {
-        if (!at(TokenKind::String)) {
-            expected("a module path string");
+        if (at(TokenKind::String)) {
+            span = cur().span;
+            return advance().text;
         }
+        if (!at(TokenKind::Ident)) {
+            expected("a module path (`json`, `std/mem` or a string)");
+        }
+        // Bare path: `ident` or `ident/ident/...`, written without whitespace.
         span = cur().span;
-        return advance().text;
+        std::string path = advance().text;
+        while (at(TokenKind::Slash) && peekKind(1) == TokenKind::Ident && adjacent(prev(), cur()) &&
+               adjacent(cur(), peek(1))) {
+            advance();
+            path += '/';
+            path += advance().text;
+        }
+        span = spanFrom(span);
+        return path;
     }
 
     ImportDecl parseImport(const DeclStart& s) {
@@ -1553,7 +1615,7 @@ private:
             expect(TokenKind::Import, "`import` and the imported names");
             decl.names = parseNameList();
         } else {
-            advance();  // 'import'
+            advance(); // 'import'
             if (at(TokenKind::String)) {
                 decl.form = ImportDecl::Form::Module;
                 decl.module = parseModuleString(decl.module_span);
@@ -1585,7 +1647,7 @@ private:
     void parseExportFrom(Program& program, DeclStart& s) {
         ExportFromDecl decl;
         const Token& name_tok = cur();
-        advance();  // 'export'
+        advance(); // 'export'
         if (match(TokenKind::Star)) {
             decl.form = ExportFromDecl::Form::Star;
             if (match(TokenKind::As)) {
@@ -1596,8 +1658,11 @@ private:
             decl.module = parseModuleString(decl.module_span);
             if (at(TokenKind::Except) && continues()) {
                 if (decl.form == ExportFromDecl::Form::StarAs) {
-                    failAt(cur(), "`except` cannot be combined with `export * as`",
-                           "not valid here", {}, "write `export * from \"m\" except a, b`");
+                    failAt(cur(),
+                           "`except` cannot be combined with `export * as`",
+                           "not valid here",
+                           {},
+                           "write `export * from \"m\" except a, b`");
                 }
                 advance();
                 decl.except = parseNameList();
@@ -1653,8 +1718,10 @@ private:
             finishDecl(decl, s, name, first.span);
             return decl;
         }
-        failAt(first, std::format("expected a declaration, found {}", describeToken(first)),
-               "expected a declaration here", {},
+        failAt(first,
+               std::format("expected a declaration, found {}", describeToken(first)),
+               "expected a declaration here",
+               {},
                "module-level code is limited to declarations, macro invocations and calls such as "
                "`staticAssert(...)`");
     }
@@ -1667,7 +1734,7 @@ private:
     bool no_struct_{false};
 };
 
-}  // namespace
+} // namespace
 
 Program parseTokens(std::vector<Token> tokens, FileId file, DiagnosticEngine& diagnostics) {
     Parser parser(std::move(tokens), file, diagnostics);
@@ -1678,4 +1745,4 @@ Program parseFile(const SourceManager& sources, FileId file, DiagnosticEngine& d
     return parseTokens(lex(sources, file, diagnostics), file, diagnostics);
 }
 
-}  // namespace xlang
+} // namespace xlang
