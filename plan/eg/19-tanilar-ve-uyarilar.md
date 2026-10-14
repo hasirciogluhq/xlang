@@ -118,7 +118,8 @@ Susturulan (`@allow`/`--allow`) uyarılar ekrandan düşer ama `--diag-log` aç�
 | Susturma | Kapsam |
 |----------|--------|
 | `--allow=W0201` / `-Wno-W0201` | Tüm derleme |
-| `@allow(W0201)` | Statement'ın, bloğun, bildirimin, fonksiyonun veya dosyanın üstünde; o kapsam |
+| `@allow(W0201)` | Statement'ın, bloğun, bildirimin veya fonksiyonun üstünde; o kapsam |
+| `@file(allow = W0201)` | Dosyanın en başında; tüm dosya (`@file(mangle = ...)` ile aynı biçim) |
 | `--deny=W0201` | Uyarıyı hataya çevirir |
 | `--warn-all` / `--allow-all` | Hepsini aç / hepsini sustur |
 | `--explain W0201` | Uyarının uzun açıklamasını yazdırır |

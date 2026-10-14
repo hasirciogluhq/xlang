@@ -81,7 +81,7 @@ No filler praise; state weaknesses plainly. For each feature cover:
   `new`, `E0502` duplicate `register`, `E0503` role contract not met, `E0504` interface used without `impl`, `W0402` local name shadows a registered one,
   `E0601` implicit signedness-changing conversion, `W0601` implicit signed int -> float conversion).
 - Implicit conversions (no `as` written): same-signedness integer widening is implicit; signed integer -> `f32/f64`
-  is implicit with `W0601` (silence with `as`, `@allow(W0601)` on a statement/block/fn/file, or `--allow`);
+  is implicit with `W0601` (silence with `as`, `@allow(W0601)` on a statement/block/fn, `@file(allow = W0601)` for a whole file, or `--allow`);
   unsigned <-> signed implicit is error `E0601` for every type, floats included (floats count as signed, so
   `ui -> f` is `E0601`); allowed only inside an `unsafe { ... }` block (same or wider target; narrowing always
   needs `as`). `unsafe` relaxes nothing else (`--safety`, `*T`, `ref T` are unaffected). Everything else is

@@ -25,7 +25,7 @@
 - [x] **1.4** Diagnostics altyapısı (`include/xlang/util/diagnostics.h`): `Diagnostic{code, severity, span,
   message, detail, reason, fix, notes}`, snippet'li çıktı, birden fazla hata toplama. Her uyarı
   `ne + detay + neden + nasıl düzeltilir` taşır. Kodlar (`W0201`...) bir kayıt tablosunda; `--allow=KOD`,
-  `--deny=KOD`, `-Wno-KOD`, `--warn-all`, `--allow-all`, `--explain KOD`, `@allow(KOD)` (statement/blok/bildirim/dosya kapsamı).
+  `--deny=KOD`, `-Wno-KOD`, `--warn-all`, `--allow-all`, `--explain KOD`, `@allow(KOD)` (statement/blok/bildirim kapsamı), `@file(allow = KOD)` (dosya kapsamı).
   Compiler kısıtlamaz: `declare` ile bağlanan dış şeyler (xl/C++/Rust/`.o`/statik) yalnızca uyarı üretir.
   - **Nokta atışı gösterim:** tanı, hatalı satırın sonuna `<======= yorum` ile işaretlenir; olayın birden
     fazla yeri varsa (ör. çakışmanın iki tarafı) her biri kendi satırında kendi yorumuyla gösterilir; aynı

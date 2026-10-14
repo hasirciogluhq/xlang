@@ -51,7 +51,8 @@ düzelt: `total as f64` yaz (açık dönüşüm uyarı vermez) ya da bilerek ise
 | Susturma | Kapsam |
 |----------|--------|
 | `x as f64` (açık dönüşüm) | Uyarı hiç çıkmaz |
-| `@allow(W0601)` statement/blok/fonksiyon/dosya üstünde | O kapsam ([19](19-tanilar-ve-uyarilar.md#19-tanılar-ve-uyarılar)) |
+| `@allow(W0601)` statement/blok/fonksiyon üstünde | O kapsam ([19](19-tanilar-ve-uyarilar.md#19-tanılar-ve-uyarılar)) |
+| `@file(allow = W0601)` dosyanın en başında | Tüm dosya |
 | `--allow=W0601` / `--deny=W0601` | Tüm derleme / hataya çevirir |
 
 ```xlang

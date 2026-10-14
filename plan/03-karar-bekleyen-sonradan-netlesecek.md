@@ -44,9 +44,6 @@
   (adres/deref) ve `as` var. Bit operatörleri (`& | ^ ~ << >>`), bileşik atama (`+=`...), `break`/`continue` ve
   `for` yazılmadı; stdlib (atomic bayrakları, bit işlemleri) bunlara ihtiyaç duyacak. Eklenip eklenmeyeceği
   ve sözdizimi kararı bekliyor (lexer/parser şu an tanımıyor).
-- **Dosya kapsamlı `@allow`:** `@allow(KOD)` dosyanın en üstüne yazılırsa ilk bildirime bağlanır, parser dosya
-  kapsamı ile ilk bildirim kapsamını ayıramaz. `@file(...)` biçimindeki özniteliğe taşınması (`@file(allow = W0201)`)
-  ya da ayrı bir söz dizimi seçilmeli.
 - **`import "m"` (takma adsız):** 1.2b yalnızca `import "m" as a`'yı listeler, 13 ise `import "std"` yazıyor.
   Parser takma adsız biçimi kabul eder (alias boş); sema'nın bunu `std.` öneki mi yoksa `import *` mı sayacağı
   belirlenmedi.
