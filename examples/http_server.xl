@@ -1,0 +1,52 @@
+// A small HTTP server: router, middleware, handlers. Run from the repository root, then
+//   curl http://127.0.0.1:8080/ping
+from "std" import println, Context, Router, routerInit, routerUse, routerGet, routerServe
+from "std" import ctxString, ctxHTML, ctxJSON, ctxSetUser, ctxUser, fsReadAll
+
+struct User {
+    name: *ui8
+}
+
+global admin: User = User { name: "admin" }
+global router: Router
+global page: [ui8; 65536]
+
+fn onListen() {
+    println("listening on http://127.0.0.1:8080")
+}
+
+fn authMiddleware(c: *Context) {
+    ctxSetUser(c, &admin as *void)
+}
+
+fn handleIndex(c: *Context) {
+    if fsReadAll("examples/index.html", &page[0], 65536) <= 0 {
+        ctxString(c, 404, "examples/index.html not found")
+        return
+    }
+    ctxHTML(c, 200, &page[0])
+}
+
+fn handleApiInfo(c: *Context) {
+    ctxJSON(c, 200, "{\"name\":\"xlang\",\"runtime\":\"native\",\"ok\":true,\"id\":7}")
+}
+
+fn handlePing(c: *Context) {
+    ctxString(c, 200, "pong")
+}
+
+fn handleMe(c: *Context) {
+    local user: *User = ctxUser(c) as *User
+    ctxString(c, 200, user.name)
+}
+
+fn main() -> i32 {
+    routerInit(&router)
+    routerUse(&router, authMiddleware)
+    routerGet(&router, "/", handleIndex)
+    routerGet(&router, "/api/info", handleApiInfo)
+    routerGet(&router, "/ping", handlePing)
+    routerGet(&router, "/me", handleMe)
+    // 127.0.0.1 = 127*2^24 + 1
+    return routerServe(&router, 2130706433, 8080, onListen)
+}

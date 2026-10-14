@@ -80,3 +80,41 @@ export fn sysPollWait(pfd: i32, tokens: *usize, max: i32, timeoutMs: i32) -> i32
 export fn sysPipe(fds: *i32, nonblocking: bool) -> i32 {
     return -1
 }
+
+// ---- files and sockets: not implemented on Windows (needs NT system service numbers) ------------
+
+export fn sysOpenRead(path: *ui8) -> i32 {
+    return -1
+}
+
+export fn sysOpenWrite(path: *ui8, append: bool) -> i32 {
+    return -1
+}
+
+export fn sysClose(fd: i32) -> i32 {
+    return -1
+}
+
+export fn sysUnlink(path: *ui8) -> i32 {
+    return -1
+}
+
+export fn sysFileSize(fd: i32) -> i64 {
+    return -1
+}
+
+export fn sysTcpSocket() -> i32 {
+    return -1
+}
+
+export fn sysTcpConnect(fd: i32, ip: ui32, port: ui16) -> i32 {
+    return -1
+}
+
+export fn sysTcpListen(fd: i32, ip: ui32, port: ui16) -> i32 {
+    return -1
+}
+
+export fn sysTcpAccept(fd: i32) -> i32 {
+    return -1
+}

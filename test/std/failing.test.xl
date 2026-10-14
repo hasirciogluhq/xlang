@@ -1,0 +1,13 @@
+// Intentionally failing: used to check that `xlang test` reports failures (test/e2e/run.sh).
+from "std/testing" import Suite, T, suiteInit, test, suiteRun, expectEq
+
+fn good(t: *T) { expectEq(t, 2 + 2, 4) }
+fn bad(t: *T) { expectEq(t, 2 + 2, 5) }
+
+fn main() -> i32 {
+    local s: Suite
+    suiteInit(&s)
+    test(&s, "passes", good)
+    test(&s, "fails", bad)
+    return suiteRun(&s)
+}

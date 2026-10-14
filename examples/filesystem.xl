@@ -1,0 +1,32 @@
+// std/fs: write, append, read back, stat, stream and remove a file. Run from the repository root.
+from "std" import print, println, printInt, fsWrite, fsAppend, fsReadAll, fsExists, fsSize, fsRemove
+from "std" import fsOpenRead, fsRead, fsClose
+
+global body: [ui8; 4096]
+global chunk: [ui8; 16]
+
+fn main() -> i32 {
+    local path: *ui8 = "examples/_tmp_fs_demo.txt"
+    fsWrite(path, "hello from xlang\n")
+    fsAppend(path, "second line\n")
+
+    local n: isize = fsReadAll(path, &body[0], 4096)
+    print(&body[0])
+
+    if fsExists(path) {
+        print("size: ")
+        printInt(fsSize(path))
+        println("")
+    }
+
+    local f: i32 = fsOpenRead(path)
+    local got: isize = fsRead(f, &chunk[0], 15)
+    fsClose(f)
+    chunk[got as usize] = 0
+    print("stream: ")
+    println(&chunk[0])
+
+    fsRemove(path)
+    if n < 0 { return 1 }
+    return 0
+}

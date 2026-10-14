@@ -1,0 +1,34 @@
+// std/fs + std/json: write a JSON file, read it back, parse members, remove it.
+from "std" import println, printInt, assert, fsWrite, fsAppend, fsReadAll, fsExists, fsSize, fsRemove
+from "std" import jsonInt, jsonString, jsonBool, jsonHas
+
+global text: [ui8; 512]
+global name: [ui8; 32]
+
+fn main() -> i32 {
+    local path: *ui8 = "xlang_e2e_fsjson.tmp"
+    assert!(fsWrite(path, "{\"id\": -42, \"user\": {\"id\": 1}, "))
+    assert!(fsAppend(path, "\"name\": \"a\\\"b\", \"ok\": true, \"list\": [1, {\"x\": 2}]}"))
+    assert!(fsExists(path))
+    local n: isize = fsReadAll(path, &text[0], 512)
+    assert!(n > 0)
+    assert!(fsSize(path) == n as i64)
+
+    local id: i64 = 0
+    assert!(jsonInt(&text[0], "id", &id))
+    assert!(id == -42)
+    assert!(jsonString(&text[0], "name", &name[0], 32))
+    assert!(name[0] == 97 && name[1] == 34 && name[2] == 98 && name[3] == 0)
+    local ok: bool = false
+    assert!(jsonBool(&text[0], "ok", &ok))
+    assert!(ok)
+    assert!(jsonHas(&text[0], "list"))
+    assert!(!jsonHas(&text[0], "missing"))
+    assert!(!jsonInt(&text[0], "name", &id))
+
+    assert!(fsRemove(path))
+    assert!(!fsExists(path))
+    printInt(n as i64)
+    println("")
+    return 0
+}

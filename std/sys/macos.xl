@@ -10,6 +10,24 @@ define SYS_BSDTHREAD_CREATE = 360
 define SYS_BSDTHREAD_TERMINATE = 361
 define SYS_BSDTHREAD_REGISTER = 366
 
+define SYS_OPEN = 5
+define SYS_CLOSE = 6
+define SYS_UNLINK = 10
+define SYS_LSEEK = 199
+define SYS_ACCEPT = 30
+define SYS_SOCKET = 97
+define SYS_CONNECT = 98
+define SYS_BIND = 104
+define SYS_SETSOCKOPT = 105
+define SYS_LISTEN = 106
+define O_RDONLY = 0
+define O_WRONLY_CREAT_TRUNC = 1537     // O_WRONLY | O_CREAT | O_TRUNC
+define O_WRONLY_CREAT_APPEND = 521     // O_WRONLY | O_CREAT | O_APPEND
+define AF_INET = 2
+define SOCK_STREAM = 1
+define SOL_SOCKET = 65535
+define SO_REUSEADDR = 4
+
 define PROT_READ_WRITE = 3
 define MAP_PRIVATE_ANON = 4098      // MAP_PRIVATE | MAP_ANON
 
@@ -166,4 +184,82 @@ export fn sysPipe(fds: *i32, nonblocking: bool) -> i32 {
     fds[0] = a as i32
     fds[1] = b as i32
     return 0
+}
+
+// ---- files -----------------------------------------------------------------------------------
+
+fn openPath(path: *ui8, flags: i32) -> i32 {
+    return syscall(SYS_OPEN, path, flags, 420) as i32
+}
+
+/// Opens for reading; negative errno on failure.
+export fn sysOpenRead(path: *ui8) -> i32 {
+    return openPath(path, O_RDONLY)
+}
+
+/// Opens for writing, creating the file; truncates unless `append`.
+export fn sysOpenWrite(path: *ui8, append: bool) -> i32 {
+    if append { return openPath(path, O_WRONLY_CREAT_APPEND) }
+    return openPath(path, O_WRONLY_CREAT_TRUNC)
+}
+
+export fn sysClose(fd: i32) -> i32 {
+    return syscall(SYS_CLOSE, fd) as i32
+}
+
+export fn sysUnlink(path: *ui8) -> i32 {
+    return syscall(SYS_UNLINK, path) as i32
+}
+
+/// Size of an open file in bytes (the read position is left at the start); negative on failure.
+export fn sysFileSize(fd: i32) -> i64 {
+    local n: i64 = syscall(SYS_LSEEK, fd, 0, 2)
+    syscall(SYS_LSEEK, fd, 0, 0)
+    return n
+}
+
+// ---- TCP over IPv4 -----------------------------------------------------------------------------
+
+/// A TCP socket; negative errno on failure.
+export fn sysTcpSocket() -> i32 {
+    return syscall(SYS_SOCKET, AF_INET, SOCK_STREAM, 0) as i32
+}
+
+/// `ip` is host order (`127.0.0.1` = 2130706433).
+fn fillAddr(addr: *ui8, ip: ui32, port: ui16) {
+    local i: usize = 0
+    while i < 16 {
+        addr[i] = 0
+        i = i + 1
+    }
+    addr[0] = 16                // BSD sockaddr: sin_len, then sin_family
+    addr[1] = AF_INET
+    addr[2] = (port / 256) as ui8
+    addr[3] = (port % 256) as ui8
+    addr[4] = (ip / 16777216) as ui8
+    addr[5] = ((ip / 65536) % 256) as ui8
+    addr[6] = ((ip / 256) % 256) as ui8
+    addr[7] = (ip % 256) as ui8
+}
+
+export fn sysTcpConnect(fd: i32, ip: ui32, port: ui16) -> i32 {
+    local addr: [ui8; 16]
+    fillAddr(&addr[0], ip, port)
+    return syscall(SYS_CONNECT, fd, &addr[0], 16) as i32
+}
+
+/// SO_REUSEADDR, bind and listen. 0 on success.
+export fn sysTcpListen(fd: i32, ip: ui32, port: ui16) -> i32 {
+    local one: i32 = 1
+    syscall(SYS_SETSOCKOPT, fd, SOL_SOCKET, SO_REUSEADDR, &one, 4)
+    local addr: [ui8; 16]
+    fillAddr(&addr[0], ip, port)
+    if syscall(SYS_BIND, fd, &addr[0], 16) < 0 { return -1 }
+    if syscall(SYS_LISTEN, fd, 128) < 0 { return -1 }
+    return 0
+}
+
+/// Blocks for a connection; negative errno on failure.
+export fn sysTcpAccept(fd: i32) -> i32 {
+    return syscall(SYS_ACCEPT, fd, 0, 0) as i32
 }

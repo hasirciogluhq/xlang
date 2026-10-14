@@ -1,0 +1,37 @@
+// HTTP client + JSON: fetches /api/info from the `http_server` example (start that one first).
+// Plain HTTP over TCP to an IPv4 address; there is no TLS and no DNS in the stdlib.
+from "std" import print, println, printInt, httpGet, Response, jsonInt, jsonString, jsonBool
+
+global buf: [ui8; 8192]
+global name: [ui8; 64]
+
+fn main() -> i32 {
+    local resp: Response
+    if !httpGet(2130706433, 8080, "127.0.0.1", "/api/info", &buf[0], 8192, &resp) {
+        println("request failed (is examples/http_server.xl running?)")
+        return 1
+    }
+    print("status: ")
+    printInt(resp.status as i64)
+    println("")
+
+    local id: i64 = 0
+    if jsonInt(resp.body, "id", &id) {
+        print("id: ")
+        printInt(id)
+        println("")
+    }
+    if jsonString(resp.body, "name", &name[0], 64) {
+        print("name: ")
+        println(&name[0])
+    }
+    local ok: bool = false
+    if jsonBool(resp.body, "ok", &ok) {
+        if ok {
+            println("ok: true")
+        } else {
+            println("ok: false")
+        }
+    }
+    return 0
+}

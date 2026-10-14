@@ -1,0 +1,19 @@
+// A struct, `new` (the registered default allocator) and `free`.
+from "std" import print, println, printInt, free
+
+struct Point {
+    x: i32
+    y: i32
+}
+
+fn main() -> i32 {
+    local p: *Point = new Point { x: 10, y: 20 }
+    print("sum: ")
+    printInt((p.x + p.y) as i64)
+    println("")
+    print("x=")
+    printInt(p.x as i64)
+    println("")
+    free(p as *void)
+    return 0
+}

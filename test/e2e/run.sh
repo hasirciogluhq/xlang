@@ -14,6 +14,7 @@ pass=0; fail=0
 tests=(
   "language|0||0"
   "stdlib|0|499500|0"
+  "fsjson|0||0"
   "panics|134|before|0"
   "threads|0|40000|1"
   "sched|0|20100|0"

@@ -1,0 +1,371 @@
+// std/http: a small blocking HTTP/1.1 server (router + handlers) and a plain-HTTP client, on top of
+// the raw TCP calls in `std/sys`. HTTP only: there is no TLS. Connections are served one at a time
+// (`Connection: close`). No fixed limits: the route table and the request buffer grow on demand.
+from "sys" import sysTcpSocket, sysTcpConnect, sysTcpListen, sysTcpAccept, sysClose, sysRead, sysWrite, sysUnmap
+from "memory" import strlen, mapGrow
+
+/// What a handler sees. `method`, `path` and `body` point into the request buffer.
+export struct Context {
+    fd: i32
+    method: *ui8
+    path: *ui8
+    body: *ui8
+    user: *void           // set by middleware (`ctxSetUser`), read by handlers (`ctxUser`)
+    responded: bool
+}
+
+export struct Route {
+    method: *ui8
+    path: *ui8
+    handler: fn(*Context)
+}
+
+export struct Router {
+    routes: *Route
+    count: usize
+    cap: usize
+    middleware: fn(*Context)
+    hasMiddleware: bool
+}
+
+export fn routerInit(r: *Router) {
+    r.routes = nil
+    r.count = 0
+    r.cap = 0
+    r.hasMiddleware = false
+}
+
+/// Runs before every handler.
+export fn routerUse(r: *Router, middleware: fn(*Context)) {
+    r.middleware = middleware
+    r.hasMiddleware = true
+}
+
+fn addRoute(r: *Router, method: *ui8, path: *ui8, handler: fn(*Context)) {
+    if r.count == r.cap {
+        local newCap: usize = r.cap * 2
+        if newCap == 0 { newCap = 16 }
+        local grown: *void = mapGrow(r.routes as *void, r.cap * sizeOf(Route), newCap * sizeOf(Route))
+        if grown == nil { panic("out of memory") }
+        r.routes = grown as *Route
+        r.cap = newCap
+    }
+    r.routes[r.count] = Route { method: method, path: path, handler: handler }
+    r.count = r.count + 1
+}
+
+export fn routerGet(r: *Router, path: *ui8, handler: fn(*Context)) {
+    addRoute(r, "GET", path, handler)
+}
+
+export fn routerPost(r: *Router, path: *ui8, handler: fn(*Context)) {
+    addRoute(r, "POST", path, handler)
+}
+
+// ---- strings -----------------------------------------------------------------------------------
+
+fn strEq(a: *ui8, b: *ui8) -> bool {
+    local i: usize = 0
+    while a[i] != 0 && a[i] == b[i] { i = i + 1 }
+    return a[i] == b[i]
+}
+
+/// Writes the decimal digits of `v` at `buf` and returns how many.
+fn formatUInt(v: usize, buf: *ui8) -> usize {
+    local tmp: [ui8; 24]
+    local n: usize = 0
+    local x: usize = v
+    if x == 0 {
+        buf[0] = 48
+        return 1
+    }
+    while x > 0 {
+        tmp[n] = ((x % 10) as ui8) + 48
+        x = x / 10
+        n = n + 1
+    }
+    local i: usize = 0
+    while i < n {
+        buf[i] = tmp[n - 1 - i]
+        i = i + 1
+    }
+    return n
+}
+
+/// Appends `s` at `at` in `buf` (capacity `cap`, truncating); returns the new length.
+fn append(buf: *ui8, at: usize, cap: usize, s: *ui8) -> usize {
+    local n: usize = at
+    local i: usize = 0
+    while s[i] != 0 && n < cap {
+        buf[n] = s[i]
+        n = n + 1
+        i = i + 1
+    }
+    return n
+}
+
+fn sendAll(fd: i32, data: *ui8, n: usize) {
+    local done: usize = 0
+    while done < n {
+        local w: isize = sysWrite(fd, &data[done], n - done)
+        if w <= 0 { return }
+        done = done + (w as usize)
+    }
+}
+
+fn sendStr(fd: i32, s: *ui8) {
+    sendAll(fd, s, strlen(s))
+}
+
+fn reason(status: i32) -> *ui8 {
+    if status == 200 { return "OK" }
+    if status == 201 { return "Created" }
+    if status == 204 { return "No Content" }
+    if status == 400 { return "Bad Request" }
+    if status == 404 { return "Not Found" }
+    if status == 500 { return "Internal Server Error" }
+    return "Unknown"
+}
+
+fn respond(c: *Context, status: i32, contentType: *ui8, body: *ui8) {
+    local num: [ui8; 24]
+    local len: usize = formatUInt(status as usize, &num[0])
+    sendStr(c.fd, "HTTP/1.1 ")
+    sendAll(c.fd, &num[0], len)
+    sendStr(c.fd, " ")
+    sendStr(c.fd, reason(status))
+    sendStr(c.fd, "\r\nContent-Type: ")
+    sendStr(c.fd, contentType)
+    sendStr(c.fd, "\r\nContent-Length: ")
+    len = formatUInt(strlen(body), &num[0])
+    sendAll(c.fd, &num[0], len)
+    sendStr(c.fd, "\r\nConnection: close\r\n\r\n")
+    sendStr(c.fd, body)
+    c.responded = true
+}
+
+export fn ctxString(c: *Context, status: i32, body: *ui8) {
+    respond(c, status, "text/plain; charset=utf-8", body)
+}
+
+export fn ctxHTML(c: *Context, status: i32, body: *ui8) {
+    respond(c, status, "text/html; charset=utf-8", body)
+}
+
+export fn ctxJSON(c: *Context, status: i32, body: *ui8) {
+    respond(c, status, "application/json", body)
+}
+
+export fn ctxSetUser(c: *Context, user: *void) {
+    c.user = user
+}
+
+export fn ctxUser(c: *Context) -> *void {
+    return c.user
+}
+
+// ---- server ------------------------------------------------------------------------------------
+
+fn hasBlankLine(s: *ui8, n: usize) -> bool {
+    local i: usize = 0
+    while i + 3 < n {
+        if s[i] == 13 && s[i + 1] == 10 && s[i + 2] == 13 && s[i + 3] == 10 { return true }
+        i = i + 1
+    }
+    return false
+}
+
+/// Index of the `\r\n\r\n` that ends the headers, or -1.
+fn headerEnd(s: *ui8, n: usize) -> isize {
+    local i: usize = 0
+    while i + 3 < n {
+        if s[i] == 13 && s[i + 1] == 10 && s[i + 2] == 13 && s[i + 3] == 10 { return i as isize }
+        i = i + 1
+    }
+    return -1
+}
+
+fn lower(c: ui8) -> ui8 {
+    if c >= 65 && c <= 90 { return c + 32 }
+    return c
+}
+
+/// Value of the `Content-Length` header found in the first `end` bytes, 0 when absent.
+fn contentLength(s: *ui8, end: usize) -> usize {
+    local name: *ui8 = "content-length:"
+    local i: usize = 0
+    while i + 15 < end {
+        local k: usize = 0
+        while k < 15 && lower(s[i + k]) == name[k] { k = k + 1 }
+        if k == 15 {
+            local p: usize = i + 15
+            while s[p] == 32 { p = p + 1 }
+            local v: usize = 0
+            while s[p] >= 48 && s[p] <= 57 {
+                v = v * 10 + ((s[p] - 48) as usize)
+                p = p + 1
+            }
+            return v
+        }
+        i = i + 1
+    }
+    return 0
+}
+
+fn serveConnection(r: *Router, fd: i32) {
+    // The buffer doubles as needed; the request is read in full (headers, then Content-Length bytes).
+    local cap: usize = 4096
+    local buf: *ui8 = mapGrow(nil, 0, cap) as *ui8
+    if buf == nil { return }
+    local total: usize = 0
+    local want: usize = 0          // total bytes expected once the headers are known
+    local gotHeaders: bool = false
+    local alive: bool = true
+    while alive && (!gotHeaders || total < want) {
+        if total + 1 >= cap {
+            local bigger: *ui8 = mapGrow(buf as *void, cap, cap * 2) as *ui8
+            if bigger == nil {
+                sysUnmap(buf as *void, cap)
+                return
+            }
+            buf = bigger
+            cap = cap * 2
+        }
+        local got: isize = sysRead(fd, &buf[total], cap - 1 - total)
+        if got <= 0 {
+            alive = false
+        } else {
+            total = total + (got as usize)
+            buf[total] = 0
+            if !gotHeaders {
+                local he: isize = headerEnd(buf, total)
+                if he >= 0 {
+                    gotHeaders = true
+                    want = (he as usize) + 4 + contentLength(buf, he as usize)
+                }
+            }
+        }
+    }
+    if gotHeaders { dispatch(r, fd, buf, total) }
+    sysUnmap(buf as *void, cap)
+}
+
+fn dispatch(r: *Router, fd: i32, buf: *ui8, n: usize) {
+    // "METHOD PATH HTTP/1.1\r\n...": split in place at the spaces.
+    local c: Context
+    c.fd = fd
+    c.user = nil
+    c.responded = false
+    c.method = &buf[0]
+    local i: usize = 0
+    while buf[i] != 0 && buf[i] != 32 { i = i + 1 }
+    if buf[i] == 0 { return }
+    buf[i] = 0
+    i = i + 1
+    c.path = &buf[i]
+    while buf[i] != 0 && buf[i] != 32 && buf[i] != 13 { i = i + 1 }
+    buf[i] = 0
+    c.body = &buf[n]
+    local he: isize = headerEnd(&buf[i + 1], n - i - 1)
+    if he >= 0 { c.body = &buf[i + 1 + (he as usize) + 4] }
+
+    if r.hasMiddleware { r.middleware(&c) }
+    local k: usize = 0
+    while k < r.count && !c.responded {
+        local route: Route = r.routes[k]
+        if strEq(route.method, c.method) && strEq(route.path, c.path) {
+            route.handler(&c)
+        }
+        k = k + 1
+    }
+    if !c.responded { ctxString(&c, 404, "not found") }
+}
+
+/// Binds `ip:port` (host-order IPv4, `127.0.0.1` = 2130706433), calls `onListen` once, then serves
+/// forever. Returns -1 when the socket could not be set up.
+export fn routerServe(r: *Router, ip: ui32, port: ui16, onListen: fn()) -> i32 {
+    local fd: i32 = sysTcpSocket()
+    if fd < 0 { return -1 }
+    if sysTcpListen(fd, ip, port) < 0 {
+        sysClose(fd)
+        return -1
+    }
+    onListen()
+    while true {
+        local conn: i32 = sysTcpAccept(fd)
+        if conn >= 0 {
+            serveConnection(r, conn)
+            sysClose(conn)
+        }
+    }
+    return 0
+}
+
+// ---- client ------------------------------------------------------------------------------------
+
+/// Result of `httpGet`: `body` points into the caller's buffer.
+export struct Response {
+    status: i32
+    body: *ui8
+}
+
+/// `GET http://ip:port/path`. The whole response is read into `buf` (capacity `cap`, NUL-terminated).
+/// Returns false when the connection or the response failed. Plain HTTP only (no TLS, no DNS).
+export fn httpGet(ip: ui32, port: ui16, host: *ui8, path: *ui8, buf: *ui8, cap: usize, out: *Response) -> bool {
+    local fd: i32 = sysTcpSocket()
+    if fd < 0 { return false }
+    if sysTcpConnect(fd, ip, port) < 0 {
+        sysClose(fd)
+        return false
+    }
+    // The request is assembled first and sent with one write.
+    local reqCap: usize = strlen(path) + strlen(host) + 64
+    local req: *ui8 = mapGrow(nil, 0, reqCap) as *ui8
+    if req == nil {
+        sysClose(fd)
+        return false
+    }
+    local len: usize = 0
+    len = append(req, len, reqCap, "GET ")
+    len = append(req, len, reqCap, path)
+    len = append(req, len, reqCap, " HTTP/1.1\r\nHost: ")
+    len = append(req, len, reqCap, host)
+    len = append(req, len, reqCap, "\r\nConnection: close\r\n\r\n")
+    sendAll(fd, req, len)
+    sysUnmap(req as *void, reqCap)
+
+    local total: usize = 0
+    local eof: bool = false
+    while !eof && total + 1 < cap {
+        local r: isize = sysRead(fd, &buf[total], cap - 1 - total)
+        if r <= 0 {
+            eof = true
+        } else {
+            total = total + (r as usize)
+        }
+    }
+    sysClose(fd)
+    buf[total] = 0
+
+    // "HTTP/1.1 200 OK\r\n..." : the status code starts after the first space.
+    local i: usize = 0
+    while buf[i] != 0 && buf[i] != 32 { i = i + 1 }
+    if buf[i] == 0 { return false }
+    i = i + 1
+    local status: i32 = 0
+    while buf[i] >= 48 && buf[i] <= 57 {
+        status = status * 10 + ((buf[i] - 48) as i32)
+        i = i + 1
+    }
+    out.status = status
+    out.body = &buf[total]
+    while buf[i] != 0 {
+        if buf[i] == 13 && buf[i + 1] == 10 && buf[i + 2] == 13 && buf[i + 3] == 10 {
+            out.body = &buf[i + 4]
+            i = total
+        } else {
+            i = i + 1
+        }
+    }
+    return true
+}

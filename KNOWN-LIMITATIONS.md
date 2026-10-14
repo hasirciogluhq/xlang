@@ -28,6 +28,16 @@ Everything in the original plan is implemented; this file lists what is intentio
 - The default stdlib is embedded in the compiler (generated `build/gen/std_blob.cpp`, rebuilt when
   `std/**/*.xl` changes); `--std=<dir>` replaces it. The compiler never searches the file system for it.
 
+## Stdlib: files, JSON, HTTP
+- **`std/http` is plain HTTP only:** no TLS and no DNS (the client takes an IPv4 address), so `https://` URLs
+  cannot be fetched. The server handles one connection at a time (blocking `accept`, `Connection: close`),
+  needs the request line and headers within 8 KiB, and does not read request bodies beyond what arrived
+  with the headers. Routes match the exact path; there are no route groups or path parameters.
+- **`std/json` is read-only and flat:** lookups of top-level members of an object in a NUL-terminated buffer;
+  no nested paths, no `\u` escapes, no validation, no writer.
+- **`std/fs` has no directories or metadata** beyond existence and size; the caller supplies all buffers.
+- **Windows:** the new file and TCP calls in `std/sys/windows.xl` are stubs returning -1 (no NT SSNs).
+
 ## Tooling
 - Debug info has compile unit, subprograms, line locations and basic types; no struct/class types.
 - `--incremental` caches per-module objects only; semantic analysis still runs for every module (no

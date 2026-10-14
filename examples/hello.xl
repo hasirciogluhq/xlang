@@ -1,0 +1,18 @@
+// A second module (`math.xl`, next to this file) and a global counter.
+from "math" import add
+from "std" import print, println, printInt
+
+global counter: i64 = 0
+
+fn main() -> i32 {
+    local x: i64 = 10
+    local y: i64 = 20
+    counter = counter + 1
+    print("add: ")
+    printInt(add(x, y))
+    println("")
+    print("counter: ")
+    printInt(counter)
+    println("")
+    return 0
+}

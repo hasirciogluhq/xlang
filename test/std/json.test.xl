@@ -1,0 +1,42 @@
+// std/json lookups on a flat object.
+from "std" import jsonInt, jsonString, jsonBool, jsonHas
+from "std/testing" import Suite, T, suiteInit, test, suiteRun, expectEq, expectEqStr, expectTrue, expectFalse
+
+global doc: *ui8 = "{\"userId\": 7, \"id\": -42, \"title\": \"hello world\", \"done\": true, \"pending\": false, \"nested\": {\"id\": 1}}"
+global title: [ui8; 32]
+
+fn ints(t: *T) {
+    local v: i64 = 0
+    expectTrue(t, jsonInt(doc, "userId", &v))
+    expectEq(t, v, 7)
+    expectTrue(t, jsonInt(doc, "id", &v))
+    expectEq(t, v, -42)
+}
+
+fn strings(t: *T) {
+    expectTrue(t, jsonString(doc, "title", &title[0], 32))
+    expectEqStr(t, &title[0], "hello world")
+}
+
+fn bools(t: *T) {
+    local b: bool = false
+    expectTrue(t, jsonBool(doc, "done", &b))
+    expectTrue(t, b)
+    expectTrue(t, jsonBool(doc, "pending", &b))
+    expectFalse(t, b)
+}
+
+fn presence(t: *T) {
+    expectTrue(t, jsonHas(doc, "nested"))
+    expectFalse(t, jsonHas(doc, "missing"))
+}
+
+fn main() -> i32 {
+    local s: Suite
+    suiteInit(&s)
+    test(&s, "integers", ints)
+    test(&s, "strings", strings)
+    test(&s, "booleans", bools)
+    test(&s, "has member", presence)
+    return suiteRun(&s)
+}

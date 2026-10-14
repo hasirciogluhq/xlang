@@ -1,0 +1,151 @@
+// std/json: read-only access to the top-level members of a JSON object held in a NUL-terminated
+// buffer. Nothing is allocated and the text is never modified; each lookup scans the object once.
+// Not covered: nested paths (find the member, then pass its text on), `\u` escapes, validation.
+
+fn isSpace(c: ui8) -> bool {
+    return c == 32 || c == 9 || c == 10 || c == 13
+}
+
+fn skipSpace(s: *ui8, i: usize) -> usize {
+    local p: usize = i
+    while isSpace(s[p]) { p = p + 1 }
+    return p
+}
+
+/// `i` is at an opening quote; returns the index just past the closing quote.
+fn skipString(s: *ui8, i: usize) -> usize {
+    local p: usize = i + 1
+    while s[p] != 0 && s[p] != 34 {
+        if s[p] == 92 && s[p + 1] != 0 { p = p + 1 }
+        p = p + 1
+    }
+    if s[p] == 34 { p = p + 1 }
+    return p
+}
+
+/// Returns the index just past the value starting at `i` (string, object, array or scalar).
+fn skipValue(s: *ui8, i: usize) -> usize {
+    if s[i] == 34 { return skipString(s, i) }
+    local p: usize = i
+    if s[p] == 123 || s[p] == 91 {
+        local depth: i32 = 0
+        local done: bool = false
+        while s[p] != 0 && !done {
+            local c: ui8 = s[p]
+            if c == 34 {
+                p = skipString(s, p)
+            } else {
+                if c == 123 || c == 91 { depth = depth + 1 }
+                if c == 125 || c == 93 { depth = depth - 1 }
+                p = p + 1
+                if depth == 0 { done = true }
+            }
+        }
+        return p
+    }
+    while s[p] != 0 && s[p] != 44 && s[p] != 125 && s[p] != 93 && !isSpace(s[p]) {
+        p = p + 1
+    }
+    return p
+}
+
+fn keyIs(s: *ui8, start: usize, end: usize, key: *ui8) -> bool {
+    local i: usize = 0
+    while start + i < end {
+        if key[i] == 0 || key[i] != s[start + i] { return false }
+        i = i + 1
+    }
+    return key[i] == 0
+}
+
+/// Index of the value of top-level member `key`, or -1.
+fn findMember(json: *ui8, key: *ui8) -> isize {
+    local i: usize = skipSpace(json, 0)
+    if json[i] != 123 { return -1 }
+    i = i + 1
+    while true {
+        i = skipSpace(json, i)
+        if json[i] != 34 { return -1 }
+        local keyStart: usize = i + 1
+        i = skipString(json, i)
+        local keyEnd: usize = i - 1
+        i = skipSpace(json, i)
+        if json[i] != 58 { return -1 }
+        i = skipSpace(json, i + 1)
+        if keyIs(json, keyStart, keyEnd, key) { return i as isize }
+        i = skipSpace(json, skipValue(json, i))
+        if json[i] != 44 { return -1 }
+        i = i + 1
+    }
+    return -1
+}
+
+/// True when the object has a top-level member `key`.
+export fn jsonHas(json: *ui8, key: *ui8) -> bool {
+    return findMember(json, key) >= 0
+}
+
+/// Integer member; false when missing or not a number.
+export fn jsonInt(json: *ui8, key: *ui8, out: *i64) -> bool {
+    local at: isize = findMember(json, key)
+    if at < 0 { return false }
+    local i: usize = at as usize
+    local neg: bool = false
+    if json[i] == 45 {
+        neg = true
+        i = i + 1
+    }
+    if json[i] < 48 || json[i] > 57 { return false }
+    local v: i64 = 0
+    while json[i] >= 48 && json[i] <= 57 {
+        v = v * 10 + ((json[i] - 48) as i64)
+        i = i + 1
+    }
+    if neg { v = 0 - v }
+    out[0] = v
+    return true
+}
+
+/// Boolean member; false when missing or not `true`/`false`.
+export fn jsonBool(json: *ui8, key: *ui8, out: *bool) -> bool {
+    local at: isize = findMember(json, key)
+    if at < 0 { return false }
+    local i: usize = at as usize
+    if json[i] == 116 {          // 't'
+        out[0] = true
+        return true
+    }
+    if json[i] == 102 {          // 'f'
+        out[0] = false
+        return true
+    }
+    return false
+}
+
+/// String member copied into `buf` (capacity `cap`, NUL-terminated, truncated if too long) with the
+/// simple escapes resolved. False when missing or not a string.
+export fn jsonString(json: *ui8, key: *ui8, buf: *ui8, cap: usize) -> bool {
+    local at: isize = findMember(json, key)
+    if at < 0 || cap == 0 { return false }
+    local i: usize = at as usize
+    if json[i] != 34 { return false }
+    i = i + 1
+    local n: usize = 0
+    while json[i] != 0 && json[i] != 34 {
+        local c: ui8 = json[i]
+        if c == 92 && json[i + 1] != 0 {
+            i = i + 1
+            c = json[i]
+            if c == 110 { c = 10 }
+            if c == 116 { c = 9 }
+            if c == 114 { c = 13 }
+        }
+        if n + 1 < cap {
+            buf[n] = c
+            n = n + 1
+        }
+        i = i + 1
+    }
+    buf[n] = 0
+    return true
+}

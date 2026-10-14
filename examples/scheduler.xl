@@ -1,0 +1,22 @@
+// Parallel jobs on the std M:N scheduler: spawn(...) + waitAll().
+from "std" import print, println, printInt, spawn, waitAll, cpu
+
+fn jobWorker(arg: *void) {
+    local id: usize = arg as usize
+    print("job ")
+    printInt(id as i64)
+    println(" done")
+}
+
+fn main() -> i32 {
+    print("cpu: ")
+    printInt(cpu() as i64)
+    println("")
+    local id: usize = 1
+    while id <= 4 {
+        spawn(jobWorker, id as *void)
+        id = id + 1
+    }
+    waitAll()
+    return 0
+}

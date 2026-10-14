@@ -1,0 +1,27 @@
+// std/memory string helpers.
+from "std" import strlen
+from "std/testing" import Suite, T, suiteInit, test, suiteRun, expectEq, expectEqUInt, expectEqStr, expectTrue
+
+fn lengths(t: *T) {
+    expectEqUInt(t, strlen("hello") as ui64, 5)
+    expectEqUInt(t, strlen("") as ui64, 0)
+}
+
+fn indexing(t: *T) {
+    local s: *ui8 = "xlang"
+    expectEq(t, s[0] as i64, 120)
+    expectTrue(t, s[5] == 0)
+}
+
+fn equality(t: *T) {
+    expectEqStr(t, "abc", "abc")
+}
+
+fn main() -> i32 {
+    local s: Suite
+    suiteInit(&s)
+    test(&s, "strlen", lengths)
+    test(&s, "indexing", indexing)
+    test(&s, "string equality", equality)
+    return suiteRun(&s)
+}

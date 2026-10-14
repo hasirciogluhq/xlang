@@ -1,0 +1,35 @@
+// Mutex + atomic counter shared by tasks started with spawn.
+from "std" import print, println, printInt, spawn, waitAll, Mutex, mutexLock, mutexUnlock
+
+struct SharedCounter {
+    total: ui64
+    guard: Mutex
+}
+
+global counter: SharedCounter
+
+fn bump(n: ui64) {
+    mutexLock(&counter.guard)
+    __builtin_atomicAdd(&counter.total, n, MemoryOrder.seqCst)
+    mutexUnlock(&counter.guard)
+}
+
+fn worker(arg: *void) {
+    bump(1)
+    print("worker ")
+    printInt(arg as usize as i64)
+    println(" done")
+}
+
+fn main() -> i32 {
+    local id: usize = 1
+    while id <= 3 {
+        spawn(worker, id as *void)
+        id = id + 1
+    }
+    waitAll()
+    print("total=")
+    printInt(__builtin_atomicLoad(&counter.total, MemoryOrder.seqCst) as i64)
+    println("")
+    return 0
+}

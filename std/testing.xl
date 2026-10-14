@@ -1,0 +1,275 @@
+// std/testing: a small test framework. A test file registers its tests and runs the suite:
+//
+//     from "std/testing" import Suite, T, suiteInit, test, suiteRun, expectEq
+//
+//     fn addWorks(t: *T) { expectEq(t, 1 + 2, 3) }
+//
+//     fn main() -> i32 {
+//         local s: Suite
+//         suiteInit(&s)
+//         test(&s, "add works", addWorks)
+//         return suiteRun(&s)
+//     }
+//
+// `xlang test` finds `*.test.xl` files, builds and runs each one. The exit code is 0 when every
+// test passed. Output is colored; build with `-D xlTestNoColor` for plain text (`xlang test` does
+// that itself when stdout is not a terminal). The registry grows on demand: no fixed limits.
+from "sys" import sysWrite
+from "memory" import strlen, mapGrow
+from "io" import print, println, printInt, printUInt
+
+#ifdef xlTestNoColor
+define COLOR = 0
+#else
+define COLOR = 1
+#endif
+
+/// The context of the running test; every `expect*` takes it.
+export struct T {
+    name: *ui8
+    failed: i32
+    announced: bool
+}
+
+struct Case {
+    name: *ui8
+    body: fn(*T)
+}
+
+export struct Suite {
+    cases: *Case
+    count: usize
+    cap: usize
+    passed: i32
+    failed: i32
+}
+
+export fn suiteInit(s: *Suite) {
+    s.cases = nil
+    s.count = 0
+    s.cap = 0
+    s.passed = 0
+    s.failed = 0
+}
+
+/// Registers a test; tests run in registration order.
+export fn test(s: *Suite, name: *ui8, body: fn(*T)) {
+    if s.count == s.cap {
+        local newCap: usize = s.cap * 2
+        if newCap == 0 { newCap = 16 }
+        local grown: *void = mapGrow(s.cases as *void, s.cap * sizeOf(Case), newCap * sizeOf(Case))
+        if grown == nil { panic("out of memory") }
+        s.cases = grown as *Case
+        s.cap = newCap
+    }
+    s.cases[s.count] = Case { name: name, body: body }
+    s.count = s.count + 1
+}
+
+// ---- colored output ------------------------------------------------------------------------------
+
+fn style(code: *ui8) {
+    if COLOR != 0 { print(code) }
+}
+
+fn reset() {
+    style("\x1b[0m")
+}
+
+fn green() { style("\x1b[32m") }
+fn red() { style("\x1b[31m") }
+fn dim() { style("\x1b[2m") }
+fn bold() { style("\x1b[1m") }
+
+/// Prints the failing test's header once, at its first failed expectation.
+fn announce(t: *T) {
+    if t.announced { return }
+    t.announced = true
+    print("  ")
+    red()
+    print("\xe2\x9c\x97 ")
+    reset()
+    println(t.name)
+}
+
+fn failLine(t: *T) {
+    announce(t)
+    t.failed = t.failed + 1
+    print("      ")
+    red()
+}
+
+fn failEnd() {
+    reset()
+    println("")
+}
+
+// ---- expectations ---------------------------------------------------------------------------------
+
+/// Fails the test with `msg` when `cond` is false.
+export fn expect(t: *T, cond: bool, msg: *ui8) {
+    if cond { return }
+    failLine(t)
+    print(msg)
+    failEnd()
+}
+
+/// Unconditional failure.
+export fn testFail(t: *T, msg: *ui8) {
+    expect(t, false, msg)
+}
+
+export fn expectTrue(t: *T, cond: bool) {
+    expect(t, cond, "expected true, got false")
+}
+
+export fn expectFalse(t: *T, cond: bool) {
+    expect(t, !cond, "expected false, got true")
+}
+
+export fn expectEq(t: *T, actual: i64, expected: i64) {
+    if actual == expected { return }
+    failLine(t)
+    print("expected ")
+    printInt(expected)
+    print(", got ")
+    printInt(actual)
+    failEnd()
+}
+
+export fn expectNe(t: *T, actual: i64, other: i64) {
+    if actual != other { return }
+    failLine(t)
+    print("expected a value other than ")
+    printInt(other)
+    failEnd()
+}
+
+/// Unsigned comparison (values above i64 max).
+export fn expectEqUInt(t: *T, actual: ui64, expected: ui64) {
+    if actual == expected { return }
+    failLine(t)
+    print("expected ")
+    printUInt(expected)
+    print(", got ")
+    printUInt(actual)
+    failEnd()
+}
+
+export fn expectGt(t: *T, actual: i64, bound: i64) {
+    if actual > bound { return }
+    failLine(t)
+    printInt(actual)
+    print(" is not greater than ")
+    printInt(bound)
+    failEnd()
+}
+
+export fn expectGe(t: *T, actual: i64, bound: i64) {
+    if actual >= bound { return }
+    failLine(t)
+    printInt(actual)
+    print(" is not greater than or equal to ")
+    printInt(bound)
+    failEnd()
+}
+
+export fn expectLt(t: *T, actual: i64, bound: i64) {
+    if actual < bound { return }
+    failLine(t)
+    printInt(actual)
+    print(" is not less than ")
+    printInt(bound)
+    failEnd()
+}
+
+export fn expectLe(t: *T, actual: i64, bound: i64) {
+    if actual <= bound { return }
+    failLine(t)
+    printInt(actual)
+    print(" is not less than or equal to ")
+    printInt(bound)
+    failEnd()
+}
+
+/// `|actual - expected| <= eps`.
+export fn expectNear(t: *T, actual: f64, expected: f64, eps: f64) {
+    local d: f64 = actual - expected
+    if d < 0.0 { d = 0.0 - d }
+    if d <= eps { return }
+    failLine(t)
+    print("floating point values differ by more than the tolerance")
+    failEnd()
+}
+
+/// NUL-terminated string equality.
+export fn expectEqStr(t: *T, actual: *ui8, expected: *ui8) {
+    local i: usize = 0
+    while actual[i] != 0 && actual[i] == expected[i] { i = i + 1 }
+    if actual[i] == expected[i] { return }
+    failLine(t)
+    print("expected \"")
+    print(expected)
+    print("\", got \"")
+    print(actual)
+    print("\"")
+    failEnd()
+}
+
+export fn expectNil(t: *T, p: *void) {
+    expect(t, p == nil, "expected nil, got a pointer")
+}
+
+export fn expectNotNil(t: *T, p: *void) {
+    expect(t, p != nil, "expected a pointer, got nil")
+}
+
+// ---- running --------------------------------------------------------------------------------------
+
+/// Runs every registered test, prints the results and a summary. Returns 0 when all passed, 1 otherwise.
+export fn suiteRun(s: *Suite) -> i32 {
+    local i: usize = 0
+    while i < s.count {
+        local c: Case = s.cases[i]
+        local t: T = T { name: c.name, failed: 0, announced: false }
+        c.body(&t)
+        if t.failed == 0 {
+            s.passed = s.passed + 1
+            print("  ")
+            green()
+            print("\xe2\x9c\x93 ")
+            reset()
+            dim()
+            print(c.name)
+            reset()
+            println("")
+        } else {
+            s.failed = s.failed + 1
+        }
+        i = i + 1
+    }
+    println("")
+    print("  ")
+    if s.failed == 0 {
+        green()
+    } else {
+        red()
+    }
+    bold()
+    printInt(s.passed as i64)
+    print(" passed")
+    if s.failed > 0 {
+        print(", ")
+        printInt(s.failed as i64)
+        print(" failed")
+    }
+    reset()
+    dim()
+    print(" (")
+    printInt((s.passed + s.failed) as i64)
+    print(" tests)")
+    reset()
+    println("")
+    if s.failed > 0 { return 1 }
+    return 0
+}

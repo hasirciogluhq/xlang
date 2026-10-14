@@ -1,0 +1,29 @@
+// Interfaces are nominal: the struct needs an explicit `impl Greeter for ConsoleGreeter`.
+from "std" import print, println
+
+interface Greeter {
+    fn greet(self, name: *ui8) -> i32
+}
+
+struct ConsoleGreeter {
+    prefix: *ui8
+}
+
+impl Greeter for ConsoleGreeter {
+    fn greet(self, name: *ui8) -> i32 {
+        print(self.prefix)
+        print(" ")
+        println(name)
+        return 0
+    }
+}
+
+fn welcome(g: Greeter, name: *ui8) -> i32 {
+    return g.greet(name)
+}
+
+fn main() -> i32 {
+    local c: ConsoleGreeter = ConsoleGreeter { prefix: "hello" }
+    c.greet("xlang")
+    return welcome(c, "interface")
+}

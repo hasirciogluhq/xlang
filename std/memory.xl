@@ -1,5 +1,6 @@
 // std/memory: the C memory routines, written in xl (no libc). They are exported with their C
 // names because LLVM emits implicit calls to them (aggregate copies, zero fills).
+from "sys" import sysMap, sysUnmap
 
 export(c) fn memcpy(dst: *void, src: *void, n: usize) -> *void {
     local d: *ui8 = dst as *ui8
@@ -91,4 +92,17 @@ export fn strlen(s: *ui8) -> usize {
         n = n + 1
     }
     return n
+}
+
+/// Growable raw storage without an allocator: maps `newBytes` fresh pages, copies the first
+/// `oldBytes` of `old` (nil for none) and unmaps `old`. nil when the OS refuses. Used by std
+/// containers (router, test registry) that must not have a fixed capacity.
+export fn mapGrow(old: *void, oldBytes: usize, newBytes: usize) -> *void {
+    local fresh: *void = sysMap(newBytes)
+    if fresh == nil { return nil }
+    if old != nil {
+        memcpy(fresh, old, oldBytes)
+        sysUnmap(old, oldBytes)
+    }
+    return fresh
 }
