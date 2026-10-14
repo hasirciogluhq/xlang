@@ -25,7 +25,7 @@ export define KEY_EC_P256 = 2
 export define KEY_EC_P384 = 3
 
 /// keyUsage bit 5: keyCertSign.
-define KU_KEY_CERT_SIGN = 4
+define KU_KEY_CERT_SIGN = 5
 
 /// A view of a certificate; every pointer points into `der`.
 export struct Cert {

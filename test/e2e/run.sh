@@ -19,6 +19,7 @@ tests=(
   "threads|0|40000|1"
   "sched|0|20100|0"
   "sched_io|0|5|0"
+  "aesgcm|0|aesgcm ok|0"
 )
 
 host_os=$(uname -s)

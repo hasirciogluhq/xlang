@@ -33,10 +33,24 @@ Everything in the original plan is implemented; this file lists what is intentio
   `std/**/*.xl` changes); `--std=<dir>` replaces it. The compiler never searches the file system for it.
 
 ## Stdlib: files, JSON, HTTP
-- **`std/http` is plain HTTP only:** no TLS and no DNS (the client takes an IPv4 address), so `https://` URLs
-  cannot be fetched. The server handles one connection at a time (blocking `accept`, `Connection: close`).
-  Routes match the exact path; there are no route groups or path parameters. Route table and request
-  buffer grow on demand with no upper bound (a client can make the server map arbitrary memory).
+- **`std/http`:** the server is plain HTTP only (one connection at a time, blocking `accept`,
+  `Connection: close`). Routes match the exact path; there are no route groups or path parameters. Route table
+  and request buffer grow on demand with no upper bound (a client can make the server map arbitrary memory).
+  `httpGet` takes an IPv4 address and is plain HTTP; `httpsGet` resolves a name (`std/dns`) and speaks TLS 1.3.
+  Redirects, cookies, keep-alive and request bodies/headers are not supported in the client.
+- **`std/tls` is a TLS 1.3 client only:** X25519 key exchange, suites `TLS_CHACHA20_POLY1305_SHA256` and
+  `TLS_AES_128_GCM_SHA256`; no TLS 1.2 or older (a TLS 1.2-only server fails with `TLS_ERR_VERSION` or an
+  alert), no server side, no session resumption/0-RTT, no HelloRetryRequest (so a server that insists on another
+  group fails), no AES-256-GCM-SHA384, no client certificates (an empty Certificate is sent), no ALPN. Certificate
+  validation (`std/truststore`, `std/x509`): chain to an OS root, validity period, `subjectAltName` DNS names
+  (CN is ignored, IP SANs unsupported), CA/keyUsage/pathLen; **not** checked: revocation (CRL/OCSP),
+  nameConstraints, extended key usage, critical extensions, certificate policies. Signatures: RSA PKCS#1/PSS and
+  ECDSA P-256/P-384 (no Ed25519, no P-521). Root stores: Linux PEM bundles (`/etc/ssl/certs/ca-certificates.crt`
+  and distro variants), macOS `/etc/ssl/cert.pem` (the keychain itself is not read), **Windows has none** (and no
+  entropy/clock without NT SSNs), so every chain fails there. The crypto is not constant-time (AES S-box, bignum),
+  fine for a client verifying public data but not for secrets shared with a local attacker. Handshake messages
+  are limited to 64 KiB and 8 certificates. The root bundle is cached unlocked (two threads racing the first
+  load leak one mapping).
 - **`std/json` is read-only and flat:** lookups of top-level members of an object in a NUL-terminated buffer;
   no nested paths, no `\u` escapes, no validation, no writer.
 - **`std/fs` has no directories or metadata** beyond existence and size; the caller supplies all buffers.

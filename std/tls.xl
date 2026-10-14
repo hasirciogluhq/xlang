@@ -1,0 +1,841 @@
+// std/tls: a TLS 1.3 client (RFC 8446) over the raw TCP calls in `std/sys`.
+//   cipher suites   TLS_CHACHA20_POLY1305_SHA256 (preferred, constant-time in software) and
+//                   TLS_AES_128_GCM_SHA256 (the mandatory suite)
+//   key exchange    X25519 only (no HelloRetryRequest, no PSK / resumption, no 0-RTT)
+//   server auth     certificate chain validated against the OS root store (`std/truststore`), host
+//                   name checked against subjectAltName, CertificateVerify with ECDSA P-256/P-384 or
+//                   RSA-PSS; the Finished MAC is always checked. There is no way to skip validation.
+//   not supported   TLS 1.2 and older, client certificates (an empty Certificate is sent when asked),
+//                   AES-256-GCM-SHA384, Ed25519 certificates, IPv6, OCSP / SCT.
+// `tlsConnectHost` resolves the name with `std/dns` and returns 0 or a negative TLS_ERR_* code.
+// Buffers are mapped on connect and released by `tlsClose`; nothing else allocates.
+from "sys" import sysTcpSocket, sysTcpConnect, sysClose, sysRead, sysWrite, sysMap, sysUnmap
+from "sys" import sysRandom, sysClockSeconds, sysSetRecvTimeout
+from "sha256" import Sha256, sha256Init, sha256Update, sha256Final, sha256
+from "hmac" import hmacSha256, hkdfExtract, hkdfExpandLabel
+from "chacha20poly1305" import aeadSeal, aeadOpen
+from "aesgcm" import aesGcmSeal, aesGcmOpen
+from "x25519" import x25519, x25519Base
+from "x509" import Cert, x509Parse, x509VerifySignature, KEY_RSA, KEY_EC_P256, KEY_EC_P384
+from "x509" import SIG_ECDSA_SHA256, SIG_ECDSA_SHA384, SIG_RSA_PSS_SHA256, SIG_RSA_PSS_SHA384, SIG_RSA_PSS_SHA512
+from "truststore" import trustVerifyChain
+from "dns" import dnsResolve
+
+export define TLS_OK = 0
+export define TLS_ERR_IO = -1             // socket failure or the peer closed during the handshake
+export define TLS_ERR_PROTOCOL = -2       // malformed or unexpected message
+export define TLS_ERR_ALERT = -3          // the peer sent a fatal alert (`TlsConn.alert`)
+export define TLS_ERR_VERSION = -4        // the server does not speak TLS 1.3
+export define TLS_ERR_CERT = -5           // chain rejected (`TlsConn.trust` holds the TRUST_* code)
+export define TLS_ERR_SIGNATURE = -6      // CertificateVerify failed
+export define TLS_ERR_FINISHED = -7       // Finished MAC mismatch
+export define TLS_ERR_ENTROPY = -8
+export define TLS_ERR_MEMORY = -9
+export define TLS_ERR_RETRY = -10         // HelloRetryRequest (unsupported)
+export define TLS_ERR_UNSUPPORTED = -11
+export define TLS_ERR_CLOCK = -12
+export define TLS_ERR_DNS = -13
+export define TLS_ERR_AEAD = -14          // record failed authentication
+
+define SUITE_CHACHA = 1
+define SUITE_AES128 = 2
+
+define REC_BUF = 16645                    // 5 header + 2^14 + 256
+define HS_BUF = 65536
+define MAX_CERTS = 8
+define RECV_TIMEOUT_MS = 20000
+
+export struct TlsConn {
+    fd: i32
+    suite: i32
+    keyLen: usize
+    wKey: [ui8; 32]
+    wIv: [ui8; 12]
+    wSeq: ui64
+    wSecret: [ui8; 32]
+    wEnc: bool
+    rKey: [ui8; 32]
+    rIv: [ui8; 12]
+    rSeq: ui64
+    rSecret: [ui8; 32]
+    rEnc: bool
+    rec: *ui8
+    out: *ui8
+    plain: *ui8               // decrypted application data not yet returned
+    plainLen: usize
+    eof: bool
+    closedByPeer: bool        // the peer sent close_notify (false: bare TCP close)
+    alert: ui8
+    trust: i32
+    open: bool
+}
+
+// ---- helpers -----------------------------------------------------------------------------------
+
+fn emit(b: *ui8, n: *usize, v: ui8) {
+    b[*n] = v
+    *n = *n + 1
+}
+
+fn emit16(b: *ui8, n: *usize, v: usize) {
+    emit(b, n, ((v / 256) % 256) as ui8)
+    emit(b, n, (v % 256) as ui8)
+}
+
+fn emit24(b: *ui8, n: *usize, v: usize) {
+    emit(b, n, ((v / 65536) % 256) as ui8)
+    emit16(b, n, v % 65536)
+}
+
+fn emitBytes(b: *ui8, n: *usize, src: *ui8, len: usize) {
+    local i: usize = 0
+    while i < len {
+        emit(b, n, src[i])
+        i = i + 1
+    }
+}
+
+fn get16(p: *ui8) -> usize {
+    return ((p[0] as usize) << 8) | (p[1] as usize)
+}
+
+fn get24(p: *ui8) -> usize {
+    return ((p[0] as usize) << 16) | ((p[1] as usize) << 8) | (p[2] as usize)
+}
+
+fn copyBytes(dst: *ui8, src: *ui8, n: usize) {
+    local i: usize = 0
+    while i < n {
+        dst[i] = src[i]
+        i = i + 1
+    }
+}
+
+fn ctEq(a: *ui8, b: *ui8, n: usize) -> bool {
+    local diff: ui8 = 0
+    local i: usize = 0
+    while i < n {
+        diff = diff | (a[i] ^ b[i])
+        i = i + 1
+    }
+    return diff == 0
+}
+
+fn writeAll(fd: i32, data: *ui8, n: usize) -> bool {
+    local done: usize = 0
+    while done < n {
+        local w: isize = sysWrite(fd, &data[done], n - done)
+        if w <= 0 { return false }
+        done = done + (w as usize)
+    }
+    return true
+}
+
+fn readFull(fd: i32, buf: *ui8, n: usize) -> bool {
+    local done: usize = 0
+    while done < n {
+        local r: isize = sysRead(fd, &buf[done], n - done)
+        if r <= 0 { return false }
+        done = done + (r as usize)
+    }
+    return true
+}
+
+// ---- record layer ------------------------------------------------------------------------------
+
+fn makeNonce(iv: *ui8, seq: ui64, out: *ui8) {
+    local i: usize = 0
+    while i < 12 {
+        out[i] = iv[i]
+        i = i + 1
+    }
+    i = 0
+    while i < 8 {
+        out[4 + i] = out[4 + i] ^ (((seq >> (((7 - i) * 8) as ui64)) & 0xff) as ui8)
+        i = i + 1
+    }
+}
+
+/// Derives the record key and IV from a traffic secret.
+fn trafficKeys(secret: *ui8, keyLen: usize, key: *ui8, iv: *ui8) {
+    local none: [ui8; 1]
+    hkdfExpandLabel(secret, "key", &none[0], 0, key, keyLen)
+    hkdfExpandLabel(secret, "iv", &none[0], 0, iv, 12)
+}
+
+/// Sends one record of `typ` with `n` bytes of `data` (n <= 2^14), encrypted once keys are set.
+fn sendRecord(c: *TlsConn, typ: ui8, data: *ui8, n: usize) -> bool {
+    local b: *ui8 = c.out
+    local len: usize = 0
+    if !c.wEnc {
+        emit(b, &len, typ)
+        emit16(b, &len, 0x0303)
+        emit16(b, &len, n)
+        emitBytes(b, &len, data, n)
+        return writeAll(c.fd, b, len)
+    }
+    local clen: usize = n + 1 + 16
+    emit(b, &len, 23)
+    emit16(b, &len, 0x0303)
+    emit16(b, &len, clen)
+    copyBytes(&b[5], data, n)
+    b[5 + n] = typ
+    local nonce: [ui8; 12]
+    makeNonce(&c.wIv[0], c.wSeq, &nonce[0])
+    if c.suite == SUITE_CHACHA {
+        aeadSeal(&c.wKey[0], &nonce[0], &b[0], 5, &b[5], n + 1, &b[5], &b[5 + n + 1])
+    } else {
+        aesGcmSeal(&c.wKey[0], &nonce[0], &b[0], 5, &b[5], n + 1, &b[5], &b[5 + n + 1])
+    }
+    c.wSeq = c.wSeq + 1
+    return writeAll(c.fd, b, 5 + clen)
+}
+
+/// Reads one record into `c.rec`. For an encrypted stream the body is decrypted in place and `*typ`
+/// is the inner content type; `*len` is the plaintext length at `c.rec + 5`. Returns 0 or a TLS_ERR.
+fn recvRecord(c: *TlsConn, typ: *ui8, len: *usize) -> i32 {
+    local r: *ui8 = c.rec
+    if !readFull(c.fd, r, 5) { return TLS_ERR_IO }
+    local l: usize = get16(&r[3])
+    if l > 16384 + 256 { return TLS_ERR_PROTOCOL }
+    if !readFull(c.fd, &r[5], l) { return TLS_ERR_IO }
+    *typ = r[0]
+    *len = l
+    if r[0] == 20 || !c.rEnc { return TLS_OK }       // change_cipher_spec is never encrypted
+    if r[0] != 23 || l < 17 { return TLS_ERR_PROTOCOL }
+    local n: usize = l - 16
+    local nonce: [ui8; 12]
+    makeNonce(&c.rIv[0], c.rSeq, &nonce[0])
+    local ok: bool = false
+    if c.suite == SUITE_CHACHA {
+        ok = aeadOpen(&c.rKey[0], &nonce[0], &r[0], 5, &r[5], n, &r[5 + n], &r[5])
+    } else {
+        ok = aesGcmOpen(&c.rKey[0], &nonce[0], &r[0], 5, &r[5], n, &r[5 + n], &r[5])
+    }
+    if !ok { return TLS_ERR_AEAD }
+    c.rSeq = c.rSeq + 1
+    // strip zero padding; the last non-zero byte is the real content type
+    while n > 0 && r[5 + n - 1] == 0 { n = n - 1 }
+    if n == 0 { return TLS_ERR_PROTOCOL }
+    *typ = r[5 + n - 1]
+    *len = n - 1
+    return TLS_OK
+}
+
+// ---- handshake ---------------------------------------------------------------------------------
+
+struct Hs {
+    buf: *ui8
+    len: usize
+    pos: usize
+    th: Sha256                // transcript hash so far
+    msgLen: usize             // total length (with header) of the message nextHs returned
+}
+
+/// Returns the next complete handshake message (header included) or nil with `c.alert` / error
+/// stored in `*err`. Records of other types are skipped (CCS) or fail (alerts).
+fn nextHs(c: *TlsConn, h: *Hs, err: *i32) -> *ui8 {
+    while true {
+        local avail: usize = h.len - h.pos
+        if avail >= 4 {
+            local need: usize = 4 + get24(&h.buf[h.pos + 1])
+            if need > HS_BUF {
+                *err = TLS_ERR_PROTOCOL
+                return nil
+            }
+            if avail >= need {
+                h.msgLen = need
+                local m: *ui8 = &h.buf[h.pos]
+                h.pos = h.pos + need
+                return m
+            }
+        }
+        local typ: ui8 = 0
+        local rl: usize = 0
+        local e: i32 = recvRecord(c, &typ, &rl)
+        if e != TLS_OK {
+            *err = e
+            return nil
+        }
+        if typ == 21 {
+            if rl >= 2 { c.alert = c.rec[6] }
+            *err = TLS_ERR_ALERT
+            return nil
+        }
+        if typ == 22 {
+            if h.len + rl > HS_BUF {
+                *err = TLS_ERR_PROTOCOL
+                return nil
+            }
+            copyBytes(&h.buf[h.len], &c.rec[5], rl)
+            h.len = h.len + rl
+        } else if typ != 20 {
+            *err = TLS_ERR_PROTOCOL
+            return nil
+        }
+    }
+    return nil
+}
+
+fn buildHello(host: *ui8, hostLen: usize, random: *ui8, sid: *ui8, pub: *ui8, out: *ui8) -> usize {
+    local n: usize = 0
+    // record header and handshake header are patched at the end
+    emit(out, &n, 22)
+    emit16(out, &n, 0x0301)
+    emit16(out, &n, 0)
+    emit(out, &n, 1)
+    emit24(out, &n, 0)
+    emit16(out, &n, 0x0303)
+    emitBytes(out, &n, random, 32)
+    emit(out, &n, 32)
+    emitBytes(out, &n, sid, 32)
+    emit16(out, &n, 4)                 // cipher suites: CHACHA20 first, then AES-128-GCM
+    emit16(out, &n, 0x1303)
+    emit16(out, &n, 0x1301)
+    emit(out, &n, 1)
+    emit(out, &n, 0)                   // compression: null only
+    local extLenAt: usize = n
+    emit16(out, &n, 0)
+    // server_name
+    emit16(out, &n, 0)
+    emit16(out, &n, hostLen + 5)
+    emit16(out, &n, hostLen + 3)
+    emit(out, &n, 0)
+    emit16(out, &n, hostLen)
+    emitBytes(out, &n, host, hostLen)
+    // supported_groups: x25519
+    emit16(out, &n, 10)
+    emit16(out, &n, 4)
+    emit16(out, &n, 2)
+    emit16(out, &n, 0x001d)
+    // signature_algorithms
+    emit16(out, &n, 13)
+    emit16(out, &n, 14)
+    emit16(out, &n, 12)
+    emit16(out, &n, 0x0403)            // ecdsa_secp256r1_sha256
+    emit16(out, &n, 0x0503)            // ecdsa_secp384r1_sha384
+    emit16(out, &n, 0x0804)            // rsa_pss_rsae_sha256
+    emit16(out, &n, 0x0805)
+    emit16(out, &n, 0x0806)
+    emit16(out, &n, 0x0401)            // rsa_pkcs1_sha256 (certificate signatures only)
+    // supported_versions: TLS 1.3
+    emit16(out, &n, 43)
+    emit16(out, &n, 3)
+    emit(out, &n, 2)
+    emit16(out, &n, 0x0304)
+    // key_share: x25519
+    emit16(out, &n, 51)
+    emit16(out, &n, 38)
+    emit16(out, &n, 36)
+    emit16(out, &n, 0x001d)
+    emit16(out, &n, 32)
+    emitBytes(out, &n, pub, 32)
+
+    local extLen: usize = n - extLenAt - 2
+    out[extLenAt] = (extLen / 256) as ui8
+    out[extLenAt + 1] = (extLen % 256) as ui8
+    local body: usize = n - 9
+    out[3] = ((n - 5) / 256) as ui8
+    out[4] = ((n - 5) % 256) as ui8
+    out[6] = ((body / 65536) % 256) as ui8
+    out[7] = ((body / 256) % 256) as ui8
+    out[8] = (body % 256) as ui8
+    return n
+}
+
+/// out = HKDF-Expand-Label(secret, label, transcript hash, 32).
+fn deriveSecret(secret: *ui8, label: *ui8, hash: *ui8, out: *ui8) {
+    hkdfExpandLabel(secret, label, hash, 32, out, 32)
+}
+
+fn finishedMac(base: *ui8, hash: *ui8, out: *ui8) {
+    local key: [ui8; 32]
+    local none: [ui8; 1]
+    hkdfExpandLabel(base, "finished", &none[0], 0, &key[0], 32)
+    hmacSha256(&key[0], 32, hash, 32, out)
+}
+
+fn schemeToAlg(scheme: usize, key: *Cert) -> i32 {
+    if scheme == 0x0403 && key.keyType == KEY_EC_P256 { return SIG_ECDSA_SHA256 }
+    if scheme == 0x0503 && key.keyType == KEY_EC_P384 { return SIG_ECDSA_SHA384 }
+    if key.keyType == KEY_RSA {
+        if scheme == 0x0804 { return SIG_RSA_PSS_SHA256 }
+        if scheme == 0x0805 { return SIG_RSA_PSS_SHA384 }
+        if scheme == 0x0806 { return SIG_RSA_PSS_SHA512 }
+    }
+    return 0
+}
+
+fn fail(c: *TlsConn, code: i32) -> i32 {
+    tlsClose(c)
+    return code
+}
+
+/// Handshake after the TCP connection is up. Returns TLS_OK or a TLS_ERR_* code.
+fn handshake(c: *TlsConn, host: *ui8) -> i32 {
+    local hostLen: usize = 0
+    while host[hostLen] != 0 { hostLen = hostLen + 1 }
+    if hostLen == 0 || hostLen > 253 { return TLS_ERR_PROTOCOL }
+
+    local hs: Hs
+    hs.buf = sysMap(HS_BUF) as *ui8
+    if hs.buf == nil { return TLS_ERR_MEMORY }
+    hs.len = 0
+    hs.pos = 0
+    local r: i32 = runHandshake(c, &hs, host, hostLen)
+    sysUnmap(hs.buf as *void, HS_BUF)
+    return r
+}
+
+fn runHandshake(c: *TlsConn, h: *Hs, host: *ui8, hostLen: usize) -> i32 {
+    local random: [ui8; 32]
+    local sid: [ui8; 32]
+    local priv: [ui8; 32]
+    local pub: [ui8; 32]
+    if !sysRandom(&random[0], 32) || !sysRandom(&sid[0], 32) || !sysRandom(&priv[0], 32) {
+        return TLS_ERR_ENTROPY
+    }
+    if !x25519Base(&pub[0], &priv[0]) { return TLS_ERR_ENTROPY }
+
+    local hello: [ui8; 768]
+    local hn: usize = buildHello(host, hostLen, &random[0], &sid[0], &pub[0], &hello[0])
+    sha256Init(&h.th)
+    sha256Update(&h.th, &hello[5], hn - 5)
+    if !sendRecord(c, 22, &hello[5], hn - 5) { return TLS_ERR_IO }
+
+    // ---- ServerHello
+    local err: i32 = TLS_OK
+    local m: *ui8 = nextHs(c, h, &err)
+    if m == nil { return err }
+    if m[0] != 2 { return TLS_ERR_PROTOCOL }
+    local body: *ui8 = &m[4]
+    local blen: usize = h.msgLen - 4
+    if blen < 2 + 32 + 1 { return TLS_ERR_PROTOCOL }
+    local retry: [ui8; 32]
+    // HelloRetryRequest magic random (RFC 8446 4.1.3)
+    retry[0] = 0xcf
+    retry[1] = 0x21
+    retry[2] = 0xad
+    retry[3] = 0x74
+    retry[4] = 0xe5
+    retry[5] = 0x9a
+    retry[6] = 0x61
+    retry[7] = 0x11
+    retry[8] = 0xbe
+    retry[9] = 0x1d
+    retry[10] = 0x8c
+    retry[11] = 0x02
+    retry[12] = 0x1e
+    retry[13] = 0x65
+    retry[14] = 0xb8
+    retry[15] = 0x91
+    retry[16] = 0xc2
+    retry[17] = 0xa2
+    retry[18] = 0x11
+    retry[19] = 0x16
+    retry[20] = 0x7a
+    retry[21] = 0xbb
+    retry[22] = 0x8c
+    retry[23] = 0x5e
+    retry[24] = 0x07
+    retry[25] = 0x9e
+    retry[26] = 0x09
+    retry[27] = 0xe2
+    retry[28] = 0xc8
+    retry[29] = 0xa8
+    retry[30] = 0x33
+    retry[31] = 0x9c
+    if ctEq(&body[2], &retry[0], 32) { return TLS_ERR_RETRY }
+    local at: usize = 2 + 32
+    local sidLen: usize = body[at] as usize
+    at = at + 1 + sidLen
+    if at + 2 + 1 + 2 > blen { return TLS_ERR_PROTOCOL }
+    local cipher: usize = get16(&body[at])
+    at = at + 3                                        // cipher + compression
+    local extEnd: usize = at + 2 + get16(&body[at])
+    at = at + 2
+    if extEnd > blen { return TLS_ERR_PROTOCOL }
+    if cipher == 0x1303 {
+        c.suite = SUITE_CHACHA
+        c.keyLen = 32
+    } else if cipher == 0x1301 {
+        c.suite = SUITE_AES128
+        c.keyLen = 16
+    } else {
+        return TLS_ERR_UNSUPPORTED
+    }
+    local gotVersion: bool = false
+    local serverPub: [ui8; 32]
+    local gotShare: bool = false
+    while at + 4 <= extEnd {
+        local et: usize = get16(&body[at])
+        local el: usize = get16(&body[at + 2])
+        at = at + 4
+        if at + el > extEnd { return TLS_ERR_PROTOCOL }
+        if et == 43 {
+            if el != 2 || get16(&body[at]) != 0x0304 { return TLS_ERR_VERSION }
+            gotVersion = true
+        } else if et == 51 {
+            if el != 36 || get16(&body[at]) != 0x001d || get16(&body[at + 2]) != 32 { return TLS_ERR_PROTOCOL }
+            copyBytes(&serverPub[0], &body[at + 4], 32)
+            gotShare = true
+        }
+        at = at + el
+    }
+    if !gotVersion { return TLS_ERR_VERSION }
+    if !gotShare { return TLS_ERR_PROTOCOL }
+    sha256Update(&h.th, m, h.msgLen)
+
+    // ---- key schedule up to the handshake traffic secrets
+    local shared: [ui8; 32]
+    if !x25519(&shared[0], &priv[0], &serverPub[0]) { return TLS_ERR_PROTOCOL }
+    local zeros: [ui8; 32]
+    local i: usize = 0
+    while i < 32 {
+        zeros[i] = 0
+        i = i + 1
+    }
+    local early: [ui8; 32]
+    local emptyHash: [ui8; 32]
+    local derived: [ui8; 32]
+    local hsSecret: [ui8; 32]
+    local master: [ui8; 32]
+    local th: [ui8; 32]
+    local cHs: [ui8; 32]
+    local sHs: [ui8; 32]
+    local none: [ui8; 1]
+    hkdfExtract(&zeros[0], 0, &zeros[0], 32, &early[0])
+    sha256(&none[0], 0, &emptyHash[0])
+    deriveSecret(&early[0], "derived", &emptyHash[0], &derived[0])
+    hkdfExtract(&derived[0], 32, &shared[0], 32, &hsSecret[0])
+    sha256Final(&h.th, &th[0])
+    deriveSecret(&hsSecret[0], "c hs traffic", &th[0], &cHs[0])
+    deriveSecret(&hsSecret[0], "s hs traffic", &th[0], &sHs[0])
+    deriveSecret(&hsSecret[0], "derived", &emptyHash[0], &derived[0])
+    hkdfExtract(&derived[0], 32, &zeros[0], 32, &master[0])
+
+    copyBytes(&c.rSecret[0], &sHs[0], 32)
+    trafficKeys(&sHs[0], c.keyLen, &c.rKey[0], &c.rIv[0])
+    c.rSeq = 0
+    c.rEnc = true
+    copyBytes(&c.wSecret[0], &cHs[0], 32)
+    trafficKeys(&cHs[0], c.keyLen, &c.wKey[0], &c.wIv[0])
+    c.wSeq = 0
+    c.wEnc = true
+
+    // ---- EncryptedExtensions, Certificate, CertificateVerify, Finished
+    local chain: [Cert; 8]
+    local chainLen: usize = 0
+    local sawCert: bool = false
+    local sawVerify: bool = false
+    local certRequested: bool = false
+    local done: bool = false
+    while !done {
+        m = nextHs(c, h, &err)
+        if m == nil { return err }
+        local mt: ui8 = m[0]
+        local ml: usize = h.msgLen
+        local mb: *ui8 = &m[4]
+        local bl: usize = ml - 4
+        if mt == 8 {
+            // EncryptedExtensions: nothing in it changes our behavior
+        } else if mt == 13 {
+            certRequested = true
+        } else if mt == 11 {
+            if bl < 4 { return TLS_ERR_PROTOCOL }
+            local ctxLen: usize = mb[0] as usize
+            local p: usize = 1 + ctxLen
+            if p + 3 > bl { return TLS_ERR_PROTOCOL }
+            local listEnd: usize = p + 3 + get24(&mb[p])
+            p = p + 3
+            if listEnd > bl { return TLS_ERR_PROTOCOL }
+            while p < listEnd {
+                if p + 3 > listEnd { return TLS_ERR_PROTOCOL }
+                local cl: usize = get24(&mb[p])
+                p = p + 3
+                if p + cl + 2 > listEnd { return TLS_ERR_PROTOCOL }
+                if chainLen >= MAX_CERTS { return TLS_ERR_CERT }
+                if !x509Parse(&chain[chainLen], &mb[p], cl) {
+                    c.trust = 0
+                    return TLS_ERR_CERT
+                }
+                chainLen = chainLen + 1
+                p = p + cl
+                p = p + 2 + get16(&mb[p])           // per-certificate extensions are ignored
+            }
+            local now: i64 = sysClockSeconds()
+            if now < 0 { return TLS_ERR_CLOCK }
+            c.trust = trustVerifyChain(&chain[0], chainLen, host, now)
+            if c.trust != 0 { return TLS_ERR_CERT }
+            sawCert = true
+        } else if mt == 15 {
+            if !sawCert || bl < 4 { return TLS_ERR_PROTOCOL }
+            local scheme: usize = get16(&mb[0])
+            local sl: usize = get16(&mb[2])
+            if 4 + sl != bl { return TLS_ERR_PROTOCOL }
+            local alg: i32 = schemeToAlg(scheme, &chain[0])
+            if alg == 0 { return TLS_ERR_UNSUPPORTED }
+            local content: [ui8; 130]
+            i = 0
+            while i < 64 {
+                content[i] = 0x20
+                i = i + 1
+            }
+            local ctxStr: *ui8 = "TLS 1.3, server CertificateVerify"
+            i = 0
+            while i < 33 {
+                content[64 + i] = ctxStr[i]
+                i = i + 1
+            }
+            content[97] = 0
+            sha256Final(&h.th, &th[0])
+            copyBytes(&content[98], &th[0], 32)
+            if !x509VerifySignature(&chain[0], alg, &content[0], 130, &mb[4], sl) {
+                return TLS_ERR_SIGNATURE
+            }
+            sawVerify = true
+        } else if mt == 20 {
+            if !sawVerify || bl != 32 { return TLS_ERR_PROTOCOL }
+            local want: [ui8; 32]
+            sha256Final(&h.th, &th[0])
+            finishedMac(&sHs[0], &th[0], &want[0])
+            if !ctEq(&want[0], mb, 32) { return TLS_ERR_FINISHED }
+            done = true
+        } else {
+            return TLS_ERR_PROTOCOL
+        }
+        sha256Update(&h.th, m, ml)
+    }
+
+    // ---- application secrets, then our flight (optional empty Certificate, Finished)
+    local sfHash: [ui8; 32]
+    local cAp: [ui8; 32]
+    local sAp: [ui8; 32]
+    sha256Final(&h.th, &sfHash[0])
+    deriveSecret(&master[0], "c ap traffic", &sfHash[0], &cAp[0])
+    deriveSecret(&master[0], "s ap traffic", &sfHash[0], &sAp[0])
+
+    local ccs: [ui8; 1]
+    ccs[0] = 1
+    local savedEnc: bool = c.wEnc
+    c.wEnc = false
+    if !sendRecord(c, 20, &ccs[0], 1) { return TLS_ERR_IO }     // middlebox compatibility
+    c.wEnc = savedEnc
+    if certRequested {
+        local empty: [ui8; 8]
+        empty[0] = 11
+        empty[1] = 0
+        empty[2] = 0
+        empty[3] = 4
+        empty[4] = 0
+        empty[5] = 0
+        empty[6] = 0
+        empty[7] = 0
+        sha256Update(&h.th, &empty[0], 8)
+        if !sendRecord(c, 22, &empty[0], 8) { return TLS_ERR_IO }
+    }
+    local fin: [ui8; 36]
+    fin[0] = 20
+    fin[1] = 0
+    fin[2] = 0
+    fin[3] = 32
+    sha256Final(&h.th, &th[0])
+    finishedMac(&cHs[0], &th[0], &fin[4])
+    if !sendRecord(c, 22, &fin[0], 36) { return TLS_ERR_IO }
+
+    copyBytes(&c.wSecret[0], &cAp[0], 32)
+    trafficKeys(&cAp[0], c.keyLen, &c.wKey[0], &c.wIv[0])
+    c.wSeq = 0
+    copyBytes(&c.rSecret[0], &sAp[0], 32)
+    trafficKeys(&sAp[0], c.keyLen, &c.rKey[0], &c.rIv[0])
+    c.rSeq = 0
+    return TLS_OK
+}
+
+/// Connects to `ip:port` and runs the handshake, verifying the certificate for `host`
+/// (the server name, also sent as SNI). `c` is initialized here; call `tlsClose` when done,
+/// whether or not this succeeded is irrelevant (it is safe after a failure).
+export fn tlsConnect(c: *TlsConn, ip: ui32, port: ui16, host: *ui8) -> i32 {
+    c.open = false
+    c.eof = false
+    c.closedByPeer = false
+    c.alert = 0
+    c.trust = 0
+    c.plainLen = 0
+    c.plain = nil
+    c.wEnc = false
+    c.rEnc = false
+    c.rec = nil
+    c.out = nil
+    c.fd = sysTcpSocket()
+    if c.fd < 0 { return TLS_ERR_IO }
+    if sysTcpConnect(c.fd, ip, port) < 0 {
+        sysClose(c.fd)
+        c.fd = -1
+        return TLS_ERR_IO
+    }
+    sysSetRecvTimeout(c.fd, RECV_TIMEOUT_MS)
+    local mem: *ui8 = sysMap(REC_BUF * 2) as *ui8
+    if mem == nil {
+        sysClose(c.fd)
+        c.fd = -1
+        return TLS_ERR_MEMORY
+    }
+    c.rec = mem
+    c.out = &mem[REC_BUF]
+    c.open = true
+    local r: i32 = handshake(c, host)
+    if r != TLS_OK { return fail(c, r) }
+    return TLS_OK
+}
+
+/// Resolves `host` with `std/dns`, then `tlsConnect`.
+export fn tlsConnectHost(c: *TlsConn, host: *ui8, port: ui16) -> i32 {
+    local ip: ui32 = 0
+    c.open = false
+    c.rec = nil
+    if !dnsResolve(host, &ip) { return TLS_ERR_DNS }
+    return tlsConnect(c, ip, port, host)
+}
+
+// ---- application data --------------------------------------------------------------------------
+
+/// Sends all `n` bytes; false on failure.
+export fn tlsWrite(c: *TlsConn, data: *ui8, n: usize) -> bool {
+    if !c.open { return false }
+    local at: usize = 0
+    while at < n {
+        local take: usize = n - at
+        if take > 16384 { take = 16384 }
+        if !sendRecord(c, 23, &data[at], take) { return false }
+        at = at + take
+    }
+    return true
+}
+
+fn rekeyRead(c: *TlsConn) {
+    local none: [ui8; 1]
+    local next: [ui8; 32]
+    hkdfExpandLabel(&c.rSecret[0], "traffic upd", &none[0], 0, &next[0], 32)
+    copyBytes(&c.rSecret[0], &next[0], 32)
+    trafficKeys(&c.rSecret[0], c.keyLen, &c.rKey[0], &c.rIv[0])
+    c.rSeq = 0
+}
+
+fn rekeyWrite(c: *TlsConn) {
+    local none: [ui8; 1]
+    local next: [ui8; 32]
+    hkdfExpandLabel(&c.wSecret[0], "traffic upd", &none[0], 0, &next[0], 32)
+    copyBytes(&c.wSecret[0], &next[0], 32)
+    trafficKeys(&c.wSecret[0], c.keyLen, &c.wKey[0], &c.wIv[0])
+    c.wSeq = 0
+}
+
+/// Reads the next application-data record into `c.plain`; handles alerts and post-handshake
+/// messages. Returns 1 for data, 0 for end of stream, negative on error.
+fn nextData(c: *TlsConn) -> i32 {
+    while true {
+        local typ: ui8 = 0
+        local rl: usize = 0
+        local e: i32 = recvRecord(c, &typ, &rl)
+        if e != TLS_OK {
+            c.eof = true
+            if e == TLS_ERR_IO { return 0 }         // bare TCP close: end of stream
+            return e
+        }
+        if typ == 23 {
+            c.plain = &c.rec[5]
+            c.plainLen = rl
+            if rl > 0 { return 1 }
+        } else if typ == 21 {
+            c.eof = true
+            if rl >= 2 && c.rec[6] == 0 {
+                c.closedByPeer = true
+                return 0
+            }
+            if rl >= 2 { c.alert = c.rec[6] }
+            return TLS_ERR_ALERT
+        } else if typ == 22 {
+            local p: usize = 0
+            while p + 4 <= rl {
+                local mt: ui8 = c.rec[5 + p]
+                local ml: usize = get24(&c.rec[5 + p + 1])
+                if p + 4 + ml > rl { return TLS_ERR_PROTOCOL }
+                if mt == 24 && ml == 1 {
+                    local requested: bool = c.rec[5 + p + 4] == 1
+                    rekeyRead(c)
+                    if requested {
+                        local ku: [ui8; 5]
+                        ku[0] = 24
+                        ku[1] = 0
+                        ku[2] = 0
+                        ku[3] = 1
+                        ku[4] = 0
+                        sendRecord(c, 22, &ku[0], 5)
+                        rekeyWrite(c)
+                    }
+                }
+                p = p + 4 + ml                     // NewSessionTicket and others are ignored
+            }
+        } else if typ != 20 {
+            return TLS_ERR_PROTOCOL
+        }
+    }
+    return 0
+}
+
+/// Reads up to `n` bytes of application data. Returns the count, 0 at end of stream
+/// (`c.closedByPeer` tells a clean close_notify from a bare TCP close), or a negative TLS_ERR.
+export fn tlsRead(c: *TlsConn, buf: *ui8, n: usize) -> isize {
+    if !c.open || n == 0 { return 0 }
+    if c.plainLen == 0 {
+        if c.eof { return 0 }
+        local r: i32 = nextData(c)
+        if r <= 0 { return r as isize }
+    }
+    local take: usize = c.plainLen
+    if take > n { take = n }
+    copyBytes(buf, c.plain, take)
+    c.plain = &c.plain[take]
+    c.plainLen = c.plainLen - take
+    return take as isize
+}
+
+/// Sends close_notify (best effort), closes the socket and releases the record buffers. Safe to call
+/// on a connection that failed to open or was already closed.
+export fn tlsClose(c: *TlsConn) {
+    if c.rec == nil { return }
+    if c.open && c.wEnc {
+        local alert: [ui8; 2]
+        alert[0] = 1
+        alert[1] = 0
+        sendRecord(c, 21, &alert[0], 2)
+    }
+    if c.fd >= 0 { sysClose(c.fd) }
+    c.fd = -1
+    sysUnmap(c.rec as *void, REC_BUF * 2)
+    c.rec = nil
+    c.out = nil
+    c.plain = nil
+    c.plainLen = 0
+    c.open = false
+}
+
+export fn tlsErrorText(code: i32) -> *ui8 {
+    if code == TLS_OK { return "ok" }
+    if code == TLS_ERR_IO { return "network error or connection closed" }
+    if code == TLS_ERR_PROTOCOL { return "malformed or unexpected TLS message" }
+    if code == TLS_ERR_ALERT { return "the peer sent a fatal TLS alert" }
+    if code == TLS_ERR_VERSION { return "server does not support TLS 1.3" }
+    if code == TLS_ERR_CERT { return "server certificate rejected" }
+    if code == TLS_ERR_SIGNATURE { return "CertificateVerify signature is invalid" }
+    if code == TLS_ERR_FINISHED { return "handshake Finished MAC mismatch" }
+    if code == TLS_ERR_ENTROPY { return "no random bytes available" }
+    if code == TLS_ERR_MEMORY { return "out of memory" }
+    if code == TLS_ERR_RETRY { return "HelloRetryRequest is not supported" }
+    if code == TLS_ERR_UNSUPPORTED { return "unsupported cipher suite or signature scheme" }
+    if code == TLS_ERR_CLOCK { return "system clock unavailable" }
+    if code == TLS_ERR_DNS { return "host name could not be resolved" }
+    if code == TLS_ERR_AEAD { return "record authentication failed" }
+    return "unknown error"
+}

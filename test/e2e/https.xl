@@ -1,0 +1,35 @@
+// HTTPS client smoke test: DNS + TLS 1.3 + OS root store against a public server, plus the
+// certificate rejection path (wrong host name). Needs network access; exits 0 on success.
+from "std" import println, httpsGet, Response, tlsErrorText, TlsConn, tlsConnect, tlsClose, TLS_ERR_CERT, dnsResolve
+
+global buf: [ui8; 65536]
+
+fn main() -> i32 {
+    local resp: Response
+    local err: i32 = 0
+    if !httpsGet("example.com", 443, "/", &buf[0], 65536, &resp, &err) {
+        println("FAIL: https GET")
+        println(tlsErrorText(err))
+        return 1
+    }
+    if resp.status != 200 {
+        println("FAIL: status")
+        return 2
+    }
+    // A server that presents a certificate for another name must be rejected: connect to
+    // github.com but ask for a host name its certificate does not cover.
+    local c: TlsConn
+    local ip: ui32 = 0
+    if !dnsResolve("github.com", &ip) {
+        println("FAIL: dns")
+        return 4
+    }
+    local e: i32 = tlsConnect(&c, ip, 443, "example.invalid")
+    tlsClose(&c)
+    if e != TLS_ERR_CERT {
+        println("FAIL: bad certificate was not rejected")
+        return 3
+    }
+    println("https ok")
+    return 0
+}

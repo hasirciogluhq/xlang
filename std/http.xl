@@ -1,9 +1,10 @@
 // std/http: a small blocking HTTP/1.1 server (router + handlers) and a plain-HTTP client, on top of
-// the raw TCP calls in `std/sys`. HTTP only: there is no TLS. Connections are served one at a time
-// (`Connection: close`). No fixed limits: the route table and the request buffer grow on demand.
+// the raw TCP calls in `std/sys`, plus `httpsGet` (DNS + TLS 1.3 via `std/tls`). The server is HTTP
+// only. Connections are served one at a time (`Connection: close`). No fixed limits: the route table and the request buffer grow on demand.
 from "sys" import sysTcpSocket, sysTcpConnect, sysTcpListen, sysTcpAccept, sysClose, sysRead, sysWrite, sysUnmap
 from "memory" import strlen, mapGrow
 from "io" import eprint
+from "tls" import TlsConn, tlsConnectHost, tlsWrite, tlsRead, tlsClose
 
 /// What a handler sees. `method`, `path` and `body` point into the request buffer.
 export struct Context {
@@ -315,7 +316,7 @@ export struct Response {
 }
 
 /// `GET http://ip:port/path`. The whole response is read into `buf` (capacity `cap`, NUL-terminated).
-/// Returns false when the connection or the response failed. Plain HTTP only (no TLS, no DNS).
+/// Returns false when the connection or the response failed. Plain HTTP only (no TLS, no DNS: see `httpsGet`).
 export fn httpGet(ip: ui32, port: ui16, host: *ui8, path: *ui8, buf: *ui8, cap: usize, out: *Response) -> bool {
     local fd: i32 = sysTcpSocket()
     if fd < 0 { return false }
@@ -352,6 +353,71 @@ export fn httpGet(ip: ui32, port: ui16, host: *ui8, path: *ui8, buf: *ui8, cap: 
     sysClose(fd)
     buf[total] = 0
 
+    return parseResponse(buf, total, out)
+}
+
+fn memMove(dst: *ui8, src: *ui8, n: usize) {
+    local i: usize = 0
+    while i < n {
+        dst[i] = src[i]
+        i = i + 1
+    }
+}
+
+fn hexDigit(c: ui8) -> i32 {
+    if c >= 48 && c <= 57 { return (c - 48) as i32 }
+    if c >= 97 && c <= 102 { return (c - 87) as i32 }
+    if c >= 65 && c <= 70 { return (c - 55) as i32 }
+    return -1
+}
+
+/// Does the header block `s[0..end]` declare `Transfer-Encoding: chunked`?
+fn isChunked(s: *ui8, end: usize) -> bool {
+    local name: *ui8 = "transfer-encoding:"
+    local i: usize = 0
+    while i + 18 < end {
+        local k: usize = 0
+        while k < 18 && lower(s[i + k]) == name[k] { k = k + 1 }
+        if k == 18 {
+            local p: usize = i + 18
+            while s[p] == 32 { p = p + 1 }
+            return lower(s[p]) == 99 && lower(s[p + 1]) == 104     // "ch"
+        }
+        i = i + 1
+    }
+    return false
+}
+
+/// Decodes a chunked body in place; returns its length. The buffer stays NUL-terminated.
+fn dechunk(body: *ui8, len: usize) -> usize {
+    local rd: usize = 0
+    local wr: usize = 0
+    local alive: bool = true
+    while alive && rd < len {
+        local size: usize = 0
+        local digits: usize = 0
+        while rd < len && hexDigit(body[rd]) >= 0 {
+            size = size * 16 + (hexDigit(body[rd]) as usize)
+            digits = digits + 1
+            rd = rd + 1
+        }
+        while rd < len && body[rd] != 10 { rd = rd + 1 }       // skip extensions and CR
+        rd = rd + 1
+        if digits == 0 || size == 0 {
+            alive = false
+        } else {
+            if size > len - rd { size = len - rd }
+            memMove(&body[wr], &body[rd], size)
+            wr = wr + size
+            rd = rd + size + 2                                  // trailing CRLF
+        }
+    }
+    body[wr] = 0
+    return wr
+}
+
+/// Splits `buf[0..total]` (NUL-terminated) into status and body; a chunked body is decoded.
+fn parseResponse(buf: *ui8, total: usize, out: *Response) -> bool {
     // "HTTP/1.1 200 OK\r\n..." : the status code starts after the first space.
     local i: usize = 0
     while buf[i] != 0 && buf[i] != 32 { i = i + 1 }
@@ -367,10 +433,53 @@ export fn httpGet(ip: ui32, port: ui16, host: *ui8, path: *ui8, buf: *ui8, cap: 
     while buf[i] != 0 {
         if buf[i] == 13 && buf[i + 1] == 10 && buf[i + 2] == 13 && buf[i + 3] == 10 {
             out.body = &buf[i + 4]
+            if isChunked(buf, i) { dechunk(out.body, total - i - 4) }
             i = total
         } else {
             i = i + 1
         }
     }
     return true
+}
+
+/// `GET https://host:port/path` over TLS 1.3 (names are resolved with `std/dns`; the certificate
+/// chain is validated against the OS roots and must cover `host`). The response is read in full
+/// into `buf` (capacity `cap`, NUL-terminated); chunked bodies are decoded. `err` (may be nil)
+/// receives a `TLS_ERR_*` code (0 when the TLS connection was established).
+export fn httpsGet(host: *ui8, port: ui16, path: *ui8, buf: *ui8, cap: usize, out: *Response, err: *i32) -> bool {
+    local c: TlsConn
+    local e: i32 = tlsConnectHost(&c, host, port)
+    if err != nil { *err = e }
+    if e != 0 { return false }
+    local reqCap: usize = strlen(path) + strlen(host) + 96
+    local req: *ui8 = mapGrow(nil, 0, reqCap) as *ui8
+    if req == nil {
+        tlsClose(&c)
+        return false
+    }
+    local len: usize = 0
+    len = append(req, len, reqCap, "GET ")
+    len = append(req, len, reqCap, path)
+    len = append(req, len, reqCap, " HTTP/1.1\r\nHost: ")
+    len = append(req, len, reqCap, host)
+    len = append(req, len, reqCap, "\r\nUser-Agent: xlang\r\nAccept: */*\r\nConnection: close\r\n\r\n")
+    local sent: bool = tlsWrite(&c, req, len)
+    sysUnmap(req as *void, reqCap)
+    if !sent {
+        tlsClose(&c)
+        return false
+    }
+    local total: usize = 0
+    local eof: bool = false
+    while !eof && total + 1 < cap {
+        local r: isize = tlsRead(&c, &buf[total], cap - 1 - total)
+        if r <= 0 {
+            eof = true
+        } else {
+            total = total + (r as usize)
+        }
+    }
+    tlsClose(&c)
+    buf[total] = 0
+    return parseResponse(buf, total, out)
 }
