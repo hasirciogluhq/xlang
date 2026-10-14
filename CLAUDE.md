@@ -4,25 +4,13 @@
 
 - **Everything written to the repo is in English**: source code, comments, docs, commit messages, this file,
   diagnostics text produced by the compiler.
-- **Exceptions: everything under `plan/` and `plan/eg/` stays in Turkish.**
 - Chat replies to the user stay in Turkish (the user writes Turkish).
 
-## Plan files (read these first)
+## Project documents
 
-| File | Contents |
-|------|----------|
-| `plan/` | Compiler plan, one file per section (`NN-*.md`): rules, decisions, pending decisions (`03-karar-bekleyen-*.md`), phases, PR breakdown; index in `plan/README.md` |
-| `plan/eg/` | What the language looks like once the plan is done, one file per feature (`NN-*.md`, `NN.M-*.md`): ASCII tables, xlang code examples; index in `plan/eg/README.md` |
-
-### Sync rule
-
-- If a plan change affects the **language surface** (syntax, types, features, CLI flags, import forms,
-  attributes, builtins), update **`plan/eg/` in the same change**.
-- If only compiler internals change (IR, passes, codegen), update only `plan/`.
-- The user usually drives plan updates through `plan/eg/`. When adding a feature, write the example first
-  (description + ASCII table + `xlang` code block) in `plan/eg/`, then add the item to `plan/`.
-- Every feature in `plan/eg/`: its own file, one heading, a short description, a table where useful, an `xlang` code
-  example. New features get a new file and a line in `plan/eg/README.md`; likewise new plan sections in `plan/README.md`.
+- `KNOWN-LIMITATIONS.md`: what is intentionally incomplete and the open decisions. The original plan
+  (`plan/`, `plan/eg/`) was completed and removed; it remains in git history.
+- `src/README.md`: source layout. `std/`: the standard library. `test/e2e/`: end-to-end programs.
 
 ## Working rules
 
@@ -43,12 +31,12 @@
 - **libc is forbidden**, absolutely: never used, never called, never imitated. Do not suggest it, do not put it in
   examples (`puts`, `FILE`, `environ`, ...).
 - Do not invent features or design beyond what the user asked for. If a decision is needed, record it in
-  the "pending decisions" file in `plan/` (`03-karar-bekleyen-*.md`) or ask.
+  `KNOWN-LIMITATIONS.md` or ask.
 - Use the default tools (Read/Edit/Write) for file changes; use bulk regex/python/sed only when necessary.
 
 ## Feature assessment (applies in every session)
 
-When the user adds a feature or decision to the plan, give an **honest assessment** alongside the plan update.
+When the user adds a feature or decision, give an **honest assessment** alongside the change.
 No filler praise; state weaknesses plainly. For each feature cover:
 
 | Heading | Content |
@@ -64,7 +52,7 @@ No filler praise; state weaknesses plainly. For each feature cover:
 - Do not re-ask topics the user closed with "do not ask again" (e.g. external libraries/libc); if needed, give a
   one-time risk note instead.
 
-## Language decisions (summary; details in `plan/eg/`)
+## Language decisions (summary)
 
 - Functions: `fn name(a: i32) -> i32 { }` (no `->` means `void`).
 - Naming (no snake_case in xl names): types are `PascalCase` (`Point`, `Allocator`, `MemoryOrder`); functions, methods,
@@ -120,8 +108,7 @@ No filler praise; state weaknesses plainly. For each feature cover:
   the user's build script (xmake): take `--emit=obj`.
 - Atomics are builtins with the `__builtin_` prefix: `__builtin_atomicLoad/Store/Xchg/Cas/Add`, `__builtin_fence`.
   The order argument is a compile-time `MemoryOrder` member (`MemoryOrder.seqCst`). Inline asm is
-  `__builtin_asm("template", in(reg) x, out(reg) y, clobber("rcx"), options("noreturn"))` (syntax in
-  `plan/eg/12.1-inline-asm.md`): the template is target-specific and chosen with `#if arch` / `#if os`, Intel dialect on
+  `__builtin_asm("template", in(reg) x, out(reg) y, clobber("rcx"), options("noreturn"))` (`in(reg) x`, `out("rax") y`, `inout(reg) z`, `clobber("cc")`, `options("nomem"|"noreturn")`; `{0}` placeholders by operand order): the template is target-specific and chosen with `#if arch` / `#if os`, Intel dialect on
   x86, memory is assumed touched unless `options("nomem")`.
   `mutex` exists in the stdlib (`std/sync`, built on the atomics + OS wait); there is no `lock_guard`/RAII guard.
 - Global namespace has two tiers: (a) the closed builtin list: `syscall`, atomics/`fence`/asm, `sizeOf`-style
