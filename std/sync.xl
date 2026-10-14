@@ -1,0 +1,121 @@
+// std/sync: mutex, condition variable, read-write lock and once, built on the atomic builtins and
+// the OS wait primitive from `std/sys` (futex on Linux). No RAII guard: `unlock` is explicit.
+from "sys" import sysWait, sysWake, sysYield
+from "cpu" import cpuRelax
+
+/// 0 = unlocked, 1 = locked, 2 = locked with waiters.
+export struct Mutex {
+    state: ui32
+}
+
+export fn mutexLock(m: *Mutex) {
+    local c: ui32 = __builtin_atomicCas(&m.state, 0, 1, MemoryOrder.acquire)
+    if c == 0 { return }
+    // brief spin before sleeping
+    local spins: i32 = 0
+    while spins < 40 {
+        cpuRelax()
+        c = __builtin_atomicCas(&m.state, 0, 1, MemoryOrder.acquire)
+        if c == 0 { return }
+        spins = spins + 1
+    }
+    if c != 2 {
+        c = __builtin_atomicXchg(&m.state, 2, MemoryOrder.acquire)
+    }
+    while c != 0 {
+        sysWait(&m.state, 2)
+        c = __builtin_atomicXchg(&m.state, 2, MemoryOrder.acquire)
+    }
+}
+
+/// True when the lock was taken.
+export fn mutexTryLock(m: *Mutex) -> bool {
+    return __builtin_atomicCas(&m.state, 0, 1, MemoryOrder.acquire) == 0
+}
+
+export fn mutexUnlock(m: *Mutex) {
+    if __builtin_atomicXchg(&m.state, 0, MemoryOrder.release) == 2 {
+        sysWake(&m.state, 1)
+    }
+}
+
+/// Condition variable: a sequence counter the waiters sleep on.
+export struct Cond {
+    seq: ui32
+}
+
+/// Atomically releases `m`, waits for a signal, and locks `m` again.
+export fn condWait(c: *Cond, m: *Mutex) {
+    local seen: ui32 = __builtin_atomicLoad(&c.seq, MemoryOrder.acquire)
+    mutexUnlock(m)
+    sysWait(&c.seq, seen)
+    mutexLock(m)
+}
+
+export fn condSignal(c: *Cond) {
+    __builtin_atomicAdd(&c.seq, 1, MemoryOrder.release)
+    sysWake(&c.seq, 1)
+}
+
+export fn condBroadcast(c: *Cond) {
+    __builtin_atomicAdd(&c.seq, 1, MemoryOrder.release)
+    sysWake(&c.seq, 2147483647)
+}
+
+/// Read-write lock: readers count in `state`; `state == 0xFFFFFFFF` means a writer holds it.
+export struct RwLock {
+    state: ui32
+}
+
+define WRITER = 4294967295
+
+export fn rwReadLock(l: *RwLock) {
+    while true {
+        local s: ui32 = __builtin_atomicLoad(&l.state, MemoryOrder.relaxed)
+        if s != WRITER {
+            if __builtin_atomicCas(&l.state, s, s + 1, MemoryOrder.acquire) == s { return }
+        } else {
+            sysWait(&l.state, WRITER)
+        }
+    }
+}
+
+export fn rwReadUnlock(l: *RwLock) {
+    if __builtin_atomicAdd(&l.state, 4294967295, MemoryOrder.release) == 1 {
+        sysWake(&l.state, 2147483647)
+    }
+}
+
+export fn rwWriteLock(l: *RwLock) {
+    while true {
+        local s: ui32 = __builtin_atomicLoad(&l.state, MemoryOrder.relaxed)
+        if s == 0 {
+            if __builtin_atomicCas(&l.state, 0, WRITER, MemoryOrder.acquire) == 0 { return }
+        } else {
+            sysWait(&l.state, s)
+        }
+    }
+}
+
+export fn rwWriteUnlock(l: *RwLock) {
+    __builtin_atomicStore(&l.state, 0, MemoryOrder.release)
+    sysWake(&l.state, 2147483647)
+}
+
+/// Runs `body` exactly once; later callers wait until it finished.
+export struct Once {
+    state: ui32   // 0 = new, 1 = running, 2 = done
+}
+
+export fn onceRun(o: *Once, body: fn()) {
+    if __builtin_atomicLoad(&o.state, MemoryOrder.acquire) == 2 { return }
+    if __builtin_atomicCas(&o.state, 0, 1, MemoryOrder.acquire) == 0 {
+        body()
+        __builtin_atomicStore(&o.state, 2, MemoryOrder.release)
+        sysWake(&o.state, 2147483647)
+        return
+    }
+    while __builtin_atomicLoad(&o.state, MemoryOrder.acquire) != 2 {
+        sysWait(&o.state, 1)
+    }
+}

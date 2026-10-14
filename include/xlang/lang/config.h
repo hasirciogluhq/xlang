@@ -59,6 +59,10 @@ struct BuildConfig {
     [[nodiscard]] std::optional<ConfigValue> lookup(std::string_view name) const;
     [[nodiscard]] bool isDefined(std::string_view name) const { return lookup(name).has_value(); }
 
+    /// Std feature switch (`default-allocator`, `sched`, ...): on by default for the default set,
+    /// `--std-features=a,-b` flips them. Exposed to `#if` as `featureDefaultAllocator` etc.
+    [[nodiscard]] bool stdFeatureEnabled(std::string_view feature) const;
+
     /// Every resolved definition, sorted by name (`--print-cfg`).
     [[nodiscard]] std::map<std::string, ConfigValue> resolved() const;
 };

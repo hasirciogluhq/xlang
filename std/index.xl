@@ -1,0 +1,11 @@
+// std: everything. `import "std"` gives all of it; `import "std/cpu"` just a part.
+export * from "memory"
+export * from "runtime"
+export * from "mem"
+export * from "io"
+export * from "assert"
+export * from "math"
+export * from "sync"
+export * from "thread"
+export * from "sched"
+export * as sys from "sys"

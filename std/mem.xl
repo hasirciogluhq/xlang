@@ -1,0 +1,151 @@
+// std/mem: the `Allocator` interface, the default `Heap`, the registered allocator
+// (std feature `default-allocator`), `free` and `setAllocator` (plan 7.2).
+from "sys" import sysMap, sysUnmap, sysYield
+from "runtime" import panic
+
+export interface Allocator {
+    fn alloc(self, size: usize, align: usize) -> *void
+    fn free(self, p: *void)
+}
+
+// ---- the heap: power-of-two size classes over mmap'ed chunks, one spin lock ----------------
+
+define HEADER = 16                 // [class: usize][mapped length: usize]
+define CLASS_COUNT = 20            // 32 B .. 16 MiB
+define MIN_CLASS_SHIFT = 5
+define CHUNK = 262144              // refill granularity for small classes
+define DIRECT = 255                // class marker: block was mapped on its own
+define PAGE = 4096
+
+struct HeapState {
+    lock: ui32
+    bump: *ui8
+    bumpEnd: *ui8
+    free: [*ui8; CLASS_COUNT]
+}
+
+global heapState: HeapState
+
+fn lockHeap() {
+    while __builtin_atomicCas(&heapState.lock, 0, 1, MemoryOrder.acquire) != 0 {
+        sysYield()
+    }
+}
+
+fn unlockHeap() {
+    __builtin_atomicStore(&heapState.lock, 0, MemoryOrder.release)
+}
+
+fn classOf(size: usize) -> usize {
+    local c: usize = 0
+    local cap: usize = 32
+    while cap < size + HEADER && c < CLASS_COUNT {
+        cap = cap * 2
+        c = c + 1
+    }
+    return c
+}
+
+fn classBytes(c: usize) -> usize {
+    local cap: usize = 32
+    local i: usize = 0
+    while i < c {
+        cap = cap * 2
+        i = i + 1
+    }
+    return cap
+}
+
+fn directMap(size: usize) -> *void {
+    local total: usize = ((size + HEADER + PAGE - 1) / PAGE) * PAGE
+    local base: *void = sysMap(total)
+    if base == nil { return nil }
+    local words: *usize = base as *usize
+    words[0] = DIRECT
+    words[1] = total
+    return (base as usize + HEADER) as *void
+}
+
+fn heapAlloc(size: usize, align: usize) -> *void {
+    if align > 16 || size > 8388608 {
+        if align > PAGE { return nil }
+        return directMap(size)
+    }
+    local c: usize = classOf(size)
+    lockHeap()
+    local head: *ui8 = heapState.free[c]
+    if head != nil {
+        local next: *usize = (head as usize + HEADER) as *usize
+        heapState.free[c] = next[0] as *ui8
+        unlockHeap()
+        return (head as usize + HEADER) as *void
+    }
+    local bytes: usize = classBytes(c)
+    if heapState.bump == nil || (heapState.bumpEnd as usize) - (heapState.bump as usize) < bytes {
+        local chunk: usize = CHUNK
+        if bytes > chunk { chunk = bytes }
+        local fresh: *void = sysMap(chunk)
+        if fresh == nil {
+            unlockHeap()
+            return nil
+        }
+        heapState.bump = fresh as *ui8
+        heapState.bumpEnd = ((fresh as usize) + chunk) as *ui8
+    }
+    local block: *ui8 = heapState.bump
+    heapState.bump = ((block as usize) + bytes) as *ui8
+    unlockHeap()
+    local words: *usize = block as *usize
+    words[0] = c
+    words[1] = bytes
+    return ((block as usize) + HEADER) as *void
+}
+
+fn heapFree(p: *void) {
+    if p == nil { return }
+    local block: *ui8 = ((p as usize) - HEADER) as *ui8
+    local words: *usize = block as *usize
+    if words[0] == DIRECT {
+        sysUnmap(block as *void, words[1])
+        return
+    }
+    local c: usize = words[0]
+    lockHeap()
+    local link: *usize = p as *usize
+    link[0] = heapState.free[c] as usize
+    heapState.free[c] = block
+    unlockHeap()
+}
+
+export class Heap { }
+
+impl Allocator for Heap {
+    fn alloc(self, size: usize, align: usize) -> *void {
+        return heapAlloc(size, align)
+    }
+
+    fn free(self, p: *void) {
+        heapFree(p)
+    }
+}
+
+global heapObject: Heap
+
+#if featureDefaultAllocator
+register(allocator) global currentAllocator: Allocator = heapObject
+global allocatorSet: bool = false
+
+/// Frees through the current allocator (the one `new T` allocated with).
+export fn free(p: *void) {
+    currentAllocator.free(p)
+}
+
+/// Replaces the allocator once, at the start of `main`, before the first `new`.
+export fn setAllocator(a: Allocator) {
+    if allocatorSet {
+        panic("allocator already set")
+    }
+    allocatorSet = true
+    currentAllocator = a
+}
+#endif

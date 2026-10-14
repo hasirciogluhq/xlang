@@ -1,6 +1,9 @@
+#include "xlang/codegen/codegen.h"
+#include "xlang/codegen/link.h"
 #include "xlang/lang/ast.h"
 #include "xlang/lang/config.h"
 #include "xlang/lang/frontend.h"
+#include "xlang/sema/compilation.h"
 #include "xlang/sema/sema.h"
 #include "xlang/util/diagnostics.h"
 #include "xlang/util/error.h"
@@ -8,12 +11,21 @@
 
 #include <CLI/CLI.hpp>
 
+#include <cctype>
+#include <cstdint>
+#include <format>
+#include <functional>
+#include <map>
 #include <filesystem>
+#include <fstream>
+#include <unistd.h>
 #include <iostream>
 #include <string>
 #include <vector>
 
 namespace {
+
+std::string g_argv0;
 
 struct DiagCliOptions {
     std::vector<std::string> allow;
@@ -73,7 +85,8 @@ void addBuildOptions(CLI::App* cmd, BuildCliOptions& o) {
     cmd->add_option("--safety", o.safety, "checked|unchecked")->check(CLI::IsMember({"checked", "unchecked"}));
     cmd->add_flag("--no-std", o.no_std, "Do not load the standard library");
     cmd->add_option("--std", o.std_path, "Use another standard library");
-    cmd->add_option("--std-features", o.std_features, "Standard library features, e.g. -default-allocator");
+    cmd->add_option("--std-features", o.std_features, "Standard library features, e.g. sched,-default-allocator")
+        ->delimiter(',');
     cmd->add_option("--layout-scheme", o.layout_scheme, "Pin the default layout scheme (v1)");
     cmd->add_option("--layout-history", o.layout_history, "Layout history file (default xl.layout)");
 }
@@ -142,6 +155,31 @@ xlang::BuildConfig toBuildConfig(const BuildCliOptions& o) {
     return config;
 }
 
+/// `--std=<dir>`, else `<exe dir>/std`, `<exe dir>/../std` (the repository layout: build/xlang).
+std::filesystem::path findStdRoot(const xlang::BuildConfig& config) {
+    if (!config.std_path.empty()) {
+        return config.std_path;
+    }
+    std::error_code ec;
+    const std::filesystem::path exe = std::filesystem::read_symlink("/proc/self/exe", ec);
+    std::vector<std::filesystem::path> bases;
+    if (!ec) {
+        bases.push_back(exe.parent_path());
+    }
+    if (!g_argv0.empty()) {
+        bases.push_back(std::filesystem::absolute(g_argv0).parent_path());
+    }
+    for (const std::filesystem::path& b : bases) {
+        for (const char* rel : {"std", "../std", "../../std", "../share/xlang/std"}) {
+            const std::filesystem::path candidate = (b / rel).lexically_normal();
+            if (std::filesystem::exists(candidate / "index.xl", ec)) {
+                return candidate;
+            }
+        }
+    }
+    return {};
+}
+
 void printConfig(const xlang::BuildConfig& config) {
     std::cout << "target = \"" << config.target.triple << "\"\n";
     for (const auto& [name, value] : config.resolved()) {
@@ -157,6 +195,9 @@ void printConfig(const xlang::BuildConfig& config) {
 }  // namespace
 
 int main(int argc, char** argv) {
+    if (argc > 0) {
+        g_argv0 = argv[0];
+    }
     // `-Wno-CODE` is spelled like a single flag; rewrite it to `--allow=CODE` for CLI11.
     std::vector<std::string> args;
     args.reserve(static_cast<std::size_t>(argc));
@@ -197,6 +238,21 @@ int main(int argc, char** argv) {
     addBuildOptions(check, build_options);
     addDiagOptions(check, diag_options);
 
+    std::filesystem::path build_input;
+    std::filesystem::path build_output;
+    std::string emit{"exe"};
+    CLI::App* build = app.add_subcommand("build", "Compile a program (default --emit=exe)");
+    build->add_option("file", build_input, "Source file (.xl)")->required();
+    build->add_option("-o,--output", build_output, "Output file");
+    bool incremental = false;
+    std::filesystem::path cache_dir;
+    build->add_flag("--incremental", incremental, "One object per module, reused from the cache when unchanged");
+    build->add_option("--cache-dir", cache_dir, "Object cache directory (default: .xlang-cache next to the output)");
+    build->add_option("--emit", emit, "exe|obj|ir|bc|header|static|shared")
+        ->check(CLI::IsMember({"exe", "obj", "ir", "bc", "header", "static", "shared"}));
+    addBuildOptions(build, build_options);
+    addDiagOptions(build, diag_options);
+
     std::filesystem::path layout_input;
     std::string layout_type;
     bool layout_record = false;
@@ -224,12 +280,18 @@ int main(int argc, char** argv) {
             return 0;
         }
 
-        CLI::App* active = parse->parsed() ? parse : (check->parsed() ? check : (layout->parsed() ? layout : nullptr));
+        CLI::App* active = parse->parsed()   ? parse
+                           : check->parsed() ? check
+                           : build->parsed() ? build
+                                             : (layout->parsed() ? layout : nullptr);
         if (active == nullptr) {
             std::cout << app.help();
             return 0;
         }
-        const std::filesystem::path& path = parse->parsed() ? input : (check->parsed() ? check_input : layout_input);
+        const std::filesystem::path& path = parse->parsed()   ? input
+                                            : check->parsed() ? check_input
+                                            : build->parsed() ? build_input
+                                                              : layout_input;
 
         xlang::BuildConfig config = toBuildConfig(build_options);
         if (build_options.print_cfg) {
@@ -238,13 +300,12 @@ int main(int argc, char** argv) {
         }
 
         xlang::SourceManager sources;
-        const xlang::FileId file = sources.loadFile(path);
         xlang::DiagnosticEngine diagnostics(sources, std::cerr);
         diagnostics.configure(toEngineOptions(active, diag_options));
 
-        const xlang::Program program = xlang::parseSource(sources, file, config, diagnostics);
-
         if (parse->parsed()) {
+            const xlang::FileId file = sources.loadFile(path);
+            const xlang::Program program = xlang::parseSource(sources, file, config, diagnostics);
             diagnostics.flush();
             if (diagnostics.hasErrors()) {
                 std::cerr << diagnostics.errorCount() << " error(s), " << diagnostics.warningCount() << " warning(s)\n";
@@ -260,16 +321,194 @@ int main(int argc, char** argv) {
         }
         xlang::LayoutHistory history = xlang::LayoutHistory::load(history_path);
 
-        xlang::Sema sema(program, config, diagnostics, &history);
+        // Whole program: root + imports + stdlib (unless --no-std), then analysis and lowering.
+        xlang::Compilation compilation(sources, config, diagnostics, &history);
+        compilation.setStdRoot(findStdRoot(config));
+        compilation.loadRoot(path);
+        compilation.finish();
         if (!diagnostics.hasErrors()) {
-            sema.analyze();
+            compilation.analyzeAll();
         }
+        xlang::Sema& sema = *compilation.rootSema();
 
         if (check->parsed() && !diagnostics.hasErrors()) {
-            xlang::hir::Module module = sema.lower();
+            xlang::hir::Module module = compilation.lowerAll();
             if (dump_hir && !diagnostics.hasErrors()) {
                 diagnostics.flush();
                 xlang::hir::dumpModule(std::cout, module);
+            }
+        }
+
+        if (build->parsed() && !diagnostics.hasErrors()) {
+            xlang::hir::Module module = compilation.lowerAll();
+            if (!diagnostics.hasErrors()) {
+                xlang::Sema& root = sema;
+                const std::string stem = path.stem().string();
+                const auto layoutOf = [&root](const xlang::Type& t) { return root.layoutOf(t, xlang::Span{}); };
+                const bool windows = config.target.os == "windows";
+                std::filesystem::path out = build_output;
+                if (out.empty()) {
+                    const std::filesystem::path dir = path.parent_path();
+                    if (emit == "exe") {
+                        out = dir / (stem + (windows ? ".exe" : ""));
+                    } else if (emit == "obj") {
+                        out = dir / (stem + (windows ? ".obj" : ".o"));
+                    } else if (emit == "ir") {
+                        out = dir / (stem + ".ll");
+                    } else if (emit == "bc") {
+                        out = dir / (stem + ".bc");
+                    } else if (emit == "header") {
+                        out = dir / (stem + ".h");
+                    } else if (emit == "static") {
+                        out = dir / (windows ? stem + ".lib" : "lib" + stem + ".a");
+                    } else {
+                        const char* ext = windows ? ".dll" : (config.target.os == "macos" ? ".dylib" : ".so");
+                        out = dir / ((windows ? "" : "lib") + stem + ext);
+                    }
+                }
+                if (emit == "header") {
+                    std::string guard = "XLANG_" + stem + "_H";
+                    for (char& ch : guard) {
+                        ch = static_cast<char>(std::toupper(static_cast<unsigned char>(ch)));
+                    }
+                    std::ofstream h(out);
+                    h << xlang::codegen::generateHeader(module, layoutOf, guard);
+                } else if (incremental && (emit == "exe" || emit == "static" || emit == "shared")) {
+                    // Plan 8.1/8.2: one object per module, keyed by the content hash of the module,
+                    // its dependencies and the build configuration.
+                    const std::filesystem::path dir =
+                        cache_dir.empty() ? out.parent_path() / ".xlang-cache" : cache_dir;
+                    std::filesystem::create_directories(dir);
+                    std::map<const xlang::ModuleInfo*, std::uint64_t> base;
+                    const auto mix = [](std::uint64_t h, const std::string& s) {
+                        for (const unsigned char ch : s) {
+                            h ^= ch;
+                            h *= 1099511628211ULL;
+                        }
+                        h ^= 0xff;
+                        h *= 1099511628211ULL;
+                        return h;
+                    };
+                    std::string cfg = "xlang-0.1|" + config.target.triple + "|" + config.target.os + "|" +
+                                      config.target.arch + "|O" + std::to_string(config.opt_level) + "|" +
+                                      (config.debug ? "g" : "-") + "|" + config.cpu + "|" + config.mangle + "|" +
+                                      config.safety + "|" + (config.no_std ? "nostd" : "std") + "|" +
+                                      config.layout_scheme + "|" + emit;
+                    for (const std::string& f : config.std_features) {
+                        cfg += "|f:" + f;
+                    }
+                    for (const auto& [k, v] : config.defines) {
+                        cfg += "|D:" + k + "=" + v.toString();
+                    }
+                    const std::function<std::uint64_t(const xlang::ModuleInfo&)> baseHash =
+                        [&](const xlang::ModuleInfo& m) -> std::uint64_t {
+                        if (const auto it = base.find(&m); it != base.end()) {
+                            return it->second;
+                        }
+                        base[&m] = 0;  // import cycles terminate here
+                        std::uint64_t h = mix(14695981039346656037ULL, cfg);
+                        h = mix(h, m.key);
+                        h = mix(h, sources.file(m.file).text());
+                        for (const xlang::ModuleInfo* d : m.deps) {
+                            h = mix(h, std::to_string(baseHash(*d)));
+                        }
+                        return base[&m] = h;
+                    };
+                    // Registered names (panic, allocator, ...) are visible everywhere: they salt
+                    // every module hash.
+                    std::string salt;
+                    for (const xlang::ModuleInfo* m : compilation.order()) {
+                        for (const xlang::Item& item : m->program.items) {
+                            if (item.modifiers.registered) {
+                                salt += std::to_string(baseHash(*m)) + ";";
+                                break;
+                            }
+                        }
+                    }
+                    std::vector<std::filesystem::path> objects;
+                    for (xlang::ModuleInfo* m : compilation.order()) {
+                        bool has_code = m->key.empty();
+                        for (const auto& f : module.functions) {
+                            has_code = has_code || f.module == m->key;
+                        }
+                        for (const auto& g : module.globals) {
+                            has_code = has_code || g.module == m->key;
+                        }
+                        if (!has_code) {
+                            continue;
+                        }
+                        const std::uint64_t h = mix(baseHash(*m), salt);
+                        std::string name = m->key.empty() ? stem : m->key;
+                        for (char& ch : name) {
+                            if (ch == '/') {
+                                ch = '.';
+                            }
+                        }
+                        const std::filesystem::path obj =
+                            dir / std::format("{}-{:016x}{}", name, h, windows ? ".obj" : ".o");
+                        if (!std::filesystem::exists(obj)) {
+                            xlang::codegen::CodegenInput cg{module, config, sources, diagnostics, layoutOf,
+                                                            name, emit == "exe"};
+                            cg.only_module = m->key;
+                            auto artifact = xlang::codegen::generate(cg);
+                            if (!artifact) {
+                                break;
+                            }
+                            artifact->optimize(config.opt_level);
+                            artifact->writeObject(obj);
+                        }
+                        objects.push_back(obj);
+                    }
+                    if (!diagnostics.hasErrors()) {
+                        if (emit == "static") {
+                            xlang::codegen::archive(objects, out, config);
+                        } else {
+                            xlang::codegen::LinkRequest req;
+                            req.objects = objects;
+                            req.output = out;
+                            req.kind = emit == "shared" ? xlang::codegen::LinkKind::Shared
+                                                        : xlang::codegen::LinkKind::Executable;
+                            req.config = &config;
+                            xlang::codegen::link(req);
+                        }
+                    }
+                } else {
+                    xlang::codegen::CodegenInput cg{module, config, sources, diagnostics, layoutOf, stem,
+                                                    emit == "exe"};
+                    auto artifact = xlang::codegen::generate(cg);
+                    if (artifact) {
+                        artifact->optimize(config.opt_level);
+                        if (emit == "ir") {
+                            artifact->writeIR(out);
+                        } else if (emit == "bc") {
+                            artifact->writeBitcode(out);
+                        } else if (emit == "obj") {
+                            artifact->writeObject(out);
+                        } else {
+                            const std::filesystem::path obj =
+                                std::filesystem::temp_directory_path() /
+                                (stem + "." + std::to_string(::getpid()) + (windows ? ".obj" : ".o"));
+                            artifact->writeObject(obj);
+                            try {
+                                if (emit == "static") {
+                                    xlang::codegen::archive({obj}, out, config);
+                                } else {
+                                    xlang::codegen::LinkRequest req;
+                                    req.objects = {obj};
+                                    req.output = out;
+                                    req.kind = emit == "shared" ? xlang::codegen::LinkKind::Shared
+                                                                : xlang::codegen::LinkKind::Executable;
+                                    req.config = &config;
+                                    xlang::codegen::link(req);
+                                }
+                            } catch (...) {
+                                std::filesystem::remove(obj);
+                                throw;
+                            }
+                            std::filesystem::remove(obj);
+                        }
+                    }
+                }
             }
         }
 

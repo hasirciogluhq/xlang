@@ -30,18 +30,27 @@ xlang build main.xl --print-cfg                     # çözülmüş tüm tanıml
 | `--cpu <ad>` | Hedef CPU (varsayılan `generic`) |
 | `--no-std` / `--std=<yol>` | Stdlib yok / başka stdlib ([15](15-stdlib-ile-thread.md#15-stdlib-ile-thread)) |
 | `--print-cfg` | Etkin tanımları yazdırır |
+| `-o <dosya>` | Çıktı dosyası (varsayılan: girişin yanında; `exe` için uzantısız / `.exe`) |
+| `--incremental` | Modül başına bir nesne; değişmeyen modüller önbellekten alınır (yalnız `exe`/`static`/`shared`) |
+| `--cache-dir <dizin>` | Nesne önbelleği (varsayılan: çıktının yanında `.xlang-cache/`) |
+| `--std-features=a,-b` | Stdlib özellikleri; `#if` içinde `featureA` (kebab → camelCase) bool sabiti olarak görünür |
 
-### Frontend komutları (codegen gelene kadar)
+Stdlib köküne `--std=<yol>` ile, verilmezse derleyicinin yanındaki `std/`, `../std/`, `../share/xlang/std/`
+dizinlerinden ilk bulunana bakılır. `import "std/x"` bu kökten, diğer yollar içe aktaran dosyanın dizininden
+ve proje kökünden (kök dosyanın dizini) çözülür.
+
+### Frontend komutları
 
 ```
 xlang parse main.xl -D ENABLE_STATS --target aarch64-apple-darwin   # önişle + macro aç + parse
 xlang check main.xl                       # + tipler, enum, layout, staticAssert
+xlang check main.xl --hir                 # tipli HIR dökümü
 xlang layout main.xl Header               # offset/boyut/hizalama; --layout-record xl.layout'a yazar
 xlang parse main.xl --print-cfg -D LEVEL=3 -O2 -g                   # çözülmüş tüm tanımlar
 ```
 
 `-D/-U/--target/-O0..3/-g/--cpu/--print-cfg/--mangle/--safety/--no-std/--std/--std-features/--layout-scheme/
---layout-history` üç komutta da geçerlidir.
+--layout-history` `parse`, `check`, `layout` ve `build` komutlarında geçerlidir.
 
 ### `xlang parse` ve tanı bayrakları
 

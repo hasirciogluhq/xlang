@@ -40,7 +40,7 @@ enum class ExprKind {
     Cast,           ///< lhs -> type; `implicit` when the compiler inserted it
     Call,           ///< direct call: text = function name, args (methods: args[0] is `self`)
     CallIndirect,   ///< lhs = function pointer value, args
-    CallVirtual,    ///< text = "Class.method" the call was resolved against; args[0] is `self` (4.4 assigns slots)
+    CallVirtual,    ///< vtable call: index = slot, text = statically resolved function; args[0] is `self`
     CallItable,     ///< lhs = interface value, text = method, index = method index in the interface, args
     ExternalCall,   ///< text = module, member = name, args (unresolved until module loading)
     Syscall,        ///< args[0] = number, rest = arguments; type i64
@@ -54,7 +54,15 @@ enum class ExprKind {
     New,            ///< allocate `target` through `lhs` (allocator value), then init fields; type `*target`;
                     ///< `registered` when lhs is the registered allocator global
     ToInterface,    ///< lhs (a pointer to the object) -> interface `type`; text = impl type name
+    AtomicLoad,     ///< lhs = pointer, index = MemoryOrder
+    AtomicStore,    ///< lhs = pointer, rhs = value, index = MemoryOrder; void
+    AtomicXchg,     ///< lhs = pointer, rhs = value; returns the old value
+    AtomicCas,      ///< lhs = pointer, rhs = expected, args[0] = desired; returns the old value
+    AtomicAdd,      ///< lhs = pointer, rhs = value; returns the old value
+    Fence,          ///< index = MemoryOrder; void
+    Asm,            ///< text = template, asm_operands, clobbers, nomem/noreturn; void
 };
+
 
 struct Expr;
 using ExprPtr = std::unique_ptr<Expr>;
@@ -62,6 +70,14 @@ using ExprPtr = std::unique_ptr<Expr>;
 struct FieldInit {
     std::string name;
     std::uint32_t index{0};
+    ExprPtr value;
+};
+
+/// `in(reg) x` / `out("rax") y` / `inout(reg) z` of `__builtin_asm`; `value` is the input value
+/// (In) or the place that receives the output (Out, InOut: also read first).
+struct AsmOperand {
+    enum class Kind { In, Out, InOut } kind{Kind::In};
+    std::string reg;  ///< `reg` (any register) or a register name
     ExprPtr value;
 };
 
@@ -83,12 +99,16 @@ struct Expr {
     ExprPtr rhs;
     std::vector<ExprPtr> args;
     std::vector<FieldInit> fields;
+    std::vector<AsmOperand> asm_operands;
+    std::vector<std::string> clobbers;
     Type target;  ///< New: the allocated type
     std::uint32_t index{0};
     bool implicit{false};
     bool checked{false};
     bool through_pointer{false};
     bool registered{false};
+    bool nomem{false};     ///< Asm: `options("nomem")`
+    bool noreturn{false};  ///< Asm: `options("noreturn")`
 };
 
 enum class StmtKind { Local, Assign, Return, Expr, If, While, Block };
@@ -104,7 +124,9 @@ struct Stmt {
 };
 
 struct Function {
-    std::string name;          ///< source-level name; methods: `Type.method`, impl methods: `Type.Iface.method`
+    std::string name;          ///< qualified name; methods: `Type.method`, impl methods: `Type.Iface.method`
+    std::string module;        ///< defining module (mangling name)
+    std::string symbol;        ///< final link symbol (mangling applied, plan 4.9)
     std::string owner;         ///< class/struct name for methods, empty otherwise
     std::vector<Local> locals; ///< parameters first
     std::uint32_t param_count{0};
@@ -123,6 +145,8 @@ struct Function {
 
 struct Global {
     std::string name;
+    std::string module;
+    std::string symbol;
     Type type;
     ExprPtr init;  ///< compile-time constant; null = zero-initialized / external
     bool exported{false};
@@ -138,8 +162,15 @@ struct Field {
     Type type;
 };
 
+struct VtableSlot {
+    std::string method;    ///< method name
+    std::string function;  ///< implementing function (qualified HIR name)
+};
+
 struct Aggregate {
     std::string name;
+    std::vector<VtableSlot> vtable;  ///< class: complete vtable (base slots first); empty = no virtuals
+    bool repr_c{false};              ///< `@repr(c)`: Itanium vtable (offset-to-top, typeinfo, functions)
     bool is_class{false};
     std::string base;          ///< class: base class name, empty = none
     std::vector<Field> fields; ///< own fields (base fields come first in layouts)
@@ -161,9 +192,9 @@ struct Interface {
 };
 
 struct Impl {
-    std::string interface;  ///< as written (`io.Writer` joined with dots)
-    std::string type;       ///< implementing struct/class name
-    std::vector<std::string> methods;  ///< function names
+    std::string interface;  ///< qualified interface name
+    std::string type;       ///< implementing struct/class (qualified)
+    std::vector<std::string> methods;  ///< function names, in the interface's method order (the itable)
     Span span;
 };
 

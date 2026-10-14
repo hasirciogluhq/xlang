@@ -1,0 +1,82 @@
+// Windows: NT system calls. The system service numbers (SSN) vary between Windows versions and
+// are selected with `-D` (plan 5.3): `-D ssnNtWriteFile=...`, `-D ssnNtTerminateProcess=...`,
+// `-D ssnNtAllocateVirtualMemory=...`, `-D ssnNtFreeVirtualMemory=...`.
+define STDOUT_HANDLE = -11
+define CURRENT_PROCESS = -1
+
+global ioStatus: [i64; 2]
+
+export fn sysWrite(fd: i32, buf: *ui8, n: usize) -> isize {
+    // NtWriteFile(handle, event, apc, apcCtx, ioStatus, buffer, length, byteOffset, key)
+    local handle: i64 = fd as i64
+    if fd == 1 { handle = STDOUT_HANDLE as i64 }
+    local status: i64 = syscall(ssnNtWriteFile, handle, 0, 0, 0, &ioStatus[0], buf, n, 0, 0)
+    if status < 0 { return -1 }
+    return n as isize
+}
+
+export fn sysRead(fd: i32, buf: *ui8, n: usize) -> isize {
+    return -1
+}
+
+export fn sysExit(code: i32) {
+    syscall(ssnNtTerminateProcess, CURRENT_PROCESS as i64, code as i64)
+}
+
+export fn sysMap(size: usize) -> *void {
+    local base: *void = nil
+    local region: usize = size
+    // NtAllocateVirtualMemory(process, &base, zeroBits, &size, MEM_COMMIT|MEM_RESERVE, PAGE_READWRITE)
+    local status: i64 = syscall(ssnNtAllocateVirtualMemory, CURRENT_PROCESS as i64, &base, 0, &region, 12288, 4)
+    if status < 0 { return nil }
+    return base
+}
+
+export fn sysUnmap(p: *void, size: usize) {
+    local base: *void = p
+    local region: usize = 0
+    syscall(ssnNtFreeVirtualMemory, CURRENT_PROCESS as i64, &base, &region, 32768)
+}
+
+export fn sysYield() {
+}
+
+export fn sysThreadId() -> i64 {
+    return 0
+}
+
+export fn sysWait(addr: *ui32, expected: ui32) {
+    local spins: i32 = 0
+    while __builtin_atomicLoad(addr, MemoryOrder.acquire) == expected && spins < 64 {
+        spins = spins + 1
+    }
+}
+
+export fn sysWake(addr: *ui32, count: i32) {
+}
+
+export fn sysThreadCreate(entry: fn(*void), arg: *void, stack: *void, size: usize, ctid: *ui32) -> i64 {
+    // NtCreateThreadEx needs the SSN of the running Windows version (`-D ssnNtCreateThreadEx`).
+    return -1
+}
+
+export fn sysThreadRelease(stack: *void, size: usize) {
+    sysUnmap(stack, size)
+}
+
+// Readiness polling is not available on Windows yet (IOCP needs `NtCreateIoCompletion` ...).
+export fn sysPollCreate() -> i32 {
+    return -1
+}
+
+export fn sysPollWatch(pfd: i32, fd: i32, write: bool, token: usize) -> i32 {
+    return -1
+}
+
+export fn sysPollWait(pfd: i32, tokens: *usize, max: i32, timeoutMs: i32) -> i32 {
+    return 0
+}
+
+export fn sysPipe(fds: *i32, nonblocking: bool) -> i32 {
+    return -1
+}

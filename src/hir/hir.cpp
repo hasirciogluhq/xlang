@@ -51,7 +51,9 @@ void dumpExpr(std::ostream& out, const Function* fn, const Expr& e) {
     case ExprKind::Cast: sub(e.implicit ? "cast.implicit" : "cast"); break;
     case ExprKind::Call: sub("call", true); break;
     case ExprKind::CallIndirect: sub("call.indirect"); break;
-    case ExprKind::CallVirtual: sub("call.virtual", true); break;
+    case ExprKind::CallVirtual:
+        out << std::format("(call.virtual {}[{}]", e.text, e.index);
+        break;
     case ExprKind::CallItable:
         out << std::format("(call.itable {}[{}]", e.text, e.index);
         break;
@@ -68,6 +70,23 @@ void dumpExpr(std::ostream& out, const Function* fn, const Expr& e) {
         out << "(new " << typeName(e.target) << (e.registered ? " registered" : "");
         break;
     case ExprKind::ToInterface: out << "(to.interface " << e.text; break;
+    case ExprKind::AtomicLoad: out << "(atomic.load order=" << e.index; break;
+    case ExprKind::AtomicStore: out << "(atomic.store order=" << e.index; break;
+    case ExprKind::AtomicXchg: out << "(atomic.xchg order=" << e.index; break;
+    case ExprKind::AtomicCas: out << "(atomic.cas order=" << e.index; break;
+    case ExprKind::AtomicAdd: out << "(atomic.add order=" << e.index; break;
+    case ExprKind::Fence: out << "(fence order=" << e.index; break;
+    case ExprKind::Asm:
+        out << "(asm \"" << e.text << "\"" << (e.nomem ? " nomem" : "") << (e.noreturn ? " noreturn" : "");
+        for (const AsmOperand& op : e.asm_operands) {
+            out << (op.kind == AsmOperand::Kind::In ? " in(" : op.kind == AsmOperand::Kind::Out ? " out(" : " inout(")
+                << op.reg << ") ";
+            dumpExpr(out, fn, *op.value);
+        }
+        for (const std::string& c : e.clobbers) {
+            out << " clobber(" << c << ")";
+        }
+        break;
     }
     if (e.lhs) {
         out << ' ';

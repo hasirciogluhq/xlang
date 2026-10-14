@@ -42,6 +42,7 @@ target("xlang-frontend")
         "$(projectdir)/src/sema/layout.cpp",
         "$(projectdir)/src/sema/conversion.cpp",
         "$(projectdir)/src/sema/scope.cpp",
+        "$(projectdir)/src/sema/compilation.cpp",
         "$(projectdir)/src/sema/lower.cpp",
         "$(projectdir)/src/hir/hir.cpp",
         "$(projectdir)/src/util/source.cpp",
@@ -49,16 +50,33 @@ target("xlang-frontend")
     )
     add_includedirs("$(projectdir)/include", {public = true})
 
+-- Code generation: HIR -> LLVM, pass pipeline, object/IR/bitcode writers, C header, link driver.
+target("xlang-codegen")
+    set_kind("static")
+    set_default(false)
+    set_enabled(not cross)
+    add_files(
+        "$(projectdir)/src/codegen/*.cpp",
+        "$(projectdir)/src/driver/*.cpp"
+    )
+    add_includedirs("$(projectdir)/include", {public = true})
+    add_deps("xlang-frontend")
+    xlang_ctx.add_llvm()
+
 target("xlang")
     set_kind("binary")
     set_basename("xlang")
     set_default(not cross)
     set_enabled(not cross)
     add_files("$(projectdir)/src/cli/main.cpp")
-    add_deps("xlang-frontend")
+    add_deps("xlang-codegen", "xlang-frontend")
     add_target_defines()
-    -- Frontend only for now; LLVM comes back with codegen (plan phase 4.7).
-    add_packages("cli11")
+    xlang_ctx.add_llvm()
+    if is_plat("macosx") then
+        add_syslinks("z", "curses", "xml2")
+    elseif is_plat("linux") then
+        add_syslinks("ncurses", "z", "pthread", "dl", "m")
+    end
 
 -- Frontend/diagnostics unit tests: `xmake build xlang-tests && xmake run xlang-tests`.
 target("xlang-tests")
@@ -69,3 +87,32 @@ target("xlang-tests")
               "$(projectdir)/test/compiler/lower_test.cpp")
     add_deps("xlang-frontend")
     add_tests("frontend")
+
+-- Plan 7.6: the standard library is plain xl source (`std/`). Building this target type-checks
+-- it with the freshly built compiler; installing puts it under <prefix>/share/xlang/std, where
+-- the compiler looks next to its own binary (`../share/xlang/std`) as well as in `std/`.
+target("std")
+    set_kind("phony")
+    set_default(false)
+    set_enabled(not cross)
+    add_deps("xlang")
+    after_build(function (target)
+        local exe = path.join(os.projectdir(), "build", "xlang")
+        os.execv(exe, {"check", path.join(os.projectdir(), "std", "index.xl"), "--no-std"})
+    end)
+    on_install(function (target)
+        local dest = path.join(target:installdir(), "share", "xlang")
+        os.mkdir(dest)
+        os.cp(path.join(os.projectdir(), "std"), dest)
+    end)
+
+-- End-to-end tests: `xmake run e2e` builds and runs the programs of test/e2e (natively, and on
+-- Linux aarch64/x86_64 through Docker when it is available).
+target("e2e")
+    set_kind("phony")
+    set_default(false)
+    set_enabled(not cross)
+    add_deps("xlang")
+    on_run(function (target)
+        os.execv(path.join(os.projectdir(), "test", "e2e", "run.sh"))
+    end)

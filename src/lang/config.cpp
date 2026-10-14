@@ -121,6 +121,18 @@ std::string ConfigValue::toString() const {
     return {};
 }
 
+bool BuildConfig::stdFeatureEnabled(std::string_view feature) const {
+    bool on = feature == "default-allocator" || feature == "sched";
+    for (const std::string& f : std_features) {
+        if (f == feature) {
+            on = true;
+        } else if (f.size() > 1 && f[0] == '-' && std::string_view(f).substr(1) == feature) {
+            on = false;
+        }
+    }
+    return on;
+}
+
 std::optional<ConfigValue> BuildConfig::lookup(std::string_view name) const {
     const std::string key(name);
     if (const auto it = defines.find(key); it != defines.end()) {
@@ -143,6 +155,21 @@ std::optional<ConfigValue> BuildConfig::lookup(std::string_view name) const {
     }
     if (name == "optLevel") {
         return ConfigValue::makeInt(opt_level);
+    }
+    // `featureDefaultAllocator`: a std feature (`default-allocator`) as a bool constant.
+    if (name.size() > 7 && name.starts_with("feature") && std::isupper(static_cast<unsigned char>(name[7])) != 0) {
+        std::string feature;
+        for (const char c : name.substr(7)) {
+            if (std::isupper(static_cast<unsigned char>(c)) != 0) {
+                if (!feature.empty()) {
+                    feature += '-';
+                }
+                feature += static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+            } else {
+                feature += c;
+            }
+        }
+        return ConfigValue::makeBool(stdFeatureEnabled(feature));
     }
     return std::nullopt;
 }

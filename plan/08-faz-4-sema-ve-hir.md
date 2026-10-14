@@ -6,18 +6,18 @@
   en fazla argüman sayısına göre 5.3'teki tablodan denetlenir, aşılırsa hata), `staticAssert`.
 - [x] **4.3** HIR (`include/xlang/hir/hir.h`): tipler çözülmüş, örtük dönüşümler açık `Cast`,
   sugar düşürülmüş, sınıf metodları `fn(self: *T, ...)`, interface çağrıları açık itable çağrısı.
-- [ ] **4.4** Class:
+- [x] **4.4** Class:
   - Tek kalıtım, `class B : A`; `virtual` metod, `override`; vptr nesnenin başında.
   - `@repr(c)` class: Itanium düzeni (vptr offset 0; vtable'da offset-to-top ve typeinfo slotları,
     ardından fonksiyonlar). Çoklu/sanal kalıtım ve MSVC ABI kapsam dışı (açık hata).
   - Constructor/destructor: ilk sürümde açık `init`/`deinit` metodları.
-- [ ] **4.5** Interface: bildirim, `impl Ad for Tip { ... }` (struct ve class implement edebilir),
+- [x] **4.5** Interface: bildirim, `impl Ad for Tip { ... }` (struct ve class implement edebilir),
   interface değeri = `{data: *void, itable: *T}`;
   statik tipten arayüze dönüşüm itable'ı derleme zamanında üretir; çağrı = itable'dan dolaylı çağrı.
   **Interface nominaldir:** bir tipin interface olarak kullanılabilmesi için `impl Ad for Tip` yazılmış
   olmalıdır; metodların adı/imzası tutsa bile yapısal eşleşme yoktur. `impl` yoksa dönüşüm **hatadır**
   (`E0504`).
-- [ ] **4.6a** Yol çözümleme: `"x"` → `x.xl` | `x/index.xl` (ikisi birden hata); yeniden dışa aktarma
+- [x] **4.6a** Yol çözümleme: `"x"` → `x.xl` | `x/index.xl` (ikisi birden hata); yeniden dışa aktarma
   grafiği tek geçişte çözülür; çakışma **her zaman hatadır** (`E0401`) ve `import`/`export` satırında
   raporlanır, kullanım yerinde değil; yerel tanım kazanmaz; export edilmeyen
   sembol yeniden dışa aktarılamaz (4.8 ile uyumlu); `export(c)` aktarmada korunur.
@@ -28,21 +28,21 @@
   kullanılmasa bile verilir. Çözüm yolları: `except`, `as`, `export * as ns`.
   Modül çözümleme stratejileri (birden fazla yol: göreli, proje kökü, arama yolları, std, paket) **henüz
   planlanmadı**; bu madde yalnızca dosya/dizin kuralını (`x.xl` | `x/index.xl`) kapsar.
-- [ ] **4.6b** `declare` semantiği: gövdesiz dış öğe, kod üretmez; düzen çözümü sırası: nesne içi düzen kaydı → `xl.layout`
+- [x] **4.6b** `declare` semantiği: gövdesiz dış öğe, kod üretmez; düzen çözümü sırası: nesne içi düzen kaydı → `xl.layout`
   geçmişi → C varsayımı + `W0201`; `@repr(c)` zorunlu değil; opak tipler yalnızca pointer ile kullanılır; `declare class` metodları dış sembol (`@mangle` ile ad verilir). Bu derlemede (ve verilen nesnelerde) çözülemeyen `declare` sembolü `W0301` uyarısıdır (hata değil): link zamanında aranır, `--emit=obj`'da normaldir.
-- [ ] **4.6** Modül yükleme: AST klonlama yerine modül başına `Program` + sembol tablosu; mangling tek yerde.
-- [ ] **4.7** Codegen'i HIR üzerinde sıfırdan yaz (eski AST→LLVM hattı silindi); tip çözümleme sema'dadır,
+- [x] **4.6** Modül yükleme: AST klonlama yerine modül başına `Program` + sembol tablosu; mangling tek yerde.
+- [x] **4.7** Codegen'i HIR üzerinde sıfırdan yaz (eski AST→LLVM hattı silindi); tip çözümleme sema'dadır,
   codegen yalnızca tipli HIR'ı görür. `verifyModule` (0.1) ilk iş olarak buraya eklenir.
 
-- [ ] **4.8** Görünürlük: `export` olmayan hiçbir sembole (fonksiyon, tip, global, `define`, `type`)
+- [x] **4.8** Görünürlük: `export` olmayan hiçbir sembole (fonksiyon, tip, global, `define`, `type`)
   başka modülden erişilemez (sema hatası); LLVM linkage'ı `InternalLinkage`. `export` →
   `ExternalLinkage` (xl mangling'li); `export(c)` → `ExternalLinkage`, C ABI adı.
   `export(c)` imzasında yalnızca C uyumlu tipler (tamsayılar, `f32/f64`, `bool`, `*T`, `@repr(c)` struct,
   fonksiyon pointer'ı, tamsayı alt tipli enum); `class`/`interface`/string enum hata (`E0302`).
-- [ ] **4.9** Name mangling: tek modül (`src/sema/mangle.cpp`) — `xl` şeması (`_xl$modül$ad$imza`);
+- [x] **4.9** Name mangling: tek modül (`src/sema/mangle.cpp`) — `xl` şeması (`_xl$modül$ad$imza`);
   `@file(mangle = ...)`, `@mangle(none|"ad")`, `--mangle=`; öncelik fn > dosya > proje.
   Mangling kapalıyken sembol çakışması derleme hatası.
-- [ ] **4.11** `new T { alanlar }` ve `new(a) T { alanlar }`: dil ifadesi; `a.alloc(sizeOf(T),
+- [x] **4.11** `new T { alanlar }` ve `new(a) T { alanlar }`: dil ifadesi; `a.alloc(sizeOf(T),
   alignOf(T))` çağırır, alanları yazar ve `*T` döndürür. Allocator, `std/mem`'in **`Allocator` interface'i**dir
   (`alloc(self, size: usize, align: usize) -> *void` ve `free(self, p: *void)`); `a` ya `Allocator` değeridir
   ya da `impl Allocator for T` yazılmış bir `T`'nin değeri/pointer'ıdır (4.5'teki örtük interface
@@ -56,7 +56,7 @@
   seçer; kayıtlı global mutable olduğundan `new` ve `std/mem.free` değişimden sonra yeni allocator'ı
   kullanır. Kayıtlı yoksa `new T` hatadır (`E0501`, düzelt: `new(a) T` ya da `register(allocator)`).
   `alloc` `nil` dönerse `new` `nil` döndürür.
-- [ ] **4.12** `register[(rol)] bildirim`: `declare` gibi tek önek. Bildirilen ad, modül derlemeye girer
+- [x] **4.12** `register[(rol)] bildirim`: `declare` gibi tek önek. Bildirilen ad, modül derlemeye girer
   girmez **global** olur (import gerekmez; `register` `export` anlamına da gelir). Kayıtlar modül
   yüklenirken toplanır: import grafiğindeki modüller ve stdlib açıkken (varsayılan; `--no-std` kapatır)
   stdlib kökünün (`index.xl`) yüklediği modüller sayılır; yüklenmeyen modülün kaydı yoktur. Stdlib'in
@@ -85,3 +85,14 @@
 
 **Kabul:** class/interface/vtable içeren küçük programlar çalışır; `@repr(c)` class'ın nesne düzeni
 ve vtable'ı clang ile birebir uyuşur (tek kalıtım).
+
+> **Durum notu (4.4–4.12):** `Compilation` (`include/xlang/sema/compilation.h`) modülleri yükler: iki geçişli
+> ayrıştırma (önce içe aktarılan modüllerin `export define` macro'ları tohumlanır), export grafiği tek geçişte
+> çözülür (`export *`, `export * as`, `export { }`, `except`; döngü güvenli), importlar `E0401`/`E0711`/`W0401`
+> kurallarıyla bağlanır, `register`'lı adlar tüm modüllerde global olur. Çözülmüş tip yolları `modül::Ad`
+> (kök modül için yalın `Ad`) biçimindedir; fonksiyon/global/aggregate adları HIR'da böyle nitelenir.
+> Class: vtable slot'ları taban slotları önce olacak şekilde atanır, `override`/`virtual` kuralları `E0712`;
+> `@repr(c)` class'ın vtable'ı `[offset-to-top, typeinfo, işlevler]` (typeinfo `null`, bkz. 03).
+> Interface: itable = interface metod sırası; `impl` uyuşmazlığı `E0713`. Sembol adları 4.9'a göre
+> `_xl$modül$ad$imza` (`@mangle`, `@file(mangle)`, `--mangle`, `export(c)` önceliğiyle); mangling kapalıyken
+> çakışma `E0401`. `export(c)` imzasında C dışı tip `E0302`. Çözülemeyen `declare` sembolü `W0301`.

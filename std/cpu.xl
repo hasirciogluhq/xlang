@@ -1,0 +1,66 @@
+// std/cpu: CPU-level helpers (plan 7.1b). The only compiler support is `__builtin_asm`.
+from "sys" import sysYield
+
+#if os == "linux" && arch == "x86_64"
+define SYS_SCHED_GETAFFINITY = 204
+#elif os == "linux"
+define SYS_SCHED_GETAFFINITY = 123
+#endif
+
+/// Hint inside spin loops.
+export fn cpuRelax() {
+#if arch == "x86_64"
+    __builtin_asm("pause")
+#elif arch == "aarch64"
+    __builtin_asm("yield")
+#endif
+}
+
+/// Current stack pointer.
+export fn stackPointer() -> usize {
+    local sp: usize = 0
+#if arch == "x86_64"
+    __builtin_asm("mov {0}, rsp", out(reg) sp)
+#elif arch == "aarch64"
+    __builtin_asm("mov {0}, sp", out(reg) sp)
+#endif
+    return sp
+}
+
+/// Number of logical CPUs available to the process (>= 1).
+export fn cpuCount() -> i32 {
+#if os == "linux"
+    local mask: [ui64; 16]
+    local i: i32 = 0
+    while i < 16 {
+        mask[i as usize] = 0
+        i = i + 1
+    }
+    local r: i64 = syscall(SYS_SCHED_GETAFFINITY, 0, 128, &mask[0])
+    if r <= 0 { return 1 }
+    local n: i32 = 0
+    local w: i32 = 0
+    while w < 16 {
+        local v: ui64 = mask[w as usize]
+        while v != 0 {
+            n = n + (v % 2) as i32
+            v = v / 2
+        }
+        w = w + 1
+    }
+    if n < 1 { return 1 }
+    return n
+#elif os == "macos"
+    // sysctl({CTL_HW, HW_NCPU})
+    local mib: [i32; 2]
+    mib[0] = 6
+    mib[1] = 3
+    local count: i32 = 0
+    local len: usize = 4
+    local r: i64 = syscall(202, &mib[0], 2, &count, &len, 0, 0)
+    if r < 0 || count < 1 { return 1 }
+    return count
+#else
+    return 1
+#endif
+}

@@ -43,3 +43,15 @@ enum MemoryOrder: ui8 { relaxed, acquire, release, acqRel, seqCst }     // built
 
 Argüman `MemoryOrder.seqCst` gibi **derleme zamanı sabiti** olmalıdır. Atomic'ler `i8..i64`, `ui8..ui64`,
 `isize`, `usize`, `*T` ve `bool` üzerinde çalışır; diğer tipler derleme hatasıdır.
+
+### Fonksiyon pointer'ı alanı çağırmak
+
+Alanı fonksiyon pointer'ı olan bir değer üzerinde `değer.alan(argümanlar)` dolaylı çağrıdır (metod değildir):
+
+```xlang
+struct Task { entry: fn(*void), arg: *void }
+
+fn run(t: *Task) {
+    t.entry(t.arg)          // dolaylı çağrı
+}
+```

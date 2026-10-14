@@ -1,0 +1,41 @@
+// std/io: output on top of the raw write syscall; none of it is built into the compiler.
+from "sys" import sysWrite
+from "memory" import strlen
+
+export fn print(s: *ui8) {
+    sysWrite(1, s, strlen(s))
+}
+
+export fn println(s: *ui8) {
+    sysWrite(1, s, strlen(s))
+    sysWrite(1, "\n", 1)
+}
+
+export fn eprint(s: *ui8) {
+    sysWrite(2, s, strlen(s))
+}
+
+export fn printUInt(v: ui64) {
+    local buf: [ui8; 24]
+    local i: usize = 24
+    local n: ui64 = v
+    if n == 0 {
+        sysWrite(1, "0", 1)
+        return
+    }
+    while n > 0 {
+        i = i - 1
+        buf[i] = ((n % 10) as ui8) + 48
+        n = n / 10
+    }
+    sysWrite(1, &buf[i], 24 - i)
+}
+
+export fn printInt(v: i64) {
+    if v < 0 {
+        sysWrite(1, "-", 1)
+        printUInt((0 - v) as ui64)
+        return
+    }
+    printUInt(v as ui64)
+}

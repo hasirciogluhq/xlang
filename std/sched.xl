@@ -1,0 +1,405 @@
+// std/sched: an M:N scheduler (plan 7.5). Lightweight tasks run on user-space stacks and are
+// multiplexed over one worker thread per CPU, with per-worker run queues and work stealing.
+// A task's stack is aligned to its size, so the running task is found from the stack pointer.
+// The compiler knows nothing of this: it is `std/thread`, `std/sync`, atomics and `__builtin_asm`.
+from "sys" import sysMap, sysUnmap, sysWait, sysWake, sysYield, sysPollCreate, sysPollWatch, sysPollWait, sysRead, sysWrite
+from "mem" import Heap
+from "sync" import Mutex, mutexLock, mutexUnlock
+from "thread" import Thread, threadStart, threadValid
+from "cpu" import cpuCount, stackPointer
+from "runtime" import panic
+
+define TASK_STACK = 65536          // power of two; stacks are aligned to it
+define MAGIC = 8745432178562345    // marks the header of a task stack
+
+// Task states.
+define RUNNING = 1
+define PARKED = 2
+define WOKEN = 3
+define DONE = 4
+define READY = 5
+
+struct Task {
+    magic: usize                   // MUST stay first: it sits at the aligned stack base
+    sp: usize                      // saved stack pointer while not running
+    entry: fn(*void)
+    arg: *void
+    state: ui32
+    wantPark: ui32
+    next: *Task
+    worker: *Worker
+    mapBase: *void
+    started: bool
+}
+
+struct Queue {
+    lock: Mutex
+    head: *Task
+    tail: *Task
+}
+
+struct Worker {
+    sp: usize                      // the worker loop's saved context while a task runs
+    id: i32
+    queue: Queue
+    current: *Task
+}
+
+struct Scheduler {
+    started: ui32                  // 0 = not started, 1 = starting, 2 = running
+    count: i32
+    workers: *Worker
+    shared: Queue
+    pending: ui32                  // tasks not finished yet
+    idle: ui32                     // futex word idle workers sleep on
+    nextWorker: ui32
+    inlineMode: bool               // no OS threads available: tasks run on the thread in `waitAll`
+    pollFd: i32                    // readiness poll set (epoll/kqueue), 0 = not created yet
+    pollStarted: ui32
+}
+
+global sched: Scheduler
+global heap: Heap
+
+// ---- context switching -------------------------------------------------------------------
+
+/// Saves the callee-saved registers on the current stack and its pointer in `*save`, then either
+/// resumes the context whose stack pointer is `load`, or (when `start` is not nil) calls `start`
+/// on the fresh stack `load`. Both contexts are suspended at this very asm block, so they share
+/// the frame of this function; frame pointers are always kept (the code generator does it).
+fn switchContext(save: *usize, load: usize, start: fn()) {
+#if arch == "x86_64"
+    __builtin_asm("push rbp\npush rbx\npush r12\npush r13\npush r14\npush r15\nmov [rdi], rsp\nmov rsp, rsi\ntest rdx, rdx\njnz 2f\npop r15\npop r14\npop r13\npop r12\npop rbx\npop rbp\njmp 3f\n2:\ncall rdx\nud2\n3:",
+                  in("rdi") save, in("rsi") load, in("rdx") start, clobber("rax"), clobber("rcx"),
+                  clobber("r8"), clobber("r9"), clobber("r10"), clobber("r11"), clobber("cc"))
+#elif arch == "aarch64"
+    __builtin_asm("stp x29, x30, [sp, #-16]!\nstp x19, x20, [sp, #-16]!\nstp x21, x22, [sp, #-16]!\nstp x23, x24, [sp, #-16]!\nstp x25, x26, [sp, #-16]!\nstp x27, x28, [sp, #-16]!\nstp d8, d9, [sp, #-16]!\nstp d10, d11, [sp, #-16]!\nstp d12, d13, [sp, #-16]!\nstp d14, d15, [sp, #-16]!\nmov x9, sp\nstr x9, [x0]\nmov sp, x1\ncbnz x2, 2f\nldp d14, d15, [sp], #16\nldp d12, d13, [sp], #16\nldp d10, d11, [sp], #16\nldp d8, d9, [sp], #16\nldp x27, x28, [sp], #16\nldp x25, x26, [sp], #16\nldp x23, x24, [sp], #16\nldp x21, x22, [sp], #16\nldp x19, x20, [sp], #16\nldp x29, x30, [sp], #16\nb 3f\n2:\nblr x2\nbrk #1\n3:",
+                  in("x0") save, in("x1") load, in("x2") start, clobber("x9"), clobber("x3"), clobber("x4"),
+                  clobber("x5"), clobber("x6"), clobber("x7"), clobber("x8"), clobber("x10"), clobber("x11"),
+                  clobber("x12"), clobber("x13"), clobber("x14"), clobber("x15"), clobber("x16"), clobber("x17"),
+                  clobber("cc"))
+#endif
+}
+
+// ---- queues ---------------------------------------------------------------------------------
+
+fn queuePush(q: *Queue, t: *Task) {
+    mutexLock(&q.lock)
+    t.next = nil
+    if q.tail == nil {
+        q.head = t
+    } else {
+        q.tail.next = t
+    }
+    q.tail = t
+    mutexUnlock(&q.lock)
+}
+
+fn queuePop(q: *Queue) -> *Task {
+    mutexLock(&q.lock)
+    local t: *Task = q.head
+    if t != nil {
+        q.head = t.next
+        if q.head == nil { q.tail = nil }
+    }
+    mutexUnlock(&q.lock)
+    return t
+}
+
+// ---- tasks ----------------------------------------------------------------------------------
+
+fn currentTask() -> *Task {
+    local base: usize = (stackPointer() / TASK_STACK) * TASK_STACK
+    local t: *Task = base as *Task
+    if t.magic != MAGIC { return nil }
+    return t
+}
+
+/// Makes a task runnable and wakes an idle worker.
+fn makeReady(t: *Task, preferred: *Worker) {
+    t.state = READY
+    if preferred != nil {
+        queuePush(&preferred.queue, t)
+    } else {
+        queuePush(&sched.shared, t)
+    }
+    __builtin_atomicAdd(&sched.idle, 1, MemoryOrder.release)
+    sysWake(&sched.idle, 1)
+}
+
+/// First function of every task, entered on its fresh stack.
+fn taskMain() {
+    local t: *Task = currentTask()
+    t.entry(t.arg)
+    t.state = DONE
+    switchContext(&t.sp, t.worker.sp, nil)
+}
+
+fn newTask(entry: fn(*void), arg: *void) -> *Task {
+    local map: *void = sysMap(TASK_STACK * 2)
+    if map == nil { return nil }
+    local base: usize = ((((map as usize) + TASK_STACK - 1) / TASK_STACK) * TASK_STACK)
+    local t: *Task = base as *Task
+    t.magic = MAGIC
+    t.entry = entry
+    t.arg = arg
+    t.state = READY
+    t.wantPark = 0
+    t.next = nil
+    t.worker = nil
+    t.mapBase = map
+    t.started = false
+    // The Task header lives at the stack base; the stack grows down from the top.
+    t.sp = base + TASK_STACK
+    return t
+}
+
+fn freeTask(t: *Task) {
+    sysUnmap(t.mapBase, TASK_STACK * 2)
+}
+
+/// Runs `t` on worker `w` until it yields, parks or finishes, then handles the outcome.
+fn runTask(w: *Worker, t: *Task) {
+    t.worker = w
+    t.state = RUNNING
+    w.current = t
+    if t.started {
+        switchContext(&w.sp, t.sp, nil)
+    } else {
+        t.started = true
+        switchContext(&w.sp, t.sp, taskMain)
+    }
+    w.current = nil
+    if t.state == DONE {
+        freeTask(t)
+        if __builtin_atomicAdd(&sched.pending, 4294967295, MemoryOrder.acqRel) == 1 {
+            sysWake(&sched.pending, 2147483647)
+        }
+        return
+    }
+    if t.wantPark != 0 {
+        t.wantPark = 0
+        // Park unless a wake-up already arrived while the task was switching out.
+        if __builtin_atomicCas(&t.state, RUNNING, PARKED, MemoryOrder.acqRel) != RUNNING {
+            makeReady(t, w)
+        }
+        return
+    }
+    makeReady(t, w)     // yielded
+}
+
+fn findWork(w: *Worker) -> *Task {
+    local t: *Task = queuePop(&w.queue)
+    if t != nil { return t }
+    t = queuePop(&sched.shared)
+    if t != nil { return t }
+    local i: i32 = 1
+    while i < sched.count {
+        local victim: *Worker = (sched.workers as usize + ((w.id + i) % sched.count) as usize * sizeOf(Worker)) as *Worker
+        t = queuePop(&victim.queue)
+        if t != nil { return t }
+        i = i + 1
+    }
+    return nil
+}
+
+// ---- I/O readiness ----------------------------------------------------------------------
+
+/// Wakes the tasks whose descriptors became ready; returns how many.
+fn pollReady(timeoutMs: i32) -> i32 {
+    local tokens: [usize; 32]
+    local n: i32 = sysPollWait(sched.pollFd, &tokens[0], 32, timeoutMs)
+    local i: i32 = 0
+    while i < n {
+        local t: *Task = tokens[i as usize] as *Task
+        local old: ui32 = __builtin_atomicXchg(&t.state, WOKEN, MemoryOrder.acqRel)
+        if old == PARKED {
+            makeReady(t, nil)
+        }
+        i = i + 1
+    }
+    return n
+}
+
+fn pollerMain(p: *void) {
+    while true {
+        pollReady(-1)
+    }
+}
+
+fn ensurePoller() {
+    if __builtin_atomicCas(&sched.pollStarted, 0, 1, MemoryOrder.acquire) != 0 {
+        while __builtin_atomicLoad(&sched.pollStarted, MemoryOrder.acquire) != 2 {
+            sysYield()
+        }
+        return
+    }
+    local fd: i32 = sysPollCreate()
+    if fd < 0 { panic("sched: no readiness polling on this system") }
+    sched.pollFd = fd
+    if !sched.inlineMode {
+        threadStart(pollerMain, nil)
+    }
+    __builtin_atomicStore(&sched.pollStarted, 2, MemoryOrder.release)
+}
+
+fn workerMain(p: *void) {
+    local w: *Worker = p as *Worker
+    while true {
+        local seen: ui32 = __builtin_atomicLoad(&sched.idle, MemoryOrder.acquire)
+        local t: *Task = findWork(w)
+        if t != nil {
+            runTask(w, t)
+        } else {
+            sysWait(&sched.idle, seen)
+        }
+    }
+}
+
+fn startScheduler() {
+    // Only one caller initializes; the others wait for `started == 2`.
+    if __builtin_atomicCas(&sched.started, 0, 1, MemoryOrder.acquire) != 0 {
+        while __builtin_atomicLoad(&sched.started, MemoryOrder.acquire) != 2 {
+            sysYield()
+        }
+        return
+    }
+    local n: i32 = cpuCount()
+    if n < 1 { n = 1 }
+    sched.count = n
+    sched.workers = heap.alloc(sizeOf(Worker) * n as usize, alignOf(Worker)) as *Worker
+    if sched.workers == nil { panic("sched: out of memory") }
+    local i: i32 = 0
+    while i < n {
+        local w: *Worker = (sched.workers as usize + (i as usize) * sizeOf(Worker)) as *Worker
+        w.sp = 0
+        w.id = i
+        w.current = nil
+        w.queue.head = nil
+        w.queue.tail = nil
+        w.queue.lock.state = 0
+        i = i + 1
+    }
+    i = 0
+    local started: i32 = 0
+    while i < n {
+        local w: *Worker = (sched.workers as usize + (i as usize) * sizeOf(Worker)) as *Worker
+        local t: Thread = threadStart(workerMain, w as *void)
+        if threadValid(t) { started = started + 1 }
+        i = i + 1
+    }
+    if started == 0 {
+        // The OS gave no threads: run everything cooperatively on the caller of `waitAll`.
+        sched.inlineMode = true
+        sched.count = 1
+    }
+    __builtin_atomicStore(&sched.started, 2, MemoryOrder.release)
+}
+
+// ---- public API -----------------------------------------------------------------------------
+
+/// Number of worker threads (one per CPU).
+export fn cpu() -> i32 {
+    return cpuCount()
+}
+
+/// Starts a task running `entry(arg)`.
+export fn spawn(entry: fn(*void), arg: *void) {
+    startScheduler()
+    local t: *Task = newTask(entry, arg)
+    if t == nil { panic("sched: cannot allocate a task stack") }
+    __builtin_atomicAdd(&sched.pending, 1, MemoryOrder.acqRel)
+    local me: *Task = currentTask()
+    if me != nil {
+        makeReady(t, me.worker)     // children start near their parent
+    } else {
+        makeReady(t, nil)
+    }
+}
+
+/// Blocks the calling thread until every spawned task has finished.
+export fn waitAll() {
+    if sched.started == 2 && sched.inlineMode {
+        // Single-threaded mode: this thread is the worker.
+        local w: *Worker = sched.workers
+        while __builtin_atomicLoad(&sched.pending, MemoryOrder.acquire) != 0 {
+            local t: *Task = findWork(w)
+            if t != nil {
+                runTask(w, t)
+            } else if sched.pollStarted == 2 {
+                pollReady(10)
+            } else {
+                sysYield()
+            }
+        }
+        return
+    }
+    local v: ui32 = __builtin_atomicLoad(&sched.pending, MemoryOrder.acquire)
+    while v != 0 {
+        sysWait(&sched.pending, v)
+        v = __builtin_atomicLoad(&sched.pending, MemoryOrder.acquire)
+    }
+}
+
+/// Lets other tasks run. Only valid inside a task.
+export fn yield() {
+    local t: *Task = currentTask()
+    if t == nil { return }
+    switchContext(&t.sp, t.worker.sp, nil)
+}
+
+/// An opaque handle for waking a parked task.
+export struct Waiter {
+    task: *Task
+}
+
+/// The calling task as a `Waiter` (nil task outside tasks).
+export fn waiterSelf() -> Waiter {
+    return Waiter { task: currentTask() }
+}
+
+/// Suspends the calling task until someone calls `wake` on its waiter. Only valid inside a task.
+export fn park() {
+    local t: *Task = currentTask()
+    if t == nil { return }
+    t.wantPark = 1
+    switchContext(&t.sp, t.worker.sp, nil)
+}
+
+/// Makes a parked (or about-to-park) task runnable again.
+export fn wake(w: Waiter) {
+    local t: *Task = w.task
+    if t == nil { return }
+    local old: ui32 = __builtin_atomicXchg(&t.state, WOKEN, MemoryOrder.acqRel)
+    if old == PARKED {
+        makeReady(t, nil)
+    }
+}
+
+// ---- task-friendly I/O -----------------------------------------------------------------
+
+fn waitFd(fd: i32, write: bool) {
+    local t: *Task = currentTask()
+    if t == nil { return }       // not in a task: the caller just blocks in the syscall
+    startScheduler()
+    ensurePoller()
+    t.wantPark = 1
+    // Register first, then park: the poller may fire before the park completes (WOKEN covers it).
+    if sysPollWatch(sched.pollFd, fd, write, t as usize) < 0 {
+        t.wantPark = 0
+        return
+    }
+    switchContext(&t.sp, t.worker.sp, nil)
+}
+
+/// Reads from `fd`; inside a task the task parks until `fd` is readable instead of blocking a worker.
+export fn ioRead(fd: i32, buf: *ui8, n: usize) -> isize {
+    waitFd(fd, false)
+    return sysRead(fd, buf, n)
+}
+
+/// Writes to `fd`; inside a task the task parks until `fd` is writable.
+export fn ioWrite(fd: i32, buf: *ui8, n: usize) -> isize {
+    waitFd(fd, true)
+    return sysWrite(fd, buf, n)
+}

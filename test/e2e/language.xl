@@ -1,0 +1,112 @@
+// End-to-end checks: every check adds 1 to `failed` when wrong; main returns the count.
+interface Shape { fn area(self) -> i32 }
+
+struct Rect { w: i32, h: i32 }
+impl Shape for Rect { fn area(self) -> i32 { return self.w * self.h } }
+
+class Animal {
+    legs: i32
+    virtual fn sound(self) -> i32 { return 1 }
+    fn legCount(self) -> i32 { return self.legs }
+}
+class Dog : Animal {
+    tail: i32
+    override fn sound(self) -> i32 { return 2 }
+}
+
+enum Color: i32 { Red, Green = 5, Blue }
+define SIZE = 4
+global table: [i32; SIZE]
+global counter: i64 = 10
+global banner: *ui8 = "xlang"
+global failed: i32 = 0
+
+class Bump {
+    base: *ui8
+    used: usize
+}
+interface Alloc {
+    fn alloc(self, size: usize, align: usize) -> *void
+    fn free(self, p: *void)
+}
+impl Alloc for Bump {
+    fn alloc(self, size: usize, align: usize) -> *void {
+        local p: *void = (self.base as usize + self.used) as *void
+        self.used = self.used + size
+        return p
+    }
+    fn free(self, p: *void) { }
+}
+
+fn check(cond: bool) {
+    if !cond { failed = failed + 1 }
+}
+
+fn fib(n: i32) -> i32 {
+    if n < 2 { return n }
+    return fib(n - 1) + fib(n - 2)
+}
+
+fn apply(f: fn(i32) -> i32, v: i32) -> i32 { return f(v) }
+fn twice(x: i32) -> i32 { return x * 2 }
+
+fn sum(p: *i32, n: i32) -> i32 {
+    local s: i32 = 0
+    local i: i32 = 0
+    while i < n {
+        s = s + p[i as usize]
+        i = i + 1
+    }
+    return s
+}
+
+fn describe(s: Shape) -> i32 { return s.area() }
+fn sound(a: *Animal) -> i32 { return a.sound() }
+
+fn main() -> i32 {
+    check(fib(10) == 55)
+    check(apply(twice, 21) == 42)
+
+    local r: Rect = Rect { w: 3, h: 4 }
+    check(r.area() == 12)
+    check(describe(r) == 12)
+
+    local d: Dog = Dog { legs: 4, tail: 1 }
+    check(d.legCount() == 4)
+    check(d.sound() == 2)
+    check(sound(&d as *Animal) == 2)
+    local a: Animal = Animal { legs: 2 }
+    check(a.sound() == 1)
+
+    check(Color.Green == Color.Green)
+    check((Color.Blue as i32) == 6)
+
+    table[0] = 1
+    table[1] = 2
+    table[3] = 4
+    check(sum(&table[0], 4) == 7)
+    counter = counter + 5
+    check(counter == 15)
+    check(banner[0] == 120)       // 'x'
+
+    local u: ui8 = 250
+    local w: ui8 = u + 10          // wraps
+    check(w == 4)
+    local neg: i32 = -7
+    check(neg / 2 == -3)
+    check(neg % 4 == -3)
+    check((neg as ui32) > 100)
+    local f: f64 = 1.5
+    f = f * 2.0
+    check(f == 3.0)
+    check((f as i32) == 3)
+    check(sizeOf(Rect) == 8)
+
+    local buf: [ui8; 64]
+    local arena: Bump = Bump { base: &buf[0], used: 0 }
+    local p: *Rect = new(&arena) Rect { w: 5, h: 6 }
+    check(p.w * p.h == 30)
+    check(arena.used == 8)
+
+    return failed
+}

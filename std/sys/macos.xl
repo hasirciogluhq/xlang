@@ -1,0 +1,169 @@
+// macOS: raw BSD syscalls (the compiler adds the syscall class on x86_64; numbers are the same
+// on both architectures). No libSystem is called.
+define SYS_EXIT = 1
+define SYS_READ = 3
+define SYS_WRITE = 4
+define SYS_MUNMAP = 73
+define SYS_MMAP = 197
+define SYS_SCHED_YIELD = 331
+define SYS_BSDTHREAD_CREATE = 360
+define SYS_BSDTHREAD_TERMINATE = 361
+define SYS_BSDTHREAD_REGISTER = 366
+
+define PROT_READ_WRITE = 3
+define MAP_PRIVATE_ANON = 4098      // MAP_PRIVATE | MAP_ANON
+
+export fn sysWrite(fd: i32, buf: *ui8, n: usize) -> isize {
+    return syscall(SYS_WRITE, fd, buf, n) as isize
+}
+
+export fn sysRead(fd: i32, buf: *ui8, n: usize) -> isize {
+    return syscall(SYS_READ, fd, buf, n) as isize
+}
+
+export fn sysExit(code: i32) {
+    syscall(SYS_EXIT, code)
+}
+
+export fn sysMap(size: usize) -> *void {
+    local r: i64 = syscall(SYS_MMAP, 0, size, PROT_READ_WRITE, MAP_PRIVATE_ANON, -1, 0)
+    if r < 0 && r > -4096 { return nil }
+    return r as *void
+}
+
+export fn sysUnmap(p: *void, size: usize) {
+    syscall(SYS_MUNMAP, p, size)
+}
+
+export fn sysYield() {
+    syscall(SYS_SCHED_YIELD)
+}
+
+export fn sysThreadId() -> i64 {
+    return 0
+}
+
+/// macOS has no futex: waiting spins on the scheduler yield (psynch needs mutex/cond structures).
+export fn sysWait(addr: *ui32, expected: ui32) {
+    local spins: i32 = 0
+    while __builtin_atomicLoad(addr, MemoryOrder.acquire) == expected && spins < 64 {
+        syscall(SYS_SCHED_YIELD)
+        spins = spins + 1
+    }
+}
+
+export fn sysWake(addr: *ui32, count: i32) {
+}
+
+// ---- threads: raw bsdthread_create (no libpthread) ----------------------------------------
+
+global threadRegistered: ui32
+
+/// Entered by the kernel on the new thread: the registered `threadstart`. Registers on arm64:
+/// x0 pthread, x1 mach port, x2 func, x3 arg, x4 stack, x5 flags (x86_64: rdi rsi rdx rcx r8 r9).
+/// Runs `func(arg)` and terminates the thread, letting the kernel release its stack.
+fn threadStub() {
+#if arch == "aarch64"
+    __builtin_asm("mov x19, x1\nmov x20, x3\nmov x9, x2\nmov x0, x3\nblr x9\nldr x0, [x20, #24]\nldr x1, [x20, #32]\nmov x2, x19\nmov x3, #0\nmov x16, #361\nsvc #0x80\nbrk #1")
+#elif arch == "x86_64"
+    __builtin_asm("mov r12, rsi\nmov r13, rcx\nmov rdi, rcx\ncall rdx\nmov rdi, [r13 + 24]\nmov rsi, [r13 + 32]\nmov rdx, r12\nxor ecx, ecx\nmov eax, 0x2000169\nsyscall\nud2")
+#endif
+}
+
+/// Runs on the new thread: the user entry, then the "exited" word is cleared.
+fn threadBody(block: *void) {
+    local words: *usize = block as *usize
+    local entry: fn(*void) = words[0] as fn(*void)
+    local arg: *void = words[1] as *void
+    local ctid: *ui32 = words[2] as *ui32
+    entry(arg)
+    __builtin_atomicStore(ctid, 0, MemoryOrder.release)
+}
+
+export fn sysThreadCreate(entry: fn(*void), arg: *void, stack: *void, size: usize, ctid: *ui32) -> i64 {
+    if __builtin_atomicLoad(&threadRegistered, MemoryOrder.acquire) == 0 {
+        // bsdthread_register(threadstart, wqthread, pthsize, init data, targetconc, dispatch offset)
+        // The kernel refuses the registration of a process that did not come up through libSystem
+        // (EINVAL): no raw thread creation until that is understood (see plan "decisions pending").
+        local r: i64 = syscall(SYS_BSDTHREAD_REGISTER, threadStub as usize, 0, 0, 0, 0, 0)
+        if r < 0 { return -1 }
+        __builtin_atomicStore(&threadRegistered, 1, MemoryOrder.release)
+    }
+    local top: usize = (stack as usize) + size
+    local block: *usize = (top - 64) as *usize
+    block[0] = entry as usize
+    block[1] = arg as usize
+    block[2] = ctid as usize
+    block[3] = stack as usize
+    block[4] = size
+    // bsdthread_create(func, func_arg, stack, pthread, flags): the kernel starts `threadstart`.
+    return syscall(SYS_BSDTHREAD_CREATE, threadBody as usize, block, block, block, 16777216)   // PTHREAD_START_CUSTOM
+}
+
+/// The kernel releases the thread's own stack at termination; nothing to do here.
+export fn sysThreadRelease(stack: *void, size: usize) {
+}
+
+// ---- readiness polling (kqueue) ----------------------------------------------------------
+
+define SYS_KQUEUE = 362
+define SYS_KEVENT = 363
+define EVFILT_READ = -1
+define EVFILT_WRITE = -2
+define EV_ADD_ONESHOT = 17          // EV_ADD | EV_ONESHOT
+
+export fn sysPollCreate() -> i32 {
+    return syscall(SYS_KQUEUE) as i32
+}
+
+export fn sysPollWatch(pfd: i32, fd: i32, write: bool, token: usize) -> i32 {
+    // struct kevent: ident u64, filter i16, flags u16, fflags u32, data i64, udata u64 (32 bytes)
+    local ev: [usize; 4]
+    ev[0] = fd as usize
+    ev[1] = 0
+    ev[2] = 0
+    ev[3] = token
+    local filter: i16 = EVFILT_READ
+    if write { filter = EVFILT_WRITE }
+    local head: *i16 = &ev[1] as *i16
+    head[0] = filter
+    local flags: *ui16 = (&ev[1] as usize + 2) as *ui16
+    flags[0] = EV_ADD_ONESHOT
+    return syscall(SYS_KEVENT, pfd, &ev[0], 1, 0, 0, 0) as i32
+}
+
+export fn sysPollWait(pfd: i32, tokens: *usize, max: i32, timeoutMs: i32) -> i32 {
+    if max > 16 { max = 16 }
+    local buf: [usize; 64]
+    local ts: [usize; 2]
+    local tsp: *usize = nil
+    if timeoutMs >= 0 {
+        ts[0] = (timeoutMs / 1000) as usize
+        ts[1] = ((timeoutMs % 1000) as usize) * 1000000
+        tsp = &ts[0]
+    }
+    local n: i64 = syscall(SYS_KEVENT, pfd, 0, 0, &buf[0], max, tsp)
+    if n <= 0 { return 0 }
+    local i: i32 = 0
+    while i < n as i32 {
+        tokens[i as usize] = buf[(i as usize) * 4 + 3]
+        i = i + 1
+    }
+    return n as i32
+}
+
+/// A pipe: `fds[0]` reads, `fds[1]` writes (BSD `pipe` returns both descriptors in registers).
+export fn sysPipe(fds: *i32, nonblocking: bool) -> i32 {
+    local a: i64 = 0
+    local b: i64 = 0
+#if arch == "aarch64"
+    __builtin_asm("mov x16, #42\nsvc #0x80\nb.cc 1f\nmov x0, #-1\nmov x1, #-1\n1:", out("x0") a, out("x1") b)
+#else
+    __builtin_asm("mov eax, 0x2000042\nsyscall\njnc 1f\nmov rax, -1\nmov rdx, -1\n1:\nmov {1}, rdx", out("rax") a, out(reg) b,
+                  clobber("rcx"), clobber("rdx"), clobber("r11"))
+#endif
+    if a < 0 { return -1 }
+    fds[0] = a as i32
+    fds[1] = b as i32
+    return 0
+}

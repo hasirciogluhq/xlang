@@ -28,8 +28,8 @@
 
 - **No backward or forward compatibility.** The compiler has never been used; syntax, AST, CLI and IR can be
   rewritten from scratch. Do not write compatibility layers.
-- **Do not read or adapt to `examples/`, `test/xlang/`, or stdlib/runtime `.xlang` files.** They are disposable
-  and will be rewritten once the compiler reaches its target.
+- **Do not read or adapt to `examples/`, `test/xlang/`, or old `.xlang` files.** They are disposable. The
+  stdlib lives in `std/` (`.xl`) and the end-to-end programs in `test/e2e/`; those are maintained.
 - **Do not read anything under `.cursor/`** (rules or plans).
 - The compiler knows only the language, CPU primitives (syscall, atomics, function pointers, inline asm), the
   closed builtin list (`syscall`, the `__builtin_` atomics, fence and asm; `sizeOf`-style queries,
@@ -137,7 +137,9 @@ No filler praise; state weaknesses plainly. For each feature cover:
   are written in xl in the stdlib and exported with `export(c)`; `alloc/free` live in the stdlib too.
 - The language takes no external libraries (no libc, libSystem, kernel32, pthread library). The stdlib calls each
   OS's kernel ABI with raw `syscall` + `#if os` (including macOS/Windows; stability is not a concern). Do not ask again.
-- Stdlib is optional: `--no-std`, `--std=<path>`; the default stdlib is embedded and contains a Go-like M:N scheduler.
+- Stdlib is optional: `--no-std`, `--std=<path>`; the default stdlib (`std/`, found next to the compiler) contains
+  a Go-like M:N scheduler. Std features (`--std-features=a,-b`) reach `#if` as bool constants named
+  `feature` + CamelCase (`default-allocator` -> `featureDefaultAllocator`).
 - The inline asm builtin is mandatory (thread trampoline, scheduler context switch).
 - Two exports or two imports binding the same name is an error (reported on the import/export line):
   `import * from a` + `import * from b` with a common name is an error; `import * as aa from a` +
@@ -162,9 +164,12 @@ No filler praise; state weaknesses plainly. For each feature cover:
 
 ## Build
 
-- Build system is xmake: `xmake build`; output `build/xlang`.
-- `xlang parse <file> [--ast]`, `xlang check <file> [--hir]`, `xlang layout <file> [Type]`, `xlang --explain <CODE>`;
-  build options `-D/-U/--target/-O/-g/--print-cfg` (frontend only, no codegen yet).
-- Unit tests: `xmake build xlang-tests && xmake run xlang-tests` (`test/compiler/`).
-- The old codegen/compiler/host/platform sources, `examples/` and `test/xlang/` were deleted; codegen returns in
-  plan phase 4.7 (see `src/README.md`).
+- Build system is xmake: `xmake build`; output `build/xlang`. LLVM comes from `llvm-config` (`$LLVM_CONFIG`
+  or Homebrew's `llvm`); the compiler links it statically.
+- `xlang build <file> [-o out] [--emit=exe|obj|ir|bc|header|static|shared] [--incremental]`, `xlang parse <file>
+  [--ast]`, `xlang check <file> [--hir]`, `xlang layout <file> [Type]`, `xlang --explain <CODE>`; build options
+  `-D/-U/--target/-O/-g/--cpu/--mangle/--safety/--no-std/--std/--std-features/--print-cfg`.
+- The standard library is xl source in `std/` (found next to the compiler); `xmake build std` type-checks it.
+- Tests: `xmake build xlang-tests && xmake run xlang-tests` (frontend + sema + HIR, `test/compiler/`) and
+  `xmake run e2e` (`test/e2e/run.sh`: builds and runs programs natively and, with Docker, on Linux
+  aarch64/x86_64). Scratch files go to the scratchpad; `test/e2e/*.xl` are the maintained end-to-end programs.

@@ -55,3 +55,21 @@
   codegen'e/ileride bir sadeleştirmeye kalır).
 - **Bildirilmeyen dönüş yolu:** değer döndüren fonksiyonun sonuna "düşmesi" için akış analizi yapılmıyor
   (planda yok); gerekirse ayrı karar.
+- **macOS ham thread oluşturma:** `bsdthread_register` (366) libSystem'siz bir süreçte `EINVAL` dönüyor, bu yüzden
+  `bsdthread_create` denenemedi. Seçenekler: register çağrısının doğru imzasını/önkoşulunu bulmak, mach
+  `thread_create_running` (MIG mesajı) ya da macOS'ta scheduler'ı tek thread'de bırakmak (şu anki davranış).
+- **Windows çıkış noktası ve syscall:** çıkış `NtTerminateProcess` SSN'sine ihtiyaç duyar (derleyici bilmez):
+  `mainCRTStartup` şimdilik `main`'i çağırıp `int3` ile durur; stdlib'in kendi çıkışını yapması beklenir.
+  4'ten fazla argümanlı `syscall` (stack aktarımı) henüz hata verir. Windows stdlib kodu doğrulanmadı.
+- **Itanium typeinfo:** `@repr(c)` class vtable'ında typeinfo slotu `null`; C++ RTTI/`dynamic_cast` ile
+  birlikte çalışma için `_ZTI...` sembolü üretilmedi.
+- **`export(c)` ve aggregate değerler:** `export(c)` fonksiyonlarda struct'ın değerle geçişi/dönüşü şimdilik
+  xl çağrı kuralıdır (işaretçiyle); hedef C ABI'sinin (SysV/AAPCS) küçük struct kayıt geçişi uygulanmadı.
+  Yalnızca işaretçi, skaler ve `@repr(c)` struct imzaları C tarafıyla doğrulanmalıdır.
+- **Modül çözümleme stratejisi:** şu an: `std`/`std/x` → stdlib kökü; diğerleri içe aktaran dosyanın dizini,
+  sonra kök dosyanın dizini. `import "x"` takma adsız biçimi son yol parçasını ad alanı yapar (`std/mem` → `mem`).
+  Paket/arama yolları henüz yok.
+- **Gömülü stdlib:** "dile gömülü varsayılan stdlib" şimdilik derleyicinin yanındaki `std/` dizinidir
+  (`xmake install` `share/xlang/std`'e kurar); tek dosyalı gömme yapılmadı.
+- **Bit operatörleri ve `break`/`continue`:** stdlib bunlar olmadan yazıldı (bayraklar önceden hesaplanmış
+  sabitler, `%`/`/` ile bit çıkarma). Dile eklenirse stdlib sadeleşir.

@@ -2,6 +2,7 @@
 
 #include "xlang/hir/hir.h"
 #include "xlang/lang/frontend.h"
+#include "xlang/sema/compilation.h"
 #include "xlang/sema/scope.h"
 #include "xlang/sema/sema.h"
 
@@ -221,7 +222,7 @@ void testMethodsAreFunctionsWithSelf() {
     CHECK(!r.diag->hasErrors());
     CHECK(r.has("fn Shape.get(self: *Shape) -> i32"));
     CHECK(r.has("(call Shape.get s#0):i32"));
-    CHECK(r.has("(call.virtual Shape.area s#0):f64"));
+    CHECK(r.has("(call.virtual Shape.area[0] s#0):f64"));
 }
 
 void testNewAndRegisteredAllocator() {
@@ -324,6 +325,155 @@ void testEnumsAndStaticAssertInBodies() {
     CHECK(bad.failedWith("E0702"));
 }
 
+// ---- multi-module programs (plan 4.6, 4.8, 4.9, 4.12)
+
+struct Multi {
+    SourceManager sources;
+    std::ostringstream out;
+    BuildConfig config;
+    std::unique_ptr<DiagnosticEngine> diag;
+    std::unique_ptr<Compilation> comp;
+    hir::Module module;
+    std::string hir_text;
+
+    Multi(std::initializer_list<std::pair<const char*, const char*>> files, BuildConfig cfg = BuildConfig{})
+        : config(std::move(cfg)) {
+        config.no_std = true;
+        diag = std::make_unique<DiagnosticEngine>(sources, out);
+        comp = std::make_unique<Compilation>(sources, config, *diag);
+        for (const auto& [name, text] : files) {
+            comp->addVirtualFile(name, text);
+        }
+        comp->loadRoot(files.begin()->first);
+        comp->finish();
+        if (!diag->hasErrors()) {
+            comp->analyzeAll();
+        }
+        if (!diag->hasErrors()) {
+            module = comp->lowerAll();
+            std::ostringstream h;
+            hir::dumpModule(h, module);
+            hir_text = h.str();
+        }
+        diag->flush();
+    }
+
+    [[nodiscard]] bool has(const std::string& needle) const { return hir_text.find(needle) != std::string::npos; }
+    [[nodiscard]] bool failedWith(const std::string& code) const {
+        return diag->hasErrors() && out.str().find(code) != std::string::npos;
+    }
+};
+
+void testModulesImportAndExport() {
+    {
+        Multi r({{"app/main.xl",
+                  "from \"math\" import square as sq\nimport \"util\" as u\n"
+                  "fn main() -> i32 { return sq(3) + u.twice(2) }\n"},
+                 {"app/math.xl", "export fn square(x: i32) -> i32 { return x * x }\nfn hidden() { }\n"},
+                 {"app/util.xl", "export fn twice(x: i32) -> i32 { return x * 2 }\n"}});
+        CHECK(!r.diag->hasErrors());
+        CHECK(r.has("(call math::square 3:i32)"));
+        CHECK(r.has("(call util::twice 2:i32)"));
+        CHECK(r.has("fn math::square("));
+    }
+    {
+        Multi r({{"app/main.xl", "from \"math\" import hidden\nfn main() { }\n"},
+                 {"app/math.xl", "fn hidden() { }\n"}});
+        CHECK(r.failedWith("E0711"));
+    }
+    {
+        Multi r({{"app/main.xl", "import \"nope\" as n\nfn main() { }\n"}});
+        CHECK(r.failedWith("E0711"));
+    }
+    {
+        Multi r({{"app/main.xl", "import * from \"a\"\nimport * from \"b\"\nfn main() { }\n"},
+                 {"app/a.xl", "export fn lorem() { }\n"},
+                 {"app/b.xl", "export fn lorem() { }\n"}});
+        CHECK(r.failedWith("E0401"));
+    }
+    {
+        Multi r({{"app/main.xl", "import * as aa from \"a\"\nimport * as bb from \"b\"\nfn main() { aa.lorem()\n bb.lorem() }\n"},
+                 {"app/a.xl", "export fn lorem() { }\n"},
+                 {"app/b.xl", "export fn lorem() { }\n"}});
+        CHECK(!r.diag->hasErrors());
+    }
+}
+
+void testModulesShareTypes() {
+    Multi r({{"app/main.xl",
+              "from \"geo\" import Point, Shape\n"
+              "fn main() -> i32 { local p: Point = Point { x: 1, y: 2 }\n"
+              "local s: Shape = Shape { id: 7 }\n return p.x + s.id }\n"},
+             {"app/geo.xl", "export struct Point { x: i32, y: i32 }\nexport class Shape { id: i32 }\n"}});
+    CHECK(!r.diag->hasErrors());
+    CHECK(r.has("struct geo::Point"));
+    CHECK(r.has("local p#0: geo::Point"));
+    CHECK(r.has("(field x p#0)"));
+}
+
+void testModuleRegistrationsAndMangling() {
+    {
+        Multi r({{"app/main.xl", "from \"rt\" import ping\nfn main() { panic(\"x\") }\n"},
+                 {"app/rt.xl", "export fn ping() { }\nregister(panic) fn panic(msg: *ui8) { }\n"}});
+        CHECK(!r.diag->hasErrors());
+        CHECK(r.module.panic_function == "rt::panic");
+        CHECK(r.has("(call rt::panic"));
+    }
+    {
+        Multi r({{"app/main.xl", "fn square(x: i32) -> i32 { return x }\n@mangle(\"my_sq\")\nfn other() { }\n"
+                                 "export(c) fn plain(x: i32) -> i32 { return x }\n"}});
+        CHECK(!r.diag->hasErrors());
+        bool seen_mangled = false;
+        bool seen_renamed = false;
+        bool seen_plain = false;
+        for (const hir::Function& f : r.module.functions) {
+            seen_mangled = seen_mangled || f.symbol == "_xl$main$square$i32";
+            seen_renamed = seen_renamed || f.symbol == "my_sq";
+            seen_plain = seen_plain || f.symbol == "plain";
+        }
+        CHECK(seen_mangled && seen_renamed && seen_plain);
+    }
+    {
+        BuildConfig c;
+        c.mangle = "none";
+        Multi r({{"app/main.xl", "import \"b\" as b\nexport fn dup() { }\n"},
+                 {"app/b.xl", "export fn dup() { }\n"}},
+                c);
+        CHECK(r.failedWith("E0401"));
+    }
+    {
+        Multi r({{"app/main.xl", "export(c) fn bad(a: [i32; 2]) { }\n"}});
+        CHECK(r.failedWith("E0302"));
+    }
+}
+
+void testClassesAndInterfacesChecks() {
+    {
+        Multi r({{"app/main.xl",
+                  "class A { virtual fn f(self) -> i32 { return 1 } }\n"
+                  "class B : A { override fn f(self) -> i32 { return 2 } }\n"
+                  "fn main() -> i32 { local b: B = B { }\n return b.f() }\n"}});
+        CHECK(!r.diag->hasErrors());
+        CHECK(r.has("(call.virtual B.f[0] "));
+    }
+    {
+        Multi r({{"app/main.xl", "class A { fn f(self) { } }\nclass B : A { override fn f(self) { } }\n"}});
+        CHECK(r.failedWith("E0712"));
+    }
+    {
+        Multi r({{"app/main.xl",
+                  "class A { virtual fn f(self) -> i32 { return 1 } }\n"
+                  "class B : A { override fn f(self) -> i64 { return 2 } }\n"}});
+        CHECK(r.failedWith("E0712"));
+    }
+    {
+        Multi r({{"app/main.xl",
+                  "interface W { fn write(self, n: i32) -> i32 }\nstruct S { }\n"
+                  "impl W for S { fn write(self, n: i64) -> i32 { return 0 } }\n"}});
+        CHECK(r.failedWith("E0713"));
+    }
+}
+
 }  // namespace
 
 void runLowerTests() {
@@ -342,4 +492,8 @@ void runLowerTests() {
     testGlobalInitializersAreConstant();
     testImportsAreExternal();
     testEnumsAndStaticAssertInBodies();
+    testModulesImportAndExport();
+    testModulesShareTypes();
+    testModuleRegistrationsAndMangling();
+    testClassesAndInterfacesChecks();
 }

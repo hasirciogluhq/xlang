@@ -156,4 +156,11 @@ Susturulan (`@allow`/`--allow`) uyarılar ekrandan düşer ama `--diag-log` aç�
 | `E0705` | Geçersiz enum (alt tip, çift üye, eksik/yanlış değer) ya da `@align`/`@layout` argümanı | **hata** |
 | `E0706` | Bilinmeyen tip/ad | **hata** |
 | `E0707` | Derleme zamanı sabiti olmayan ifade (dizi uzunluğu, enum değeri, `staticAssert`, `sizeOf`) | **hata** |
+| `E0708` | Tip uyuşmazlığı: örtük dönüşümü olmayan atama/argüman/dönüş (`as` gerekir) | **hata** |
+| `E0709` | Geçersiz işlem: bilinmeyen alan/metod, atanamayan ya da adresi alınamayan ifade, işaretçi aritmetiği | **hata** |
+| `E0710` | Yanlış argüman sayısı; `syscall` hedefin sınırını aşıyor | **hata** |
+| `E0711` | Modül bulunamadı, `x.xl` ile `x/index.xl` birlikte var, ya da modül o adı export etmiyor | **hata** |
+| `E0712` | `virtual`/`override` kuralı: hiçbir şeyi geçersiz kılmayan `override`, imza farkı, gizleme | **hata** |
+| `E0713` | `impl` interface ile uyuşmuyor: eksik/fazla metod ya da imza farkı | **hata** |
+| `E0714` | Kod üretimi hatası (çözülmemiş dış başvuru, desteklenmeyen hedef, doğrulama) | **hata** |
 | `W0601` | İşaretli tamsayı → `f32/f64` örtük dönüşüm, duyarlılık kaybolabilir ([2](02-tip-donusumu.md#i--f-uyarısı)) | uyarı |

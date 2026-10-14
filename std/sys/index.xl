@@ -1,0 +1,5 @@
+// std/sys: the raw OS layer (plan 7.1). The compiler only translates `syscall`; every number
+// and structure below is xl. One module per OS, chosen with `#if os`; all export the same names.
+#if os == "linux" export * from "linux"
+#if os == "macos" export * from "macos"
+#if os == "windows" export * from "windows"

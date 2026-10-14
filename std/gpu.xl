@@ -1,0 +1,5 @@
+// std/gpu: the std feature `gpu` is off by default; this module only reports availability so
+// programs can branch on it. Device back ends are not part of the default stdlib.
+export fn gpuAvailable() -> bool {
+    return false
+}

@@ -98,3 +98,26 @@ M:N model
 | Worker | CPU sayısı kadar OS thread'i |
 | İş çalma | Boş worker, başkasının kuyruğundan görev alır |
 | Bloklama | Bloklayıcı I/O, OS olay mekanizması (epoll/kqueue/IOCP benzeri) ile görev park edilir |
+
+### Stdlib modülleri ve uygulama durumu
+
+| Modül | İçerik |
+|-------|--------|
+| `std/memory` | `memcpy`, `memmove`, `memset`, `memcmp`, `bzero` (`export(c)`), `strlen` |
+| `std/runtime` | `register(panic) fn panic` |
+| `std/mem` | `Allocator`, `Heap`, kayıtlı `currentAllocator`, `free`, `setAllocator` |
+| `std/io` | `print`, `println`, `eprint`, `printInt`, `printUInt` |
+| `std/assert` | `assert!(koşul)` |
+| `std/math` | `sqrt`, `abs`, `min`, `max`, `minInt`, `maxInt` |
+| `std/sync` | `Mutex`, `Cond`, `RwLock`, `Once` ve `mutexLock/mutexUnlock/condWait/...` |
+| `std/thread` | `threadStart`, `threadJoin`, `threadDetach`, `threadId`, `threadYield`, `threadValid` |
+| `std/sched` | `spawn`, `waitAll`, `yield`, `cpu`, `park`/`wake`, `ioRead`/`ioWrite` |
+| `std/cpu` | `cpuRelax`, `stackPointer`, `cpuCount` (`import "std/cpu"`) |
+| `std/gpu` | `gpuAvailable` (yalnızca yer tutucu) |
+| `std/sys` | OS katmanı: `sysWrite`, `sysRead`, `sysExit`, `sysMap`, `sysThreadCreate`, `sysWait/sysWake`, `sysPoll*`, `sysPipe` |
+
+| OS | Durum |
+|----|-------|
+| Linux (x86_64, aarch64) | Tam: thread (`clone`), futex, epoll |
+| macOS (arm64) | Çalışır; **ham thread oluşturma yok** (`bsdthread_register` EINVAL döner): scheduler tek thread'de kooperatif çalışır; bekleme `yield` döngüsü; I/O kqueue ile |
+| Windows (x86_64) | Yazıldı, **doğrulanmadı**: NT SSN numaraları `-D ssnNtWriteFile=...` gibi verilir; thread/poll yok |

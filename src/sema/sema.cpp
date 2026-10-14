@@ -1,5 +1,7 @@
 #include "xlang/sema/sema.h"
 
+#include "xlang/sema/compilation.h"
+
 #include <algorithm>
 #include <format>
 #include <functional>
@@ -57,6 +59,14 @@ namespace {
         out += '-';
     }
     std::reverse(out.begin(), out.end());
+    return out;
+}
+
+[[nodiscard]] std::string joinDotted(const std::vector<std::string>& path) {
+    std::string out;
+    for (const std::string& p : path) {
+        out += out.empty() ? p : "." + p;
+    }
     return out;
 }
 
@@ -249,24 +259,33 @@ std::optional<Type> Sema::resolve(const Type& type) {
         return type;
     }
 
-    if (type.path.size() != 1) {
-        return type;  // `alias.Name`: needs module loading
+    std::optional<EntityRef> ref;
+    if (type.path.size() == 1) {
+        ref = lookupEntity(type.path.front());
+    } else if (type.path.size() == 2) {
+        ref = lookupQualified(type.path);
+        if (!ref && comp_ == nullptr) {
+            return type;  // standalone: `alias.Name` stays unresolved
+        }
+    } else {
+        return type;
     }
-    const std::string& name = type.path.front();
-    const Symbol* sym = find(name);
-    if (sym == nullptr) {
-        error("E0706", type.span, std::format("unknown type `{}`", name), "not declared in this module");
+    const std::string shown = joinDotted(type.path);
+    if (!ref) {
+        error("E0706", type.span, std::format("unknown type `{}`", shown), "not declared in this module");
         return std::nullopt;
     }
+    Sema& owner = *ref->owner;
     Type out = type;
-    switch (sym->kind) {
+    out.path = {ref->qname()};
+    switch (ref->sym->kind) {
     case Symbol::Kind::Struct: out.kind = TypeKind::Struct; return out;
     case Symbol::Kind::Class: out.kind = TypeKind::Class; return out;
     case Symbol::Kind::Interface: out.kind = TypeKind::Interface; return out;
     case Symbol::Kind::Enum: {
-        const auto& decl = std::get<EnumDecl>(sym->item->decl);
+        const auto& decl = std::get<EnumDecl>(ref->sym->item->decl);
         out.kind = TypeKind::Enum;
-        auto under = resolve(decl.underlying);
+        auto under = owner.resolve(decl.underlying);
         if (!under) {
             return std::nullopt;
         }
@@ -274,13 +293,12 @@ std::optional<Type> Sema::resolve(const Type& type) {
         return out;
     }
     case Symbol::Kind::Alias: {
-        if (!alias_in_progress_.insert(name).second) {
-            error("E0704", type.span, std::format("type alias `{}` refers to itself", name),
-                  "cyclic alias");
+        if (!owner.alias_in_progress_.insert(ref->local).second) {
+            error("E0704", type.span, std::format("type alias `{}` refers to itself", shown), "cyclic alias");
             return std::nullopt;
         }
-        auto target = resolve(std::get<TypeAliasDecl>(sym->item->decl).target);
-        alias_in_progress_.erase(name);
+        auto target = owner.resolve(std::get<TypeAliasDecl>(ref->sym->item->decl).target);
+        owner.alias_in_progress_.erase(ref->local);
         if (!target) {
             return std::nullopt;
         }
@@ -288,9 +306,90 @@ std::optional<Type> Sema::resolve(const Type& type) {
         return target;
     }
     default:
-        error("E0706", type.span, std::format("`{}` is not a type", name), "this name is not a type");
+        error("E0706", type.span, std::format("`{}` is not a type", shown), "this name is not a type");
         return std::nullopt;
     }
+}
+
+// ---------------------------------------------------------------------------------------------
+// Modules
+
+std::string Sema::EntityRef::qname() const {
+    return owner->qualify(local);
+}
+
+void Sema::attach(Compilation* compilation, std::string module_key) {
+    comp_ = compilation;
+    key_ = std::move(module_key);
+}
+
+void Sema::bindImport(const std::string& local_name, ImportBinding binding) {
+    imports_[local_name] = std::move(binding);
+}
+
+std::string Sema::qualify(const std::string& local) const {
+    if (key_.empty() || local == "MemoryOrder") {
+        return local;
+    }
+    return key_ + "::" + local;
+}
+
+std::optional<Sema::EntityRef> Sema::lookupEntity(const std::string& name) {
+    if (const Symbol* s = find(name)) {
+        return EntityRef{this, s, name};
+    }
+    if (const auto it = imports_.find(name); it != imports_.end() && comp_ != nullptr &&
+                                             it->second.kind == ImportBinding::Kind::Entity) {
+        if (Sema* owner = comp_->semaOf(it->second.module_key)) {
+            if (const Symbol* s = owner->find(it->second.name)) {
+                return EntityRef{owner, s, it->second.name};
+            }
+        }
+    }
+    if (comp_ != nullptr) {
+        return comp_->findRegistered(name);
+    }
+    return std::nullopt;
+}
+
+std::optional<Sema::EntityRef> Sema::lookupQualified(const std::vector<std::string>& path) {
+    if (comp_ == nullptr || path.size() != 2) {
+        return std::nullopt;
+    }
+    const auto it = imports_.find(path[0]);
+    if (it == imports_.end() || it->second.kind != ImportBinding::Kind::Namespace) {
+        return std::nullopt;
+    }
+    return comp_->exportedEntity(it->second.module_key, path[1]);
+}
+
+std::optional<Sema::EntityRef> Sema::entityByQName(const std::string& qname) {
+    const std::size_t sep = qname.rfind("::");
+    if (comp_ == nullptr) {
+        if (const Symbol* s = find(qname)) {
+            return EntityRef{this, s, qname};
+        }
+        return std::nullopt;
+    }
+    Sema* owner = comp_->semaOf(sep == std::string::npos ? std::string{} : qname.substr(0, sep));
+    if (owner == nullptr) {
+        return std::nullopt;
+    }
+    const std::string local = sep == std::string::npos ? qname : qname.substr(sep + 2);
+    if (const Symbol* s = owner->find(local)) {
+        return EntityRef{owner, s, local};
+    }
+    return std::nullopt;
+}
+
+std::optional<Sema::EntityRef> Sema::entityOfExpr(const Expr& expr) {
+    if (expr.kind == Expr::Kind::Name) {
+        return lookupEntity(expr.text);
+    }
+    if (expr.kind == Expr::Kind::Field && expr.lhs->kind == Expr::Kind::Name) {
+        return lookupQualified({expr.lhs->text, expr.text});
+    }
+    return std::nullopt;
 }
 
 std::optional<Type> Sema::exprToType(const Expr& expr) {
@@ -375,6 +474,16 @@ std::optional<ConstValue> Sema::evalConst(const Expr& expr) {
             return fromConfig(*cfg);
         }
         const Symbol* sym = find(expr.text);
+        if (sym == nullptr) {
+            if (const auto ref = lookupEntity(expr.text); ref && ref->owner != this &&
+                                                           ref->sym->kind == Symbol::Kind::Define) {
+                Expr remote;
+                remote.kind = Expr::Kind::Name;
+                remote.text = ref->local;
+                remote.span = expr.span;
+                return ref->owner->evalConst(remote);
+            }
+        }
         if (sym == nullptr || sym->kind != Symbol::Kind::Define) {
             notConstant(expr.span, std::format("`{}` is not a `define` constant", expr.text));
             return std::nullopt;
@@ -394,10 +503,18 @@ std::optional<ConstValue> Sema::evalConst(const Expr& expr) {
         return value;
     }
     case Expr::Kind::Field: {
+        if (const auto ref = entityOfExpr(*expr.lhs); ref && ref->sym->kind == Symbol::Kind::Enum) {
+            return ref->owner->enumMember(ref->local, expr.text, expr.span);
+        }
+        // `ns.name` naming a define of another module
         if (expr.lhs->kind == Expr::Kind::Name) {
-            const Symbol* sym = find(expr.lhs->text);
-            if (sym != nullptr && sym->kind == Symbol::Kind::Enum) {
-                return enumMember(expr.lhs->text, expr.text, expr.span);
+            if (const auto ref = lookupQualified({expr.lhs->text, expr.text});
+                ref && ref->sym->kind == Symbol::Kind::Define) {
+                Expr remote;
+                remote.kind = Expr::Kind::Name;
+                remote.text = ref->local;
+                remote.span = expr.span;
+                return ref->owner->evalConst(remote);
             }
         }
         notConstant(expr.span, "only enum members can be read as constants");
@@ -787,8 +904,14 @@ std::optional<TypeLayout> Sema::layoutOf(const Type& type, const Span& at) {
         return out;
     }
     case TypeKind::Struct:
-    case TypeKind::Class:
-        return layoutOfName(t.path.front(), at);
+    case TypeKind::Class: {
+        const auto ref = entityByQName(t.path.front());
+        if (!ref) {
+            error("E0706", at, std::format("unknown type `{}`", t.path.front()), "not a struct or class");
+            return std::nullopt;
+        }
+        return ref->owner->layoutOfName(ref->local, at);
+    }
     case TypeKind::Named:
         error("E0703", at, std::format("size of `{}` is unknown", typeToString(t)),
               "type comes from another module (module loading not available here)");
@@ -879,7 +1002,7 @@ std::optional<TypeLayout> Sema::aggregateLayout(const std::string& name, const I
     // Declared types without `@repr(c)`: recorded layout -> project history -> C assumption.
     if (item.modifiers.declared && !out.repr_c) {
         if (history_ != nullptr) {
-            if (const LayoutRecord* rec = history_->find(name)) {
+            if (const LayoutRecord* rec = history_->find(qualify(name))) {
                 TypeLayout recorded = rec->layout;
                 recorded.source = "record";
                 const std::string current = config_.layout_scheme.empty() ? kCurrentLayoutScheme
@@ -937,18 +1060,18 @@ std::optional<TypeLayout> Sema::aggregateLayout(const std::string& name, const I
     if (cls != nullptr) {
         out.has_vptr = std::ranges::any_of(cls->methods, [](const FnDecl& m) { return m.is_virtual; });
         if (cls->has_base) {
-            if (cls->base.size() != 1) {
-                error("E0703", base_decl.name_span, "base class from another module is not resolvable here",
-                      "module loading not available");
+            Type base_type = Type::makeNamed(cls->base);
+            base_type.span = base_decl.name_span;
+            const auto base_resolved = resolve(base_type);
+            if (!base_resolved) {
                 return std::nullopt;
             }
-            const Symbol* bsym = find(cls->base[0]);
-            if (bsym == nullptr || bsym->kind != Symbol::Kind::Class) {
-                error("E0706", base_decl.name_span, std::format("base `{}` is not a class", cls->base[0]),
+            if (base_resolved->kind != TypeKind::Class) {
+                error("E0706", base_decl.name_span, std::format("base `{}` is not a class", joinDotted(cls->base)),
                       "single inheritance needs a class base");
                 return std::nullopt;
             }
-            auto base = layoutOfName(cls->base[0], at);
+            auto base = layoutOf(*base_resolved, at);
             if (!base) {
                 return std::nullopt;
             }

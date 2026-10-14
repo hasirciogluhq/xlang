@@ -104,6 +104,20 @@ constexpr std::size_t kLeadWidth = 40;
         {"E0710", Severity::Error, "wrong number of arguments",
          "A call has a different number of arguments than the callee declares, or a `syscall` "
          "has more arguments than the target allows."},
+        {"E0711", Severity::Error, "module or imported name not found",
+         "An `import`/`export ... from` names a module that cannot be located, a path that is both "
+         "`x.xl` and `x/index.xl`, or a name the module does not export."},
+        {"E0712", Severity::Error, "invalid `virtual`/`override` use",
+         "A method marked `override` replaces nothing, replaces a method with a different "
+         "signature, re-declares an already virtual method without `override`, or hides a "
+         "virtual base method with a plain method."},
+        {"E0713", Severity::Error, "`impl` does not match its interface",
+         "An `impl Interface for Type` lacks a method of the interface, defines a method the "
+         "interface does not have, or a method has a different signature."},
+        {"E0714", Severity::Error, "code generation failed",
+         "The back end could not lower the program: an unresolved external reference, a syscall "
+         "form the target does not support, or a generated module that failed LLVM verification "
+         "(an internal error)."},
         {"W0601", Severity::Warning, "implicit signed integer to float conversion",
          "A signed integer is implicitly converted to `f32`/`f64` and precision may be lost. "
          "Write `as f64`, or silence with `@allow(W0601)` / `--allow=W0601`."},

@@ -1,8 +1,8 @@
 ## Faz 5 — Codegen kalitesi
 
-- [ ] **5.1** Alloca'lar fonksiyon entry bloğuna (`mem2reg` için).
-- [ ] **5.2** `PassBuilder` ile `buildPerModuleDefaultPipeline(level)`; `CodeGenOptLevel` bağla; `--cpu`.
-- [ ] **5.3** Syscall hedef OS ayrımı (`src/codegen/target.cpp`): compiler `syscall(nr, args...)`'ı
+- [x] **5.1** Alloca'lar fonksiyon entry bloğuna (`mem2reg` için).
+- [x] **5.2** `PassBuilder` ile `buildPerModuleDefaultPipeline(level)`; `CodeGenOptLevel` bağla; `--cpu`.
+- [x] **5.3** Syscall hedef OS ayrımı (`src/codegen/target.cpp`): compiler `syscall(nr, args...)`'ı
   hedefin (OS + arch) çağrı kuralına çevirir; hangi syscall olduğunu bilmez. **Argüman sayısı dinamiktir:**
   compiler kaç argüman verildiyse o kadarını iletir (3 verildiyse 3), eksikleri sıfırlamaz/doldurmaz.
   Her hedef için tabloda bir **en fazla argüman sayısı** vardır; kod üretilmeden önce `--target`'ın OS/arch'ına
@@ -24,16 +24,26 @@
   olarak bildirir. Linux zaten böyledir; macOS carry bayrağını set edip pozitif errno döndürdüğü için
   compiler carry set ise sonucu `-errno`'ya çevirir (dönüş değeri ABI'sidir, hangi syscall olduğunu bilmek
   gerekmez). Windows'ta NTSTATUS (`eax`) olduğu gibi dönüş değeridir, `i64`'e işaret genişletilir.
-- [ ] **5.4** Debug info (`DIBuilder`): compile unit, subprogram, satır konumları, struct/class tipleri.
-- [ ] **5.5** Pointer↔integer dönüşümleri örtük değildir; her yerde (syscall argümanları dahil) açık `as` ile yazılır. Tek istisna `syscall` argümanlarıdır: tamsayı ve `*T` doğrudan verilir, compiler çevirir (5.3).
-- [ ] **5.6** Çıktı biçimleri: `--emit=obj` (nesne), `ir` (`.ll`, `clang++` ile derlenebilir; hedef triple
+- [x] **5.4** Debug info (`DIBuilder`): compile unit, subprogram, satır konumları, struct/class tipleri.
+- [x] **5.5** Pointer↔integer dönüşümleri örtük değildir; her yerde (syscall argümanları dahil) açık `as` ile yazılır. Tek istisna `syscall` argümanlarıdır: tamsayı ve `*T` doğrudan verilir, compiler çevirir (5.3).
+- [x] **5.6** Çıktı biçimleri: `--emit=obj` (nesne), `ir` (`.ll`, `clang++` ile derlenebilir; hedef triple
   ve data layout yazılı), `bc` (bitcode). Kaynak: yalnızca LLVM Module; farklı yazıcılar. Bu çıktılar
   üretilir ve compiler orada durur (başka araç çağrılmaz).
-- [ ] **5.7** `--emit=header`: `export(c)` fonksiyonları ve `@repr(c)` tipler için `extern "C"` korumalı
+- [x] **5.7** `--emit=header`: `export(c)` fonksiyonları ve `@repr(c)` tipler için `extern "C"` korumalı
   C/C++ başlığı (`src/codegen/header.cpp`). Üretilir ve durur.
-- [ ] **5.8** `--emit=static` (`.a`/`.lib`) ve `--emit=shared` (`.so`/`.dylib`/`.dll`): compiler nesneyi
+- [x] **5.8** `--emit=static` (`.a`/`.lib`) ve `--emit=shared` (`.so`/`.dylib`/`.dll`): compiler nesneyi
   kendisi üretir, arşivleme/bağlama için hedefin arşivleyicisini/linker'ını çağırır (5.9).
-- [ ] **5.9** `--emit=exe` (**varsayılan**): nesneyi üretir, linker'ı çağırıp çalıştırılabiliri çıkarır.
+- [x] **5.9** `--emit=exe` (**varsayılan**): nesneyi üretir, linker'ı çağırıp çalıştırılabiliri çıkarır.
   Linker sürücüsü (`src/driver/link.cpp`): hedefe göre linker seçimi, `-nostdlib`/`-static` benzeri
   bayraklar (libc/libSystem/kernel32 **verilmez**), giriş sembolü; araç bulunamazsa net hata (`--emit=obj`
   önerilir). Compiler yalnızca kendi nesnesini bağlar.
+
+> **Durum notu (5.x):** `src/codegen/` (`codegen.cpp`, `emit.cpp`, `header.cpp`) ve `src/driver/link.cpp`.
+> Skalerler SSA, aggregate'ler (struct/class/dizi/interface) bellekte ve adresle taşınır; aggregate
+> argümanlar çağıranın kopyası olarak işaretçiyle geçer, aggregate dönüş `sret`. Tüm fonksiyonlar
+> `no-builtins` + `frame-pointer=all` taşır (stdlib'in `memcpy` döngüleri `memcpy`'ye dönüşmesin, bağlam
+> değişimi çerçeve düzenine güvenebilsin). Syscall hedefe göre inline asm'dir (5.3 tablosu); Windows'ta 4'ten
+> fazla argüman henüz hata verir. Giriş noktası `_start` (Windows: `mainCRTStartup`) modül asm'idir.
+> Debug info (5.4): compile unit, subprogram, satır konumları, temel tipler; struct/class tipleri henüz yok.
+> Bağlayıcı: macOS `ld64.lld`, Linux `ld.lld`/`ld`, Windows `lld-link`; libc/libSystem/kernel32 verilmez.
+> `--emit=static` süreç içi arşivleyici (`llvm::writeArchive`) kullanır.

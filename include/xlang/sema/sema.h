@@ -15,6 +15,7 @@
 namespace xlang {
 
 class Lowerer;
+class Compilation;
 
 using Int128 = __int128;
 
@@ -71,13 +72,50 @@ public:
 
     [[nodiscard]] const BuildConfig& config() const { return config_; }
 
-private:
-    friend class Lowerer;
+    // --- module awareness (plan 4.6); a standalone Sema has no compilation and resolves imports
+    // --- as external names.
 
     struct Symbol {
         enum class Kind { Struct, Class, Interface, Enum, Alias, Define, Global, Fn, Macro } kind;
         const Item* item{nullptr};
     };
+
+    /// An import binding made by the compilation: a name that stands for an entity of another
+    /// module, or a whole module (`import "m" as a`).
+    struct ImportBinding {
+        enum class Kind { Entity, Namespace } kind{Kind::Entity};
+        std::string module_key;  ///< defining module (Entity) / the module itself (Namespace)
+        std::string name;        ///< Entity: name inside that module
+        Span span;
+    };
+
+    /// An entity found through scopes: the module that owns it and its local name there.
+    struct EntityRef {
+        Sema* owner{nullptr};
+        const Symbol* sym{nullptr};
+        std::string local;
+        [[nodiscard]] std::string qname() const;
+    };
+
+    void attach(Compilation* compilation, std::string module_key);
+    void bindImport(const std::string& local_name, ImportBinding binding);
+    [[nodiscard]] const std::map<std::string, ImportBinding>& imports() const { return imports_; }
+    [[nodiscard]] const std::string& moduleKey() const { return key_; }
+    [[nodiscard]] Compilation* compilation() const { return comp_; }
+    [[nodiscard]] const Program& program() const { return program_; }
+    /// `key::name` for imported modules, plain `name` for the root module and builtins.
+    [[nodiscard]] std::string qualify(const std::string& local) const;
+    /// Local definition, import, or registered global, in that order.
+    [[nodiscard]] std::optional<EntityRef> lookupEntity(const std::string& name);
+    /// `ns.Name`
+    [[nodiscard]] std::optional<EntityRef> lookupQualified(const std::vector<std::string>& path);
+    /// By qualified name (as stored in resolved types).
+    [[nodiscard]] std::optional<EntityRef> entityByQName(const std::string& qname);
+    [[nodiscard]] const Symbol* findLocal(const std::string& name) const { return find(name); }
+
+private:
+    friend class Lowerer;
+    friend class Compilation;
 
     void collect();
     void checkType(const Type& type, const Span& at);
@@ -90,6 +128,7 @@ private:
 
     [[nodiscard]] const Symbol* find(const std::string& name) const;
     [[nodiscard]] std::optional<Type> exprToType(const Expr& expr);
+    [[nodiscard]] std::optional<EntityRef> entityOfExpr(const Expr& expr);
     [[nodiscard]] std::optional<ConstValue> evalBinary(const Expr& expr);
     [[nodiscard]] std::optional<ConstValue> evalCast(const Expr& expr);
     [[nodiscard]] std::optional<ConstValue> evalCall(const Expr& expr);
@@ -116,6 +155,9 @@ private:
     std::map<std::string, std::vector<std::optional<ConstValue>>> enum_values_;
     std::set<std::string> enum_in_progress_;
     std::set<std::string> reported_;  ///< dedup key for repeated diagnostics
+    Compilation* comp_{nullptr};
+    std::string key_;
+    std::map<std::string, ImportBinding> imports_;
 };
 
 }  // namespace xlang

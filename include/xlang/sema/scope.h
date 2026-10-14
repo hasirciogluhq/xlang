@@ -10,6 +10,8 @@
 
 namespace xlang {
 
+class Sema;
+
 enum class ScopeKind { Module, Function, Block };
 
 /// What a name is bound to (plan 4.1). `Namespace` is `import "m" as a` / `import * as a`;
@@ -22,7 +24,9 @@ struct ScopeEntry {
     Span span;                       ///< where the name was bound
     std::uint32_t local{0};          ///< Local: index into the function's locals
     const Item* item{nullptr};       ///< Global/Function/Constant/Type: the declaration
-    std::string module;              ///< Namespace/External: module path as written
+    std::string module;              ///< Namespace: module key; External: module path as written
+    Sema* owner{nullptr};            ///< module that owns the declaration (item)
+    std::string qname;               ///< qualified name of the entity
     std::string member;              ///< External: name inside `module` (empty for a whole module)
 };
 

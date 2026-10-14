@@ -1,0 +1,176 @@
+// Linux: raw syscalls. Numbers differ per architecture.
+#if arch == "x86_64"
+define SYS_READ = 0
+define SYS_WRITE = 1
+define SYS_MMAP = 9
+define SYS_MUNMAP = 11
+define SYS_SCHED_YIELD = 24
+define SYS_NANOSLEEP = 35
+define SYS_CLONE = 56
+define SYS_EXIT = 60
+define SYS_FUTEX = 202
+define SYS_EXIT_GROUP = 231
+define SYS_GETTID = 186
+define SYS_EPOLL_CREATE1 = 291
+define SYS_EPOLL_CTL = 233
+define SYS_EPOLL_WAIT = 232
+#elif arch == "aarch64"
+define SYS_READ = 63
+define SYS_WRITE = 64
+define SYS_MMAP = 222
+define SYS_MUNMAP = 215
+define SYS_SCHED_YIELD = 124
+define SYS_NANOSLEEP = 101
+define SYS_CLONE = 220
+define SYS_EXIT = 93
+define SYS_FUTEX = 98
+define SYS_EXIT_GROUP = 94
+define SYS_GETTID = 178
+define SYS_EPOLL_CREATE1 = 20
+define SYS_EPOLL_CTL = 21
+define SYS_EPOLL_WAIT = 22
+#endif
+
+#if arch == "x86_64"
+define SYS_PIPE2 = 293
+define EPOLL_DATA_OFFSET = 4       // struct epoll_event is packed on x86_64
+define EPOLL_STRIDE = 12
+#else
+define SYS_PIPE2 = 59
+define EPOLL_DATA_OFFSET = 8
+define EPOLL_STRIDE = 16
+#endif
+
+define EPOLL_CTL_ADD = 1
+define EPOLL_CTL_MOD = 3
+define EPOLLIN = 1
+define EPOLLOUT = 4
+define EPOLLONESHOT = 1073741824
+define O_NONBLOCK = 2048
+
+define PROT_READ_WRITE = 3
+define MAP_PRIVATE_ANON = 34        // MAP_PRIVATE | MAP_ANONYMOUS
+// Plain (non-private) futex operations: the kernel's CLONE_CHILD_CLEARTID wake-up at thread exit
+// uses the shared key, so waiters on a thread's `ctid` must use the same one.
+define FUTEX_WAIT = 0
+define FUTEX_WAKE = 1
+
+export fn sysWrite(fd: i32, buf: *ui8, n: usize) -> isize {
+    return syscall(SYS_WRITE, fd, buf, n) as isize
+}
+
+export fn sysRead(fd: i32, buf: *ui8, n: usize) -> isize {
+    return syscall(SYS_READ, fd, buf, n) as isize
+}
+
+export fn sysExit(code: i32) {
+    syscall(SYS_EXIT_GROUP, code)
+}
+
+/// Anonymous read/write pages; nil on failure.
+export fn sysMap(size: usize) -> *void {
+    local r: i64 = syscall(SYS_MMAP, 0, size, PROT_READ_WRITE, MAP_PRIVATE_ANON, -1, 0)
+    if r < 0 && r > -4096 { return nil }
+    return r as *void
+}
+
+export fn sysUnmap(p: *void, size: usize) {
+    syscall(SYS_MUNMAP, p, size)
+}
+
+export fn sysYield() {
+    syscall(SYS_SCHED_YIELD)
+}
+
+export fn sysThreadId() -> i64 {
+    return syscall(SYS_GETTID)
+}
+
+/// Blocks while `*addr == expected` (futex wait); returns when woken or the value differs.
+export fn sysWait(addr: *ui32, expected: ui32) {
+    syscall(SYS_FUTEX, addr, FUTEX_WAIT, expected, 0, 0, 0)
+}
+
+/// Wakes up to `count` waiters on `addr`.
+export fn sysWake(addr: *ui32, count: i32) {
+    syscall(SYS_FUTEX, addr, FUTEX_WAKE, count, 0, 0, 0)
+}
+
+/// Starts a thread running `entry(arg)` on `stack` (top at `stack + size`); the child exits when
+/// `entry` returns. Returns the thread id or a negative errno.
+export fn sysThreadCreate(entry: fn(*void), arg: *void, stack: *void, size: usize, ctid: *ui32) -> i64 {
+    // The child finds `entry` and `arg` at the top of its stack.
+    local top: *usize = ((stack as usize) + size - 16) as *usize
+    top[0] = entry as usize
+    top[1] = arg as usize
+    // CLONE_VM|FS|FILES|SIGHAND|THREAD|SYSVSEM|CHILD_CLEARTID: the kernel zeroes `*ctid` and wakes
+    // its futex waiters when the thread has fully exited (so its stack can be released).
+    local flags: usize = 2428672
+    local ret: i64 = 0
+#if arch == "x86_64"
+    __builtin_asm("syscall\ntest rax, rax\njnz 2f\npop rax\npop rdi\ncall rax\nmov eax, 60\nxor edi, edi\nsyscall\n2:",
+                  in("rax") SYS_CLONE as i64, in("rdi") flags, in("rsi") top, in("rdx") 0, in("r10") ctid, in("r8") 0,
+                  out("rax") ret, clobber("rcx"), clobber("r11"))
+#elif arch == "aarch64"
+    __builtin_asm("svc #0\ncbnz x0, 2f\nldp x1, x0, [sp], #16\nblr x1\nmov x8, #93\nmov x0, #0\nsvc #0\n2:",
+                  in("x8") SYS_CLONE as i64, in("x0") flags, in("x1") top, in("x2") 0, in("x3") 0, in("x4") ctid,
+                  out("x0") ret)
+#endif
+    return ret
+}
+
+/// Releases a joined thread's stack (the thread has fully exited).
+export fn sysThreadRelease(stack: *void, size: usize) {
+    syscall(SYS_MUNMAP, stack, size)
+}
+
+// ---- readiness polling (epoll) -----------------------------------------------------------
+
+/// A poll set; negative errno on failure.
+export fn sysPollCreate() -> i32 {
+    return syscall(SYS_EPOLL_CREATE1, 0) as i32
+}
+
+/// Watches `fd` once for readability/writability; `token` comes back from `sysPollWait`.
+export fn sysPollWatch(pfd: i32, fd: i32, write: bool, token: usize) -> i32 {
+    local ev: [ui8; 16]
+    local i: i32 = 0
+    while i < 16 {
+        ev[i as usize] = 0
+        i = i + 1
+    }
+    local events: ui32 = EPOLLIN
+    if write { events = EPOLLOUT }
+    events = events + EPOLLONESHOT
+    local ep: *ui32 = &ev[0] as *ui32
+    ep[0] = events
+    local data: *usize = (&ev[0] as usize + EPOLL_DATA_OFFSET) as *usize
+    data[0] = token
+    local r: i64 = syscall(SYS_EPOLL_CTL, pfd, EPOLL_CTL_MOD, fd, &ev[0])
+    if r == -2 {
+        r = syscall(SYS_EPOLL_CTL, pfd, EPOLL_CTL_ADD, fd, &ev[0])
+    }
+    return r as i32
+}
+
+/// Waits (up to `timeoutMs`, -1 = forever) and stores the tokens of ready watches; returns how many.
+export fn sysPollWait(pfd: i32, tokens: *usize, max: i32, timeoutMs: i32) -> i32 {
+    if max > 32 { max = 32 }
+    local buf: [ui8; 512]
+    local n: i64 = syscall(SYS_EPOLL_WAIT, pfd, &buf[0], max, timeoutMs, 0, 0)
+    if n <= 0 { return 0 }
+    local i: i32 = 0
+    while i < n as i32 {
+        local data: *usize = (&buf[0] as usize + (i as usize) * EPOLL_STRIDE + EPOLL_DATA_OFFSET) as *usize
+        tokens[i as usize] = data[0]
+        i = i + 1
+    }
+    return n as i32
+}
+
+/// A pipe: `fds[0]` reads, `fds[1]` writes. 0 on success.
+export fn sysPipe(fds: *i32, nonblocking: bool) -> i32 {
+    local flags: i32 = 0
+    if nonblocking { flags = O_NONBLOCK }
+    return syscall(SYS_PIPE2, fds, flags) as i32
+}

@@ -1,0 +1,94 @@
+// std/memory: the C memory routines, written in xl (no libc). They are exported with their C
+// names because LLVM emits implicit calls to them (aggregate copies, zero fills).
+
+export(c) fn memcpy(dst: *void, src: *void, n: usize) -> *void {
+    local d: *ui8 = dst as *ui8
+    local s: *ui8 = src as *ui8
+    local i: usize = 0
+    if (d as usize) % 8 == 0 && (s as usize) % 8 == 0 {
+        local dw: *ui64 = dst as *ui64
+        local sw: *ui64 = src as *ui64
+        local words: usize = n / 8
+        local w: usize = 0
+        while w < words {
+            dw[w] = sw[w]
+            w = w + 1
+        }
+        i = words * 8
+    }
+    while i < n {
+        d[i] = s[i]
+        i = i + 1
+    }
+    return dst
+}
+
+export(c) fn memmove(dst: *void, src: *void, n: usize) -> *void {
+    local d: *ui8 = dst as *ui8
+    local s: *ui8 = src as *ui8
+    if (d as usize) <= (s as usize) {
+        local i: usize = 0
+        while i < n {
+            d[i] = s[i]
+            i = i + 1
+        }
+    } else {
+        local j: usize = n
+        while j > 0 {
+            j = j - 1
+            d[j] = s[j]
+        }
+    }
+    return dst
+}
+
+export(c) fn memset(dst: *void, value: i32, n: usize) -> *void {
+    local d: *ui8 = dst as *ui8
+    local b: ui8 = (value as ui32) as ui8
+    local i: usize = 0
+    if (d as usize) % 8 == 0 && n >= 8 {
+        local dw: *ui64 = dst as *ui64
+        local word: ui64 = b as ui64
+        word = word * 72340172838076673     // 0x0101010101010101 replicates the byte
+        local words: usize = n / 8
+        local w: usize = 0
+        while w < words {
+            dw[w] = word
+            w = w + 1
+        }
+        i = words * 8
+    }
+    while i < n {
+        d[i] = b
+        i = i + 1
+    }
+    return dst
+}
+
+/// LLVM lowers zero fills to `bzero` on Darwin targets.
+export(c) fn bzero(dst: *void, n: usize) {
+    memset(dst, 0, n)
+}
+
+export(c) fn memcmp(a: *void, b: *void, n: usize) -> i32 {
+    local x: *ui8 = a as *ui8
+    local y: *ui8 = b as *ui8
+    local i: usize = 0
+    while i < n {
+        if x[i] != y[i] {
+            if x[i] < y[i] { return -1 }
+            return 1
+        }
+        i = i + 1
+    }
+    return 0
+}
+
+/// Length of a NUL-terminated string.
+export fn strlen(s: *ui8) -> usize {
+    local n: usize = 0
+    while s[n] != 0 {
+        n = n + 1
+    }
+    return n
+}

@@ -1,0 +1,11 @@
+// std/runtime: the registered `panic` (plan 7.2b). The compiler's failure paths (division by
+// zero, array bounds) call it; user code can call it too.
+from "sys" import sysWrite, sysExit
+from "memory" import strlen
+
+register(panic) fn panic(msg: *ui8) {
+    sysWrite(2, "panic: ", 7)
+    sysWrite(2, msg, strlen(msg))
+    sysWrite(2, "\n", 1)
+    sysExit(134)
+}

@@ -1,0 +1,120 @@
+// std/thread: OS threads on the raw syscalls of `std/sys` (plan 7.3). A thread's stack is mapped
+// with `sysMap`; the kernel clears `ctid` when the thread has fully exited, which is what
+// `threadJoin` waits for before the stack is released.
+from "sys" import sysMap, sysUnmap, sysThreadCreate, sysThreadRelease, sysThreadId, sysWait, sysWake, sysYield
+from "mem" import Heap
+from "sync" import Mutex, mutexLock, mutexUnlock
+from "runtime" import panic
+
+define STACK_SIZE = 262144
+
+struct ThreadCtx {
+    entry: fn(*void)
+    arg: *void
+    stack: *void
+    stackSize: usize
+    tid: ui32          // non-zero while the thread runs
+    detached: ui32
+    next: *ThreadCtx   // zombie list link (detached threads)
+}
+
+export struct Thread {
+    ctx: *ThreadCtx
+}
+
+global heap: Heap
+global zombieLock: Mutex
+global zombies: *ThreadCtx
+
+fn release(c: *ThreadCtx) {
+    sysThreadRelease(c.stack, c.stackSize)
+    heap.free(c as *void)
+}
+
+/// Frees the resources of detached threads that have exited.
+fn reap() {
+    mutexLock(&zombieLock)
+    local prev: *ThreadCtx = nil
+    local cur: *ThreadCtx = zombies
+    while cur != nil {
+        local next: *ThreadCtx = cur.next
+        if __builtin_atomicLoad(&cur.tid, MemoryOrder.acquire) == 0 {
+            if prev == nil { zombies = next } else { prev.next = next }
+            release(cur)
+        } else {
+            prev = cur
+        }
+        cur = next
+    }
+    mutexUnlock(&zombieLock)
+}
+
+fn threadMain(p: *void) {
+    local c: *ThreadCtx = p as *ThreadCtx
+    c.entry(c.arg)
+}
+
+/// Starts `entry(arg)` on a new OS thread.
+export fn threadStart(entry: fn(*void), arg: *void) -> Thread {
+    reap()
+    local t: Thread = Thread { ctx: nil }
+    local c: *ThreadCtx = heap.alloc(sizeOf(ThreadCtx), alignOf(ThreadCtx)) as *ThreadCtx
+    if c == nil { return t }
+    local stack: *void = sysMap(STACK_SIZE)
+    if stack == nil {
+        heap.free(c as *void)
+        return t
+    }
+    c.entry = entry
+    c.arg = arg
+    c.stack = stack
+    c.stackSize = STACK_SIZE
+    c.tid = 1
+    c.detached = 0
+    c.next = nil
+    local r: i64 = sysThreadCreate(threadMain, c as *void, stack, STACK_SIZE, &c.tid)
+    if r < 0 {
+        sysUnmap(stack, STACK_SIZE)
+        heap.free(c as *void)
+        return t
+    }
+    t.ctx = c
+    return t
+}
+
+/// True when `t` refers to a started thread.
+export fn threadValid(t: Thread) -> bool {
+    return t.ctx != nil
+}
+
+/// Waits for the thread to exit and releases its resources.
+export fn threadJoin(t: Thread) {
+    local c: *ThreadCtx = t.ctx
+    if c == nil { return }
+    local v: ui32 = __builtin_atomicLoad(&c.tid, MemoryOrder.acquire)
+    while v != 0 {
+        sysWait(&c.tid, v)
+        v = __builtin_atomicLoad(&c.tid, MemoryOrder.acquire)
+    }
+    release(c)
+}
+
+/// The thread cleans up after itself; its resources are released lazily.
+export fn threadDetach(t: Thread) {
+    local c: *ThreadCtx = t.ctx
+    if c == nil { return }
+    mutexLock(&zombieLock)
+    c.detached = 1
+    c.next = zombies
+    zombies = c
+    mutexUnlock(&zombieLock)
+}
+
+/// OS thread id of the calling thread.
+export fn threadId() -> i64 {
+    return sysThreadId()
+}
+
+export fn threadYield() {
+    sysYield()
+}

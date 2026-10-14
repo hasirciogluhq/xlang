@@ -1,0 +1,33 @@
+// Threads + mutex + condition variable on raw syscalls.
+from "std" import println, printInt, assert, Mutex, mutexLock, mutexUnlock, threadStart, threadJoin, Thread, free
+
+global counter: i64 = 0
+global atomicCounter: ui32 = 0
+global lock: Mutex
+
+fn worker(arg: *void) {
+    local i: i32 = 0
+    while i < 10000 {
+        mutexLock(&lock)
+        counter = counter + 1
+        mutexUnlock(&lock)
+        __builtin_atomicAdd(&atomicCounter, 1, MemoryOrder.seqCst)
+        i = i + 1
+    }
+}
+
+fn main() -> i32 {
+    local t0: Thread = threadStart(worker, nil)
+    local t1: Thread = threadStart(worker, nil)
+    local t2: Thread = threadStart(worker, nil)
+    local t3: Thread = threadStart(worker, nil)
+    threadJoin(t0)
+    threadJoin(t1)
+    threadJoin(t2)
+    threadJoin(t3)
+    printInt(counter)
+    println("")
+    assert!(counter == 40000)
+    assert!(atomicCounter == 40000)
+    return 0
+}
