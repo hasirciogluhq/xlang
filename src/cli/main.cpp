@@ -27,6 +27,15 @@
 
 namespace {
 
+/// `@library("x")` imports of the program, for the Windows linker step.
+void collectImports(const xlang::hir::Module& module, xlang::codegen::LinkRequest& req) {
+    for (const auto& f : module.functions) {
+        if (f.declared && !f.import_library.empty()) {
+            req.imports.emplace_back(f.import_library, f.symbol);
+        }
+    }
+}
+
 struct DiagCliOptions {
     std::vector<std::string> allow;
     std::vector<std::string> deny;
@@ -550,6 +559,7 @@ int main(int argc, char** argv) {
                             req.kind = emit == "shared" ? xlang::codegen::LinkKind::Shared
                                                         : xlang::codegen::LinkKind::Executable;
                             req.config = &config;
+                            collectImports(module, req);
                             xlang::codegen::link(req);
                         }
                     }
@@ -582,6 +592,7 @@ int main(int argc, char** argv) {
                                                    ? xlang::codegen::LinkKind::Shared
                                                    : xlang::codegen::LinkKind::Executable;
                                     req.config = &config;
+                                    collectImports(module, req);
                                     xlang::codegen::link(req);
                                 }
                             } catch (...) {

@@ -136,6 +136,7 @@ struct Function {
     bool exported{false};
     bool export_c{false};
     bool declared{false};
+    std::string import_library;  ///< `@library("name")` on a `declare fn`: the OS library it is imported from
     bool registered{false};
     std::string register_role;
     bool is_virtual{false};

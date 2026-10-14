@@ -596,7 +596,8 @@ hir::Module Compilation::lowerAll() {
         diag_.report(std::move(d));
     };
     for (const hir::Function& f : out.functions) {
-        if (f.declared && !defined.contains(f.symbol)) {
+        // A `@library` import is resolved by the OS library, not by another object.
+        if (f.declared && f.import_library.empty() && !defined.contains(f.symbol)) {
             warn(f.symbol, f.span, "function");
         }
     }

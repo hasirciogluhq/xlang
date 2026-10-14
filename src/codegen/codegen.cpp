@@ -1753,9 +1753,19 @@ void Gen::emitEntry() {
         }
         text += "\tmov x16, #1\n\tsvc #0x80\n";
     } else if (t.os == "windows") {
-        // The exit syscall number (SSN) is not known to the compiler (plan 5.3): the entry calls
-        // `main` and traps; the stdlib's own startup is expected to exit the process.
-        text = ".text\n.globl mainCRTStartup\nmainCRTStartup:\n\tsubq $40, %rsp\n\tcall " + sym + "\n\tint3\n";
+        // The process ends through ntdll's `NtTerminateProcess` (the linker driver always imports
+        // it for Windows executables): its exit status is `main`'s result, or 0 for a void `main`.
+        text = ".text\n.globl mainCRTStartup\nmainCRTStartup:\n\tsubq $40, %rsp\n\tcall " + sym + "\n";
+        text += returns_int ? "\tmovl %eax, %edx\n" : "\txorl %edx, %edx\n";
+        text += "\tmovq $-1, %rcx\n\tcall NtTerminateProcess\n\tint3\n";
+        // Without a C runtime nothing else defines the stack probe LLVM calls for frames over 4 KiB
+        // (it touches every page so the guard page extends the stack) nor the marker MSVC-style
+        // object code references when floating point appears.
+        text += ".globl __chkstk\n__chkstk:\n\tpushq %rcx\n\tpushq %rax\n\tcmpq $0x1000, %rax\n"
+                "\tleaq 24(%rsp), %rcx\n\tjb 2f\n1:\n\tsubq $0x1000, %rcx\n\ttestq %rcx, (%rcx)\n"
+                "\tsubq $0x1000, %rax\n\tcmpq $0x1000, %rax\n\tja 1b\n2:\n\tsubq %rax, %rcx\n"
+                "\ttestq %rcx, (%rcx)\n\tpopq %rax\n\tpopq %rcx\n\tret\n";
+        text += ".data\n.globl _fltused\n_fltused:\n\t.long 0\n";
     } else {
         return;
     }

@@ -1,44 +1,128 @@
-// Windows: NT system calls. The system service numbers (SSN) vary between Windows versions and
-// are selected with `-D` (plan 5.3): `-D ssnNtWriteFile=...`, `-D ssnNtTerminateProcess=...`,
-// `-D ssnNtAllocateVirtualMemory=...`, `-D ssnNtFreeVirtualMemory=...`.
-define STDOUT_HANDLE = -11
+// Windows: the NT native API. Windows has no stable system call numbers (they change between builds),
+// so the stable boundary is ntdll.dll's `Nt*` exports, which are the system calls themselves; they are
+// imported with `@library`. Where the OS offers no stable kernel interface (sockets, entropy) the
+// documented user-mode library is used instead: ws2_32 and bcrypt. No C runtime is involved.
+//
+// A file/socket "fd" is the kernel handle's low 32 bits (kernel handle values are 32-bit safe). Socket
+// fds carry bit 30 so `sysRead`/`sysWrite`/`sysClose` can tell them from file handles without a table.
+define SOCKET_TAG = 1073741824
 define CURRENT_PROCESS = -1
+define STATUS_PENDING = 0x103
+define STATUS_END_OF_FILE = 0xC0000011
+define STATUS_PIPE_BROKEN = 0xC000014B
+
+@library("ntdll") declare fn NtWriteFile(h: i64, event: i64, apc: *void, apcCtx: *void, iosb: *i64, buf: *ui8, len: ui32, offset: *i64, key: *ui32) -> i32
+@library("ntdll") declare fn NtReadFile(h: i64, event: i64, apc: *void, apcCtx: *void, iosb: *i64, buf: *ui8, len: ui32, offset: *i64, key: *ui32) -> i32
+@library("ntdll") declare fn NtCreateFile(h: *i64, access: ui32, attrs: *ui64, iosb: *i64, alloc: *i64, fileAttrs: ui32, share: ui32, disposition: ui32, options: ui32, ea: *void, eaLen: ui32) -> i32
+@library("ntdll") declare fn NtDeleteFile(attrs: *ui64) -> i32
+@library("ntdll") declare fn NtClose(h: i64) -> i32
+@library("ntdll") declare fn NtQueryInformationFile(h: i64, iosb: *i64, info: *void, len: ui32, infoClass: ui32) -> i32
+@library("ntdll") declare fn NtWaitForSingleObject(h: i64, alertable: ui8, timeout: *i64) -> i32
+@library("ntdll") declare fn NtTerminateProcess(process: i64, status: i32) -> i32
+@library("ntdll") declare fn NtAllocateVirtualMemory(process: i64, base: **void, zeroBits: usize, size: *usize, allocType: ui32, protect: ui32) -> i32
+@library("ntdll") declare fn NtFreeVirtualMemory(process: i64, base: **void, size: *usize, freeType: ui32) -> i32
+@library("ntdll") declare fn NtYieldExecution() -> i32
+@library("ntdll") declare fn RtlDosPathNameToNtPathName_U(dos: *ui16, nt: *ui64, part: *void, relative: *void) -> ui8
+@library("ntdll") declare fn RtlFreeUnicodeString(s: *ui64)
+
+@library("kernel32") declare fn GetStdHandle(which: i32) -> i64
+
+@library("ws2_32") declare fn WSAStartup(version: ui16, data: *ui8) -> i32
+@library("ws2_32") declare fn socket(af: i32, kind: i32, proto: i32) -> ui64
+@library("ws2_32") declare fn connect(s: ui64, addr: *ui8, len: i32) -> i32
+@library("ws2_32") declare fn bind(s: ui64, addr: *ui8, len: i32) -> i32
+@library("ws2_32") declare fn listen(s: ui64, backlog: i32) -> i32
+@library("ws2_32") declare fn accept(s: ui64, addr: *ui8, len: *i32) -> ui64
+@library("ws2_32") declare fn recv(s: ui64, buf: *ui8, len: i32, flags: i32) -> i32
+@library("ws2_32") declare fn send(s: ui64, buf: *ui8, len: i32, flags: i32) -> i32
+@library("ws2_32") declare fn closesocket(s: ui64) -> i32
+@library("ws2_32") declare fn setsockopt(s: ui64, level: i32, name: i32, value: *ui8, len: i32) -> i32
+
+@library("bcrypt") declare fn BCryptGenRandom(alg: *void, buf: *ui8, len: ui32, flags: ui32) -> i32
 
 global ioStatus: [i64; 2]
+global wsaReady: bool
+
+fn stdHandle(fd: i32) -> i64 {
+    if fd == 0 { return GetStdHandle(-10) }
+    if fd == 1 { return GetStdHandle(-11) }
+    if fd == 2 { return GetStdHandle(-12) }
+    return fd as i64
+}
+
+fn isSocket(fd: i32) -> bool {
+    return fd >= 0 && (fd & SOCKET_TAG) != 0
+}
+
+fn socketOf(fd: i32) -> ui64 {
+    return (fd & (SOCKET_TAG - 1)) as ui64
+}
+
+/// Waits for a pending synchronous request and returns the final status.
+fn finish(h: i64, status: i32, iosb: *i64) -> i32 {
+    if status == STATUS_PENDING {
+        NtWaitForSingleObject(h, 0, nil)
+        return iosb[0] as i32
+    }
+    return status
+}
 
 export fn sysWrite(fd: i32, buf: *ui8, n: usize) -> isize {
-    // NtWriteFile(handle, event, apc, apcCtx, ioStatus, buffer, length, byteOffset, key)
-    local handle: i64 = fd as i64
-    if fd == 1 { handle = STDOUT_HANDLE as i64 }
-    local status: i64 = syscall(ssnNtWriteFile, handle, 0, 0, 0, &ioStatus[0], buf, n, 0, 0)
-    if status < 0 { return -1 }
-    return n as isize
+    if isSocket(fd) {
+        local len: i32 = n as i32
+        if n > 1073741824 { len = 1073741824 }
+        local w: i32 = send(socketOf(fd), buf, len, 0)
+        if w < 0 { return -1 }
+        return w as isize
+    }
+    local h: i64 = stdHandle(fd)
+    local io: [i64; 2]
+    local len: ui32 = n as ui32
+    if n > 1073741824 { len = 1073741824 }
+    local st: i32 = finish(h, NtWriteFile(h, 0, nil, nil, &io[0], buf, len, nil, nil), &io[0])
+    if st < 0 { return -1 }
+    return io[1] as isize
 }
 
 export fn sysRead(fd: i32, buf: *ui8, n: usize) -> isize {
-    return -1
+    if isSocket(fd) {
+        local len: i32 = n as i32
+        if n > 1073741824 { len = 1073741824 }
+        local r: i32 = recv(socketOf(fd), buf, len, 0)
+        if r < 0 { return -1 }
+        return r as isize
+    }
+    local h: i64 = stdHandle(fd)
+    local io: [i64; 2]
+    local len: ui32 = n as ui32
+    if n > 1073741824 { len = 1073741824 }
+    local st: i32 = finish(h, NtReadFile(h, 0, nil, nil, &io[0], buf, len, nil, nil), &io[0])
+    if st == (STATUS_END_OF_FILE as i32) || st == (STATUS_PIPE_BROKEN as i32) { return 0 }
+    if st < 0 { return -1 }
+    return io[1] as isize
 }
 
 export fn sysExit(code: i32) {
-    syscall(ssnNtTerminateProcess, CURRENT_PROCESS as i64, code as i64)
+    NtTerminateProcess(CURRENT_PROCESS as i64, code)
 }
 
 export fn sysMap(size: usize) -> *void {
     local base: *void = nil
     local region: usize = size
-    // NtAllocateVirtualMemory(process, &base, zeroBits, &size, MEM_COMMIT|MEM_RESERVE, PAGE_READWRITE)
-    local status: i64 = syscall(ssnNtAllocateVirtualMemory, CURRENT_PROCESS as i64, &base, 0, &region, 12288, 4)
-    if status < 0 { return nil }
+    // MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE
+    local st: i32 = NtAllocateVirtualMemory(CURRENT_PROCESS as i64, &base, 0, &region, 12288, 4)
+    if st < 0 { return nil }
     return base
 }
 
 export fn sysUnmap(p: *void, size: usize) {
     local base: *void = p
     local region: usize = 0
-    syscall(ssnNtFreeVirtualMemory, CURRENT_PROCESS as i64, &base, &region, 32768)
+    NtFreeVirtualMemory(CURRENT_PROCESS as i64, &base, &region, 32768)   // MEM_RELEASE
 }
 
 export fn sysYield() {
+    NtYieldExecution()
 }
 
 export fn sysThreadId() -> i64 {
@@ -55,8 +139,9 @@ export fn sysWait(addr: *ui32, expected: ui32) {
 export fn sysWake(addr: *ui32, count: i32) {
 }
 
+// Threads need `NtCreateThreadEx` plus a futex-like wait (WaitOnAddress); not done yet, the scheduler
+// stays on one thread like macOS (see KNOWN-LIMITATIONS.md).
 export fn sysThreadCreate(entry: fn(*void), arg: *void, stack: *void, size: usize, ctid: *ui32) -> i64 {
-    // NtCreateThreadEx needs the SSN of the running Windows version (`-D ssnNtCreateThreadEx`).
     return -1
 }
 
@@ -64,7 +149,7 @@ export fn sysThreadRelease(stack: *void, size: usize) {
     sysUnmap(stack, size)
 }
 
-// Readiness polling is not available on Windows yet (IOCP needs `NtCreateIoCompletion` ...).
+// Readiness polling (IOCP / AFD poll) is not available yet.
 export fn sysPollCreate() -> i32 {
     return -1
 }
@@ -81,57 +166,196 @@ export fn sysPipe(fds: *i32, nonblocking: bool) -> i32 {
     return -1
 }
 
-// ---- files and sockets: not implemented on Windows (needs NT system service numbers) ------------
+// ---- files ---------------------------------------------------------------------------------------
+
+/// UTF-8 (ASCII-oriented: bytes >= 0x80 are widened as Latin-1) -> UTF-16, `/` becomes `\`. false if too long.
+fn widen(path: *ui8, out: *ui16, cap: usize) -> bool {
+    local i: usize = 0
+    while path[i] != 0 {
+        if i + 1 >= cap { return false }
+        local c: ui16 = path[i] as ui16
+        if c == 47 { c = 92 }
+        out[i] = c
+        i = i + 1
+    }
+    out[i] = 0
+    return true
+}
+
+/// NtCreateFile on a DOS path. `access`/`disposition`/`options` as in the NT API; -1 on failure.
+fn createFile(path: *ui8, access: ui32, disposition: ui32, options: ui32) -> i32 {
+    local wide: [ui16; 520]
+    if !widen(path, &wide[0], 520) { return -1 }
+    local name: [ui64; 2]
+    if RtlDosPathNameToNtPathName_U(&wide[0], &name[0], nil, nil) == 0 { return -1 }
+    local oa: [ui64; 6]
+    oa[0] = 48
+    oa[1] = 0
+    oa[2] = &name[0] as ui64
+    oa[3] = 64                  // OBJ_CASE_INSENSITIVE
+    oa[4] = 0
+    oa[5] = 0
+    local h: i64 = 0
+    local io: [i64; 2]
+    // share read|write|delete, FILE_ATTRIBUTE_NORMAL
+    local st: i32 = NtCreateFile(&h, access, &oa[0], &io[0], nil, 128, 7, disposition, options, nil, 0)
+    RtlFreeUnicodeString(&name[0])
+    if st < 0 { return -1 }
+    return h as i32
+}
+
+// FILE_SYNCHRONOUS_IO_NONALERT | FILE_NON_DIRECTORY_FILE
+define FILE_IO_OPTIONS = 96
 
 export fn sysOpenRead(path: *ui8) -> i32 {
-    return -1
+    // GENERIC_READ | SYNCHRONIZE, FILE_OPEN
+    return createFile(path, 0x80100000, 1, FILE_IO_OPTIONS)
 }
 
 export fn sysOpenWrite(path: *ui8, append: bool) -> i32 {
-    return -1
+    if append {
+        // FILE_APPEND_DATA | SYNCHRONIZE, FILE_OPEN_IF: writes go to the end of the file
+        return createFile(path, 0x100004, 3, FILE_IO_OPTIONS)
+    }
+    // GENERIC_WRITE | SYNCHRONIZE, FILE_OVERWRITE_IF
+    return createFile(path, 0x40100000, 5, FILE_IO_OPTIONS)
 }
 
 export fn sysClose(fd: i32) -> i32 {
-    return -1
+    if isSocket(fd) {
+        return closesocket(socketOf(fd))
+    }
+    if NtClose(fd as i64) < 0 { return -1 }
+    return 0
 }
 
 export fn sysUnlink(path: *ui8) -> i32 {
-    return -1
+    local wide: [ui16; 520]
+    if !widen(path, &wide[0], 520) { return -1 }
+    local name: [ui64; 2]
+    if RtlDosPathNameToNtPathName_U(&wide[0], &name[0], nil, nil) == 0 { return -1 }
+    local oa: [ui64; 6]
+    oa[0] = 48
+    oa[1] = 0
+    oa[2] = &name[0] as ui64
+    oa[3] = 64
+    oa[4] = 0
+    oa[5] = 0
+    local st: i32 = NtDeleteFile(&oa[0])
+    RtlFreeUnicodeString(&name[0])
+    if st < 0 { return -1 }
+    return 0
 }
 
 export fn sysFileSize(fd: i32) -> i64 {
-    return -1
+    local info: [i64; 3]        // FILE_STANDARD_INFORMATION: AllocationSize, EndOfFile, ...
+    local io: [i64; 2]
+    if NtQueryInformationFile(fd as i64, &io[0], &info[0] as *void, 24, 5) < 0 { return -1 }
+    return info[1]
+}
+
+// ---- TCP over IPv4 (ws2_32) -----------------------------------------------------------------------
+
+fn wsaInit() -> bool {
+    if wsaReady { return true }
+    local data: [ui8; 512]
+    if WSAStartup(514, &data[0]) != 0 { return false }     // 2.2
+    wsaReady = true
+    return true
+}
+
+fn newSocket(kind: i32, proto: i32) -> i32 {
+    if !wsaInit() { return -1 }
+    local s: ui64 = socket(2, kind, proto)
+    if s == 18446744073709551615 { return -1 }
+    return (s as i32) | SOCKET_TAG
 }
 
 export fn sysTcpSocket() -> i32 {
-    return -1
+    return newSocket(1, 6)
 }
 
 export fn sysUdpSocket() -> i32 {
-    return -1
+    return newSocket(2, 17)
 }
 
+/// Receive timeout in milliseconds (0 = none); 0 on success. Windows takes a DWORD of milliseconds.
 export fn sysSetRecvTimeout(fd: i32, ms: i32) -> i32 {
-    return -1
+    local v: i32 = ms
+    // SOL_SOCKET = 0xffff, SO_RCVTIMEO = 0x1006
+    return setsockopt(socketOf(fd), 65535, 4102, &v as *ui8, 4)
+}
+
+/// `ip` is host order (`127.0.0.1` = 2130706433): sockaddr_in = family (u16), port and address in
+/// network order, 8 zero bytes.
+fn fillAddr(addr: *ui8, ip: ui32, port: ui16) {
+    local i: usize = 0
+    while i < 16 {
+        addr[i] = 0
+        i = i + 1
+    }
+    addr[0] = 2
+    addr[2] = (port / 256) as ui8
+    addr[3] = (port % 256) as ui8
+    addr[4] = (ip / 16777216) as ui8
+    addr[5] = ((ip / 65536) % 256) as ui8
+    addr[6] = ((ip / 256) % 256) as ui8
+    addr[7] = (ip % 256) as ui8
 }
 
 export fn sysTcpConnect(fd: i32, ip: ui32, port: ui16) -> i32 {
-    return -1
+    local addr: [ui8; 16]
+    fillAddr(&addr[0], ip, port)
+    if connect(socketOf(fd), &addr[0], 16) != 0 { return -1 }
+    return 0
 }
 
+/// bind + listen (no SO_REUSEADDR: on Windows it would let another process steal the port). 0 on success.
 export fn sysTcpListen(fd: i32, ip: ui32, port: ui16) -> i32 {
-    return -1
+    local addr: [ui8; 16]
+    fillAddr(&addr[0], ip, port)
+    if bind(socketOf(fd), &addr[0], 16) != 0 { return -1 }
+    if listen(socketOf(fd), 128) != 0 { return -1 }
+    return 0
 }
 
 export fn sysTcpAccept(fd: i32) -> i32 {
-    return -1
+    local s: ui64 = accept(socketOf(fd), nil, nil)
+    if s == 18446744073709551615 { return -1 }
+    return (s as i32) | SOCKET_TAG
 }
 
-// No entropy source or clock without NT system service numbers: the TLS client cannot run here.
+// ---- entropy and wall clock --------------------------------------------------------------------
+
+/// Fills `buf[0..n]` from the system-preferred CNG RNG (BCRYPT_USE_SYSTEM_PREFERRED_RNG).
 export fn sysRandom(buf: *ui8, n: usize) -> bool {
-    return false
+    local done: usize = 0
+    while done < n {
+        local chunk: usize = n - done
+        if chunk > 65536 { chunk = 65536 }
+        if BCryptGenRandom(nil, &buf[done], chunk as ui32, 2) < 0 { return false }
+        done = done + chunk
+    }
+    return true
 }
 
+/// Seconds since 1970-01-01 UTC, read from KUSER_SHARED_DATA.SystemTime (the read-only page the
+/// kernel maps at 0x7FFE0000 in every process; no call needed). 100 ns units since 1601.
 export fn sysClockSeconds() -> i64 {
+    local t: *ui32 = 2147352596 as *ui32            // 0x7FFE0014
+    local lo: ui32 = 0
+    local hi1: i32 = 0
+    local hi2: i32 = 0
+    local tries: i32 = 0
+    while tries < 8 {
+        hi1 = t[1] as i32
+        lo = t[0]
+        hi2 = t[2] as i32
+        if hi1 == hi2 {
+            local ticks: i64 = ((hi1 as i64) * 4294967296) + (lo as i64)
+            return ticks / 10000000 - 11644473600
+        }
+        tries = tries + 1
+    }
     return -1
 }

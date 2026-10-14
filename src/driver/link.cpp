@@ -9,6 +9,9 @@
 
 #include <cstdlib>
 #include <format>
+#include <fstream>
+#include <map>
+#include <set>
 #include <sys/wait.h>
 
 namespace xlang::codegen {
@@ -62,6 +65,7 @@ namespace {
 void link(const LinkRequest& r) {
     const TargetInfo& t = r.config->target;
     std::vector<std::string> args;
+    std::vector<std::filesystem::path> temporaries;  ///< generated import libraries, removed after linking
     std::filesystem::path tool;
     const bool shared = r.kind == LinkKind::Shared;
     if (t.os == "macos") {
@@ -98,6 +102,49 @@ void link(const LinkRequest& r) {
             throw XlangError("no COFF linker found (`lld-link`); install LLVM's lld, or stop at `--emit=obj`");
         }
         args = {"/nodefaultlib", "/out:" + r.output.string(), "/subsystem:console"};
+        // Native OS libraries (crypt32, ws2_32, ...) imported with `@library`: one import library per
+        // DLL, generated from the symbols the program declares (no Windows SDK needed).
+        std::map<std::string, std::set<std::string>> byLibrary;
+        for (const auto& [lib, sym] : r.imports) {
+            byLibrary[lib].insert(sym);
+        }
+        if (!shared) {
+            byLibrary["ntdll"].insert("NtTerminateProcess");  // the entry stub's exit
+        }
+        if (!byLibrary.empty()) {
+            const std::filesystem::path dlltool = findTool({"llvm-dlltool"});
+            if (dlltool.empty()) {
+                throw XlangError("no import-library tool found (`llvm-dlltool`); install LLVM, or stop at `--emit=obj`");
+            }
+            const std::filesystem::path dir = r.output.parent_path().empty() ? std::filesystem::path(".")
+                                                                           : r.output.parent_path();
+            const std::string machine = t.arch == "aarch64" ? "arm64" : "i386:x86-64";
+            for (const auto& [lib, syms] : byLibrary) {
+                std::string dll = lib;
+                if (dll.size() < 4 || dll.substr(dll.size() - 4) != ".dll") {
+                    dll += ".dll";
+                }
+                const std::filesystem::path def = dir / (lib + ".xl-import.def");
+                const std::filesystem::path implib = dir / (lib + ".xl-import.lib");
+                std::string text = "LIBRARY " + dll + "\nEXPORTS\n";
+                for (const std::string& s : syms) {
+                    text += "    " + s + "\n";
+                }
+                {
+                    std::ofstream f(def, std::ios::binary);
+                    f << text;
+                }
+                const std::string cmd = quote(dlltool.string()) + " -m " + quote(machine) + " -d " +
+                                        quote(def.string()) + " -l " + quote(implib.string()) + " 2>&1";
+                const int rc = std::system(cmd.c_str());
+                std::filesystem::remove(def);
+                if (rc != 0) {
+                    throw XlangError("cannot create the import library for `" + dll + "`");
+                }
+                args.push_back(implib.string());
+                temporaries.push_back(implib);
+            }
+        }
         if (shared) {
             args.push_back("/dll");
         } else {
@@ -115,6 +162,9 @@ void link(const LinkRequest& r) {
     }
     command += " 2>&1";
     const int status = std::system(command.c_str());
+    for (const std::filesystem::path& tmp : temporaries) {
+        std::filesystem::remove(tmp);
+    }
     if (status != 0) {
         throw XlangError(std::format("linker failed: {}", command));
     }

@@ -851,6 +851,13 @@ void Lowerer::lowerFunction(const FnDecl& f, const Modifiers& mods, const std::s
     out.exported = mods.exported || mods.export_c || mods.registered;
     out.export_c = mods.export_c;
     out.declared = mods.declared;
+    if (const Attribute* lib = findAttribute(attrs, "library"); lib != nullptr && mods.declared) {
+        if (lib->args.size() == 1 && lib->args[0].kind == AttributeArg::Kind::String) {
+            out.import_library = lib->args[0].text;
+        } else {
+            err("E0705", f.name_span, "`@library` takes one string (the OS library name)", "invalid argument");
+        }
+    }
     out.registered = mods.registered;
     out.register_role = mods.register_role;
     out.is_virtual = f.is_virtual;

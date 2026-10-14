@@ -4,7 +4,9 @@
 //   Linux    /etc/ssl/certs/ca-certificates.crt, /etc/pki/tls/certs/ca-bundle.crt, /etc/ssl/ca-bundle.pem,
 //            /etc/pki/ca-trust/extracted/pem/tls-ca-bundle.pem, /etc/ssl/cert.pem (first that exists)
 //   macOS    /etc/ssl/cert.pem (the system roots exported by the OS; the keychain itself is not read)
-//   Windows  none: the roots live in the registry / a locked hive, so every chain is untrusted
+//   Windows  the system "ROOT" certificate store, enumerated through crypt32.dll (CertOpenSystemStoreW,
+//            CertEnumCertificatesInStore): the store is a locked, serialized registry hive with no
+//            syscall-level interface, so the OS library is the only stable way (see CLAUDE.md)
 // `trustSetBundle(path)` overrides the search. Nothing is ever trusted implicitly: with no roots a
 // chain fails with TRUST_NO_ROOTS.
 from "x509" import Cert, x509Parse, x509IssuedBy, x509CheckSignedBy, x509MatchesHost, x509ValidAt
@@ -27,12 +29,69 @@ global bundleCap: usize
 global bundleLen: usize
 global bundleTried: bool
 global bundleOverride: *ui8
+/// The bundle is a PEM text (false) or a list of `[u32 length, DER bytes]` records (true, Windows).
+global bundleDer: bool
+
+#if os == "windows"
+@library("crypt32") declare fn CertOpenSystemStoreW(prov: *void, name: *ui16) -> *void
+@library("crypt32") declare fn CertEnumCertificatesInStore(store: *void, prev: *void) -> *void
+@library("crypt32") declare fn CertCloseStore(store: *void, flags: ui32) -> i32
+
+define WIN_STORE_CAP = 4194304
+
+/// Copies every certificate of the system ROOT store into one DER record list. false if none.
+fn loadWindowsRoots() -> bool {
+    // L"ROOT"
+    local name: [ui16; 5]
+    name[0] = 82
+    name[1] = 79
+    name[2] = 79
+    name[3] = 84
+    name[4] = 0
+    local store: *void = CertOpenSystemStoreW(nil, &name[0])
+    if store == nil { return false }
+    local mem: *ui8 = sysMap(WIN_STORE_CAP) as *ui8
+    if mem == nil {
+        CertCloseStore(store, 0)
+        return false
+    }
+    local used: usize = 0
+    local ctx: *void = CertEnumCertificatesInStore(store, nil)
+    while ctx != nil {
+        // CERT_CONTEXT: dwCertEncodingType (u32), pbCertEncoded (*ui8) at 8, cbCertEncoded (u32) at 16.
+        local words: *ui64 = ctx as *ui64
+        local der: *ui8 = words[1] as *ui8
+        local len: usize = ((ctx as *ui32)[4]) as usize
+        if der != nil && len > 0 && used + 4 + len <= WIN_STORE_CAP {
+            mem[used] = (len % 256) as ui8
+            mem[used + 1] = ((len / 256) % 256) as ui8
+            mem[used + 2] = ((len / 65536) % 256) as ui8
+            mem[used + 3] = ((len / 16777216) % 256) as ui8
+            local i: usize = 0
+            while i < len {
+                mem[used + 4 + i] = der[i]
+                i = i + 1
+            }
+            used = used + 4 + len
+        }
+        ctx = CertEnumCertificatesInStore(store, ctx)     // frees the previous context
+    }
+    CertCloseStore(store, 0)
+    if used == 0 { return false }
+    bundle = mem
+    bundleCap = WIN_STORE_CAP
+    bundleLen = used
+    bundleDer = true
+    return true
+}
+#endif
 
 /// Uses `path` (a PEM file with CERTIFICATE blocks) instead of the OS location. Call before any
 /// verification; the NUL-terminated string must stay valid.
 export fn trustSetBundle(path: *ui8) {
     bundleOverride = path
     bundleTried = false
+    bundleDer = false
     bundle = nil
     bundleLen = 0
 }
@@ -67,6 +126,8 @@ fn load() {
 #elif os == "macos"
     if loadFile("/etc/ssl/cert.pem") { return }
     if loadFile("/private/etc/ssl/cert.pem") { return }
+#elif os == "windows"
+    if loadWindowsRoots() { return }
 #endif
 }
 
@@ -94,6 +155,25 @@ fn startsWith(p: *ui8, end: usize, at: usize, s: *ui8) -> bool {
 /// `cap`). Returns the DER length, 0 at the end of the bundle; a block that does not decode or fit
 /// is skipped.
 fn nextCert(pos: *usize, der: *ui8, cap: usize) -> usize {
+    if bundleDer {
+        // `[u32 length, DER]` records; an oversized record is skipped.
+        while *pos + 4 <= bundleLen {
+            local at: usize = *pos
+            local n: usize = (bundle[at] as usize) + (bundle[at + 1] as usize) * 256 +
+                             (bundle[at + 2] as usize) * 65536 + (bundle[at + 3] as usize) * 16777216
+            *pos = at + 4 + n
+            if n != 0 && n <= cap && at + 4 + n <= bundleLen {
+                local i: usize = 0
+                while i < n {
+                    der[i] = bundle[at + 4 + i]
+                    i = i + 1
+                }
+                return n
+            }
+        }
+        *pos = bundleLen
+        return 0
+    }
     while true {
         local p: usize = *pos
         while p < bundleLen && !startsWith(bundle, bundleLen, p, "-----BEGIN CERTIFICATE-----") {

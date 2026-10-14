@@ -29,10 +29,20 @@
   type or function inside it (no precedence rules; roles bind only via `register`). Thread, scheduler and print concepts do not belong in the
   compiler; they are xlang stdlib.
 - **libc is forbidden**, absolutely: never used, never called, never imitated. Do not suggest it, do not put it in
-  examples (`puts`, `FILE`, `environ`, ...).
+  examples (`puts`, `FILE`, `environ`, ...). The same goes for any shared "C runtime" layer of an OS
+  (libSystem's libc half, msvcrt/ucrt, glibc, musl).
+- **Native OS libraries are allowed, tight coupling is not.** Order of preference, per OS: (1) raw `syscall`
+  (Linux, macOS BSD layer); (2) where the OS's stable boundary is a user-mode library and the thing cannot be done
+  with a syscall (Windows: ntdll `Nt*` exports, crypt32 root certificate store, ws2_32 sockets, bcrypt RNG), import
+  it with `@library("name") declare fn ...`. The linker driver builds the import library itself (`llvm-dlltool`,
+  no SDK). Such imports live only in `std/sys/<os>.xl` or the single std module that needs them, behind
+  `#if os`, never in the compiler or the language core; one OS's library is never a dependency of another OS's
+  build, and nothing is shared across all OSes (no common libc). If a syscall can do the job, use the syscall.
 - Do not invent features or design beyond what the user asked for. If a decision is needed, record it in
   `KNOWN-LIMITATIONS.md` or ask.
-- Use the default tools (Read/Edit/Write) for file changes; use bulk regex/python/sed only when necessary.
+- **File changes are made ONLY with the built-in Read/Edit/Write tools.** Bash/python/sed/perl/awk/`echo >`/heredocs
+  must never create or modify a file (no scripted find-and-replace, even for many files: use repeated Edit calls).
+  Bash is for building, running and inspecting only.
 
 ## Feature assessment (applies in every session)
 
@@ -122,8 +132,10 @@ No filler praise; state weaknesses plainly. For each feature cover:
   objects/libraries.
 - No libc: xl has its own stdlib; `memcpy/memset/memmove/memcmp` (LLVM emits implicit calls)
   are written in xl in the stdlib and exported with `export(c)`; `alloc/free` live in the stdlib too.
-- The language takes no external libraries (no libc, libSystem, kernel32, pthread library). The stdlib calls each
-  OS's kernel ABI with raw `syscall` + `#if os` (including macOS/Windows; stability is not a concern). Do not ask again.
+- The language itself links no external library and the compiler never links one implicitly. The stdlib talks to
+  each OS through raw `syscall` + `#if os` first; only when that is impossible or unstable (Windows has no stable
+  syscall numbers) it imports native OS libraries with `@library("name")` on a `declare fn` (see the rule above).
+  Never libc. Do not ask again.
 - Stdlib is optional: `--no-std`, `--std=<path>`; the default stdlib (`std/`, embedded in the compiler) contains
   a Go-like M:N scheduler. Std features (`--std-features=a,-b`) reach `#if` as bool constants named
   `feature` + CamelCase (`default-allocator` -> `featureDefaultAllocator`).

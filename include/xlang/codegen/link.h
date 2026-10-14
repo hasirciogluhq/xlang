@@ -16,6 +16,9 @@ struct LinkRequest {
     LinkKind kind{LinkKind::Executable};
     const BuildConfig* config{nullptr};
     std::string entry;  ///< entry symbol of executables (`_start`, `mainCRTStartup`)
+    /// `@library("x")` imports: (library, symbol). Only Windows uses them: an import library is
+    /// generated per DLL (llvm-dlltool) and handed to the linker. Nothing else is ever linked.
+    std::vector<std::pair<std::string, std::string>> imports;
 };
 
 /// Plan 5.9: picks the target's linker, passes no libc/libSystem/kernel32 and links only the
