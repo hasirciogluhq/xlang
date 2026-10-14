@@ -1,0 +1,88 @@
+// ChaCha20-Poly1305 known-answer test (RFC 8439 section 2.8.2) plus tamper / round-trip checks.
+from "std/chacha20poly1305" import aeadSeal, aeadOpen
+from "std" import println, print, strlen
+
+fn hexDigit(v: ui8) -> ui8 {
+    if v < 10 { return 48 + v }
+    return 87 + v
+}
+
+fn toHex(d: *ui8, n: usize, out: *ui8) {
+    local i: usize = 0
+    while i < n {
+        out[i * 2] = hexDigit(d[i] >> 4)
+        out[i * 2 + 1] = hexDigit(d[i] & 15)
+        i = i + 1
+    }
+    out[n * 2] = 0
+}
+
+fn same(a: *ui8, b: *ui8) -> bool {
+    local i: usize = 0
+    while a[i] != 0 || b[i] != 0 {
+        if a[i] != b[i] { return false }
+        i = i + 1
+    }
+    return true
+}
+
+global failures: i32 = 0
+
+fn expect(ok: bool, name: *ui8) {
+    if !ok {
+        failures = failures + 1
+        print("FAIL ")
+        println(name)
+    }
+}
+
+fn main() -> i32 {
+    local key: [ui8; 32]
+    local i: usize = 0
+    while i < 32 {
+        key[i] = (0x80 + i) as ui8
+        i = i + 1
+    }
+    local nonce: [ui8; 12]
+    nonce[0] = 0x07
+    nonce[1] = 0
+    nonce[2] = 0
+    nonce[3] = 0
+    i = 0
+    while i < 8 {
+        nonce[4 + i] = (0x40 + i) as ui8
+        i = i + 1
+    }
+    local aad: [ui8; 12]
+    aad[0] = 0x50
+    aad[1] = 0x51
+    aad[2] = 0x52
+    aad[3] = 0x53
+    i = 0
+    while i < 8 {
+        aad[4 + i] = (0xc0 + i) as ui8
+        i = i + 1
+    }
+    local msg: *ui8 = "Ladies and Gentlemen of the class of '99: If I could offer you only one tip for the future, sunscreen would be it."
+    local n: usize = strlen(msg)
+    local ct: [ui8; 128]
+    local tag: [ui8; 16]
+    aeadSeal(&key[0], &nonce[0], &aad[0], 12, msg, n, &ct[0], &tag[0])
+    local hex: [ui8; 40]
+    toHex(&tag[0], 16, &hex[0])
+    expect(same(&hex[0], "1ae10b594f09e26a7e902ecbd0600691"), "tag")
+    toHex(&ct[0], 16, &hex[0])
+    expect(same(&hex[0], "d31a8d34648e60db7b86afbc53ef7ec2"), "ciphertext head")
+
+    local pt: [ui8; 128]
+    expect(aeadOpen(&key[0], &nonce[0], &aad[0], 12, &ct[0], n, &tag[0], &pt[0]), "open")
+    pt[n] = 0
+    expect(same(&pt[0], msg), "round trip")
+    ct[5] = ct[5] ^ 1
+    expect(!aeadOpen(&key[0], &nonce[0], &aad[0], 12, &ct[0], n, &tag[0], &pt[0]), "tamper rejected")
+    if failures == 0 {
+        println("chacha20poly1305 ok")
+        return 0
+    }
+    return 1
+}

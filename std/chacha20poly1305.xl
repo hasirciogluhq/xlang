@@ -1,0 +1,281 @@
+// std/chacha20poly1305: the ChaCha20-Poly1305 AEAD of RFC 8439 (32-byte key, 12-byte nonce, 16-byte
+// tag). Poly1305 uses 5x26-bit limbs (no 128-bit integers needed). `aeadOpen` compares tags without
+// early exit. `ct`/`pt` may be the same buffer (in-place).
+
+fn load32(p: *ui8) -> ui32 {
+    return (p[0] as ui32) | ((p[1] as ui32) << 8) | ((p[2] as ui32) << 16) | ((p[3] as ui32) << 24)
+}
+
+fn store32(p: *ui8, v: ui32) {
+    p[0] = (v & 0xff) as ui8
+    p[1] = ((v >> 8) & 0xff) as ui8
+    p[2] = ((v >> 16) & 0xff) as ui8
+    p[3] = ((v >> 24) & 0xff) as ui8
+}
+
+fn rotl(x: ui32, n: ui32) -> ui32 {
+    return (x << n) | (x >> (32 - n))
+}
+
+fn quarter(s: *ui32, a: usize, b: usize, c: usize, d: usize) {
+    s[a] = s[a] + s[b]
+    s[d] = rotl(s[d] ^ s[a], 16)
+    s[c] = s[c] + s[d]
+    s[b] = rotl(s[b] ^ s[c], 12)
+    s[a] = s[a] + s[b]
+    s[d] = rotl(s[d] ^ s[a], 8)
+    s[c] = s[c] + s[d]
+    s[b] = rotl(s[b] ^ s[c], 7)
+}
+
+/// One 64-byte keystream block for (key, counter, nonce).
+fn chachaBlock(key: *ui8, counter: ui32, nonce: *ui8, out: *ui8) {
+    local s: [ui32; 16]
+    local w: [ui32; 16]
+    s[0] = 0x61707865
+    s[1] = 0x3320646e
+    s[2] = 0x79622d32
+    s[3] = 0x6b206574
+    local i: usize = 0
+    while i < 8 {
+        s[4 + i] = load32(&key[i * 4])
+        i = i + 1
+    }
+    s[12] = counter
+    s[13] = load32(&nonce[0])
+    s[14] = load32(&nonce[4])
+    s[15] = load32(&nonce[8])
+    i = 0
+    while i < 16 {
+        w[i] = s[i]
+        i = i + 1
+    }
+    i = 0
+    while i < 10 {
+        quarter(&w[0], 0, 4, 8, 12)
+        quarter(&w[0], 1, 5, 9, 13)
+        quarter(&w[0], 2, 6, 10, 14)
+        quarter(&w[0], 3, 7, 11, 15)
+        quarter(&w[0], 0, 5, 10, 15)
+        quarter(&w[0], 1, 6, 11, 12)
+        quarter(&w[0], 2, 7, 8, 13)
+        quarter(&w[0], 3, 4, 9, 14)
+        i = i + 1
+    }
+    i = 0
+    while i < 16 {
+        store32(&out[i * 4], w[i] + s[i])
+        i = i + 1
+    }
+}
+
+/// XORs `n` bytes of `in` with the keystream starting at block `counter`.
+fn chachaXor(key: *ui8, counter: ui32, nonce: *ui8, src: *ui8, n: usize, dst: *ui8) {
+    local ks: [ui8; 64]
+    local done: usize = 0
+    local ctr: ui32 = counter
+    while done < n {
+        chachaBlock(key, ctr, nonce, &ks[0])
+        local take: usize = n - done
+        if take > 64 { take = 64 }
+        local i: usize = 0
+        while i < take {
+            dst[done + i] = src[done + i] ^ ks[i]
+            i = i + 1
+        }
+        done = done + take
+        ctr = ctr + 1
+    }
+}
+
+// ---- Poly1305 ------------------------------------------------------------------------------------
+// State layout in a [ui64; 10]: r0..r4 at 0..4, h0..h4 at 5..9.
+
+fn polyInit(st: *ui64, key: *ui8) {
+    st[0] = (load32(&key[0]) as ui64) & 0x3ffffff
+    st[1] = ((load32(&key[3]) as ui64) >> 2) & 0x3ffff03
+    st[2] = ((load32(&key[6]) as ui64) >> 4) & 0x3ffc0ff
+    st[3] = ((load32(&key[9]) as ui64) >> 6) & 0x3f03fff
+    st[4] = ((load32(&key[12]) as ui64) >> 8) & 0x00fffff
+    local i: usize = 5
+    while i < 10 {
+        st[i] = 0
+        i = i + 1
+    }
+}
+
+/// Absorbs one full 16-byte block (the 2^128 bit is always set).
+fn polyBlock(st: *ui64, m: *ui8) {
+    local r0: ui64 = st[0]
+    local r1: ui64 = st[1]
+    local r2: ui64 = st[2]
+    local r3: ui64 = st[3]
+    local r4: ui64 = st[4]
+    local s1: ui64 = r1 * 5
+    local s2: ui64 = r2 * 5
+    local s3: ui64 = r3 * 5
+    local s4: ui64 = r4 * 5
+    local h0: ui64 = st[5] + ((load32(&m[0]) as ui64) & 0x3ffffff)
+    local h1: ui64 = st[6] + (((load32(&m[3]) as ui64) >> 2) & 0x3ffffff)
+    local h2: ui64 = st[7] + (((load32(&m[6]) as ui64) >> 4) & 0x3ffffff)
+    local h3: ui64 = st[8] + (((load32(&m[9]) as ui64) >> 6) & 0x3ffffff)
+    local h4: ui64 = st[9] + (((load32(&m[12]) as ui64) >> 8) | 0x1000000)
+    local d0: ui64 = h0 * r0 + h1 * s4 + h2 * s3 + h3 * s2 + h4 * s1
+    local d1: ui64 = h0 * r1 + h1 * r0 + h2 * s4 + h3 * s3 + h4 * s2
+    local d2: ui64 = h0 * r2 + h1 * r1 + h2 * r0 + h3 * s4 + h4 * s3
+    local d3: ui64 = h0 * r3 + h1 * r2 + h2 * r1 + h3 * r0 + h4 * s4
+    local d4: ui64 = h0 * r4 + h1 * r3 + h2 * r2 + h3 * r1 + h4 * r0
+    local c: ui64 = d0 >> 26
+    h0 = d0 & 0x3ffffff
+    d1 = d1 + c
+    c = d1 >> 26
+    h1 = d1 & 0x3ffffff
+    d2 = d2 + c
+    c = d2 >> 26
+    h2 = d2 & 0x3ffffff
+    d3 = d3 + c
+    c = d3 >> 26
+    h3 = d3 & 0x3ffffff
+    d4 = d4 + c
+    c = d4 >> 26
+    h4 = d4 & 0x3ffffff
+    h0 = h0 + c * 5
+    c = h0 >> 26
+    h0 = h0 & 0x3ffffff
+    h1 = h1 + c
+    st[5] = h0
+    st[6] = h1
+    st[7] = h2
+    st[8] = h3
+    st[9] = h4
+}
+
+/// Absorbs `n` bytes, zero-padded to a multiple of 16 (the AEAD construction pads every section).
+fn polyPadded(st: *ui64, data: *ui8, n: usize) {
+    local done: usize = 0
+    while n - done >= 16 {
+        polyBlock(st, &data[done])
+        done = done + 16
+    }
+    if done < n {
+        local last: [ui8; 16]
+        local i: usize = 0
+        while i < 16 {
+            last[i] = 0
+            i = i + 1
+        }
+        i = 0
+        while done + i < n {
+            last[i] = data[done + i]
+            i = i + 1
+        }
+        polyBlock(st, &last[0])
+    }
+}
+
+fn polyFinish(st: *ui64, pad: *ui8, tag: *ui8) {
+    local h0: ui64 = st[5]
+    local h1: ui64 = st[6]
+    local h2: ui64 = st[7]
+    local h3: ui64 = st[8]
+    local h4: ui64 = st[9]
+    local c: ui64 = h1 >> 26
+    h1 = h1 & 0x3ffffff
+    h2 = h2 + c
+    c = h2 >> 26
+    h2 = h2 & 0x3ffffff
+    h3 = h3 + c
+    c = h3 >> 26
+    h3 = h3 & 0x3ffffff
+    h4 = h4 + c
+    c = h4 >> 26
+    h4 = h4 & 0x3ffffff
+    h0 = h0 + c * 5
+    c = h0 >> 26
+    h0 = h0 & 0x3ffffff
+    h1 = h1 + c
+    // compute h + -p
+    local g0: ui64 = h0 + 5
+    c = g0 >> 26
+    g0 = g0 & 0x3ffffff
+    local g1: ui64 = h1 + c
+    c = g1 >> 26
+    g1 = g1 & 0x3ffffff
+    local g2: ui64 = h2 + c
+    c = g2 >> 26
+    g2 = g2 & 0x3ffffff
+    local g3: ui64 = h3 + c
+    c = g3 >> 26
+    g3 = g3 & 0x3ffffff
+    local g4: ui64 = h4 + c - 0x4000000
+    // select h if h < p (g4 underflowed: top bit set), else g
+    local mask: ui64 = (g4 >> 63) - 1
+    g0 = g0 & mask
+    g1 = g1 & mask
+    g2 = g2 & mask
+    g3 = g3 & mask
+    g4 = g4 & mask
+    mask = ~mask
+    h0 = (h0 & mask) | g0
+    h1 = (h1 & mask) | g1
+    h2 = (h2 & mask) | g2
+    h3 = (h3 & mask) | g3
+    h4 = (h4 & mask) | g4
+    // h = h % 2^128, then + pad
+    local w0: ui64 = (h0 | (h1 << 26)) & 0xffffffff
+    local w1: ui64 = ((h1 >> 6) | (h2 << 20)) & 0xffffffff
+    local w2: ui64 = ((h2 >> 12) | (h3 << 14)) & 0xffffffff
+    local w3: ui64 = ((h3 >> 18) | (h4 << 8)) & 0xffffffff
+    local f: ui64 = w0 + (load32(&pad[0]) as ui64)
+    store32(&tag[0], (f & 0xffffffff) as ui32)
+    f = w1 + (load32(&pad[4]) as ui64) + (f >> 32)
+    store32(&tag[4], (f & 0xffffffff) as ui32)
+    f = w2 + (load32(&pad[8]) as ui64) + (f >> 32)
+    store32(&tag[8], (f & 0xffffffff) as ui32)
+    f = w3 + (load32(&pad[12]) as ui64) + (f >> 32)
+    store32(&tag[12], (f & 0xffffffff) as ui32)
+}
+
+fn store64(p: *ui8, v: ui64) {
+    local i: usize = 0
+    while i < 8 {
+        p[i] = ((v >> ((i as ui64) * 8)) & 0xff) as ui8
+        i = i + 1
+    }
+}
+
+/// Tag over `aad` and the ciphertext `ct[0..n]` under the one-time key from block 0.
+fn computeTag(key: *ui8, nonce: *ui8, aad: *ui8, alen: usize, ct: *ui8, n: usize, tag: *ui8) {
+    local block0: [ui8; 64]
+    chachaBlock(key, 0, nonce, &block0[0])
+    local st: [ui64; 10]
+    polyInit(&st[0], &block0[0])
+    polyPadded(&st[0], aad, alen)
+    polyPadded(&st[0], ct, n)
+    local lens: [ui8; 16]
+    store64(&lens[0], alen as ui64)
+    store64(&lens[8], n as ui64)
+    polyBlock(&st[0], &lens[0])
+    polyFinish(&st[0], &block0[16], tag)
+}
+
+/// Encrypts `pt[0..n]` into `ct` (may alias) and writes the 16-byte `tag`.
+export fn aeadSeal(key: *ui8, nonce: *ui8, aad: *ui8, alen: usize, pt: *ui8, n: usize, ct: *ui8, tag: *ui8) {
+    chachaXor(key, 1, nonce, pt, n, ct)
+    computeTag(key, nonce, aad, alen, ct, n, tag)
+}
+
+/// Verifies the 16-byte `tag` and, only if it matches, decrypts `ct[0..n]` into `pt` (may alias).
+export fn aeadOpen(key: *ui8, nonce: *ui8, aad: *ui8, alen: usize, ct: *ui8, n: usize, tag: *ui8, pt: *ui8) -> bool {
+    local want: [ui8; 16]
+    computeTag(key, nonce, aad, alen, ct, n, &want[0])
+    local diff: ui8 = 0
+    local i: usize = 0
+    while i < 16 {
+        diff = diff | (want[i] ^ tag[i])
+        i = i + 1
+    }
+    if diff != 0 { return false }
+    chachaXor(key, 1, nonce, ct, n, pt)
+    return true
+}
