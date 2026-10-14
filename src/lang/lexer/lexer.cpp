@@ -29,7 +29,7 @@ namespace {
         {"define", TokenKind::Define}, {"new", TokenKind::New},
         {"virtual", TokenKind::Virtual}, {"override", TokenKind::Override},
         {"self", TokenKind::SelfKw},   {"for", TokenKind::For},
-        {"ref", TokenKind::Ref},       {"except", TokenKind::Except},
+        {"except", TokenKind::Except},
         {"true", TokenKind::True},     {"false", TokenKind::False},
         {"null", TokenKind::Null},
     };
@@ -513,7 +513,6 @@ const char* tokenKindName(TokenKind kind) {
     case TokenKind::Override: return "override";
     case TokenKind::SelfKw: return "self";
     case TokenKind::For: return "for";
-    case TokenKind::Ref: return "ref";
     case TokenKind::Except: return "except";
     case TokenKind::True: return "true";
     case TokenKind::False: return "false";

@@ -208,8 +208,7 @@ std::vector<std::string> Sema::aggregateNames() const {
 
 std::optional<Type> Sema::resolve(const Type& type) {
     switch (type.kind) {
-    case TypeKind::Pointer:
-    case TypeKind::Ref: {
+    case TypeKind::Pointer: {
         auto inner = resolve(*type.elem);
         if (!inner) {
             return std::nullopt;
@@ -746,7 +745,6 @@ std::optional<std::uint64_t> Sema::primitiveSize(const Type& t, std::uint64_t& a
     case TypeKind::FnPtr:
         align = config_.target.pointer_width / 8;
         return align;
-    case TypeKind::Ref:
     case TypeKind::Interface:
         align = config_.target.pointer_width / 8;
         return 2 * align;
@@ -981,10 +979,6 @@ std::optional<TypeLayout> Sema::aggregateLayout(const std::string& name, const I
     for (std::size_t i = 0; i < fields->size(); ++i) {
         const FieldDecl& f = (*fields)[i];
         auto resolved = resolve(f.type);
-        if (resolved && resolved->kind == TypeKind::Ref && out.repr_c) {
-            error("E0302", f.span, "`ref T` cannot be a field of a `@repr(c)` type",
-                  "use `*T` in C-layout types");
-        }
         auto fl = resolved ? layoutOf(*resolved, f.span) : std::nullopt;
         if (!fl) {
             return std::nullopt;
@@ -1057,7 +1051,7 @@ void Sema::checkType(const Type& type, const Span& at) {
             if (t.elem) {
                 walk(*t.elem);
             }
-        } else if (t.kind == TypeKind::Pointer || t.kind == TypeKind::Ref) {
+        } else if (t.kind == TypeKind::Pointer) {
             if (t.elem) {
                 walk(*t.elem);
             }

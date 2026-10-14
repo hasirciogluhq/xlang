@@ -18,7 +18,6 @@ enum class TypeKind {
     Int,      ///< i8..i64, isize, ui8..ui64, usize (see Type::bits / is_signed)
     Float,    ///< f32, f64
     Pointer,  ///< *T
-    Ref,      ///< ref T
     FnPtr,    ///< fn(A, B) -> R
     Array,    ///< [T; N]
     Enum,     ///< enum with `elem` as underlying type (null = default i32)
@@ -28,7 +27,7 @@ enum class TypeKind {
     Named,    ///< unresolved reference to a user type or alias; sema resolves it to one of the above
 };
 
-/// A type tree. Parsing produces `Void/Bool/Int/Float/Pointer/Ref/FnPtr/Array/Named`; `Enum`,
+/// A type tree. Parsing produces `Void/Bool/Int/Float/Pointer/FnPtr/Array/Named`; `Enum`,
 /// `Struct`, `Class` and `Interface` are filled in by sema when `Named` is resolved.
 struct Type {
     TypeKind kind{TypeKind::Void};
@@ -37,7 +36,7 @@ struct Type {
     bool is_signed{false};
     /// Named/Struct/Class/Interface/Enum: qualified name (`io.Writer` = {"io", "Writer"}).
     std::vector<std::string> path;
-    /// Pointer/Ref/Array: pointee or element type. Enum: underlying type.
+    /// Pointer/Array: pointee or element type. Enum: underlying type.
     std::shared_ptr<const Type> elem;
     /// FnPtr: parameter and return types.
     std::vector<Type> params;
@@ -56,7 +55,6 @@ struct Type {
     [[nodiscard]] static Type makeInt(unsigned bits, bool is_signed);
     [[nodiscard]] static Type makeFloat(unsigned bits);
     [[nodiscard]] static Type makePointer(Type pointee);
-    [[nodiscard]] static Type makeRef(Type pointee);
     [[nodiscard]] static Type makeFnPtr(std::vector<Type> params, Type ret);
     [[nodiscard]] static Type makeArray(Type element, std::shared_ptr<const Expr> length);
     [[nodiscard]] static Type makeNamed(std::vector<std::string> path);

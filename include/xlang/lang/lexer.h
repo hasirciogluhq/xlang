@@ -46,7 +46,6 @@ enum class TokenKind {
     Override,
     SelfKw,
     For,
-    Ref,
     Except,
     True,
     False,

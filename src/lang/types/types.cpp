@@ -39,13 +39,6 @@ Type Type::makePointer(Type pointee) {
     return t;
 }
 
-Type Type::makeRef(Type pointee) {
-    Type t;
-    t.kind = TypeKind::Ref;
-    t.elem = std::make_shared<const Type>(std::move(pointee));
-    return t;
-}
-
 Type Type::makeFnPtr(std::vector<Type> params, Type ret) {
     Type t;
     t.kind = TypeKind::FnPtr;
@@ -142,7 +135,6 @@ std::string typeToString(const Type& type) {
         return std::format("{}{}", type.is_signed ? "i" : "ui", type.bits);
     case TypeKind::Float: return std::format("f{}", type.bits);
     case TypeKind::Pointer: return "*" + (type.elem ? typeToString(*type.elem) : "?");
-    case TypeKind::Ref: return "ref " + (type.elem ? typeToString(*type.elem) : "?");
     case TypeKind::FnPtr: {
         std::string out = "fn(";
         for (std::size_t i = 0; i < type.params.size(); ++i) {

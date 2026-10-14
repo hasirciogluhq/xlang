@@ -312,11 +312,6 @@ private:
             type = Type::makePointer(parseType());
             break;
         }
-        case TokenKind::Ref: {
-            advance();
-            type = Type::makeRef(parseType());
-            break;
-        }
         case TokenKind::PrimType: {
             type = *primitiveFromName(advance().text);
             break;

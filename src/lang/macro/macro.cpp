@@ -159,7 +159,6 @@ private:
         case TokenKind::PrimType:
         case TokenKind::Ident:
         case TokenKind::Star:
-        case TokenKind::Ref:
         case TokenKind::Fn:
         case TokenKind::LBracket:
             return true;
