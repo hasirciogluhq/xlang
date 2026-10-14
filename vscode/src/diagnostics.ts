@@ -1,22 +1,34 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { execFile } from "node:child_process";
-import { promisify } from "node:util";
 import * as vscode from "vscode";
-import { buildEnv, collectModuleSearchPaths } from "./paths";
-
-const execFileAsync = promisify(execFile);
 
 const DIAGNOSTIC_SOURCE = "xlang";
 
-const PARSE_ERROR_RE =
-  /(?:lex|parse) error at line (\d+), column (\d+): (.+)/;
+interface JsonLabel {
+  file: string;
+  line: number;
+  column: number;
+  endLine?: number;
+  endColumn?: number;
+  text?: string;
+}
 
-const MODULE_ERROR_RE = /module not found:\s*(\S+)/;
+interface JsonDiagnostic {
+  code?: string;
+  severity?: string;
+  suppressed?: boolean;
+  message: string;
+  labels?: JsonLabel[];
+  detail?: string;
+  reason?: string;
+  fix?: string;
+}
 
 export class XlangDiagnostics {
   private readonly collection: vscode.DiagnosticCollection;
   private readonly pending = new Map<string, NodeJS.Timeout>();
+  private readonly running = new Map<string, number>();
 
   constructor(collection: vscode.DiagnosticCollection) {
     this.collection = collection;
@@ -30,18 +42,16 @@ export class XlangDiagnostics {
     this.collection.dispose();
   }
 
-  schedule(document: vscode.TextDocument, delayMs = 300): void {
+  schedule(document: vscode.TextDocument, delayMs = 400): void {
     const key = document.uri.toString();
     const existing = this.pending.get(key);
     if (existing) {
       clearTimeout(existing);
     }
-
     const timer = setTimeout(() => {
       this.pending.delete(key);
-      void this.refresh(document);
+      void this.refresh(document, true);
     }, delayMs);
-
     this.pending.set(key, timer);
   }
 
@@ -49,139 +59,183 @@ export class XlangDiagnostics {
     this.collection.delete(document.uri);
   }
 
-  async refresh(document: vscode.TextDocument): Promise<void> {
+  /**
+   * Runs `xlang check` and publishes the result. With `fromBuffer` the unsaved editor text is
+   * checked through a temporary sibling file, so relative imports keep working.
+   */
+  async refresh(document: vscode.TextDocument, fromBuffer = false): Promise<void> {
     const config = vscode.workspace.getConfiguration("xlang");
-    if (!config.get<boolean>("enableDiagnostics", true)) {
+    if (!config.get<boolean>("enableDiagnostics", true) || document.uri.scheme !== "file") {
       this.collection.delete(document.uri);
       return;
     }
 
-    if (document.uri.scheme !== "file") {
-      return;
-    }
-
     const compilerPath = await resolveCompilerPath();
-    if (!compilerPath) {
-      return;
-    }
+    const key = document.uri.toString();
+    const ticket = (this.running.get(key) ?? 0) + 1;
+    this.running.set(key, ticket);
 
     const filePath = document.uri.fsPath;
-    let stderr = "";
-
-    try {
-      await execFileAsync(compilerPath, ["parse", filePath], {
-        cwd: path.dirname(filePath),
-        env: buildEnv(filePath),
-        timeout: 15_000,
-        maxBuffer: 1024 * 1024,
-      });
-      this.collection.set(document.uri, []);
-      return;
-    } catch (error: unknown) {
-      if (!isExecError(error)) {
-        return;
+    let target = filePath;
+    let temp: string | undefined;
+    if (fromBuffer && document.isDirty) {
+      temp = path.join(path.dirname(filePath), `.${path.basename(filePath, ".xl")}.xlang-buffer.xl`);
+      try {
+        fs.writeFileSync(temp, document.getText());
+        target = temp;
+      } catch {
+        temp = undefined;
       }
-      stderr = error.stderr?.toString() ?? error.message;
     }
 
-    const diagnostic = parseDiagnostic(stderr, document);
-    this.collection.set(document.uri, diagnostic ? [diagnostic] : []);
+    let output: string;
+    try {
+      const result = await runProcess(
+        compilerPath,
+        ["check", target, ...compilerFlags(), "--diag-format", "json", "--context", "0"],
+        path.dirname(filePath)
+      );
+      output = result.text;
+    } catch {
+      output = "";
+    } finally {
+      if (temp) {
+        try {
+          fs.unlinkSync(temp);
+        } catch {
+          // best effort
+        }
+      }
+    }
+
+    if (this.running.get(key) !== ticket) {
+      return; // a newer run owns the result
+    }
+    this.collection.set(document.uri, toDiagnostics(output, document, target));
   }
 }
 
-function parseDiagnostic(
-  stderr: string,
-  document: vscode.TextDocument
-): vscode.Diagnostic | undefined {
-  for (const line of stderr.split("\n")) {
-    const trimmed = line.replace(/^error:\s*/, "");
-    const match = PARSE_ERROR_RE.exec(trimmed);
-    if (!match) {
-      continue;
-    }
-
-    const lineNumber = Number.parseInt(match[1], 10);
-    const column = Number.parseInt(match[2], 10);
-    const message = match[3];
-
-    const startLine = Math.max(0, lineNumber - 1);
-    const startCharacter = Math.max(0, column - 1);
-    const endCharacter = document.lineAt(startLine).text.length;
-
-    const diagnostic = new vscode.Diagnostic(
-      new vscode.Range(
-        startLine,
-        startCharacter,
-        startLine,
-        Math.max(startCharacter + 1, endCharacter)
-      ),
-      message,
-      vscode.DiagnosticSeverity.Error
-    );
-    diagnostic.source = DIAGNOSTIC_SOURCE;
-    return diagnostic;
-  }
-
-  const moduleMatch = MODULE_ERROR_RE.exec(stderr);
-  if (moduleMatch) {
-    const moduleName = moduleMatch[1];
-    const diagnostic = new vscode.Diagnostic(
-      findImportRange(document, moduleName),
-      `module not found: ${moduleName}`,
-      vscode.DiagnosticSeverity.Error
-    );
-    diagnostic.source = DIAGNOSTIC_SOURCE;
-    return diagnostic;
-  }
-
-  if (stderr.includes("error:")) {
-    const message = stderr
-      .split("\n")
-      .map((line) => line.replace(/^error:\s*/, ""))
-      .filter(Boolean)
-      .join("\n")
-      .trim();
-
-    const diagnostic = new vscode.Diagnostic(
-      new vscode.Range(0, 0, 0, 1),
-      message,
-      vscode.DiagnosticSeverity.Error
-    );
-    diagnostic.source = DIAGNOSTIC_SOURCE;
-    return diagnostic;
-  }
-
-  return undefined;
-}
-
-function findImportRange(
+function toDiagnostics(
+  output: string,
   document: vscode.TextDocument,
-  moduleName: string
-): vscode.Range {
-  const root = moduleName.split("/")[0];
-  for (let i = 0; i < document.lineCount; i += 1) {
-    const text = document.lineAt(i).text;
-    if (!text.includes("import")) {
+  checkedFile: string
+): vscode.Diagnostic[] {
+  const own: vscode.Diagnostic[] = [];
+  const foreign: vscode.Diagnostic[] = [];
+  const sameFile = (file: string) => path.normalize(file) === path.normalize(checkedFile);
+
+  for (const line of output.split("\n")) {
+    const text = line.trim();
+    if (!text.startsWith("{")) {
       continue;
     }
-    if (text.includes(moduleName) || text.includes(root)) {
-      return document.lineAt(i).range;
+    let d: JsonDiagnostic;
+    try {
+      d = JSON.parse(text) as JsonDiagnostic;
+    } catch {
+      continue;
+    }
+    if (d.suppressed) {
+      continue;
+    }
+
+    const severity =
+      d.severity === "warning"
+        ? vscode.DiagnosticSeverity.Warning
+        : d.severity === "note"
+          ? vscode.DiagnosticSeverity.Information
+          : vscode.DiagnosticSeverity.Error;
+
+    const labels = d.labels ?? [];
+    const primary = labels.find((l) => sameFile(l.file)) ?? labels[0];
+    const parts = [d.message];
+    if (primary?.text) {
+      parts.push(primary.text);
+    }
+    if (d.detail) {
+      parts.push(d.detail);
+    }
+    if (d.fix) {
+      parts.push(`fix: ${d.fix}`);
+    }
+    const message = parts.join("\n");
+
+    if (primary && sameFile(primary.file)) {
+      const diag = new vscode.Diagnostic(rangeOf(primary, document), message, severity);
+      diag.source = DIAGNOSTIC_SOURCE;
+      if (d.code) {
+        diag.code = d.code;
+      }
+      const related = labels
+        .filter((l) => l !== primary)
+        .map(
+          (l) =>
+            new vscode.DiagnosticRelatedInformation(
+              new vscode.Location(
+                sameFile(l.file) ? document.uri : vscode.Uri.file(l.file),
+                new vscode.Position(Math.max(0, l.line - 1), Math.max(0, l.column - 1))
+              ),
+              l.text ?? "related location"
+            )
+        );
+      if (related.length > 0) {
+        diag.relatedInformation = related;
+      }
+      own.push(diag);
+    } else {
+      // The error is in another file (an import): surface it on the first line.
+      const where = primary ? `${path.basename(primary.file)}:${primary.line}:${primary.column}` : "";
+      const diag = new vscode.Diagnostic(
+        new vscode.Range(0, 0, 0, Math.max(1, document.lineAt(0).text.length)),
+        where ? `${where}: ${message}` : message,
+        severity
+      );
+      diag.source = DIAGNOSTIC_SOURCE;
+      if (d.code) {
+        diag.code = d.code;
+      }
+      foreign.push(diag);
     }
   }
-  return new vscode.Range(0, 0, 0, 1);
+  return [...own, ...foreign];
 }
 
-export async function resolveCompilerPath(): Promise<string | undefined> {
+function rangeOf(label: JsonLabel, document: vscode.TextDocument): vscode.Range {
+  const lastLine = Math.max(0, document.lineCount - 1);
+  const startLine = Math.min(Math.max(0, label.line - 1), lastLine);
+  const startChar = Math.max(0, label.column - 1);
+  const endLine = Math.min(Math.max(startLine, (label.endLine ?? label.line) - 1), lastLine);
+  let endChar = Math.max(0, (label.endColumn ?? label.column + 1) - 1);
+  if (endLine === startLine && endChar <= startChar) {
+    endChar = Math.max(startChar + 1, document.lineAt(startLine).text.length);
+  }
+  return new vscode.Range(startLine, startChar, endLine, endChar);
+}
+
+/** `-D`, `--target` from the extension settings; shared by check / build / run / test. */
+export function compilerFlags(): string[] {
   const config = vscode.workspace.getConfiguration("xlang");
-  const configured =
-    config.get<string>("compilerPath", "").trim() ||
-    config.get<string>("xlankPath", "").trim();
+  const flags: string[] = [];
+  for (const define of config.get<string[]>("defines", [])) {
+    if (define.trim()) {
+      flags.push("-D", define.trim());
+    }
+  }
+  const target = config.get<string>("target", "").trim();
+  if (target) {
+    flags.push("--target", target);
+  }
+  return flags;
+}
+
+export async function resolveCompilerPath(): Promise<string> {
+  const config = vscode.workspace.getConfiguration("xlang");
+  const configured = config.get<string>("compilerPath", "").trim();
   if (configured) {
     return configured;
   }
 
-  const folders = vscode.workspace.workspaceFolders ?? [];
-  for (const folder of folders) {
+  for (const folder of vscode.workspace.workspaceFolders ?? []) {
     for (const base of [folder.uri.fsPath, path.join(folder.uri.fsPath, "..")]) {
       const found = findBuiltXlang(base);
       if (found) {
@@ -189,13 +243,13 @@ export async function resolveCompilerPath(): Promise<string | undefined> {
       }
     }
   }
-
   return "xlang";
 }
 
 /** Prefer build/xlang; fall back to xmake's build/<plat>/<arch>/<mode>/xlang. */
 function findBuiltXlang(root: string): string | undefined {
-  const direct = path.normalize(path.join(root, "build", "xlang"));
+  const exe = process.platform === "win32" ? "xlang.exe" : "xlang";
+  const direct = path.normalize(path.join(root, "build", exe));
   if (fs.existsSync(direct)) {
     return direct;
   }
@@ -204,7 +258,6 @@ function findBuiltXlang(root: string): string | undefined {
   if (!fs.existsSync(buildDir)) {
     return undefined;
   }
-
   try {
     for (const plat of fs.readdirSync(buildDir, { withFileTypes: true })) {
       if (!plat.isDirectory() || plat.name.startsWith(".")) {
@@ -216,9 +269,7 @@ function findBuiltXlang(root: string): string | undefined {
           continue;
         }
         for (const mode of ["release", "debug"]) {
-          const candidate = path.normalize(
-            path.join(platDir, arch.name, mode, "xlang")
-          );
+          const candidate = path.normalize(path.join(platDir, arch.name, mode, exe));
           if (fs.existsSync(candidate)) {
             return candidate;
           }
@@ -228,39 +279,36 @@ function findBuiltXlang(root: string): string | undefined {
   } catch {
     return undefined;
   }
-
   return undefined;
 }
 
-export { buildEnv, collectModuleSearchPaths } from "./paths";
-
-function isExecError(
-  error: unknown
-): error is { stderr?: Buffer | string; message: string } {
-  return typeof error === "object" && error !== null && "message" in error;
+export interface ProcessResult {
+  /** stdout followed by stderr. */
+  text: string;
+  /** Exit status; `null` when the process was killed (timeout). */
+  code: number | null;
 }
 
-export async function runCompiler(
+/** Runs a process; resolves with its output and exit status whatever that status is. */
+export function runProcess(
+  command: string,
   args: string[],
   cwd: string,
-  filePath?: string
-): Promise<{ stdout: string; stderr: string }> {
-  const compilerPath = await resolveCompilerPath();
-  if (!compilerPath) {
-    throw new Error(
-      "xlang compiler not found. Build the project or set xlang.compilerPath."
+  timeoutMs = 60_000
+): Promise<ProcessResult> {
+  return new Promise((resolve, reject) => {
+    execFile(
+      command,
+      args,
+      { cwd, timeout: timeoutMs, maxBuffer: 8 * 1024 * 1024 },
+      (error, stdout, stderr) => {
+        if (error && (error as NodeJS.ErrnoException).code === "ENOENT") {
+          reject(new Error(`xlang compiler not found: ${command}. Build it or set xlang.compilerPath.`));
+          return;
+        }
+        const code = error ? (typeof error.code === "number" ? error.code : null) : 0;
+        resolve({ text: `${stdout.toString()}\n${stderr.toString()}`, code });
+      }
     );
-  }
-
-  const result = await execFileAsync(compilerPath, args, {
-    cwd,
-    env: buildEnv(filePath),
-    timeout: 120_000,
-    maxBuffer: 4 * 1024 * 1024,
   });
-
-  return {
-    stdout: result.stdout.toString(),
-    stderr: result.stderr.toString(),
-  };
 }

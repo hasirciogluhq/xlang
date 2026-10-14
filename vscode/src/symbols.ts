@@ -1,9 +1,21 @@
-import * as fs from "node:fs";
 import * as path from "node:path";
 import * as vscode from "vscode";
-import { collectModuleSearchPaths } from "./paths";
+import { SOURCE_EXT } from "./paths";
 
-export type SymbolKind = "function" | "struct" | "global" | "variable" | "module" | "field";
+export type SymbolKind =
+  | "function"
+  | "method"
+  | "struct"
+  | "class"
+  | "interface"
+  | "enum"
+  | "enumMember"
+  | "type"
+  | "define"
+  | "global"
+  | "variable"
+  | "field"
+  | "module";
 
 export interface SymbolDoc {
   name: string;
@@ -12,406 +24,803 @@ export interface SymbolDoc {
   detail: string;
   documentation: string;
   exported: boolean;
-  receiver?: string;
+  /** Struct / class / interface / enum a member belongs to. */
+  owner?: string;
   returnType?: string;
   moduleId: string;
   filePath: string;
   line: number;
 }
 
-export interface StructDoc {
+export interface FieldDoc {
   name: string;
-  fields: { name: string; type: string }[];
+  type: string;
+  line: number;
+}
+
+export interface AggregateDoc {
+  name: string;
+  kind: "struct" | "class" | "interface" | "enum";
+  base?: string;
+  fields: FieldDoc[];
+  methods: SymbolDoc[];
+  members: string[];
   exported: boolean;
   filePath: string;
   line: number;
 }
 
 export interface ImportBinding {
+  /** Name bound in the importing file (`a` of `import * as a`, the name of `import x`). */
   alias: string;
   modulePath: string;
-  kind: "namespace" | "symbol" | "submodule";
+  /** `star`: every export is visible without a prefix. */
+  kind: "namespace" | "star" | "symbol";
   symbolName?: string;
+}
+
+export interface ReExport {
+  modulePath: string;
+  kind: "star" | "namespace" | "names";
+  alias?: string;
+  names?: { name: string; alias: string }[];
+  except?: string[];
+}
+
+export interface ParamDoc {
+  name: string;
+  type: string;
+}
+
+export interface LocalDoc {
+  name: string;
+  type: string;
+  line: number;
+}
+
+export interface FunctionScope {
+  name: string;
+  owner?: string;
+  startLine: number;
+  endLine: number;
+  params: ParamDoc[];
+  locals: LocalDoc[];
 }
 
 export interface ParsedModule {
   moduleId: string;
   filePath: string;
   symbols: SymbolDoc[];
-  structs: Map<string, StructDoc>;
+  aggregates: Map<string, AggregateDoc>;
   imports: ImportBinding[];
-  locals: Map<string, string>;
-  functions: string[];
+  reexports: ReExport[];
+  functions: FunctionScope[];
 }
 
-const EXPORT_FN = /^\s*export\s+fn\s+(\w+)\s*\(([^)]*)\)(?:\s*:\s*([\w*]+))?/;
-const FN = /^\s*fn\s+(\w+)\s*\(([^)]*)\)(?:\s*:\s*([\w*]+))?/;
-const EXPORT_STRUCT = /^\s*export\s+struct\s+(\w+)/;
-const STRUCT = /^\s*struct\s+(\w+)/;
-const EXPORT_GLOBAL = /^\s*export\s+(\w+)\s*:/;
-const LOCAL = /^\s*local\s+(\w+)(?:\s*:\s*([\w]+))?\s*=\s*(.+)$/;
-const IMPORT_FROM = /^\s*import\s+(.+?)\s+from\s+([\w./]+)\s*$/;
-const IMPORT_ALIAS = /^\s*import\s+(\w+)\s+from\s+([\w./]+)\s*$/;
-const IMPORT_BARE = /^\s*import\s+([\w./]+)(?:\s+as\s+(\w+))?\s*$/;
-const FROM_IMPORT = /^\s*from\s+([\w./]+)\s+import\s+(.+?)\s*$/;
+// ---------------------------------------------------------------------------------------------
+// Parsing (line based; the compiler is the authority, this only feeds IntelliSense)
 
-function parseFirstParamType(params: string): string | undefined {
-  const first = params.split(",")[0]?.trim();
-  if (!first) {
-    return undefined;
+const MODS = String.raw`(?:(export)(?:\((\w+)\))?\s+)?(?:(declare)\s+)?(?:register(?:\(\w+\))?\s+)?`;
+const FN_RE = new RegExp(String.raw`^\s*(?:@\w+(?:\([^)]*\))?\s+)*${MODS}(?:(?:virtual|override)\s+)*fn\s+(\w+)\s*\(`);
+const STRUCT_RE = new RegExp(String.raw`^\s*(?:@\w+(?:\([^)]*\))?\s+)*${MODS}(struct|class|interface)\s+(\w+)(?:\s*:\s*([\w./]+))?`);
+const ENUM_RE = new RegExp(String.raw`^\s*(?:@\w+(?:\([^)]*\))?\s+)*${MODS}enum\s+(\w+)(?:\s*:\s*([^{]+?))?\s*\{?`);
+const IMPL_RE = /^\s*impl\s+([\w./]+)\s+for\s+(\w+)/;
+const TYPE_RE = new RegExp(String.raw`^\s*${MODS}type\s+(\w+)\s*=\s*(.+?)\s*$`);
+const DEFINE_RE = new RegExp(String.raw`^\s*${MODS}define\s+(\w+)\s*(\(([^)]*)\))?\s*(?:=\s*(.+?))?\s*\{?\s*$`);
+const GLOBAL_RE = new RegExp(String.raw`^\s*(?:@\w+(?:\([^)]*\))?\s+)*${MODS}global\s+(\w+)\s*(?::\s*([^=]+?))?\s*(?:=.*)?$`);
+const LOCAL_RE = /^\s*local\s+(\w+)\s*(?::\s*([^=]+?))?\s*(?:=\s*(.+?))?\s*$/;
+const FOR_LOCAL_RE = /\bfor\s+local\s+(\w+)\s*(?::\s*([^=;]+?))?\s*=\s*([^;]+)/;
+const FOR_RANGE_RE = /\bfor\s+(\w+)\s+in\s+([^.]+?)\s*\.\./;
+
+const IMPORT_FROM_RE = /^\s*from\s+"([^"]+)"\s+import\s+(.+?)\s*$/;
+const IMPORT_NAMES_RE = /^\s*import\s+(?!\*)(\w[\w\s,]*?)\s+from\s+"([^"]+)"\s*$/;
+const IMPORT_STAR_RE = /^\s*import\s+\*\s+from\s+"([^"]+)"\s*$/;
+const IMPORT_STAR_AS_RE = /^\s*import\s+\*\s+as\s+(\w+)\s+from\s+"([^"]+)"\s*$/;
+const IMPORT_MODULE_RE = /^\s*import\s+"([^"]+)"(?:\s+as\s+(\w+))?\s*$/;
+const EXPORT_STAR_RE = /^\s*export\s+\*\s+from\s+"([^"]+)"(?:\s+except\s+(.+?))?\s*$/;
+const EXPORT_STAR_AS_RE = /^\s*export\s+\*\s+as\s+(\w+)\s+from\s+"([^"]+)"\s*$/;
+const EXPORT_NAMES_RE = /^\s*export\s+\{([^}]*)\}\s+from\s+"([^"]+)"\s*$/;
+
+/** Removes strings and a trailing `//` comment so braces and parentheses can be counted. */
+function stripLine(line: string): string {
+  let out = "";
+  let inString = false;
+  let escaped = false;
+  for (let i = 0; i < line.length; i += 1) {
+    const ch = line[i];
+    if (inString) {
+      if (escaped) {
+        escaped = false;
+      } else if (ch === "\\") {
+        escaped = true;
+      } else if (ch === '"') {
+        inString = false;
+        out += '"';
+      }
+      continue;
+    }
+    if (ch === '"') {
+      inString = true;
+      out += '"';
+      continue;
+    }
+    if (ch === "/" && line[i + 1] === "/") {
+      break;
+    }
+    out += ch;
   }
-  const colon = first.indexOf(":");
-  if (colon === -1) {
-    return undefined;
-  }
-  return first.slice(colon + 1).trim().replace(/\*$/, "");
+  return out;
 }
 
-function formatSignature(name: string, params: string, ret?: string): string {
-  const inner = params.trim();
-  return ret ? `${name}(${inner}) → ${ret}` : `${name}(${inner})`;
+/** Removes a trailing `//` comment but keeps string contents (module paths are strings). */
+function stripComment(line: string): string {
+  let inString = false;
+  let escaped = false;
+  for (let i = 0; i < line.length; i += 1) {
+    const ch = line[i];
+    if (inString) {
+      if (escaped) {
+        escaped = false;
+      } else if (ch === "\\") {
+        escaped = true;
+      } else if (ch === '"') {
+        inString = false;
+      }
+      continue;
+    }
+    if (ch === '"') {
+      inString = true;
+    } else if (ch === "/" && line[i + 1] === "/") {
+      return line.slice(0, i);
+    }
+  }
+  return line;
+}
+
+function count(text: string, ch: string): number {
+  let n = 0;
+  for (const c of text) {
+    if (c === ch) {
+      n += 1;
+    }
+  }
+  return n;
+}
+
+/** Reads `(...)` starting at the `(` at `open`; returns the inside and the index after `)`. */
+function readParens(text: string, open: number): { inside: string; end: number } | undefined {
+  let depth = 0;
+  for (let i = open; i < text.length; i += 1) {
+    if (text[i] === "(") {
+      depth += 1;
+    } else if (text[i] === ")") {
+      depth -= 1;
+      if (depth === 0) {
+        return { inside: text.slice(open + 1, i), end: i + 1 };
+      }
+    }
+  }
+  return undefined;
+}
+
+function splitTop(text: string): string[] {
+  const parts: string[] = [];
+  let depth = 0;
+  let current = "";
+  for (const ch of text) {
+    if (ch === "(" || ch === "[" || ch === "{") {
+      depth += 1;
+    } else if (ch === ")" || ch === "]" || ch === "}") {
+      depth -= 1;
+    }
+    if (ch === "," && depth === 0) {
+      parts.push(current);
+      current = "";
+    } else {
+      current += ch;
+    }
+  }
+  if (current.trim()) {
+    parts.push(current);
+  }
+  return parts.map((p) => p.trim()).filter(Boolean);
+}
+
+function parseParams(inside: string): ParamDoc[] {
+  const out: ParamDoc[] = [];
+  for (const part of splitTop(inside)) {
+    const colon = part.indexOf(":");
+    if (colon === -1) {
+      if (/^\w+$/.test(part)) {
+        out.push({ name: part, type: "" });
+      }
+      continue;
+    }
+    out.push({ name: part.slice(0, colon).trim(), type: part.slice(colon + 1).trim() });
+  }
+  return out;
+}
+
+/** `*T` -> `T`, `[T; N]` -> `T`: the type whose members a value of this type exposes. */
+export function memberTypeName(type: string): string {
+  let t = type.trim();
+  for (;;) {
+    if (t.startsWith("*")) {
+      t = t.slice(1).trim();
+      continue;
+    }
+    const arr = /^\[\s*(.+?)\s*;\s*[^\]]+\]$/.exec(t);
+    if (arr) {
+      t = arr[1];
+      continue;
+    }
+    break;
+  }
+  return t.replace(/^.*\//, "");
+}
+
+function formatSignature(name: string, params: ParamDoc[], ret?: string): string {
+  const inner = params.map((p) => (p.type ? `${p.name}: ${p.type}` : p.name)).join(", ");
+  return ret ? `fn ${name}(${inner}) -> ${ret}` : `fn ${name}(${inner})`;
+}
+
+function makeSymbol(init: Partial<SymbolDoc> & Pick<SymbolDoc, "name" | "kind">, ctx: ModuleCtx, line: number, doc: string[]): SymbolDoc {
+  const text = doc.join("\n");
+  return {
+    signature: init.name,
+    detail: init.kind,
+    documentation: text,
+    exported: false,
+    moduleId: ctx.moduleId,
+    filePath: ctx.filePath,
+    line,
+    ...init,
+  };
+}
+
+interface ModuleCtx {
+  moduleId: string;
+  filePath: string;
+}
+
+interface Container {
+  kind: "struct" | "class" | "interface" | "enum" | "impl";
+  name: string;
+  depth: number;
+  aggregate?: AggregateDoc;
+}
+
+/** Members of a declaration whose body sits on the declaration line: `struct P { x: i32, y: i32 }`. */
+function parseInlineBody(
+  agg: AggregateDoc,
+  line: string,
+  ctx: ModuleCtx,
+  lineNo: number,
+  symbols: SymbolDoc[]
+): void {
+  const open = line.indexOf("{");
+  const close = line.lastIndexOf("}");
+  if (open === -1 || close <= open) {
+    return;
+  }
+  const inner = line.slice(open + 1, close);
+
+  if (agg.kind === "enum") {
+    for (const part of splitTop(inner)) {
+      const member = /^(\w+)\s*(?:=.*)?$/.exec(part);
+      if (member) {
+        agg.members.push(member[1]);
+      }
+    }
+    return;
+  }
+
+  if (agg.kind === "interface") {
+    const re = /fn\s+(\w+)\s*\(/g;
+    let m: RegExpExecArray | null;
+    while ((m = re.exec(inner))) {
+      const group = readParens(inner, m.index + m[0].length - 1);
+      if (!group) {
+        continue;
+      }
+      const params = parseParams(group.inside);
+      const ret = /^\s*->\s*([^}]+?)\s*(?:fn\b|$)/.exec(inner.slice(group.end));
+      const returnType = ret ? ret[1].trim() : undefined;
+      const sym = makeSymbol(
+        {
+          name: m[1],
+          kind: "method",
+          signature: formatSignature(m[1], params, returnType),
+          detail: returnType ? `-> ${returnType}` : "fn",
+          owner: agg.name,
+          returnType,
+          exported: true,
+        },
+        ctx,
+        lineNo,
+        []
+      );
+      symbols.push(sym);
+      agg.methods.push(sym);
+    }
+    return;
+  }
+
+  for (const part of splitTop(inner)) {
+    const field = /^(\w+)\s*:\s*(.+)$/.exec(part);
+    if (field) {
+      agg.fields.push({ name: field[1], type: field[2].trim(), line: lineNo });
+      symbols.push(
+        makeSymbol(
+          {
+            name: field[1],
+            kind: "field",
+            signature: `${field[1]}: ${field[2].trim()}`,
+            detail: field[2].trim(),
+            owner: agg.name,
+            exported: true,
+          },
+          ctx,
+          lineNo,
+          []
+        )
+      );
+    }
+  }
 }
 
 export function parseXlangSource(source: string, filePath: string, moduleId: string): ParsedModule {
+  const ctx: ModuleCtx = { moduleId, filePath };
   const symbols: SymbolDoc[] = [];
-  const structs = new Map<string, StructDoc>();
+  const aggregates = new Map<string, AggregateDoc>();
   const imports: ImportBinding[] = [];
-  const locals = new Map<string, string>();
-  const functions: string[] = [];
-  const lines = source.split("\n");
+  const reexports: ReExport[] = [];
+  const functions: FunctionScope[] = [];
 
-  let currentStruct: StructDoc | undefined;
-  let braceDepth = 0;
+  const lines = source.split("\n");
+  let depth = 0;
+  let docs: string[] = [];
+  let container: Container | undefined;
+  let current: FunctionScope | undefined;
+  let currentDepth = 0;
+
+  const aggregate = (name: string): AggregateDoc | undefined => aggregates.get(name);
 
   for (let i = 0; i < lines.length; i += 1) {
-    const line = lines[i];
-    const trimmed = line.trim();
+    const raw = lines[i];
+    const trimmed = raw.trim();
 
-    if (trimmed.startsWith("//")) {
+    if (trimmed.startsWith("///")) {
+      docs.push(trimmed.replace(/^\/\/\/ ?/, ""));
       continue;
     }
-
-    const importFrom = IMPORT_FROM.exec(line);
-    if (importFrom) {
-      parseImportClauseList(importFrom[1], importFrom[2], imports);
+    if (trimmed.startsWith("//") || trimmed === "") {
+      if (trimmed === "") {
+        docs = [];
+      }
       continue;
     }
-
-    const importAlias = IMPORT_ALIAS.exec(line);
-    if (importAlias && importAlias[2].includes("/")) {
-      imports.push({ alias: importAlias[1], modulePath: importAlias[2], kind: "namespace" });
+    if (trimmed.startsWith("#")) {
       continue;
     }
+    if (/^@\w+(\([^)]*\))?\s*$/.test(trimmed)) {
+      continue; // attribute line: keeps the doc comment for the declaration below
+    }
 
-    const fromImport = FROM_IMPORT.exec(line);
-    if (fromImport) {
-      for (const part of fromImport[2].split(",")) {
-        const spec = part.trim();
-        const asSplit = spec.split(/\s+as\s+/);
-        const name = asSplit[0]?.trim();
-        const alias = asSplit[1]?.trim() ?? name;
-        if (name) {
-          imports.push({ alias: alias!, modulePath: fromImport[1], kind: "symbol", symbolName: name });
+    // Join a signature that continues on the next lines.
+    let line = stripLine(raw);
+    let consumed = 0;
+    while (/\bfn\s+\w+\s*\(/.test(line) && count(line, "(") > count(line, ")") && i + consumed + 1 < lines.length && consumed < 24) {
+      consumed += 1;
+      line += " " + stripLine(lines[i + consumed]).trim();
+    }
+
+    const depthBefore = depth;
+    const opens = count(line, "{");
+    const closes = count(line, "}");
+
+    // --- imports / re-exports (module level; they contain strings, so match the raw line)
+    if (depthBefore === 0) {
+      const code = stripComment(raw);
+      let m: RegExpExecArray | null;
+      if ((m = IMPORT_STAR_AS_RE.exec(code))) {
+        imports.push({ alias: m[1], modulePath: m[2], kind: "namespace" });
+      } else if ((m = IMPORT_STAR_RE.exec(code))) {
+        imports.push({ alias: "*", modulePath: m[1], kind: "star" });
+      } else if ((m = IMPORT_FROM_RE.exec(code))) {
+        pushNames(imports, m[1], m[2]);
+      } else if ((m = IMPORT_NAMES_RE.exec(code))) {
+        pushNames(imports, m[2], m[1]);
+      } else if ((m = IMPORT_MODULE_RE.exec(code))) {
+        imports.push({
+          alias: m[2] ?? m[1].split("/").pop() ?? m[1],
+          modulePath: m[1],
+          kind: "namespace",
+        });
+      } else if ((m = EXPORT_STAR_AS_RE.exec(code))) {
+        reexports.push({ modulePath: m[2], kind: "namespace", alias: m[1] });
+      } else if ((m = EXPORT_STAR_RE.exec(code))) {
+        reexports.push({
+          modulePath: m[1],
+          kind: "star",
+          except: m[2] ? m[2].split(",").map((s) => s.trim()).filter(Boolean) : undefined,
+        });
+      } else if ((m = EXPORT_NAMES_RE.exec(code))) {
+        reexports.push({
+          modulePath: m[2],
+          kind: "names",
+          names: m[1]
+            .split(",")
+            .map((s) => s.trim())
+            .filter(Boolean)
+            .map((s) => {
+              const [name, alias] = s.split(/\s+as\s+/);
+              return { name, alias: alias ?? name };
+            }),
+        });
+      }
+    }
+
+    // --- declarations
+    let handled = false;
+    let m: RegExpExecArray | null;
+
+    if (depthBefore === 0) {
+      if ((m = ENUM_RE.exec(line)) && /\benum\b/.test(line)) {
+        const exported = Boolean(m[1]);
+        const name = m[4];
+        const agg: AggregateDoc = {
+          name,
+          kind: "enum",
+          fields: [],
+          methods: [],
+          members: [],
+          exported,
+          filePath,
+          line: i,
+        };
+        aggregates.set(name, agg);
+        symbols.push(
+          makeSymbol(
+            { name, kind: "enum", signature: `enum ${name}${m[5] ? `: ${m[5].trim()}` : ""}`, detail: "enum", exported },
+            ctx,
+            i,
+            docs
+          )
+        );
+        container = { kind: "enum", name, depth: 0, aggregate: agg };
+        parseInlineBody(agg, line, ctx, i, symbols);
+        handled = true;
+      } else if ((m = STRUCT_RE.exec(line))) {
+        const exported = Boolean(m[1]);
+        const kind = m[4] as "struct" | "class" | "interface";
+        const name = m[5];
+        const agg: AggregateDoc = {
+          name,
+          kind,
+          base: m[6],
+          fields: [],
+          methods: [],
+          members: [],
+          exported,
+          filePath,
+          line: i,
+        };
+        aggregates.set(name, agg);
+        symbols.push(
+          makeSymbol(
+            {
+              name,
+              kind,
+              signature: `${kind} ${name}${m[6] ? ` : ${m[6]}` : ""}`,
+              detail: kind,
+              exported,
+            },
+            ctx,
+            i,
+            docs
+          )
+        );
+        container = { kind, name, depth: 0, aggregate: agg };
+        parseInlineBody(agg, line, ctx, i, symbols);
+        handled = true;
+      } else if ((m = IMPL_RE.exec(line))) {
+        container = { kind: "impl", name: m[2], depth: 0 };
+        handled = true;
+      } else if ((m = TYPE_RE.exec(line))) {
+        symbols.push(
+          makeSymbol(
+            { name: m[4], kind: "type", signature: `type ${m[4]} = ${m[5]}`, detail: "type alias", exported: Boolean(m[1]) },
+            ctx,
+            i,
+            docs
+          )
+        );
+        handled = true;
+      } else if ((m = DEFINE_RE.exec(line)) && /\bdefine\b/.test(line)) {
+        const isMacro = m[6] !== undefined && m[7] === undefined;
+        symbols.push(
+          makeSymbol(
+            {
+              name: m[4],
+              kind: "define",
+              signature: isMacro ? `define ${m[4]}(${m[6]})` : `define ${m[4]}${m[7] ? ` = ${m[7]}` : ""}`,
+              detail: isMacro ? "macro" : "constant",
+              exported: Boolean(m[1]),
+            },
+            ctx,
+            i,
+            docs
+          )
+        );
+        handled = true;
+      } else if ((m = GLOBAL_RE.exec(line)) && /\bglobal\b/.test(line)) {
+        symbols.push(
+          makeSymbol(
+            {
+              name: m[4],
+              kind: "global",
+              signature: `global ${m[4]}${m[5] ? `: ${m[5]}` : ""}`,
+              detail: m[5] ? m[5] : "global",
+              returnType: m[5],
+              exported: Boolean(m[1]),
+            },
+            ctx,
+            i,
+            docs
+          )
+        );
+        handled = true;
+      }
+    }
+
+    if (!handled) {
+      const fn = FN_RE.exec(line);
+      if (fn && (depthBefore === 0 || (container && depthBefore === container.depth + 1))) {
+        const name = fn[4];
+        const open = line.indexOf("(", fn[0].length - 1);
+        const group = open === -1 ? undefined : readParens(line, open);
+        const params = group ? parseParams(group.inside) : [];
+        const after = group ? line.slice(group.end) : "";
+        const retMatch = /^\s*->\s*([^{]+?)\s*\{?\s*$/.exec(after);
+        const returnType = retMatch ? retMatch[1].trim() : undefined;
+        const exported = Boolean(fn[1]);
+        const owner = container && depthBefore === container.depth + 1 ? container.name : undefined;
+        const sym = makeSymbol(
+          {
+            name,
+            kind: owner ? "method" : "function",
+            signature: formatSignature(name, params, returnType),
+            detail: returnType ? `-> ${returnType}` : "fn",
+            exported: owner ? true : exported,
+            owner,
+            returnType,
+          },
+          ctx,
+          i,
+          docs
+        );
+        symbols.push(sym);
+        if (owner) {
+          aggregate(owner)?.methods.push(sym);
+        }
+        const hasBody = line.includes("{");
+        if (hasBody) {
+          current = {
+            name,
+            owner,
+            startLine: i,
+            endLine: i,
+            params: params.map((p) => ({ ...p })),
+            locals: [],
+          };
+          currentDepth = depthBefore;
+          functions.push(current);
+        }
+        handled = true;
+      }
+    }
+
+    if (!handled && container && depthBefore === container.depth + 1) {
+      if (container.kind === "struct" || container.kind === "class") {
+        const field = /^\s*(?:@\w+(?:\([^)]*\))?\s+)*(\w+)\s*:\s*([^,]+?)\s*,?\s*$/.exec(line);
+        if (field && container.aggregate) {
+          container.aggregate.fields.push({ name: field[1], type: field[2], line: i });
+          symbols.push(
+            makeSymbol(
+              {
+                name: field[1],
+                kind: "field",
+                signature: `${field[1]}: ${field[2]}`,
+                detail: field[2],
+                owner: container.name,
+                exported: true,
+              },
+              ctx,
+              i,
+              docs
+            )
+          );
+        }
+      } else if (container.kind === "enum" && container.aggregate) {
+        for (const part of line.split(",")) {
+          const member = /^\s*(\w+)\s*(?:=.*)?$/.exec(part);
+          if (member && !/^\s*[{}]/.test(part)) {
+            container.aggregate.members.push(member[1]);
+          }
         }
       }
-      continue;
     }
 
-    const bareImport = IMPORT_BARE.exec(line);
-    if (bareImport && !line.includes(" from ")) {
-      imports.push({
-        alias: bareImport[2] ?? bareImport[1].split("/").pop() ?? bareImport[1],
-        modulePath: bareImport[1],
-        kind: "namespace",
-      });
-      continue;
-    }
-
-    if (IMPORT_ALIAS.exec(line) && !line.includes("/")) {
-      const m = IMPORT_ALIAS.exec(line)!;
-      if (m[1] === m[2]) {
-        imports.push({ alias: m[1], modulePath: m[2], kind: "namespace" });
-      } else {
-        imports.push({ alias: m[1], modulePath: m[2], kind: "symbol", symbolName: m[1] });
-      }
-      continue;
-    }
-
-    const exportStruct = EXPORT_STRUCT.exec(line);
-    if (exportStruct) {
-      currentStruct = {
-        name: exportStruct[1],
-        fields: [],
-        exported: true,
-        filePath,
-        line: i,
-      };
-      structs.set(exportStruct[1], currentStruct);
-      symbols.push(makeStructSymbol(currentStruct, moduleId));
-      braceDepth = (line.match(/\{/g) ?? []).length - (line.match(/\}/g) ?? []).length;
-      continue;
-    }
-
-    const struct = STRUCT.exec(line);
-    if (struct && !line.includes("export")) {
-      currentStruct = {
-        name: struct[1],
-        fields: [],
-        exported: false,
-        filePath,
-        line: i,
-      };
-      structs.set(struct[1], currentStruct);
-      braceDepth = (line.match(/\{/g) ?? []).length - (line.match(/\}/g) ?? []).length;
-      continue;
-    }
-
-    if (currentStruct && braceDepth > 0) {
-      braceDepth += (line.match(/\{/g) ?? []).length - (line.match(/\}/g) ?? []).length;
-      const field = /^\s*(\w+)\s*:\s*([\w*]+(?:\s+array\s+\w+)?)/.exec(line);
-      if (field) {
-        currentStruct.fields.push({ name: field[1], type: field[2].trim() });
-      }
-      if (braceDepth <= 0) {
-        currentStruct = undefined;
-      }
-      continue;
-    }
-
-    const exportFn = EXPORT_FN.exec(line);
-    if (exportFn) {
-      const receiver = parseFirstParamType(exportFn[2]);
-      symbols.push(makeFnSymbol(exportFn[1], exportFn[2], exportFn[3], moduleId, filePath, i, true, receiver));
-      functions.push(exportFn[1]);
-      continue;
-    }
-
-    const fn = FN.exec(line);
-    if (fn && !line.includes("declare")) {
-      const receiver = parseFirstParamType(fn[2]);
-      symbols.push(makeFnSymbol(fn[1], fn[2], fn[3], moduleId, filePath, i, false, receiver));
-      functions.push(fn[1]);
-    }
-
-    const exportGlobal = EXPORT_GLOBAL.exec(line);
-    if (exportGlobal) {
-      symbols.push({
-        name: exportGlobal[1],
-        kind: "global",
-        signature: exportGlobal[1],
-        detail: "global",
-        documentation: `Exported global \`${exportGlobal[1]}\` from \`${moduleId}\`.`,
-        exported: true,
-        moduleId,
-        filePath,
-        line: i,
-      });
-    }
-
-    const local = LOCAL.exec(line);
-    if (local) {
-      const explicit = local[2];
-      const inferred = explicit ?? inferTypeFromRhs(local[3], symbols);
-      if (inferred) {
-        locals.set(local[1], inferred);
+    // --- locals (inside a function body)
+    if (current) {
+      let lm: RegExpExecArray | null;
+      if ((lm = LOCAL_RE.exec(line))) {
+        current.locals.push({
+          name: lm[1],
+          type: (lm[2] ?? inferType(lm[3] ?? "", symbols, aggregates, current)).trim(),
+          line: i,
+        });
+      } else if ((lm = FOR_LOCAL_RE.exec(line))) {
+        current.locals.push({
+          name: lm[1],
+          type: (lm[2] ?? inferType(lm[3], symbols, aggregates, current)).trim(),
+          line: i,
+        });
+      } else if ((lm = FOR_RANGE_RE.exec(line))) {
+        current.locals.push({ name: lm[1], type: inferType(lm[2], symbols, aggregates, current), line: i });
       }
     }
+
+    depth += opens - closes;
+    if (depth < 0) {
+      depth = 0;
+    }
+    // A function body ends when the brace depth returns to the depth of its declaration.
+    if (current && closes > 0 && depth <= currentDepth) {
+      current.endLine = i + consumed;
+      current = undefined;
+    }
+    // Same for the struct / class / interface / enum / impl block.
+    if (container && closes > 0 && depth <= container.depth) {
+      container = undefined;
+    }
+    docs = [];
+    i += consumed;
   }
 
-  return { moduleId, filePath, symbols, structs, imports, locals, functions };
+  // An unterminated function runs to the end of the file.
+  if (current) {
+    current.endLine = lines.length - 1;
+  }
+
+  return { moduleId, filePath, symbols, aggregates, imports, reexports, functions };
 }
 
-function parseImportClauseList(clause: string, modulePath: string, out: ImportBinding[]): void {
-  for (const part of clause.split(",")) {
-    const trimmed = part.trim();
-    const starAs = /^\*\s+as\s+(\w+)$/.exec(trimmed);
-    if (starAs) {
-      out.push({ alias: starAs[1], modulePath, kind: "namespace" });
+function pushNames(out: ImportBinding[], modulePath: string, list: string): void {
+  for (const part of list.split(",")) {
+    const spec = part.trim();
+    if (!spec) {
       continue;
     }
-    const asSplit = trimmed.split(/\s+as\s+/);
-    const name = asSplit[0]?.trim();
-    const alias = asSplit[1]?.trim() ?? name;
+    const [name, alias] = spec.split(/\s+as\s+/).map((s) => s.trim());
     if (name) {
-      out.push({ alias: alias!, modulePath, kind: "symbol", symbolName: name });
+      out.push({ alias: alias ?? name, modulePath, kind: "symbol", symbolName: name });
     }
   }
 }
 
-function inferTypeFromRhs(rhs: string, symbols: SymbolDoc[]): string | undefined {
-  const call = /^([\w.]+)\([^)]*\)$/.exec(rhs.trim());
-  if (!call) {
-    return undefined;
+function inferType(
+  rhs: string,
+  symbols: SymbolDoc[],
+  aggregates: Map<string, AggregateDoc>,
+  scope: FunctionScope
+): string {
+  const text = rhs.trim();
+  let m: RegExpExecArray | null;
+  if ((m = /^new(?:\([^)]*\))?\s+([\w.]+)/.exec(text))) {
+    return `*${m[1]}`;
   }
-  const method = call[1].includes(".") ? call[1].split(".").pop()! : call[1];
-  const fn = symbols.find((s) => s.name === method);
-  if (fn?.returnType) {
-    return fn.returnType;
+  if ((m = /^([A-Z]\w*)\s*\{/.exec(text)) && aggregates.has(m[1])) {
+    return m[1];
   }
-  if (method === "NewRouter" || method === "Group") {
-    return "Router";
+  if ((m = /\bas\s+([^\s]+)\s*$/.exec(text))) {
+    return m[1];
   }
-  if (method === "parse") {
-    return "Json";
+  if ((m = /^&\s*(\w+)\s*$/.exec(text))) {
+    const base = scope.locals.find((l) => l.name === m![1]) ?? scope.params.find((p) => p.name === m![1]);
+    return base?.type ? `*${base.type}` : "";
   }
-  return undefined;
+  if ((m = /^(\w+)\s*\(/.exec(text))) {
+    const fn = symbols.find((s) => s.name === m![1] && (s.kind === "function" || s.kind === "method"));
+    return fn?.returnType ?? "";
+  }
+  if (/^".*"$/.test(text)) {
+    return "*ui8";
+  }
+  if (/^(true|false)$/.test(text)) {
+    return "bool";
+  }
+  if (/^-?\d+$/.test(text)) {
+    return "i32";
+  }
+  if (/^-?\d+\.\d+$/.test(text)) {
+    return "f64";
+  }
+  const named = scope.locals.find((l) => l.name === text) ?? scope.params.find((p) => p.name === text);
+  return named?.type ?? "";
 }
 
-function makeStructSymbol(st: StructDoc, moduleId: string): SymbolDoc {
-  const fields = st.fields.map((f) => `- \`${f.name}\`: ${f.type}`).join("\n");
-  return {
-    name: st.name,
-    kind: "struct",
-    signature: `struct ${st.name}`,
-    detail: "struct",
-    documentation: fields
-      ? `Struct from \`${moduleId}\`:\n\n${fields}`
-      : `Struct \`${st.name}\` from \`${moduleId}\`.`,
-    exported: st.exported,
-    moduleId,
-    filePath: st.filePath,
-    line: st.line,
-  };
-}
-
-function makeFnSymbol(
-  name: string,
-  params: string,
-  ret: string | undefined,
-  moduleId: string,
-  filePath: string,
-  line: number,
-  exported: boolean,
-  receiver?: string
-): SymbolDoc {
-  const sig = formatSignature(name, params, ret);
-  const doc = [`\`${sig}\` from \`${moduleId}\`.`];
-  if (receiver) {
-    doc.push(`Method on \`${receiver}\`.`);
-  }
-  if (params.trim()) {
-    doc.push(`Parameters: \`${params.trim()}\``);
-  }
-  return {
-    name,
-    kind: "function",
-    signature: sig,
-    detail: ret ? `→ ${ret}` : "function",
-    documentation: doc.join("\n\n"),
-    exported,
-    receiver,
-    returnType: ret,
-    moduleId,
-    filePath,
-    line,
-  };
-}
-
-export function resolveModuleFile(modulePath: string, contextFile: string): string | undefined {
-  const searchPaths = collectModuleSearchPaths(contextFile);
-  for (const root of searchPaths) {
-    const file = path.join(root, `${modulePath}.xlang`);
-    if (fs.existsSync(file)) {
-      return file;
-    }
-    const dir = path.join(root, modulePath);
-    if (fs.existsSync(dir) && fs.statSync(dir).isDirectory()) {
-      return dir;
-    }
-  }
-  const relative = path.join(path.dirname(contextFile), `${modulePath}.xlang`);
-  if (fs.existsSync(relative)) {
-    return relative;
-  }
-  return undefined;
-}
-
-export function moduleIdFromPath(filePath: string, searchRoot?: string): string {
+export function moduleIdFromPath(filePath: string, stdRoot?: string, workspaceRoot?: string): string {
   const normalized = path.normalize(filePath);
-  const parts = normalized.split(path.sep);
-  const frontendIdx = parts.lastIndexOf("frontend");
-  if (frontendIdx !== -1 && parts[frontendIdx - 1] === "runtime") {
-    return parts.slice(frontendIdx + 1).join("/").replace(/\.xlang$/, "");
-  }
-  if (frontendIdx !== -1) {
-    return parts.slice(frontendIdx + 1).join("/").replace(/\.xlang$/, "");
-  }
-  if (searchRoot) {
-    return path.relative(searchRoot, normalized).replace(/\.xlang$/, "").replace(/\\/g, "/");
-  }
-  return path.basename(normalized, ".xlang");
-}
-
-export function loadModuleFromDisk(modulePath: string, contextFile: string): ParsedModule | undefined {
-  const resolved = resolveModuleFile(modulePath, contextFile);
-  if (!resolved) {
-    return undefined;
-  }
-  if (fs.statSync(resolved).isDirectory()) {
-    return loadPackageDir(resolved, modulePath);
-  }
-  const source = fs.readFileSync(resolved, "utf8");
-  return parseXlangSource(source, resolved, moduleIdFromPath(resolved));
-}
-
-function loadPackageDir(dirPath: string, moduleId: string): ParsedModule {
-  const merged: ParsedModule = {
-    moduleId,
-    filePath: dirPath,
-    symbols: [],
-    structs: new Map(),
-    imports: [],
-    locals: new Map(),
-    functions: [],
-  };
-
-  for (const file of fs.readdirSync(dirPath).filter((f) => f.endsWith(".xlang")).sort()) {
-    const full = path.join(dirPath, file);
-    const part = parseXlangSource(fs.readFileSync(full, "utf8"), full, `${moduleId}/${file.replace(/\.xlang$/, "")}`);
-    for (const sym of part.symbols) {
-      if (sym.exported && !merged.symbols.some((s) => s.name === sym.name)) {
-        merged.symbols.push({ ...sym, moduleId });
-      }
-    }
-    for (const [name, st] of part.structs) {
-      if (st.exported && !merged.structs.has(name)) {
-        merged.structs.set(name, st);
-      }
+  if (stdRoot) {
+    const rel = path.relative(stdRoot, normalized);
+    if (!rel.startsWith("..") && !path.isAbsolute(rel)) {
+      const stem = rel.slice(0, -SOURCE_EXT.length).replace(/\\/g, "/");
+      return stem === "index" ? "std" : `std/${stem.replace(/\/index$/, "")}`;
     }
   }
-  return merged;
+  if (workspaceRoot) {
+    const rel = path.relative(workspaceRoot, normalized);
+    if (!rel.startsWith("..")) {
+      return rel.slice(0, -SOURCE_EXT.length).replace(/\\/g, "/");
+    }
+  }
+  return path.basename(normalized, SOURCE_EXT);
 }
 
-export function symbolToLocation(sym: SymbolDoc): vscode.Location {
-  return new vscode.Location(vscode.Uri.file(sym.filePath), new vscode.Position(sym.line, 0));
-}
+// ---------------------------------------------------------------------------------------------
+// VS Code presentation
 
 export function symbolToHover(sym: SymbolDoc): vscode.MarkdownString {
   const md = new vscode.MarkdownString();
-  md.supportSnippet = true;
-  md.appendMarkdown(`**${sym.name}** \`${sym.detail}\`\n\n`);
-  md.appendMarkdown(sym.documentation);
-  if (sym.moduleId) {
-    md.appendMarkdown(`\n\n---\n*module:* \`${sym.moduleId}\``);
+  md.appendCodeblock(sym.signature, "xlang");
+  if (sym.documentation) {
+    md.appendMarkdown(`\n${sym.documentation}\n`);
+  }
+  const where = [sym.owner ? `member of \`${sym.owner}\`` : "", sym.moduleId ? `module \`${sym.moduleId}\`` : ""]
+    .filter(Boolean)
+    .join(" · ");
+  if (where) {
+    md.appendMarkdown(`\n---\n*${where}*`);
   }
   return md;
 }
 
 export function symbolToCompletion(sym: SymbolDoc, sortPrefix: string): vscode.CompletionItem {
+  const K = vscode.CompletionItemKind;
   const kind =
     sym.kind === "struct"
-      ? vscode.CompletionItemKind.Struct
-      : sym.kind === "global" || sym.kind === "variable"
-        ? vscode.CompletionItemKind.Variable
-        : sym.kind === "module"
-          ? vscode.CompletionItemKind.Module
-          : vscode.CompletionItemKind.Function;
+      ? K.Struct
+      : sym.kind === "class"
+        ? K.Class
+        : sym.kind === "interface"
+          ? K.Interface
+          : sym.kind === "enum"
+            ? K.Enum
+            : sym.kind === "enumMember"
+              ? K.EnumMember
+              : sym.kind === "field"
+                ? K.Field
+                : sym.kind === "method"
+                  ? K.Method
+                  : sym.kind === "type"
+                    ? K.TypeParameter
+                    : sym.kind === "define"
+                      ? K.Constant
+                      : sym.kind === "global" || sym.kind === "variable"
+                        ? K.Variable
+                        : sym.kind === "module"
+                          ? K.Module
+                          : K.Function;
   const item = new vscode.CompletionItem(sym.name, kind);
   item.detail = sym.signature;
   item.documentation = symbolToHover(sym);
   item.sortText = `${sortPrefix}_${sym.name}`;
-  if (sym.kind === "function" && !sym.receiver) {
+  if (sym.kind === "function" || sym.kind === "method") {
     item.insertText = new vscode.SnippetString(`${sym.name}($0)`);
+  } else if (sym.kind === "define" && sym.detail === "macro") {
+    item.insertText = new vscode.SnippetString(`${sym.name}!($0)`);
   }
   return item;
 }

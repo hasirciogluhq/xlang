@@ -1,7 +1,7 @@
 {
   "name": "xlang",
   "displayName": "xlang",
-  "description": "Syntax highlighting, snippets, diagnostics, and formatting for the xlang programming language",
+  "description": "Syntax highlighting, IntelliSense, snippets, compiler diagnostics, formatting and run/build/test commands for the xlang programming language",
   "version": "1.0.0",
   "publisher": "xlang",
   "license": "MIT",
@@ -41,8 +41,7 @@
           "Xlang"
         ],
         "extensions": [
-          ".xlang",
-          ".test.xlang"
+          ".xl"
         ],
         "configuration": "./language-configuration.json",
         "icon": {
@@ -70,23 +69,33 @@
         "xlang.compilerPath": {
           "type": "string",
           "default": "",
-          "description": "Path to the xlang compiler binary (build/xlang). Empty = auto-detect."
+          "description": "Path to the xlang compiler binary (build/xlang). Empty = auto-detect (workspace build/, then PATH)."
         },
-        "xlang.xlankPath": {
+        "xlang.stdPath": {
           "type": "string",
           "default": "",
-          "description": "Deprecated alias for xlang.compilerPath (formerly xlank).",
-          "deprecationMessage": "Use xlang.compilerPath instead."
+          "description": "Directory of the standard library sources (the one holding index.xl) used for IntelliSense. Empty = auto-detect (std/ in the workspace or next to the compiler)."
         },
         "xlang.enableDiagnostics": {
           "type": "boolean",
           "default": true,
-          "description": "Run xlang parse on open/save and show errors."
+          "description": "Run `xlang check` on open/save and show its errors and warnings."
         },
         "xlang.diagnosticsOnType": {
           "type": "boolean",
           "default": false,
-          "description": "Re-run diagnostics while typing (debounced)."
+          "description": "Re-run diagnostics while typing (debounced). The buffer is checked through a temporary copy next to the file."
+        },
+        "xlang.defines": {
+          "type": "array",
+          "items": { "type": "string" },
+          "default": [],
+          "description": "Extra -D NAME or NAME=VALUE flags passed to the compiler for diagnostics, run and build."
+        },
+        "xlang.target": {
+          "type": "string",
+          "default": "",
+          "description": "Value of --target passed to the compiler for diagnostics and build (empty = host)."
         },
         "xlang.formatter.tabSize": {
           "type": "number",
@@ -97,8 +106,8 @@
         },
         "xlang.testRoot": {
           "type": "string",
-          "default": "test/xlang",
-          "description": "Default directory for xlang test (relative to workspace root)."
+          "default": "test",
+          "description": "Directory (or pattern) given to `xlang test` for the suite command, relative to the workspace root."
         }
       }
     },
@@ -124,13 +133,21 @@
       {
         "command": "xlang.formatDocument",
         "title": "xlang: Format Document"
+      },
+      {
+        "command": "xlang.checkFile",
+        "title": "xlang: Check Current File"
+      },
+      {
+        "command": "xlang.explain",
+        "title": "xlang: Explain Diagnostic Code"
       }
     ],
     "menus": {
       "editor/context": [
         {
           "command": "xlang.runFile",
-          "when": "resourceLangId == xlang && resourceFilename !~ /\\.test\\.xlang$/",
+          "when": "resourceLangId == xlang && resourceFilename !~ /\\.test\\.xl$/",
           "group": "navigation"
         },
         {

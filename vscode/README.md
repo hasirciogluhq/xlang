@@ -1,71 +1,89 @@
 # xlang — VS Code Extension
 
-Language support for **xlang** (`.xlang`, `.test.xlang`): syntax highlighting, IntelliSense, hover docs, go-to-definition, diagnostics, formatting, and run/build/test commands.
+Language support for **xlang** (`.xl`, `*.test.xl`): syntax highlighting, IntelliSense, hover docs,
+go-to-definition, compiler diagnostics, formatting, snippets and run / build / test commands.
 
-Built with **Bun** + TypeScript. Requires the [`xlang`](https://github.com/hasirciogluhq/xlang#readme) compiler for diagnostics and commands.
+Built with **Bun** + TypeScript. It needs the [`xlang`](https://github.com/hasirciogluhq/xlang#readme)
+compiler for diagnostics and the commands.
 
 ## Features
 
-### IntelliSense & hover
+### Highlighting
+
+Keywords and control flow (`while`, `do`, `for`, `break`, `continue`, `switch`, `defer`, `unsafe`),
+declarations (`fn`, `struct`, `class`, `interface`, `impl`, `enum`, `type`, `define`, `global`,
+`register`), types (`i8`..`i64`, `isize`, `ui8`..`ui64`, `usize`, `f32`, `f64`, `bool`, `void`, `*T`,
+`[T; N]`), attributes (`@repr(c)`, `@library("x")`, ...), `#if` directives, macro calls (`f!(...)`),
+builtins (`syscall`, `sizeOf`, `__builtin_*`, `MemoryOrder`), numbers (hex, binary, octal, floats),
+compound assignment and the other operators.
+
+### IntelliSense and hover
 
 | Feature | Description |
 |---------|-------------|
-| **Completion** | Keywords, types, global runtime (`print`, `fetch`, `ReadAll`, `NewLock`, …), compiler builtins, local symbols |
-| **Import-aware** | `http.NewRouter()`, `json.parse()` — completes from `src/runtime/frontend/` after import |
-| **Global runtime** | `print`, `spawn`, `fetch`, `Now`, `Format`, `ReadAll`, `NewLock`, … — no import required |
-| **Member access** | `r.Get(`, `ctx.JSON(`, `lock.Lock(`, `a.FetchAdd(` — methods on known receiver types |
-| **Module picker** | Typing `import` suggests workspace modules (`http`, `json`, `http/router`, …) with export preview |
-| **Selective import** | Snippets for `import expect from test`, `import router from http/router` |
-| **Hover** | Markdown docs on builtins, exported functions, structs, and imported symbols |
-| **Go to definition** | Jump to the `.xlang` file where an imported symbol is defined |
+| **Completion** | Keywords, types, builtins, attributes (`@`), directives (`#`), `MemoryOrder.` members, roles, locals, parameters and every name visible through imports |
+| **Member access** | `p.` completes fields and methods (own, inherited, from `impl` blocks), `Color.` enum members, `ns.` namespace members |
+| **Import paths** | Inside `from "..." import`, `import "..."` and `export * from "..."` the stdlib (`std`, `std/mem`, ...) and nearby modules are suggested with their exports |
+| **Hover** | Signatures and `///` doc comments of symbols, docs of keywords and builtins, diagnostic code descriptions (`E0709`) |
+| **Go to definition** | Symbols, members and the module file named by an import string |
 
-The extension parses `.xlang` sources locally (no LSP server). It scans `src/runtime/frontend/` in your workspace and resolves imports alongside the compiler module roots (`XLANG_MODULE_PATH` for the `xlang` binary).
+The extension parses `.xl` sources locally (no language server). Standard library modules come from a
+`std/` directory: `xlang.stdPath`, a `std/` above the file, `std/` in a workspace folder, or `std/` next
+to the compiler's build directory.
 
 ### Diagnostics
 
-Runs `xlang parse` on open/save (optional debounce while typing). Shows parse errors and missing modules.
+Runs `xlang check <file> --diag-format json` on open and save (and while typing when
+`xlang.diagnosticsOnType` is on, through a temporary copy next to the file). Errors and warnings keep their
+codes (`E0709`, `W0701`, ...), exact ranges, the pinpoint text, the fix hint and related locations.
+Problems found in an imported file are shown on the first line of the importing file.
 
 ### Commands
 
 | Command | Action |
 |---------|--------|
-| **xlang: Run Current File** | `xlang run <file>` |
-| **xlang: Build Current File** | `xlang build <file>` |
-| **xlang: Test Current File** | `xlang test <file>` or suite |
-| **xlang: Run Test Suite** | `xlang test test/xlang` |
-| **xlang: Format Document** | Built-in formatter |
+| **xlang: Run Current File** | `xlang run <file>` in a terminal |
+| **xlang: Build Current File** | `xlang build <file> -o <file without extension>` |
+| **xlang: Check Current File** | `xlang check <file>`, output in the *xlang* channel |
+| **xlang: Test Current File** | `xlang test <file>` (a `*.test.xl` file) or the suite |
+| **xlang: Run Test Suite** | `xlang test <xlang.testRoot>` |
+| **xlang: Explain Diagnostic Code** | `xlang --explain <CODE>` |
+| **xlang: Format Document** | Built-in brace based formatter |
 
-Right-click an `.xlang` editor for Run / Test shortcuts.
+`xlang.defines` (`-D`) and `xlang.target` (`--target`) are passed to check, build, run and test.
 
 ### Snippets
 
-`fn`, `struct`, `import`, `httpserver`, `expect`, `Test*`, `filio`, `jsonparse`, and more — see `snippets/xlang.json`.
+`fn`, `main`, `struct`, `class`, `interface`, `impl`, `enum`, `define`, `if`, `while`, `do`, `for`,
+`forin`, `switch`, `defer`, `unsafe`, `from`, `importas`, `declare`, `library`, `registerpanic`,
+`#if`, `testfile`, and more: see `snippets/xlang.json`.
 
 ## Settings
 
 | Setting | Default | Description |
 |---------|---------|-------------|
-| `xlang.compilerPath` | *(auto)* | Path to `xlang` binary |
-| `xlang.enableDiagnostics` | `true` | Parse diagnostics on open/save |
-| `xlang.diagnosticsOnType` | `false` | Re-parse while typing (debounced) |
-| `xlang.formatter.tabSize` | `4` | Indent size for formatter |
-| `xlang.testRoot` | `test/xlang` | Default test directory |
-
-Auto-detect looks for `build/xlang` in the workspace root (or parent).
+| `xlang.compilerPath` | *(auto)* | Path to the `xlang` binary (auto: `build/xlang` in the workspace, then `PATH`) |
+| `xlang.stdPath` | *(auto)* | Directory with the stdlib sources (`index.xl`) for IntelliSense |
+| `xlang.enableDiagnostics` | `true` | Run `xlang check` on open/save |
+| `xlang.diagnosticsOnType` | `false` | Re-check while typing (debounced) |
+| `xlang.defines` | `[]` | Extra `-D NAME[=VALUE]` flags |
+| `xlang.target` | *(host)* | `--target` triple |
+| `xlang.formatter.tabSize` | `4` | Indent size of the formatter |
+| `xlang.testRoot` | `test` | What the suite command passes to `xlang test` |
 
 ## Development
 
 ```bash
 cd vscode
 bun install
-bun run compile      # → out/extension.js
+bun run compile      # -> out/extension.js
 bun run watch        # rebuild on change
-bun run package      # → xlang-1.0.0.vsix
+bun run package      # -> xlang-<version>.vsix
 ```
 
 Press **F5** in VS Code to launch an Extension Development Host.
 
-### Project layout
+### Layout
 
 ```
 vscode/
@@ -73,56 +91,42 @@ vscode/
 │   ├── extension.ts      # activation, commands
 │   ├── completions.ts    # CompletionItemProvider
 │   ├── hover.ts          # Hover + Definition providers
-│   ├── symbols.ts        # .xlang symbol parser
-│   ├── languageIndex.ts  # import resolution + module cache
-│   ├── builtins.ts       # runtime/stdlib catalog + docs
-│   ├── paths.ts          # module / libs path helpers for the extension
-│   ├── diagnostics.ts    # xlang parse integration
+│   ├── symbols.ts        # line based .xl declaration parser
+│   ├── languageIndex.ts  # import resolution, members, scopes
+│   ├── builtins.ts       # keyword / type / builtin / attribute catalog
+│   ├── paths.ts          # module and stdlib resolution
+│   ├── diagnostics.ts    # `xlang check` integration
 │   └── formatter.ts
 ├── syntaxes/             # TextMate grammar
 ├── snippets/
 └── language-configuration.json
 ```
 
-## Install
-
-```bash
-cd vscode && bun run package
-code --install-extension xlang-1.0.0.vsix
-```
-
-Or install from the marketplace when published.
-
 ## Example
 
-```xlang
-import * as http from http
+```xl
+from "std" import println
 
-fn handle_index(ctx: Context) {
-    local html = ReadAll("examples/index.html")
-    ctx.HTML(200, html)
-    return 0
+enum Color { Red, Green, Blue }
+
+fn classify(c: Color) -> i32 {
+    switch c {
+        case Color.Red { return 1 }
+        default { return 2 }
+    }
 }
 
-fn handle_ping(ctx: Context) {
-    ctx.String(200, "pong")
-    return 0
-}
-
-fn on_listen(info: ServerInfo) {
-    return 0
-}
-
-fn main() {
-    local r = http.NewRouter()
-    r.Get("/", handle_index)
-    r.Get("/ping", handle_ping)
-    r.ListenAndServe("127.0.0.1", 8080, on_listen)
+fn main() -> i32 {
+    local total: i32 = 0
+    for i in 0..4 {
+        defer total += 1
+        if i == 2 { continue }
+        total += classify(Color.Green)
+    }
+    println("done")
     return 0
 }
 ```
-
-Hover `ReadAll`, `Now`, or `ctx.JSON` for signatures. Runtime symbols (`print`, `fetch`, `Now`, `Format`, file I/O, sync) need no import.
 
 ## License
 

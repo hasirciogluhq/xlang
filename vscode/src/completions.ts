@@ -1,22 +1,19 @@
 import * as vscode from "vscode";
 import {
-  COMPILER_BUILTINS,
-  EXPECT_CHAIN,
-  GLOBAL_RUNTIME_FUNCTIONS,
-  HTTP_TYPES,
-  JSON_METHODS,
+  ATTRIBUTES,
+  BUILTINS,
+  DIRECTIVES,
   KEYWORDS,
-  NET_SYSCALLS,
-  PROCESS_SYSCALLS,
-  RUNTIME_TYPES,
-  TEST_BUILTINS,
+  MEMORY_ORDERS,
+  ROLES,
   TYPES,
   catalogToCompletion,
 } from "./builtins";
 import { getLanguageIndex } from "./languageIndex";
+import { listModulePaths } from "./paths";
 import { symbolToCompletion } from "./symbols";
 
-const TRIGGER_CHARS = [".", "(", " ", ..."abcdefghijklmnopqrstuvwxyz"];
+const TRIGGER_CHARS = [".", "@", "#", '"', "/", ...Array.from("abcdefghijklmnopqrstuvwxyz")];
 
 export function registerCompletions(context: vscode.ExtensionContext): void {
   context.subscriptions.push(
@@ -24,96 +21,87 @@ export function registerCompletions(context: vscode.ExtensionContext): void {
       "xlang",
       {
         provideCompletionItems(document, position) {
-          if (isInsideString(document, position)) {
+          const index = getLanguageIndex();
+          const line = document.lineAt(position.line).text;
+          const prefix = line.slice(0, position.character);
+
+          // Module path inside `from "..." import` / `import "..."` / `from "..."`.
+          const modulePrefix = /(?:\bfrom|\bimport(?:\s+\*(?:\s+as\s+\w+)?\s+from)?|\bexport\s+\*(?:\s+as\s+\w+)?\s+from)\s+"([^"]*)$/.exec(prefix);
+          if (modulePrefix) {
+            return moduleCompletions(index, document, modulePrefix[1]);
+          }
+
+          if (isInsideString(prefix) || /\/\/.*$/.test(prefix)) {
             return [];
           }
 
-          const index = getLanguageIndex();
-          const line = document.lineAt(position.line).text;
-          const linePrefix = line.slice(0, position.character);
-          const items: vscode.CompletionItem[] = [];
-
-          const memberMatch = /([\w]+)\.([\w]*)$/.exec(linePrefix);
-          if (memberMatch) {
-            const objectName = memberMatch[1];
-            const members = index.resolveMemberAccess(document, objectName);
-            for (const sym of members) {
-              items.push(symbolToCompletion(sym, "0"));
-            }
-            if (items.length > 0) {
-              return items;
-            }
+          // `@attribute`
+          if (/@[A-Za-z_]*$/.test(prefix)) {
+            return ATTRIBUTES.map((a) => catalogToCompletion(a, "0"));
           }
 
-          if (isImportLine(linePrefix)) {
-            for (const mod of index.listWorkspaceModules(document.uri.fsPath)) {
-              const item = new vscode.CompletionItem(mod.path, vscode.CompletionItemKind.Module);
-              item.detail = "module";
-              item.documentation = new vscode.MarkdownString(mod.documentation);
-              item.sortText = `0_${mod.path}`;
-              items.push(item);
-            }
-            for (const snippet of importSnippets()) {
-              items.push(snippet);
-            }
+          // `#if`, `#endif`, ...
+          if (/^\s*#[a-z]*$/.test(prefix)) {
+            return DIRECTIVES.map((d) => catalogToCompletion(d, "0"));
+          }
+
+          // `MemoryOrder.seqCst`
+          if (/\bMemoryOrder\.\w*$/.test(prefix)) {
+            return MEMORY_ORDERS.map((m) => catalogToCompletion(m, "0"));
+          }
+
+          // `register(panic)`
+          if (/\bregister\(\w*$/.test(prefix)) {
+            return ROLES.map((r) => catalogToCompletion(r, "0"));
+          }
+
+          // Member access: `a.`, `self.b.`, `Color.`, `ns.`
+          const member = /([A-Za-z_]\w*(?:\s*\.\s*[A-Za-z_]\w*)*)\s*\.\s*(\w*)$/.exec(prefix);
+          if (member) {
+            const members = index.resolveMemberAccess(document, member[1], position.line);
+            return members.map((sym) => symbolToCompletion(sym, "0"));
+          }
+
+          // `: ` / `->` / `as` / `*`: type position.
+          const typePosition = /(?::\s*|->\s*|\bas\s+|\*\s*|\[\s*)\w*$/.test(prefix);
+
+          const items: vscode.CompletionItem[] = [];
+          for (const ty of TYPES) {
+            items.push(catalogToCompletion(ty, typePosition ? "0" : "2"));
+          }
+          for (const sym of index.visibleSymbols(document)) {
+            const isType = ["struct", "class", "interface", "enum", "type"].includes(sym.kind);
+            items.push(symbolToCompletion(sym, isType ? (typePosition ? "0" : "3") : typePosition ? "4" : "1"));
+          }
+          if (typePosition) {
             return items;
           }
 
           for (const kw of KEYWORDS) {
-            items.push(catalogToCompletion(kw, "1"));
+            items.push(catalogToCompletion(kw, "2"));
           }
-          for (const ty of TYPES) {
-            items.push(catalogToCompletion({ ...ty, kind: vscode.CompletionItemKind.TypeParameter }, "2"));
-          }
-
-          for (const entry of [...GLOBAL_RUNTIME_FUNCTIONS, ...COMPILER_BUILTINS, ...TEST_BUILTINS, ...PROCESS_SYSCALLS]) {
-            items.push(catalogToCompletion(entry, "3"));
-          }
-          for (const ty of RUNTIME_TYPES) {
-            items.push(catalogToCompletion(ty, "3"));
+          for (const b of BUILTINS) {
+            items.push(catalogToCompletion(b, "3"));
           }
 
-          for (const sym of index.localSymbols(document)) {
-            if (sym.kind === "function" || sym.kind === "struct" || sym.exported) {
-              items.push(symbolToCompletion(sym, "4"));
+          const scope = index.scopeAt(document, position.line);
+          if (scope) {
+            for (const p of scope.params) {
+              const item = new vscode.CompletionItem(p.name, vscode.CompletionItemKind.Variable);
+              item.detail = p.type ? `${p.name}: ${p.type}` : p.name;
+              item.sortText = `0_${p.name}`;
+              items.push(item);
             }
-          }
-
-          for (const binding of index.resolveImportBindings(document)) {
-            const item = new vscode.CompletionItem(binding.alias, vscode.CompletionItemKind.Module);
-            item.detail = binding.modulePath;
-            item.documentation = new vscode.MarkdownString(`Import alias → \`${binding.modulePath}\``);
-            item.sortText = `5_${binding.alias}`;
-            items.push(item);
-
-            if (binding.modulePath === "json" || binding.alias === "json") {
-              for (const entry of JSON_METHODS.filter((m) => !m.receiver)) {
-                items.push(catalogToCompletion(entry, "5"));
+            for (const l of scope.locals) {
+              if (l.line > position.line) {
+                continue;
               }
-            }
-            if (binding.modulePath === "http" || binding.modulePath.startsWith("http/")) {
-              for (const entry of HTTP_TYPES) {
-                items.push(catalogToCompletion(entry, "5"));
-              }
-            }
-          }
-
-          if (/expect\s*\([^)]*\)\s*\.\s*[\w]*$/.test(linePrefix) || /\.(to\w*)?$/.test(linePrefix)) {
-            for (const chain of EXPECT_CHAIN) {
-              items.push(catalogToCompletion(chain, "6"));
+              const item = new vscode.CompletionItem(l.name, vscode.CompletionItemKind.Variable);
+              item.detail = l.type ? `${l.name}: ${l.type}` : l.name;
+              item.sortText = `0_${l.name}`;
+              items.push(item);
             }
           }
-
-          if (/^\s*declare\s+syscall\s+\w*\s*$/.test(linePrefix.trimEnd())) {
-            for (const sc of [...NET_SYSCALLS, ...PROCESS_SYSCALLS]) {
-              items.push(catalogToCompletion(sc, "7"));
-            }
-          }
-
-          if (/^\s*go\s*$/.test(linePrefix.trimEnd())) {
-            items.push(makeSnippet("go ${1:worker}(${2:args})", "go worker(args)"));
-          }
-
           return items;
         },
       },
@@ -122,43 +110,38 @@ export function registerCompletions(context: vscode.ExtensionContext): void {
   );
 }
 
-function isImportLine(linePrefix: string): boolean {
-  return /^\s*import\s/.test(linePrefix) || /^\s*from\s+[\w./]+\s+import\s/.test(linePrefix);
+function moduleCompletions(
+  index: ReturnType<typeof getLanguageIndex>,
+  document: vscode.TextDocument,
+  typed: string
+): vscode.CompletionItem[] {
+  const contextFile = document.uri.fsPath;
+  const items: vscode.CompletionItem[] = [];
+  for (const modulePath of listModulePaths(contextFile, index.stdRoot(contextFile))) {
+    if (!modulePath.startsWith(typed.split("/").slice(0, -1).join("/"))) {
+      continue;
+    }
+    const item = new vscode.CompletionItem(modulePath, vscode.CompletionItemKind.Module);
+    item.detail = modulePath === "std" || modulePath.startsWith("std/") ? "standard library" : "module";
+    item.documentation = new vscode.MarkdownString(index.moduleDescription(modulePath, contextFile));
+    item.sortText = `${modulePath.startsWith("std") ? "1" : "0"}_${modulePath}`;
+    item.filterText = modulePath;
+    items.push(item);
+  }
+  return items;
 }
 
-function importSnippets(): vscode.CompletionItem[] {
-  return [
-    makeSnippet('import * as ${1:alias} from ${2:module}', "import * as alias from module"),
-    makeSnippet('import ${1:expect} from ${2:test}', "import expect from test (selective)"),
-    makeSnippet('import ${1:router} from ${2:http/router}', "import router from http/router"),
-    makeSnippet('import ${1:Name} from ${2:module}', "import Name from module"),
-    makeSnippet('import * as ${1:a}, ${2:Name} from ${3:module}', "import * as a, Name from module"),
-    makeSnippet('import ${1:alias} from ${2:module/path}', "import alias from module/path"),
-    makeSnippet("from ${1:module} import ${2:symbol}", "from module import symbol"),
-  ];
-}
-
-function makeSnippet(insertText: string, label: string): vscode.CompletionItem {
-  const item = new vscode.CompletionItem(label, vscode.CompletionItemKind.Snippet);
-  item.insertText = new vscode.SnippetString(insertText);
-  return item;
-}
-
-function isInsideString(document: vscode.TextDocument, position: vscode.Position): boolean {
-  const text = document.lineAt(position.line).text.slice(0, position.character);
+/** True when the cursor is inside an unterminated string literal on this line. */
+function isInsideString(prefix: string): boolean {
   let inString = false;
   let escaped = false;
-  for (const ch of text) {
+  for (const ch of prefix) {
     if (inString) {
       if (escaped) {
         escaped = false;
-        continue;
-      }
-      if (ch === "\\") {
+      } else if (ch === "\\") {
         escaped = true;
-        continue;
-      }
-      if (ch === '"') {
+      } else if (ch === '"') {
         inString = false;
       }
       continue;

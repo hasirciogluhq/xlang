@@ -1,19 +1,26 @@
 import * as fs from "node:fs";
-import * as path from "node:path";
 import * as vscode from "vscode";
-import { ATOMIC_BOOL_METHODS, ATOMIC_INT_METHODS, CONN_METHODS, CONTEXT_METHODS, ERROR_METHODS, findGlobalRuntimeEntry, JSON_METHODS, LOCK_METHODS, ROUTER_METHODS, RWLOCK_METHODS, SERVER_METHODS, type CatalogEntry } from "./builtins";
+import { findStdRoot, resolveModuleFile } from "./paths";
 import {
-  type ImportBinding,
+  type AggregateDoc,
+  type FunctionScope,
   type ParsedModule,
   type SymbolDoc,
-  loadModuleFromDisk,
-  parseXlangSource,
+  memberTypeName,
   moduleIdFromPath,
+  parseXlangSource,
 } from "./symbols";
+
+const MAX_REEXPORT_DEPTH = 6;
 
 export class LanguageIndex {
   private readonly moduleCache = new Map<string, ParsedModule>();
   private readonly fileCache = new Map<string, ParsedModule>();
+  private compilerPath: string | undefined;
+
+  setCompilerPath(compilerPath: string | undefined): void {
+    this.compilerPath = compilerPath;
+  }
 
   invalidate(uri?: vscode.Uri): void {
     if (uri) {
@@ -22,265 +29,334 @@ export class LanguageIndex {
     this.moduleCache.clear();
   }
 
+  stdRoot(contextFile: string): string | undefined {
+    return findStdRoot(contextFile, this.compilerPath);
+  }
+
   getDocumentModule(document: vscode.TextDocument): ParsedModule {
     const key = document.uri.fsPath;
     const cached = this.fileCache.get(key);
-    if (cached) {
+    if (cached && cached.moduleId.length > 0) {
       return cached;
     }
-    const moduleId = moduleIdFromPath(
+    const parsed = parseXlangSource(
+      document.getText(),
       key,
-      vscode.workspace.getWorkspaceFolder(document.uri)?.uri.fsPath
+      moduleIdFromPath(
+        key,
+        this.stdRoot(key),
+        vscode.workspace.getWorkspaceFolder(document.uri)?.uri.fsPath
+      )
     );
-    const parsed = parseXlangSource(document.getText(), key, moduleId);
     this.fileCache.set(key, parsed);
     return parsed;
   }
 
-  getImportedModule(modulePath: string, contextFile: string): ParsedModule | undefined {
-    const cacheKey = `${modulePath}::${contextFile}`;
-    const hit = this.moduleCache.get(cacheKey);
+  getModule(modulePath: string, contextFile: string): ParsedModule | undefined {
+    const file = resolveModuleFile(modulePath, contextFile, this.stdRoot(contextFile));
+    if (!file) {
+      return undefined;
+    }
+    const hit = this.moduleCache.get(file);
     if (hit) {
       return hit;
     }
-    const loaded = loadModuleFromDisk(modulePath, contextFile);
-    if (loaded) {
-      this.moduleCache.set(cacheKey, loaded);
+    let source: string;
+    try {
+      source = fs.readFileSync(file, "utf8");
+    } catch {
+      return undefined;
     }
-    return loaded;
+    const parsed = parseXlangSource(source, file, modulePath);
+    this.moduleCache.set(file, parsed);
+    return parsed;
   }
 
-  resolveImportBindings(document: vscode.TextDocument): ImportBinding[] {
-    return this.getDocumentModule(document).imports;
-  }
-
-  symbolsForImportAlias(document: vscode.TextDocument, alias: string): SymbolDoc[] {
-    const binding = this.resolveImportBindings(document).find((b) => b.alias === alias);
-    if (!binding) {
+  /** Everything `mod` exports, following `export * from` and `export { } from` chains. */
+  exportedSymbols(mod: ParsedModule, depth = 0, seen = new Set<string>()): SymbolDoc[] {
+    if (depth > MAX_REEXPORT_DEPTH || seen.has(mod.filePath)) {
       return [];
     }
+    seen.add(mod.filePath);
 
-    const sub = binding.symbolName
-      ? this.findSubmodule(binding.modulePath, binding.symbolName, document.uri.fsPath)
-      : undefined;
-    if (sub) {
-      const mod = this.getImportedModule(sub, document.uri.fsPath);
-      return mod?.symbols.filter((s) => s.exported) ?? [];
+    const out: SymbolDoc[] = mod.symbols.filter((s) => s.exported && !s.owner);
+    for (const re of mod.reexports) {
+      const target = this.getModule(re.modulePath, mod.filePath);
+      if (!target) {
+        continue;
+      }
+      if (re.kind === "namespace" && re.alias) {
+        out.push({
+          name: re.alias,
+          kind: "module",
+          signature: `export * as ${re.alias} from "${re.modulePath}"`,
+          detail: "namespace",
+          documentation: "",
+          exported: true,
+          moduleId: re.modulePath,
+          filePath: target.filePath,
+          line: 0,
+        });
+        continue;
+      }
+      const inner = this.exportedSymbols(target, depth + 1, seen);
+      if (re.kind === "names" && re.names) {
+        for (const n of re.names) {
+          const sym = inner.find((s) => s.name === n.name);
+          if (sym) {
+            out.push({ ...sym, name: n.alias });
+          }
+        }
+      } else {
+        const except = new Set(re.except ?? []);
+        for (const sym of inner) {
+          if (!except.has(sym.name)) {
+            out.push(sym);
+          }
+        }
+      }
     }
-
-    if (binding.kind === "symbol" && binding.symbolName) {
-      const mod = this.getImportedModule(binding.modulePath, document.uri.fsPath);
-      const sym = mod?.symbols.find((s) => s.name === binding.symbolName && s.exported);
-      return sym ? [sym] : [];
-    }
-
-    const mod = this.getImportedModule(binding.modulePath, document.uri.fsPath);
-    return mod?.symbols.filter((s) => s.exported) ?? [];
+    return dedupe(out);
   }
 
-  methodsForType(typeName: string): SymbolDoc[] {
-    return [...ROUTER_METHODS, ...JSON_METHODS, ...LOCK_METHODS, ...RWLOCK_METHODS, ...ATOMIC_INT_METHODS, ...ATOMIC_BOOL_METHODS, ...CONTEXT_METHODS, ...SERVER_METHODS, ...CONN_METHODS, ...ERROR_METHODS]
-      .filter((m) => m.receiver === typeName)
-      .map(catalogToSymbolDoc);
-  }
-
-  localSymbols(document: vscode.TextDocument): SymbolDoc[] {
-    const mod = this.getDocumentModule(document);
-    const out = [...mod.symbols];
-    for (const [name, typeName] of mod.locals) {
-      out.push({
-        name,
-        kind: "variable",
-        signature: `${name}: ${typeName}`,
-        detail: typeName,
-        documentation: `Local variable (\`${typeName}\`).`,
-        exported: false,
-        moduleId: mod.moduleId,
-        filePath: mod.filePath,
-        line: 0,
-      });
+  /** Modules whose declarations are reachable from `document` (imports and their re-exports). */
+  private reachableModules(document: vscode.TextDocument): ParsedModule[] {
+    const out: ParsedModule[] = [];
+    const seen = new Set<string>();
+    const visit = (mod: ParsedModule | undefined, depth: number) => {
+      if (!mod || depth > MAX_REEXPORT_DEPTH || seen.has(mod.filePath)) {
+        return;
+      }
+      seen.add(mod.filePath);
+      out.push(mod);
+      for (const re of mod.reexports) {
+        visit(this.getModule(re.modulePath, mod.filePath), depth + 1);
+      }
+    };
+    const self = this.getDocumentModule(document);
+    seen.add(self.filePath);
+    for (const imp of self.imports) {
+      visit(this.getModule(imp.modulePath, document.uri.fsPath), 0);
     }
     return out;
   }
 
-  resolveMemberAccess(document: vscode.TextDocument, objectExpr: string): SymbolDoc[] {
-    const trimmed = objectExpr.trim();
-    if (this.resolveImportBindings(document).some((b) => b.alias === trimmed)) {
-      return this.symbolsForImportAlias(document, trimmed);
-    }
+  /** Names usable without a prefix: own declarations plus what the imports bring in. */
+  visibleSymbols(document: vscode.TextDocument): SymbolDoc[] {
+    const self = this.getDocumentModule(document);
+    const out: SymbolDoc[] = self.symbols.filter((s) => !s.owner);
+    const contextFile = document.uri.fsPath;
 
-    const localType = this.getDocumentModule(document).locals.get(trimmed);
-    const paramType = localType ?? this.paramTypeForName(document, trimmed);
-    if (paramType) {
-      return mergeSymbols(this.methodsForType(paramType), this.findMethodsOnType(paramType, document));
-    }
-
-    return [];
-  }
-
-  private paramTypeForName(document: vscode.TextDocument, name: string): string | undefined {
-    for (const sym of this.getDocumentModule(document).symbols) {
-      if (sym.kind !== "function") {
-        continue;
-      }
-      const paramsMatch = /\(([^)]*)\)/.exec(sym.signature);
-      if (!paramsMatch) {
-        continue;
-      }
-      for (const part of paramsMatch[1].split(",")) {
-        const m = /^\s*(\w+)\s*:\s*(\w+)/.exec(part.trim());
-        if (m && m[1] === name) {
-          return m[2];
-        }
-      }
-    }
-    return undefined;
-  }
-
-  findSymbol(document: vscode.TextDocument, name: string, namespace?: string): SymbolDoc | undefined {
-    if (namespace) {
-      return this.symbolsForImportAlias(document, namespace).find((s) => s.name === name);
-    }
-    const local = this.localSymbols(document).find((s) => s.name === name);
-    if (local) {
-      return local;
-    }
-    for (const binding of this.resolveImportBindings(document)) {
-      if (binding.alias === name) {
-        return {
-          name: binding.alias,
-          kind: "module",
-          signature: binding.modulePath,
-          detail: "import",
-          documentation: `Import alias for module \`${binding.modulePath}\`.`,
-          exported: true,
-          moduleId: binding.modulePath,
-          filePath: document.uri.fsPath,
-          line: 0,
-        };
-      }
-    }
-    const global = findGlobalRuntimeEntry(name);
-    if (global) {
-      return catalogToSymbolDoc(global);
-    }
-    return undefined;
-  }
-
-  listWorkspaceModules(contextFile: string): { path: string; documentation: string }[] {
-    const results: { path: string; documentation: string }[] = [];
-    const seen = new Set<string>();
-
-    const addModule = (modulePath: string) => {
-      if (seen.has(modulePath)) {
-        return;
-      }
-      seen.add(modulePath);
-      const mod = loadModuleFromDisk(modulePath, contextFile);
-      const exportNames = mod?.symbols
-        .filter((s) => s.exported)
-        .map((s) => s.name)
-        .slice(0, 10)
-        .join(", ");
-      results.push({
-        path: modulePath,
-        documentation: exportNames
-          ? `Exports: \`${exportNames}\`${exportNames.length >= 10 ? "…" : ""}`
-          : `Module \`${modulePath}\``,
-      });
-    };
-
-    const walk = (absDir: string, rel: string) => {
-      if (!fs.existsSync(absDir)) {
-        return;
-      }
-      for (const entry of fs.readdirSync(absDir, { withFileTypes: true })) {
-        if (entry.name.startsWith(".")) {
-          continue;
-        }
-        const relPath = rel ? `${rel}/${entry.name.replace(/\.xlang$/, "")}` : entry.name.replace(/\.xlang$/, "");
-        if (entry.isDirectory()) {
-          addModule(relPath);
-          walk(path.join(absDir, entry.name), relPath);
-        } else if (entry.name.endsWith(".xlang")) {
-          addModule(relPath);
-        }
-      }
-    };
-
-    for (const folder of vscode.workspace.workspaceFolders ?? []) {
-      const roots = [
-        path.join(folder.uri.fsPath, "src", "runtime", "frontend"),
-        path.join(folder.uri.fsPath, "runtime", "frontend"),
-        path.join(folder.uri.fsPath, "frontend"),
-        path.join(folder.uri.fsPath, "..", "src", "runtime", "frontend"),
-      ];
-      for (const root of roots) {
-        walk(root, "");
-      }
-    }
-
-    return results.sort((a, b) => a.path.localeCompare(b.path));
-  }
-
-  private findSubmodule(packagePath: string, name: string, contextFile: string): string | undefined {
-    const resolved = loadModuleFromDisk(packagePath, contextFile);
-    if (!resolved || !fs.existsSync(resolved.filePath) || !fs.statSync(resolved.filePath).isDirectory()) {
-      return undefined;
-    }
-    for (const entry of fs.readdirSync(resolved.filePath)) {
-      if (!entry.endsWith(".xlang")) {
-        continue;
-      }
-      const stem = entry.replace(/\.xlang$/, "");
-      if (stem.toLowerCase() === name.toLowerCase()) {
-        return `${packagePath}/${stem}`;
-      }
-    }
-    return undefined;
-  }
-
-  private findMethodsOnType(typeName: string, document: vscode.TextDocument): SymbolDoc[] {
-    const out: SymbolDoc[] = [];
-    for (const binding of this.resolveImportBindings(document)) {
-      const mod = this.getImportedModule(binding.modulePath, document.uri.fsPath);
+    for (const imp of self.imports) {
+      const mod = this.getModule(imp.modulePath, contextFile);
       if (!mod) {
         continue;
       }
-      for (const sym of mod.symbols) {
-        if (sym.receiver === typeName) {
-          out.push(sym);
+      if (imp.kind === "star") {
+        out.push(...this.exportedSymbols(mod));
+      } else if (imp.kind === "namespace") {
+        out.push({
+          name: imp.alias,
+          kind: "module",
+          signature: `import * as ${imp.alias} from "${imp.modulePath}"`,
+          detail: "namespace",
+          documentation: "",
+          exported: true,
+          moduleId: imp.modulePath,
+          filePath: mod.filePath,
+          line: 0,
+        });
+      } else if (imp.symbolName) {
+        const sym = this.exportedSymbols(mod).find((s) => s.name === imp.symbolName);
+        if (sym) {
+          out.push({ ...sym, name: imp.alias });
         }
       }
     }
-    for (const sym of this.getDocumentModule(document).symbols) {
-      if (sym.receiver === typeName) {
-        out.push(sym);
+    return dedupe(out);
+  }
+
+  /** Members of a namespace alias (`import * as a` or `export * as a`). */
+  namespaceMembers(document: vscode.TextDocument, alias: string): SymbolDoc[] | undefined {
+    const imp = this.getDocumentModule(document).imports.find(
+      (i) => i.kind === "namespace" && i.alias === alias
+    );
+    if (!imp) {
+      return undefined;
+    }
+    const mod = this.getModule(imp.modulePath, document.uri.fsPath);
+    return mod ? this.exportedSymbols(mod) : [];
+  }
+
+  scopeAt(document: vscode.TextDocument, line: number): FunctionScope | undefined {
+    return this.getDocumentModule(document).functions.find(
+      (f) => line >= f.startLine && line <= f.endLine
+    );
+  }
+
+  /** Declared type of a name at a line: local (declared above), parameter, `self`. */
+  typeOfName(document: vscode.TextDocument, name: string, line: number): string | undefined {
+    const scope = this.scopeAt(document, line);
+    if (!scope) {
+      const global = this.getDocumentModule(document).symbols.find(
+        (s) => s.kind === "global" && s.name === name
+      );
+      return global?.returnType;
+    }
+    if (name === "self") {
+      return scope.owner;
+    }
+    const locals = scope.locals.filter((l) => l.name === name && l.line <= line);
+    const local = locals[locals.length - 1];
+    if (local?.type) {
+      return local.type;
+    }
+    const param = scope.params.find((p) => p.name === name);
+    if (param?.type) {
+      return param.type;
+    }
+    const global = this.visibleSymbols(document).find((s) => s.kind === "global" && s.name === name);
+    return global?.returnType;
+  }
+
+  findAggregate(document: vscode.TextDocument, typeName: string): AggregateDoc | undefined {
+    const name = memberTypeName(typeName);
+    const own = this.getDocumentModule(document).aggregates.get(name);
+    if (own) {
+      return own;
+    }
+    for (const mod of this.reachableModules(document)) {
+      const hit = mod.aggregates.get(name);
+      if (hit) {
+        return hit;
       }
     }
-    return out;
+    return undefined;
+  }
+
+  /** Fields, methods (own, inherited, from `impl` blocks) and enum members of a type. */
+  membersOfType(document: vscode.TextDocument, typeName: string): SymbolDoc[] {
+    const out: SymbolDoc[] = [];
+    const visited = new Set<string>();
+    const mods = [this.getDocumentModule(document), ...this.reachableModules(document)];
+
+    const collect = (name: string) => {
+      if (visited.has(name)) {
+        return;
+      }
+      visited.add(name);
+      const agg = this.findAggregate(document, name);
+      for (const mod of mods) {
+        for (const sym of mod.symbols) {
+          if (sym.owner === name && (sym.kind === "field" || sym.kind === "method")) {
+            out.push(sym);
+          }
+        }
+      }
+      if (agg?.kind === "enum") {
+        for (const member of agg.members) {
+          out.push({
+            name: member,
+            kind: "enumMember",
+            signature: `${agg.name}.${member}`,
+            detail: "enum member",
+            documentation: "",
+            exported: true,
+            owner: agg.name,
+            moduleId: "",
+            filePath: agg.filePath,
+            line: agg.line,
+          });
+        }
+      }
+      if (agg?.base) {
+        collect(memberTypeName(agg.base));
+      }
+    };
+
+    collect(memberTypeName(typeName));
+    return dedupe(out);
+  }
+
+  /** Completion / hover members for `chain.` such as `a`, `self.b` or `Color`. */
+  resolveMemberAccess(document: vscode.TextDocument, chain: string, line: number): SymbolDoc[] {
+    const parts = chain.split(".").map((p) => p.trim()).filter(Boolean);
+    if (parts.length === 0) {
+      return [];
+    }
+    if (parts.length === 1) {
+      const ns = this.namespaceMembers(document, parts[0]);
+      if (ns) {
+        return ns;
+      }
+      const agg = this.findAggregate(document, parts[0]);
+      if (agg?.kind === "enum" && !this.typeOfName(document, parts[0], line)) {
+        return this.membersOfType(document, agg.name);
+      }
+    }
+
+    let type: string | undefined = this.typeOfName(document, parts[0], line);
+    if (!type) {
+      return [];
+    }
+    for (const part of parts.slice(1)) {
+      const field: SymbolDoc | undefined = this.membersOfType(document, type).find(
+        (m) => m.name === part
+      );
+      type = field?.kind === "field" ? field.detail : field?.returnType;
+      if (!type) {
+        return [];
+      }
+    }
+    return this.membersOfType(document, type);
+  }
+
+  findSymbol(document: vscode.TextDocument, name: string, line: number): SymbolDoc | undefined {
+    const scope = this.scopeAt(document, line);
+    if (scope) {
+      const locals = scope.locals.filter((l) => l.name === name && l.line <= line);
+      const local = locals[locals.length - 1];
+      const param = scope.params.find((p) => p.name === name);
+      const found = local ?? param;
+      if (found) {
+        const type = found.type || "?";
+        return {
+          name,
+          kind: "variable",
+          signature: `${name}: ${type}`,
+          detail: type,
+          documentation: local ? "Local variable." : "Parameter.",
+          exported: false,
+          moduleId: this.getDocumentModule(document).moduleId,
+          filePath: document.uri.fsPath,
+          line: local ? local.line : scope.startLine,
+        };
+      }
+    }
+    return this.visibleSymbols(document).find((s) => s.name === name);
+  }
+
+  /** Short markdown listing of what a module exports (for the import path completion). */
+  moduleDescription(modulePath: string, contextFile: string): string {
+    const mod = this.getModule(modulePath, contextFile);
+    if (!mod) {
+      return `Module \`${modulePath}\``;
+    }
+    const names = this.exportedSymbols(mod)
+      .map((s) => s.name)
+      .slice(0, 12);
+    return names.length > 0
+      ? `Exports: ${names.map((n) => `\`${n}\``).join(", ")}${names.length >= 12 ? ", …" : ""}`
+      : `Module \`${modulePath}\``;
   }
 }
 
-function catalogToSymbolDoc(entry: CatalogEntry): SymbolDoc {
-  return {
-    name: entry.label,
-    kind: entry.kind === vscode.CompletionItemKind.Struct ? "struct" : "function",
-    signature: entry.detail,
-    detail: entry.detail,
-    documentation: entry.documentation,
-    exported: true,
-    receiver: entry.receiver,
-    moduleId: "runtime",
-    filePath: "",
-    line: 0,
-  };
-}
-
-function mergeSymbols(a: SymbolDoc[], b: SymbolDoc[]): SymbolDoc[] {
+function dedupe(list: SymbolDoc[]): SymbolDoc[] {
   const map = new Map<string, SymbolDoc>();
-  for (const sym of [...a, ...b]) {
-    map.set(sym.name, sym);
+  for (const sym of list) {
+    if (!map.has(sym.name)) {
+      map.set(sym.name, sym);
+    }
   }
   return [...map.values()];
 }
