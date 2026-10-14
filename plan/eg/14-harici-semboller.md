@@ -67,6 +67,7 @@ Diğer her şey import edilir. **libc yasaktır**: builtin'ler compiler'ın kend
 | `__builtin_asm` | Inline asm ([12.1](12.1-inline-asm.md#121-inline-asm)); `__builtin_` önekli |
 | `MemoryOrder` | Atomic işlemlerin memory order enum'u ([12](12-atomic-ve-fonksiyon-pointer-i.md#12-atomic-ve-fonksiyon-pointerı)) |
 | `sizeOf`, `alignOf`, `offsetOf`, `staticAssert` | Derleme zamanı sorguları |
+| `nil` | Boş pointer sabiti (`0 as *T`); öneksiz |
 
 Builtin fonksiyonlar `syscall`, atomic'ler, `fence` ve `__builtin_asm`'dir. Builtin'ler iki biçimde yazılır ve
 **hepsi `__builtin_` önekini taşımaz**: atomic'ler, `fence`, `__builtin_asm` önekli; `syscall`,

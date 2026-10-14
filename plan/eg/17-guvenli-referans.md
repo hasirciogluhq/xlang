@@ -41,7 +41,7 @@ heap nesnesi                         ref Node (16 B)
 | Erişim | `r.alan`, `*r`: her erişimde nesil kontrolü |
 | `ref T → *T` | Açık `as *T` (korumayı bilerek bırakır) |
 | Yerel adresi | `&local` ile alınan `ref`'in fonksiyondan kaçması (return/global'e yazma) **derleme hatası** |
-| `null` | `ref T` null olamaz; null gerekiyorsa `*T` kullanılır |
+| `nil` | `ref T` `nil` olamaz; `nil` gerekiyorsa `*T` kullanılır |
 | Maliyet | Erişim başına bir yükleme + karşılaştırma; `--safety=unchecked` ile kontroller kaldırılır |
 
 Per-fonksiyon kapatma: `@unchecked fn hotLoop(...)`.

@@ -23,7 +23,7 @@ fn main() -> i32 {
 | Alan erişimi | `p.alan` (pointer üzerinden de `.`) |
 | Tür değiştirme | `p as *U` |
 
-`null` pointer değeri `0 as *T` ile ya da `null` sabitiyle yazılır.
+Boş pointer değeri builtin `nil` sabitiyle yazılır (`local p: *i32 = nil`); her `*T` tipine atanabilir ve `0 as *T` ile aynıdır.
 
 ### `new`
 
@@ -60,7 +60,7 @@ class Bump {
 
 impl Allocator for Bump {                                    // zorunlu: yoksa new(&arena) hata (E0504)
     fn alloc(self, size: usize, align: usize) -> *void {     // hizalama bu örnekte yok sayıldı
-        if self.used + size > self.cap { return null }
+        if self.used + size > self.cap { return nil }
         local p: *void = (self.base as usize + self.used) as *void
         self.used = self.used + size
         return p
@@ -85,7 +85,7 @@ fn main() -> i32 {
 | Yazım | Anlam |
 |-------|-------|
 | `new(a) T { ... }` | `a.alloc(sizeOf(T), alignOf(T))` çağır, alanları yaz, `*T` döndür |
-| `a.alloc` `null` dönerse | `new` de `null` döndürür, alanlar yazılmaz |
+| `a.alloc` `nil` dönerse | `new` de `nil` döndürür, alanlar yazılmaz |
 | `new T { ... }` | Kayıtlı allocator'ın `alloc`'u çağrılır; kayıtlı yoksa **hata** (`E0501`) |
 | Bırakma | `a.free(p)` (açık allocator); kayıtlı allocator için `std/mem`'in `free(p)`'si (aynı allocator'a gider) |
 | `a`'nın tipi `Allocator` değil ve `impl Allocator for T` yok | **Hata** `E0504` |

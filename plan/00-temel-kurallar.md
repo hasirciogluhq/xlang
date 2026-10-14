@@ -33,6 +33,7 @@
    | Inline asm | `__builtin_asm` | `__builtin_` önekli |
    | Memory order | `MemoryOrder` (enum tipi: `MemoryOrder.relaxed`, `.acquire`, `.release`, `.acqRel`, `.seqCst`) | öneksiz tip |
    | Derleme zamanı | `sizeOf`, `alignOf`, `offsetOf`, `staticAssert` | öneksiz |
+   | Sabit | `nil` (boş pointer; her `*T`'ye atanır, `0 as *T` ile aynı) | öneksiz |
 
    Builtin fonksiyonlar iki biçimde yazılır ve **hepsi `__builtin_` önekini taşımaz**.
    `register` ile kaydedilenler (ör. stdlib'in `panic`'i) builtin değildir: compiler onları stdlib'den

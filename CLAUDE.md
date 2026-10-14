@@ -33,7 +33,7 @@
 - **Do not read anything under `.cursor/`** (rules or plans).
 - The compiler knows only the language, CPU primitives (syscall, atomics, function pointers, inline asm), the
   closed builtin list (`syscall`, the `__builtin_` atomics, fence and asm; `sizeOf`-style queries,
-  `staticAssert`; `MemoryOrder`) and the roles bound with
+  `staticAssert`; `nil`; `MemoryOrder`) and the roles bound with
   `register` (`panic`, `allocator`). A builtin's body is provided by the compiler itself; if the compiler will not
   directly support something, it is not a builtin and goes to the stdlib. `memcpy` family, `malloc`/`free`/the
   allocator are NOT builtins: they come from the stdlib (`std/memory`, `std/mem`). The compiler loads the default
@@ -126,7 +126,7 @@ No filler praise; state weaknesses plainly. For each feature cover:
   x86, memory is assumed touched unless `options("nomem")`.
   `mutex` exists in the stdlib (`std/sync`, built on the atomics + OS wait); there is no `lock_guard`/RAII guard.
 - Global namespace has two tiers: (a) the closed builtin list: `syscall`, atomics/`fence`/asm, `sizeOf`-style
-  queries, `staticAssert`, the `MemoryOrder` enum; (b) names bound with `register` in any loaded module.
+  queries, `staticAssert`, the `nil` constant, the `MemoryOrder` enum; (b) names bound with `register` in any loaded module.
   Builtins come in two spellings: `__builtin_xx` (atomics, fence, asm) and unprefixed (`syscall`, `sizeOf` family,
   ...); not all carry the `__builtin_` prefix. `syscall` is always plain `syscall`. `register`'d names are not
   builtins (their body is ordinary xl). `print`, `alloc`, `memcpy`, `assert` and anything neither builtin nor

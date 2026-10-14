@@ -20,6 +20,6 @@ Stdlib'in ihtiyacı olan minimum; hiçbiri "thread" kavramı taşımaz:
 - [ ] **6.5** Builtin tablosu: kapalı tablo (ad, imza, biçim `__builtin_xx` | öneksiz). Sema'da global isim
   olarak çözülür; gövdeyi compiler üretir; çakışma kuralı "Karar bekleyen"e bağlı. Tabloda `__builtin_`
   önekli atomic'ler, `fence` (6.1) ve `__builtin_asm` (6.3) ile `MemoryOrder` enum tipi vardır; `sizeOf`
-  ailesi (2.4) ve `syscall` (5.3) öneksizdir. `syscall` bir builtin'dir: tabloda yer alır, argüman sayısı
+  ailesi (2.4), `nil` sabiti ve `syscall` (5.3) öneksizdir. `syscall` bir builtin'dir: tabloda yer alır, argüman sayısı
   dinamiktir ve hedefe göre denetimi/çağrı kuralı 5.3'te tanımlıdır. `register` ile kaydedilenler bu
   tabloda değildir (4.12).

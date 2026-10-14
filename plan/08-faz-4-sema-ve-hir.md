@@ -60,7 +60,7 @@
   kaydederek ya da çalışma zamanında `main`'de `std/mem.setAllocator(a)` ile **bir kez** değiştirerek
   seçer; kayıtlı global mutable olduğundan `new` ve `std/mem.free` değişimden sonra yeni allocator'ı
   kullanır. Kayıtlı yoksa `new T` hatadır (`E0501`, düzelt: `new(a) T` ya da `register(allocator)`).
-  `alloc` `null` dönerse `new` `null` döndürür.
+  `alloc` `nil` dönerse `new` `nil` döndürür.
 - [ ] **4.12** `register[(rol)] bildirim`: `declare` gibi tek önek. Bildirilen ad, modül derlemeye girer
   girmez **global** olur (import gerekmez; `register` `export` anlamına da gelir). Kayıtlar modül
   yüklenirken toplanır: import grafiğindeki modüller ve stdlib açıkken (varsayılan; `--no-std` kapatır)
