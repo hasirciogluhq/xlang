@@ -1,70 +1,18 @@
-// std/http: a small blocking HTTP/1.1 server (router + handlers) and a plain-HTTP client, on top of
-// the raw TCP calls in `std/sys`, plus `httpsGet` (DNS + TLS 1.3 via `std/tls`). The server speaks
-// HTTP (`routerServe`) or HTTPS (`routerServeTls`, TLS 1.3). Connections are served one at a time
-// (`Connection: close`). No fixed limits: the route table and the request buffer grow on demand.
-from "sys" import sysTcpSocket, sysTcpConnect, sysTcpListen, sysTcpAccept, sysClose, sysRead, sysWrite, sysUnmap
+// std/http: HTTP/1.1 over the raw TCP calls in `std/sys` and TLS 1.3 in `std/tls`.
+//
+// Server: a blocking router (`Router`, `routerGet`/`routerPost`/..., `routerServe`, `routerServeTls`),
+// one connection at a time, `Connection: close`. Handlers see headers and the query string through
+// `Context` and answer with `ctxString`/`ctxJSON`/`ctxRespond`/`ctxRedirect`.
+//
+// Client: `fetch(url, &opts, buf, cap, &resp)` reads a whole response into a caller buffer, follows
+// redirects and speaks `http://` (DNS + TCP) or `https://` (DNS + TLS 1.3, certificate validated against
+// the OS roots). `httpOpen`/`httpRead`/`httpClose` stream the response body instead. Every request
+// sends `Connection: close`; there is no keep-alive, compression, cookie jar, proxy, IPv6 or HTTP/2.
+from "sys" import sysTcpSocket, sysTcpConnect, sysTcpListen, sysTcpAccept, sysClose, sysRead, sysWrite, sysUnmap, sysSetRecvTimeout
 from "memory" import strlen, mapGrow
 from "io" import eprint
-from "tls" import TlsConn, TlsCredentials, tlsConnectHost, tlsWrite, tlsRead, tlsClose, tlsListen, tlsAccept
-
-/// What a handler sees. `method`, `path` and `body` point into the request buffer.
-export struct Context {
-    fd: i32
-    tls: *TlsConn         // the TLS session of an HTTPS connection, nil for plain HTTP
-    method: *ui8
-    path: *ui8
-    body: *ui8
-    user: *void           // set by middleware (`ctxSetUser`), read by handlers (`ctxUser`)
-    responded: bool
-}
-
-export struct Route {
-    method: *ui8
-    path: *ui8
-    handler: fn(*Context)
-}
-
-export struct Router {
-    routes: *Route
-    count: usize
-    cap: usize
-    middleware: fn(*Context)
-    hasMiddleware: bool
-}
-
-export fn routerInit(r: *Router) {
-    r.routes = nil
-    r.count = 0
-    r.cap = 0
-    r.hasMiddleware = false
-}
-
-/// Runs before every handler.
-export fn routerUse(r: *Router, middleware: fn(*Context)) {
-    r.middleware = middleware
-    r.hasMiddleware = true
-}
-
-fn addRoute(r: *Router, method: *ui8, path: *ui8, handler: fn(*Context)) {
-    if r.count == r.cap {
-        local newCap: usize = r.cap * 2
-        if newCap == 0 { newCap = 16 }
-        local grown: *void = mapGrow(r.routes as *void, r.cap * sizeOf(Route), newCap * sizeOf(Route))
-        if grown == nil { panic("out of memory") }
-        r.routes = grown as *Route
-        r.cap = newCap
-    }
-    r.routes[r.count] = Route { method: method, path: path, handler: handler }
-    r.count = r.count + 1
-}
-
-export fn routerGet(r: *Router, path: *ui8, handler: fn(*Context)) {
-    addRoute(r, "GET", path, handler)
-}
-
-export fn routerPost(r: *Router, path: *ui8, handler: fn(*Context)) {
-    addRoute(r, "POST", path, handler)
-}
+from "dns" import dnsResolve
+from "tls" import TlsConn, TlsCredentials, TLS_ERR_DNS, tlsConnectHost, tlsWrite, tlsRead, tlsClose, tlsListen, tlsAccept
 
 // ---- strings -----------------------------------------------------------------------------------
 
@@ -72,6 +20,48 @@ fn strEq(a: *ui8, b: *ui8) -> bool {
     local i: usize = 0
     while a[i] != 0 && a[i] == b[i] { i = i + 1 }
     return a[i] == b[i]
+}
+
+fn lower(c: ui8) -> ui8 {
+    if c >= 65 && c <= 90 { return c + 32 }
+    return c
+}
+
+/// Case-insensitive equality of two NUL-terminated strings.
+fn eqCI(a: *ui8, b: *ui8) -> bool {
+    local i: usize = 0
+    while a[i] != 0 && lower(a[i]) == lower(b[i]) { i = i + 1 }
+    return lower(a[i]) == lower(b[i])
+}
+
+/// Does `s` start with `prefix` (case-insensitive)?
+fn startsCI(s: *ui8, prefix: *ui8) -> bool {
+    local i: usize = 0
+    while prefix[i] != 0 {
+        if lower(s[i]) != lower(prefix[i]) { return false }
+        i = i + 1
+    }
+    return true
+}
+
+/// Copies `src` (with its NUL) into `dst` of capacity `cap`; false when it does not fit.
+fn copyStr(dst: *ui8, cap: usize, src: *ui8) -> bool {
+    local i: usize = 0
+    while src[i] != 0 {
+        if i + 1 >= cap { return false }
+        dst[i] = src[i]
+        i = i + 1
+    }
+    dst[i] = 0
+    return true
+}
+
+fn memMove(dst: *ui8, src: *ui8, n: usize) {
+    local i: usize = 0
+    while i < n {
+        dst[i] = src[i]
+        i = i + 1
+    }
 }
 
 /// Writes the decimal digits of `v` at `buf` and returns how many.
@@ -96,6 +86,29 @@ fn formatUInt(v: usize, buf: *ui8) -> usize {
     return n
 }
 
+/// Writes the lowercase hexadecimal digits of `v` at `buf` and returns how many.
+fn formatHex(v: usize, buf: *ui8) -> usize {
+    local tmp: [ui8; 24]
+    local n: usize = 0
+    local x: usize = v
+    if x == 0 {
+        buf[0] = 48
+        return 1
+    }
+    while x > 0 {
+        local d: ui8 = (x % 16) as ui8
+        if d < 10 { tmp[n] = d + 48 } else { tmp[n] = d + 87 }
+        x = x / 16
+        n = n + 1
+    }
+    local i: usize = 0
+    while i < n {
+        buf[i] = tmp[n - 1 - i]
+        i = i + 1
+    }
+    return n
+}
+
 /// Appends `s` at `at` in `buf` (capacity `cap`, truncating); returns the new length.
 fn append(buf: *ui8, at: usize, cap: usize, s: *ui8) -> usize {
     local n: usize = at
@@ -106,6 +119,184 @@ fn append(buf: *ui8, at: usize, cap: usize, s: *ui8) -> usize {
         i = i + 1
     }
     return n
+}
+
+fn hexDigit(c: ui8) -> i32 {
+    if c >= 48 && c <= 57 { return (c - 48) as i32 }
+    if c >= 97 && c <= 102 { return (c - 87) as i32 }
+    if c >= 65 && c <= 70 { return (c - 55) as i32 }
+    return -1
+}
+
+/// Index of the `\r\n\r\n` that ends the headers, or -1.
+fn headerEnd(s: *ui8, n: usize) -> isize {
+    local i: usize = 0
+    while i + 3 < n {
+        if s[i] == 13 && s[i + 1] == 10 && s[i + 2] == 13 && s[i + 3] == 10 { return i as isize }
+        i = i + 1
+    }
+    return -1
+}
+
+/// Turns every `\r` of the header block `s[0..he + 3)` into NUL, so each line reads
+/// `Name: value\0\n` and the block ends at a line that starts with NUL.
+fn terminateLines(s: *ui8, he: usize) {
+    local i: usize = 0
+    while i < he + 3 {
+        if s[i] == 13 { s[i] = 0 }
+        i = i + 1
+    }
+}
+
+/// Value of header `name` in a block prepared by `terminateLines` (the first line, the request or
+/// status line, is skipped); nil when absent. Names compare case-insensitively.
+fn headerLookup(block: *ui8, name: *ui8) -> *ui8 {
+    local nl: usize = strlen(name)
+    local p: usize = 0
+    while block[p] != 10 { p = p + 1 }
+    p = p + 1
+    while block[p] != 0 {
+        local k: usize = 0
+        while k < nl && lower(block[p + k]) == lower(name[k]) { k = k + 1 }
+        if k == nl && block[p + nl] == 58 {
+            local v: usize = p + nl + 1
+            while block[v] == 32 || block[v] == 9 { v = v + 1 }
+            return &block[v]
+        }
+        while block[p] != 10 { p = p + 1 }
+        p = p + 1
+    }
+    return nil
+}
+
+/// Does the raw `Name: value\r\n` list `headers` contain `name`?
+fn hasHeader(headers: *ui8, name: *ui8) -> bool {
+    if headers == nil { return false }
+    local nl: usize = strlen(name)
+    local p: usize = 0
+    while headers[p] != 0 {
+        if startsCI(&headers[p], name) && headers[p + nl] == 58 { return true }
+        while headers[p] != 0 && headers[p] != 10 { p = p + 1 }
+        if headers[p] == 10 { p = p + 1 }
+    }
+    return false
+}
+
+/// Decodes `%XX` and `+` in place; returns the new length. Invalid escapes are kept as written.
+export fn urlDecode(s: *ui8) -> usize {
+    local rd: usize = 0
+    local wr: usize = 0
+    while s[rd] != 0 {
+        local c: ui8 = s[rd]
+        if c == 43 {
+            s[wr] = 32
+            rd = rd + 1
+        } else {
+            if c == 37 && hexDigit(s[rd + 1]) >= 0 && s[rd + 1] != 0 && hexDigit(s[rd + 2]) >= 0 {
+                s[wr] = ((hexDigit(s[rd + 1]) * 16 + hexDigit(s[rd + 2])) as ui8)
+                rd = rd + 3
+            } else {
+                s[wr] = c
+                rd = rd + 1
+            }
+        }
+        wr = wr + 1
+    }
+    s[wr] = 0
+    return wr
+}
+
+// ---- server ------------------------------------------------------------------------------------
+
+/// What a handler sees. `method`, `path`, `body`, `headers` and `query` point into the request buffer.
+export struct Context {
+    fd: i32
+    tls: *TlsConn         // the TLS session of an HTTPS connection, nil for plain HTTP
+    method: *ui8
+    path: *ui8            // without the query string
+    body: *ui8            // NUL-terminated, `bodyLen` bytes
+    bodyLen: usize
+    user: *void           // set by middleware (`ctxSetUser`), read by handlers (`ctxUser`)
+    responded: bool
+    isHead: bool
+    headers: *ui8         // the request header block, read with `ctxHeader`
+    query: *ui8           // raw `a=1\0b=2` pairs, read with `ctxQuery`; nil without a query string
+    queryLen: usize
+    extra: [ui8; 1024]    // response headers added with `ctxSetHeader`
+    extraLen: usize
+}
+
+export struct Route {
+    method: *ui8
+    path: *ui8
+    handler: fn(*Context)
+}
+
+export struct Router {
+    routes: *Route
+    count: usize
+    cap: usize
+    middleware: fn(*Context)
+    hasMiddleware: bool
+    maxHeaderBytes: usize   // request line + headers; larger requests get 431
+    maxBodyBytes: usize     // request body; larger requests get 413
+}
+
+export fn routerInit(r: *Router) {
+    r.routes = nil
+    r.count = 0
+    r.cap = 0
+    r.hasMiddleware = false
+    r.maxHeaderBytes = 16384
+    r.maxBodyBytes = 1048576
+}
+
+/// Runs before every handler.
+export fn routerUse(r: *Router, middleware: fn(*Context)) {
+    r.middleware = middleware
+    r.hasMiddleware = true
+}
+
+/// Registers `handler` for `method` and the exact `path` (the query string is not part of it).
+export fn routerAdd(r: *Router, method: *ui8, path: *ui8, handler: fn(*Context)) {
+    if r.count == r.cap {
+        local newCap: usize = r.cap * 2
+        if newCap == 0 { newCap = 16 }
+        local grown: *void = mapGrow(r.routes as *void, r.cap * sizeOf(Route), newCap * sizeOf(Route))
+        if grown == nil { panic("out of memory") }
+        r.routes = grown as *Route
+        r.cap = newCap
+    }
+    r.routes[r.count] = Route { method: method, path: path, handler: handler }
+    r.count = r.count + 1
+}
+
+export fn routerGet(r: *Router, path: *ui8, handler: fn(*Context)) {
+    routerAdd(r, "GET", path, handler)
+}
+
+export fn routerPost(r: *Router, path: *ui8, handler: fn(*Context)) {
+    routerAdd(r, "POST", path, handler)
+}
+
+export fn routerPut(r: *Router, path: *ui8, handler: fn(*Context)) {
+    routerAdd(r, "PUT", path, handler)
+}
+
+export fn routerDelete(r: *Router, path: *ui8, handler: fn(*Context)) {
+    routerAdd(r, "DELETE", path, handler)
+}
+
+export fn routerPatch(r: *Router, path: *ui8, handler: fn(*Context)) {
+    routerAdd(r, "PATCH", path, handler)
+}
+
+export fn routerHead(r: *Router, path: *ui8, handler: fn(*Context)) {
+    routerAdd(r, "HEAD", path, handler)
+}
+
+export fn routerOptions(r: *Router, path: *ui8, handler: fn(*Context)) {
+    routerAdd(r, "OPTIONS", path, handler)
 }
 
 fn sendAll(c: *Context, data: *ui8, n: usize) {
@@ -134,14 +325,41 @@ fn connRead(fd: i32, tls: *TlsConn, buf: *ui8, n: usize) -> isize {
 fn reason(status: i32) -> *ui8 {
     if status == 200 { return "OK" }
     if status == 201 { return "Created" }
+    if status == 202 { return "Accepted" }
     if status == 204 { return "No Content" }
+    if status == 206 { return "Partial Content" }
+    if status == 301 { return "Moved Permanently" }
+    if status == 302 { return "Found" }
+    if status == 303 { return "See Other" }
+    if status == 304 { return "Not Modified" }
+    if status == 307 { return "Temporary Redirect" }
+    if status == 308 { return "Permanent Redirect" }
     if status == 400 { return "Bad Request" }
+    if status == 401 { return "Unauthorized" }
+    if status == 403 { return "Forbidden" }
     if status == 404 { return "Not Found" }
+    if status == 405 { return "Method Not Allowed" }
+    if status == 408 { return "Request Timeout" }
+    if status == 409 { return "Conflict" }
+    if status == 410 { return "Gone" }
+    if status == 411 { return "Length Required" }
+    if status == 413 { return "Payload Too Large" }
+    if status == 414 { return "URI Too Long" }
+    if status == 415 { return "Unsupported Media Type" }
+    if status == 422 { return "Unprocessable Entity" }
+    if status == 429 { return "Too Many Requests" }
+    if status == 431 { return "Request Header Fields Too Large" }
     if status == 500 { return "Internal Server Error" }
+    if status == 501 { return "Not Implemented" }
+    if status == 502 { return "Bad Gateway" }
+    if status == 503 { return "Service Unavailable" }
+    if status == 504 { return "Gateway Timeout" }
     return "Unknown"
 }
 
-fn respond(c: *Context, status: i32, contentType: *ui8, body: *ui8) {
+/// Sends a complete response. Headers added with `ctxSetHeader` go out too; a HEAD request gets the
+/// headers (with the `Content-Length` of `body`) but no body.
+export fn ctxRespond(c: *Context, status: i32, contentType: *ui8, body: *ui8) {
     local num: [ui8; 24]
     local len: usize = formatUInt(status as usize, &num[0])
     sendStr(c, "HTTP/1.1 ")
@@ -150,24 +368,57 @@ fn respond(c: *Context, status: i32, contentType: *ui8, body: *ui8) {
     sendStr(c, reason(status))
     sendStr(c, "\r\nContent-Type: ")
     sendStr(c, contentType)
-    sendStr(c, "\r\nContent-Length: ")
+    sendStr(c, "\r\n")
+    if c.extraLen > 0 { sendAll(c, &c.extra[0], c.extraLen) }
+    sendStr(c, "Content-Length: ")
     len = formatUInt(strlen(body), &num[0])
     sendAll(c, &num[0], len)
     sendStr(c, "\r\nConnection: close\r\n\r\n")
-    sendStr(c, body)
+    if !c.isHead { sendStr(c, body) }
     c.responded = true
 }
 
 export fn ctxString(c: *Context, status: i32, body: *ui8) {
-    respond(c, status, "text/plain; charset=utf-8", body)
+    ctxRespond(c, status, "text/plain; charset=utf-8", body)
 }
 
 export fn ctxHTML(c: *Context, status: i32, body: *ui8) {
-    respond(c, status, "text/html; charset=utf-8", body)
+    ctxRespond(c, status, "text/html; charset=utf-8", body)
 }
 
 export fn ctxJSON(c: *Context, status: i32, body: *ui8) {
-    respond(c, status, "application/json", body)
+    ctxRespond(c, status, "application/json", body)
+}
+
+/// Adds a response header (call before responding). Returns false when it does not fit (1024 bytes
+/// in total) or when `name`/`value` contain a line break.
+export fn ctxSetHeader(c: *Context, name: *ui8, value: *ui8) -> bool {
+    local nl: usize = strlen(name)
+    local vl: usize = strlen(value)
+    if nl == 0 || c.extraLen + nl + vl + 4 > 1024 { return false }
+    local i: usize = 0
+    while i < nl {
+        if name[i] <= 32 || name[i] == 58 || name[i] >= 127 { return false }
+        i = i + 1
+    }
+    i = 0
+    while i < vl {
+        if value[i] == 10 || value[i] == 13 { return false }
+        i = i + 1
+    }
+    local at: usize = c.extraLen
+    at = append(&c.extra[0], at, 1024, name)
+    at = append(&c.extra[0], at, 1024, ": ")
+    at = append(&c.extra[0], at, 1024, value)
+    at = append(&c.extra[0], at, 1024, "\r\n")
+    c.extraLen = at
+    return true
+}
+
+/// Answers with `status` (301/302/303/307/308) and a `Location` header.
+export fn ctxRedirect(c: *Context, status: i32, location: *ui8) {
+    ctxSetHeader(c, "Location", location)
+    ctxRespond(c, status, "text/plain; charset=utf-8", "")
 }
 
 export fn ctxSetUser(c: *Context, user: *void) {
@@ -178,30 +429,30 @@ export fn ctxUser(c: *Context) -> *void {
     return c.user
 }
 
-// ---- server ------------------------------------------------------------------------------------
-
-fn hasBlankLine(s: *ui8, n: usize) -> bool {
-    local i: usize = 0
-    while i + 3 < n {
-        if s[i] == 13 && s[i + 1] == 10 && s[i + 2] == 13 && s[i + 3] == 10 { return true }
-        i = i + 1
-    }
-    return false
+/// Request header `name` (case-insensitive), or nil.
+export fn ctxHeader(c: *Context, name: *ui8) -> *ui8 {
+    return headerLookup(c.headers, name)
 }
 
-/// Index of the `\r\n\r\n` that ends the headers, or -1.
-fn headerEnd(s: *ui8, n: usize) -> isize {
-    local i: usize = 0
-    while i + 3 < n {
-        if s[i] == 13 && s[i + 1] == 10 && s[i + 2] == 13 && s[i + 3] == 10 { return i as isize }
-        i = i + 1
+/// Raw (not percent-decoded; see `urlDecode`) value of query parameter `name`, or nil. A parameter
+/// without `=` has the empty string as value.
+export fn ctxQuery(c: *Context, name: *ui8) -> *ui8 {
+    if c.query == nil { return nil }
+    local nl: usize = strlen(name)
+    local idx: usize = 0
+    while idx <= c.queryLen {
+        local pair: *ui8 = &c.query[idx]
+        local k: usize = 0
+        while k < nl && pair[k] == name[k] { k = k + 1 }
+        if k == nl && (pair[nl] == 61 || pair[nl] == 0) {
+            if pair[nl] == 61 { return &pair[nl + 1] }
+            return &pair[nl]
+        }
+        local j: usize = idx
+        while c.query[j] != 0 { j = j + 1 }
+        idx = j + 1
     }
-    return -1
-}
-
-fn lower(c: ui8) -> ui8 {
-    if c >= 65 && c <= 90 { return c + 32 }
-    return c
+    return nil
 }
 
 /// Value of the `Content-Length` header found in the first `end` bytes, 0 when absent.
@@ -226,6 +477,17 @@ fn contentLength(s: *ui8, end: usize) -> usize {
     return 0
 }
 
+/// Answers a request that is rejected before parsing (header or body too large).
+fn rejectEarly(fd: i32, tls: *TlsConn, status: i32, text: *ui8) {
+    local c: Context
+    c.fd = fd
+    c.tls = tls
+    c.responded = false
+    c.isHead = false
+    c.extraLen = 0
+    ctxString(&c, status, text)
+}
+
 fn serveConnection(r: *Router, fd: i32, tls: *TlsConn) {
     // The buffer doubles as needed; the request is read in full (headers, then Content-Length bytes).
     local cap: usize = 4096
@@ -235,6 +497,7 @@ fn serveConnection(r: *Router, fd: i32, tls: *TlsConn) {
     local want: usize = 0          // total bytes expected once the headers are known
     local gotHeaders: bool = false
     local alive: bool = true
+    local rejected: bool = false
     while alive && (!gotHeaders || total < want) {
         if total + 1 >= cap {
             local bigger: *ui8 = mapGrow(buf as *void, cap, cap * 2) as *ui8
@@ -255,22 +518,46 @@ fn serveConnection(r: *Router, fd: i32, tls: *TlsConn) {
                 local he: isize = headerEnd(buf, total)
                 if he >= 0 {
                     gotHeaders = true
-                    want = (he as usize) + 4 + contentLength(buf, he as usize)
+                    local bodyLen: usize = contentLength(buf, he as usize)
+                    if (he as usize) + 4 > r.maxHeaderBytes {
+                        rejectEarly(fd, tls, 431, "request header too large")
+                        rejected = true
+                        alive = false
+                    } else {
+                        if bodyLen > r.maxBodyBytes {
+                            rejectEarly(fd, tls, 413, "request body too large")
+                            rejected = true
+                            alive = false
+                        }
+                    }
+                    want = (he as usize) + 4 + bodyLen
+                } else {
+                    if total > r.maxHeaderBytes {
+                        rejectEarly(fd, tls, 431, "request header too large")
+                        rejected = true
+                        alive = false
+                    }
                 }
             }
         }
     }
-    if gotHeaders { dispatch(r, fd, tls, buf, total) }
+    if gotHeaders && !rejected { dispatch(r, fd, tls, buf, total) }
     sysUnmap(buf as *void, cap)
 }
 
 fn dispatch(r: *Router, fd: i32, tls: *TlsConn, buf: *ui8, n: usize) {
-    // "METHOD PATH HTTP/1.1\r\n...": split in place at the spaces.
+    local he: usize = headerEnd(buf, n) as usize
+    terminateLines(buf, he)
+    // "METHOD PATH?QUERY HTTP/1.1\0\n...": split in place at the spaces.
     local c: Context
     c.fd = fd
     c.tls = tls
     c.user = nil
     c.responded = false
+    c.extraLen = 0
+    c.query = nil
+    c.queryLen = 0
+    c.headers = &buf[0]
     c.method = &buf[0]
     local i: usize = 0
     while buf[i] != 0 && buf[i] != 32 { i = i + 1 }
@@ -278,20 +565,40 @@ fn dispatch(r: *Router, fd: i32, tls: *TlsConn, buf: *ui8, n: usize) {
     buf[i] = 0
     i = i + 1
     c.path = &buf[i]
-    while buf[i] != 0 && buf[i] != 32 && buf[i] != 13 { i = i + 1 }
+    while buf[i] != 0 && buf[i] != 32 && buf[i] != 63 { i = i + 1 }
+    if buf[i] == 63 {
+        buf[i] = 0
+        i = i + 1
+        c.query = &buf[i]
+        local q: usize = i
+        while buf[i] != 0 && buf[i] != 32 {
+            if buf[i] == 38 { buf[i] = 0 }
+            i = i + 1
+        }
+        c.queryLen = i - q
+    }
     buf[i] = 0
-    c.body = &buf[n]
-    local he: isize = headerEnd(&buf[i + 1], n - i - 1)
-    if he >= 0 { c.body = &buf[i + 1 + (he as usize) + 4] }
+    c.body = &buf[he + 4]
+    c.bodyLen = n - (he + 4)
+    c.isHead = strEq(c.method, "HEAD")
 
     if r.hasMiddleware { r.middleware(&c) }
-    local k: usize = 0
-    while k < r.count && !c.responded {
-        local route: Route = r.routes[k]
-        if strEq(route.method, c.method) && strEq(route.path, c.path) {
-            route.handler(&c)
+    local pass: i32 = 0
+    while pass < 2 && !c.responded {
+        // a HEAD request falls back to the GET handler of the same path
+        local method: *ui8 = c.method
+        if pass == 1 { method = "GET" }
+        if pass == 0 || c.isHead {
+            local k: usize = 0
+            while k < r.count && !c.responded {
+                local route: Route = r.routes[k]
+                if strEq(route.method, method) && strEq(route.path, c.path) {
+                    route.handler(&c)
+                }
+                k = k + 1
+            }
         }
-        k = k + 1
+        pass = pass + 1
     }
     if !c.responded { ctxString(&c, 404, "not found") }
 }
@@ -339,183 +646,675 @@ export fn routerServeTls(r: *Router, ip: ui32, port: ui16, cr: *TlsCredentials, 
     return 0
 }
 
-// ---- client ------------------------------------------------------------------------------------
+// ---- client: URLs and options ------------------------------------------------------------------
 
-/// Result of `httpGet`: `body` points into the caller's buffer.
-export struct Response {
+export define FETCH_OK = 0
+export define FETCH_ERR_URL = -1          // not an http:// or https:// URL, or too long / malformed
+export define FETCH_ERR_DNS = -2
+export define FETCH_ERR_CONNECT = -3
+export define FETCH_ERR_TLS = -4          // handshake or certificate failure (`HttpStream.tlsError`)
+export define FETCH_ERR_IO = -5           // write failed, or the connection ended before the headers
+export define FETCH_ERR_TOO_LARGE = -6    // headers or body do not fit the caller's buffer
+export define FETCH_ERR_REDIRECT = -7     // too many redirects or a Location that cannot be followed
+export define FETCH_ERR_BODY = -8         // malformed response or a body cut short
+
+export fn fetchErrorText(code: i32) -> *ui8 {
+    if code == FETCH_OK { return "ok" }
+    if code == FETCH_ERR_URL { return "invalid URL" }
+    if code == FETCH_ERR_DNS { return "host name could not be resolved" }
+    if code == FETCH_ERR_CONNECT { return "could not connect" }
+    if code == FETCH_ERR_TLS { return "TLS handshake or certificate validation failed" }
+    if code == FETCH_ERR_IO { return "network I/O error" }
+    if code == FETCH_ERR_TOO_LARGE { return "response does not fit the buffer" }
+    if code == FETCH_ERR_REDIRECT { return "too many redirects or unusable Location" }
+    if code == FETCH_ERR_BODY { return "malformed or truncated response" }
+    return "unknown error"
+}
+
+/// A parsed `http://` or `https://` URL.
+export struct Url {
+    https: bool
+    port: ui16
+    host: [ui8; 256]
+    path: [ui8; 2048]     // path and query, always starts with `/`
+}
+
+/// Parses the path part starting at `s[p]` (the fragment is dropped, a missing path becomes `/`).
+fn parsePath(u: *Url, s: *ui8, start: usize) -> bool {
+    local p: usize = start
+    local o: usize = 0
+    if s[p] != 47 {
+        u.path[0] = 47
+        o = 1
+    }
+    while s[p] != 0 && s[p] != 35 {
+        local c: ui8 = s[p]
+        if c <= 32 || c == 127 { return false }
+        if o + 1 >= 2048 { return false }
+        u.path[o] = c
+        o = o + 1
+        p = p + 1
+    }
+    u.path[o] = 0
+    return true
+}
+
+/// Parses `http://[user@]host[:port][/path][?query][#fragment]` (and `https://`). IPv6 literals are
+/// not supported. The user info is dropped.
+export fn urlParse(s: *ui8, u: *Url) -> bool {
+    local i: usize = 0
+    if startsCI(s, "https://") {
+        u.https = true
+        u.port = 443
+        i = 8
+    } else {
+        if startsCI(s, "http://") {
+            u.https = false
+            u.port = 80
+            i = 7
+        } else {
+            return false
+        }
+    }
+    local aStart: usize = i
+    local aEnd: usize = i
+    while s[aEnd] != 0 && s[aEnd] != 47 && s[aEnd] != 63 && s[aEnd] != 35 { aEnd = aEnd + 1 }
+    local k: usize = aStart
+    while k < aEnd {
+        if s[k] == 64 { aStart = k + 1 }
+        k = k + 1
+    }
+    if aStart >= aEnd || s[aStart] == 91 { return false }
+    local h: usize = aStart
+    while h < aEnd && s[h] != 58 { h = h + 1 }
+    local hostLen: usize = h - aStart
+    if hostLen == 0 || hostLen >= 256 { return false }
+    k = 0
+    while k < hostLen {
+        local c: ui8 = s[aStart + k]
+        if c <= 32 || c >= 127 { return false }
+        u.host[k] = c
+        k = k + 1
+    }
+    u.host[hostLen] = 0
+    if h < aEnd {
+        h = h + 1
+        if h == aEnd { return false }
+        local v: usize = 0
+        while h < aEnd {
+            local d: ui8 = s[h]
+            if d < 48 || d > 57 { return false }
+            v = v * 10 + ((d - 48) as usize)
+            if v > 65535 { return false }
+            h = h + 1
+        }
+        if v == 0 { return false }
+        u.port = v as ui16
+    }
+    return parsePath(u, s, aEnd)
+}
+
+/// Request description for `fetch` and `httpOpen`; initialize with `fetchInit`.
+export struct FetchOptions {
+    method: *ui8          // nil means GET; any token (`POST`, `PUT`, `DELETE`, `HEAD`, ...)
+    headers: *ui8         // raw lines `Name: value\r\n`, each ending in CRLF; nil for none
+    body: *ui8            // request body bytes, or nil
+    bodyLen: usize
+    hasSource: bool       // true: the body comes from `source` and is sent chunked
+    source: fn(*void, *ui8, usize) -> usize   // fills the buffer, returns the byte count, 0 ends the body
+    sourceCtx: *void
+    timeoutMs: i32        // receive timeout after connecting; 0 blocks (TLS handshake keeps its own 20 s)
+    followRedirects: bool
+    maxRedirects: i32
+}
+
+export fn fetchInit(o: *FetchOptions) {
+    o.method = nil
+    o.headers = nil
+    o.body = nil
+    o.bodyLen = 0
+    o.hasSource = false
+    o.sourceCtx = nil
+    o.timeoutMs = 0
+    o.followRedirects = true
+    o.maxRedirects = 5
+}
+
+// ---- client: connection and response stream ----------------------------------------------------
+
+/// An open response. `status` and the headers are valid after `httpOpen`; the body is read with
+/// `httpRead`. Do not copy a stream.
+export struct HttpStream {
+    conn: TlsConn
+    fd: i32
+    isTls: bool
+    open: bool
     status: i32
-    body: *ui8
+    mode: i32             // 0 until close, 1 Content-Length, 2 chunked
+    remaining: usize      // mode 1: bytes left; mode 2: bytes left in the current chunk
+    done: bool
+    failed: bool
+    headers: *ui8         // the header block in the caller's buffer, see `httpHeader`
+    headerLen: usize      // bytes the header block occupies (the body would start here)
+    tlsError: i32         // the `TLS_ERR_*` code behind `FETCH_ERR_TLS`
+    pend: [ui8; 4096]     // body bytes that arrived together with the headers
+    pendPos: usize
+    pendLen: usize
 }
 
-/// `GET http://ip:port/path`. The whole response is read into `buf` (capacity `cap`, NUL-terminated).
-/// Returns false when the connection or the response failed. Plain HTTP only (no TLS, no DNS: see `httpsGet`).
-export fn httpGet(ip: ui32, port: ui16, host: *ui8, path: *ui8, buf: *ui8, cap: usize, out: *Response) -> bool {
-    local fd: i32 = sysTcpSocket()
-    if fd < 0 { return false }
-    if sysTcpConnect(fd, ip, port) < 0 {
-        sysClose(fd)
-        return false
-    }
-    // The request is assembled first and sent with one write.
-    local reqCap: usize = strlen(path) + strlen(host) + 64
-    local req: *ui8 = mapGrow(nil, 0, reqCap) as *ui8
-    if req == nil {
-        sysClose(fd)
-        return false
-    }
-    local len: usize = 0
-    len = append(req, len, reqCap, "GET ")
-    len = append(req, len, reqCap, path)
-    len = append(req, len, reqCap, " HTTP/1.1\r\nHost: ")
-    len = append(req, len, reqCap, host)
-    len = append(req, len, reqCap, "\r\nConnection: close\r\n\r\n")
-    local sent: usize = 0
-    while sent < len {
-        local w: isize = sysWrite(fd, &req[sent], len - sent)
-        if w <= 0 { sent = len + 1 } else { sent = sent + (w as usize) }
-    }
-    sysUnmap(req as *void, reqCap)
-
-    local total: usize = 0
-    local eof: bool = false
-    while !eof && total + 1 < cap {
-        local r: isize = sysRead(fd, &buf[total], cap - 1 - total)
-        if r <= 0 {
-            eof = true
-        } else {
-            total = total + (r as usize)
-        }
-    }
-    sysClose(fd)
-    buf[total] = 0
-
-    return parseResponse(buf, total, out)
+fn closeStream(s: *HttpStream) {
+    if !s.open { return }
+    if s.isTls { tlsClose(&s.conn) } else { sysClose(s.fd) }
+    s.open = false
 }
 
-fn memMove(dst: *ui8, src: *ui8, n: usize) {
-    local i: usize = 0
-    while i < n {
-        dst[i] = src[i]
-        i = i + 1
-    }
+fn failOpen(s: *HttpStream, code: i32) -> i32 {
+    closeStream(s)
+    return code
 }
 
-fn hexDigit(c: ui8) -> i32 {
-    if c >= 48 && c <= 57 { return (c - 48) as i32 }
-    if c >= 97 && c <= 102 { return (c - 87) as i32 }
-    if c >= 65 && c <= 70 { return (c - 55) as i32 }
-    return -1
-}
-
-/// Does the header block `s[0..end]` declare `Transfer-Encoding: chunked`?
-fn isChunked(s: *ui8, end: usize) -> bool {
-    local name: *ui8 = "transfer-encoding:"
-    local i: usize = 0
-    while i + 18 < end {
-        local k: usize = 0
-        while k < 18 && lower(s[i + k]) == name[k] { k = k + 1 }
-        if k == 18 {
-            local p: usize = i + 18
-            while s[p] == 32 { p = p + 1 }
-            return lower(s[p]) == 99 && lower(s[p + 1]) == 104     // "ch"
-        }
-        i = i + 1
-    }
-    return false
-}
-
-/// Decodes a chunked body in place; returns its length. The buffer stays NUL-terminated.
-fn dechunk(body: *ui8, len: usize) -> usize {
-    local rd: usize = 0
-    local wr: usize = 0
-    local alive: bool = true
-    while alive && rd < len {
-        local size: usize = 0
-        local digits: usize = 0
-        while rd < len && hexDigit(body[rd]) >= 0 {
-            size = size * 16 + (hexDigit(body[rd]) as usize)
-            digits = digits + 1
-            rd = rd + 1
-        }
-        while rd < len && body[rd] != 10 { rd = rd + 1 }       // skip extensions and CR
-        rd = rd + 1
-        if digits == 0 || size == 0 {
-            alive = false
-        } else {
-            if size > len - rd { size = len - rd }
-            memMove(&body[wr], &body[rd], size)
-            wr = wr + size
-            rd = rd + size + 2                                  // trailing CRLF
-        }
-    }
-    body[wr] = 0
-    return wr
-}
-
-/// Splits `buf[0..total]` (NUL-terminated) into status and body; a chunked body is decoded.
-fn parseResponse(buf: *ui8, total: usize, out: *Response) -> bool {
-    // "HTTP/1.1 200 OK\r\n..." : the status code starts after the first space.
-    local i: usize = 0
-    while buf[i] != 0 && buf[i] != 32 { i = i + 1 }
-    if buf[i] == 0 { return false }
-    i = i + 1
-    local status: i32 = 0
-    while buf[i] >= 48 && buf[i] <= 57 {
-        status = status * 10 + ((buf[i] - 48) as i32)
-        i = i + 1
-    }
-    out.status = status
-    out.body = &buf[total]
-    while buf[i] != 0 {
-        if buf[i] == 13 && buf[i + 1] == 10 && buf[i + 2] == 13 && buf[i + 3] == 10 {
-            out.body = &buf[i + 4]
-            if isChunked(buf, i) { dechunk(out.body, total - i - 4) }
-            i = total
-        } else {
-            i = i + 1
-        }
+fn sendRaw(s: *HttpStream, data: *ui8, n: usize) -> bool {
+    if s.isTls { return tlsWrite(&s.conn, data, n) }
+    local done: usize = 0
+    while done < n {
+        local w: isize = sysWrite(s.fd, &data[done], n - done)
+        if w <= 0 { return false }
+        done = done + (w as usize)
     }
     return true
 }
 
-/// `GET https://host:port/path` over TLS 1.3 (names are resolved with `std/dns`; the certificate
-/// chain is validated against the OS roots and must cover `host`). The response is read in full
-/// into `buf` (capacity `cap`, NUL-terminated); chunked bodies are decoded. `err` (may be nil)
-/// receives a `TLS_ERR_*` code (0 when the TLS connection was established).
-export fn httpsGet(host: *ui8, port: ui16, path: *ui8, buf: *ui8, cap: usize, out: *Response, err: *i32) -> bool {
-    local c: TlsConn
-    local e: i32 = tlsConnectHost(&c, host, port)
-    if err != nil { *err = e }
-    if e != 0 { return false }
-    local reqCap: usize = strlen(path) + strlen(host) + 96
-    local req: *ui8 = mapGrow(nil, 0, reqCap) as *ui8
-    if req == nil {
-        tlsClose(&c)
-        return false
+/// Raw bytes from the connection, serving the headers' leftover first.
+fn rawRead(s: *HttpStream, out: *ui8, n: usize) -> isize {
+    if s.pendPos < s.pendLen {
+        local avail: usize = s.pendLen - s.pendPos
+        if avail > n { avail = n }
+        memMove(out, &s.pend[s.pendPos], avail)
+        s.pendPos = s.pendPos + avail
+        return avail as isize
     }
-    local len: usize = 0
-    len = append(req, len, reqCap, "GET ")
-    len = append(req, len, reqCap, path)
-    len = append(req, len, reqCap, " HTTP/1.1\r\nHost: ")
-    len = append(req, len, reqCap, host)
-    len = append(req, len, reqCap, "\r\nUser-Agent: xlang\r\nAccept: */*\r\nConnection: close\r\n\r\n")
-    local sent: bool = tlsWrite(&c, req, len)
-    sysUnmap(req as *void, reqCap)
-    if !sent {
-        tlsClose(&c)
-        return false
-    }
-    local total: usize = 0
-    local eof: bool = false
-    while !eof && total + 1 < cap {
-        local r: isize = tlsRead(&c, &buf[total], cap - 1 - total)
-        if r <= 0 {
-            eof = true
-        } else {
-            total = total + (r as usize)
+    if s.isTls { return tlsRead(&s.conn, out, n) }
+    return sysRead(s.fd, out, n)
+}
+
+fn rawByte(s: *HttpStream, out: *ui8) -> bool {
+    return rawRead(s, out, 1) == 1
+}
+
+/// Reads a chunk-size line; returns the size or -1 on a malformed line.
+fn readChunkSize(s: *HttpStream) -> isize {
+    local size: usize = 0
+    local digits: usize = 0
+    local ext: bool = false
+    local count: usize = 0
+    local ch: ui8 = 0
+    while true {
+        if !rawByte(s, &ch) { return -1 }
+        count = count + 1
+        if count > 1024 { return -1 }
+        if ch == 10 { break }
+        if !ext {
+            local h: i32 = hexDigit(ch)
+            if h >= 0 {
+                size = size * 16 + (h as usize)
+                digits = digits + 1
+                if size > 140737488355327 { return -1 }
+            } else {
+                if ch != 13 { ext = true }
+            }
         }
     }
-    tlsClose(&c)
-    buf[total] = 0
-    return parseResponse(buf, total, out)
+    if digits == 0 { return -1 }
+    return size as isize
+}
+
+/// Consumes the trailer section after the last chunk; false on a read failure.
+fn skipTrailers(s: *HttpStream) -> bool {
+    local ch: ui8 = 0
+    local count: usize = 0
+    while true {
+        local len: usize = 0
+        while true {
+            if !rawByte(s, &ch) { return false }
+            count = count + 1
+            if count > 65536 { return false }
+            if ch == 10 { break }
+            if ch != 13 { len = len + 1 }
+        }
+        if len == 0 { return true }
+    }
+    return true
+}
+
+fn streamFail(s: *HttpStream) -> isize {
+    s.failed = true
+    return -1
+}
+
+/// Body bytes of the response: the count, 0 at the end of the body, -1 on a protocol or network
+/// error (a body shorter than its `Content-Length`, a bad chunk).
+fn streamRead(s: *HttpStream, out: *ui8, n: usize) -> isize {
+    if s.failed { return -1 }
+    if s.done || n == 0 { return 0 }
+    if s.mode == 0 {
+        local r: isize = rawRead(s, out, n)
+        if r <= 0 {
+            s.done = true
+            return 0
+        }
+        return r
+    }
+    if s.mode == 1 {
+        if s.remaining == 0 {
+            s.done = true
+            return 0
+        }
+        local want: usize = n
+        if want > s.remaining { want = s.remaining }
+        local r: isize = rawRead(s, out, want)
+        if r <= 0 { return streamFail(s) }
+        s.remaining = s.remaining - (r as usize)
+        if s.remaining == 0 { s.done = true }
+        return r
+    }
+    // chunked
+    if s.remaining == 0 {
+        local size: isize = readChunkSize(s)
+        if size < 0 { return streamFail(s) }
+        if size == 0 {
+            if !skipTrailers(s) { return streamFail(s) }
+            s.done = true
+            return 0
+        }
+        s.remaining = size as usize
+    }
+    local want: usize = n
+    if want > s.remaining { want = s.remaining }
+    local r: isize = rawRead(s, out, want)
+    if r <= 0 { return streamFail(s) }
+    s.remaining = s.remaining - (r as usize)
+    if s.remaining == 0 {
+        local crlf: ui8 = 0
+        if !rawByte(s, &crlf) { return streamFail(s) }
+        if crlf == 13 {
+            if !rawByte(s, &crlf) { return streamFail(s) }
+        }
+        if crlf != 10 { return streamFail(s) }
+    }
+    return r
+}
+
+/// Sends the request body described by `o` (after the head).
+fn sendBody(s: *HttpStream, o: *FetchOptions) -> bool {
+    if o.hasSource {
+        // frame: [room for the hex size line][data][CRLF]; the size line is right-aligned before the data
+        local frame: [ui8; 4120]
+        while true {
+            local n: usize = o.source(o.sourceCtx, &frame[16], 4096)
+            if n == 0 { break }
+            if n > 4096 { return false }
+            local hex: [ui8; 24]
+            local h: usize = formatHex(n, &hex[0])
+            local start: usize = 16 - h - 2
+            memMove(&frame[start], &hex[0], h)
+            frame[start + h] = 13
+            frame[start + h + 1] = 10
+            frame[16 + n] = 13
+            frame[16 + n + 1] = 10
+            if !sendRaw(s, &frame[start], 16 + n + 2 - start) { return false }
+        }
+        return sendRaw(s, "0\r\n\r\n", 5)
+    }
+    if o.body != nil && o.bodyLen > 0 { return sendRaw(s, o.body, o.bodyLen) }
+    return true
+}
+
+/// Connects, sends the request and reads the status line and headers into `hbuf` (capacity `hcap`,
+/// the header block ends up NUL-terminated line by line). Leaves the body to `streamRead`.
+fn openStream(s: *HttpStream, u: *Url, o: *FetchOptions, hbuf: *ui8, hcap: usize) -> i32 {
+    s.open = false
+    s.done = false
+    s.failed = false
+    s.pendPos = 0
+    s.pendLen = 0
+    s.status = 0
+    s.tlsError = 0
+    s.remaining = 0
+    s.mode = 0
+    s.isTls = u.https
+    s.headers = hbuf
+    s.headerLen = 0
+
+    local method: *ui8 = "GET"
+    if o.method != nil { method = o.method }
+    if method[0] == 0 { return FETCH_ERR_URL }
+    local mi: usize = 0
+    while method[mi] != 0 {
+        if method[mi] <= 32 || method[mi] >= 127 { return FETCH_ERR_URL }
+        mi = mi + 1
+    }
+    local host: *ui8 = &u.host[0]
+    local path: *ui8 = &u.path[0]
+
+    if u.https {
+        local e: i32 = tlsConnectHost(&s.conn, host, u.port)
+        if e != 0 {
+            s.tlsError = e
+            if e == TLS_ERR_DNS { return FETCH_ERR_DNS }
+            return FETCH_ERR_TLS
+        }
+        s.fd = s.conn.fd
+    } else {
+        local ip: ui32 = 0
+        if !dnsResolve(host, &ip) { return FETCH_ERR_DNS }
+        s.fd = sysTcpSocket()
+        if s.fd < 0 { return FETCH_ERR_CONNECT }
+        if sysTcpConnect(s.fd, ip, u.port) < 0 {
+            sysClose(s.fd)
+            return FETCH_ERR_CONNECT
+        }
+    }
+    s.open = true
+    if o.timeoutMs > 0 { sysSetRecvTimeout(s.fd, o.timeoutMs) }
+
+    // ---- request head
+    local isHead: bool = strEq(method, "HEAD")
+    local hasBody: bool = o.body != nil && o.bodyLen > 0
+    local hl: usize = 0
+    if o.headers != nil { hl = strlen(o.headers) }
+    local reqCap: usize = strlen(method) + strlen(path) + strlen(host) + hl + 256
+    local req: *ui8 = mapGrow(nil, 0, reqCap) as *ui8
+    if req == nil { return failOpen(s, FETCH_ERR_IO) }
+    local len: usize = 0
+    len = append(req, len, reqCap, method)
+    len = append(req, len, reqCap, " ")
+    len = append(req, len, reqCap, path)
+    len = append(req, len, reqCap, " HTTP/1.1\r\n")
+    if !hasHeader(o.headers, "host") {
+        len = append(req, len, reqCap, "Host: ")
+        len = append(req, len, reqCap, host)
+        local def: ui16 = 80
+        if u.https { def = 443 }
+        if u.port != def {
+            local num: [ui8; 24]
+            local nl: usize = formatUInt(u.port as usize, &num[0])
+            num[nl] = 0
+            len = append(req, len, reqCap, ":")
+            len = append(req, len, reqCap, &num[0])
+        }
+        len = append(req, len, reqCap, "\r\n")
+    }
+    if !hasHeader(o.headers, "user-agent") { len = append(req, len, reqCap, "User-Agent: xlang\r\n") }
+    if !hasHeader(o.headers, "accept") { len = append(req, len, reqCap, "Accept: */*\r\n") }
+    len = append(req, len, reqCap, "Connection: close\r\n")
+    if o.hasSource {
+        len = append(req, len, reqCap, "Transfer-Encoding: chunked\r\n")
+    } else {
+        if hasBody {
+            local num: [ui8; 24]
+            local nl: usize = formatUInt(o.bodyLen, &num[0])
+            num[nl] = 0
+            len = append(req, len, reqCap, "Content-Length: ")
+            len = append(req, len, reqCap, &num[0])
+            len = append(req, len, reqCap, "\r\n")
+        } else {
+            if strEq(method, "POST") || strEq(method, "PUT") || strEq(method, "PATCH") {
+                len = append(req, len, reqCap, "Content-Length: 0\r\n")
+            }
+        }
+    }
+    if o.headers != nil && hl > 0 {
+        len = append(req, len, reqCap, o.headers)
+        if o.headers[hl - 1] != 10 { len = append(req, len, reqCap, "\r\n") }
+    }
+    len = append(req, len, reqCap, "\r\n")
+    local sent: bool = sendRaw(s, req, len)
+    sysUnmap(req as *void, reqCap)
+    if !sent { return failOpen(s, FETCH_ERR_IO) }
+    if !sendBody(s, o) { return failOpen(s, FETCH_ERR_IO) }
+
+    // ---- response head; reads are capped at 4096 so the leftover fits `pend`
+    local total: usize = 0
+    local he: isize = -1
+    hbuf[0] = 0
+    while he < 0 {
+        if total + 1 >= hcap { return failOpen(s, FETCH_ERR_TOO_LARGE) }
+        local want: usize = hcap - 1 - total
+        if want > 4096 { want = 4096 }
+        local r: isize = rawRead(s, &hbuf[total], want)
+        if r <= 0 { return failOpen(s, FETCH_ERR_IO) }
+        total = total + (r as usize)
+        hbuf[total] = 0
+        he = headerEnd(hbuf, total)
+    }
+    local hend: usize = (he as usize) + 4
+    local left: usize = total - hend
+    memMove(&s.pend[0], &hbuf[hend], left)
+    s.pendLen = left
+    s.headerLen = hend
+
+    if !startsCI(hbuf, "HTTP/1.") { return failOpen(s, FETCH_ERR_BODY) }
+    local p: usize = 0
+    while hbuf[p] != 0 && hbuf[p] != 32 { p = p + 1 }
+    if hbuf[p] == 0 { return failOpen(s, FETCH_ERR_BODY) }
+    p = p + 1
+    local status: i32 = 0
+    local digits: i32 = 0
+    while hbuf[p] >= 48 && hbuf[p] <= 57 {
+        status = status * 10 + ((hbuf[p] - 48) as i32)
+        digits = digits + 1
+        p = p + 1
+    }
+    if digits != 3 { return failOpen(s, FETCH_ERR_BODY) }
+    s.status = status
+    terminateLines(hbuf, he as usize)
+
+    if isHead || (status >= 100 && status < 200) || status == 204 || status == 304 {
+        s.mode = 1
+        s.remaining = 0
+        s.done = true
+        return FETCH_OK
+    }
+    local te: *ui8 = headerLookup(hbuf, "transfer-encoding")
+    if te != nil && startsCI(te, "chunked") {
+        s.mode = 2
+        return FETCH_OK
+    }
+    local cl: *ui8 = headerLookup(hbuf, "content-length")
+    if cl != nil {
+        local v: usize = 0
+        local nd: usize = 0
+        while cl[nd] >= 48 && cl[nd] <= 57 {
+            v = v * 10 + ((cl[nd] - 48) as usize)
+            nd = nd + 1
+            if nd > 18 { return failOpen(s, FETCH_ERR_BODY) }
+        }
+        if nd == 0 { return failOpen(s, FETCH_ERR_BODY) }
+        s.mode = 1
+        s.remaining = v
+        if v == 0 { s.done = true }
+        return FETCH_OK
+    }
+    s.mode = 0
+    return FETCH_OK
+}
+
+/// Opens `url` and reads the status line and headers into `hbuf` (capacity `hcap`). Returns
+/// `FETCH_OK` or a `FETCH_ERR_*` code (the connection is then closed). Redirects are not followed:
+/// check `s.status` and `httpHeader(s, "location")`. Read the body with `httpRead`, finish with
+/// `httpClose`.
+export fn httpOpen(s: *HttpStream, url: *ui8, opts: *FetchOptions, hbuf: *ui8, hcap: usize) -> i32 {
+    local u: Url
+    if !urlParse(url, &u) { return FETCH_ERR_URL }
+    return openStream(s, &u, opts, hbuf, hcap)
+}
+
+/// Reads up to `n` body bytes (chunked bodies are decoded). Returns the count, 0 at the end of the
+/// body, -1 on an error (truncated body, bad chunk, receive timeout).
+export fn httpRead(s: *HttpStream, out: *ui8, n: usize) -> isize {
+    return streamRead(s, out, n)
+}
+
+export fn httpClose(s: *HttpStream) {
+    closeStream(s)
+}
+
+/// Response header `name` (case-insensitive) of an open stream, or nil.
+export fn httpHeader(s: *HttpStream, name: *ui8) -> *ui8 {
+    return headerLookup(s.headers, name)
+}
+
+// ---- client: fetch -----------------------------------------------------------------------------
+
+/// Result of `fetch`. `headers`, `body` point into the caller's buffer; `headers` is the raw block
+/// (status line first, read with `responseHeader`), `body` is NUL-terminated.
+export struct Response {
+    status: i32
+    ok: bool              // status 200..299
+    headers: *ui8
+    body: *ui8
+    bodyLen: usize
+    error: i32            // FETCH_OK or the FETCH_ERR_* code `fetch` returned
+}
+
+export fn responseHeader(resp: *Response, name: *ui8) -> *ui8 {
+    return headerLookup(resp.headers, name)
+}
+
+fn isRedirect(status: i32) -> bool {
+    return status == 301 || status == 302 || status == 303 || status == 307 || status == 308
+}
+
+/// Resolves a `Location` value against `cur` into `next`: an absolute http(s) URL or a `/`-path.
+fn resolveLocation(l: *ui8, cur: *Url, next: *Url) -> bool {
+    if startsCI(l, "http://") || startsCI(l, "https://") { return urlParse(l, next) }
+    if l[0] == 47 && l[1] != 47 {
+        next.https = cur.https
+        next.port = cur.port
+        memMove(&next.host[0], &cur.host[0], 256)
+        return parsePath(next, l, 0)
+    }
+    return false
+}
+
+fn sameOrigin(a: *Url, b: *Url) -> bool {
+    return a.https == b.https && a.port == b.port && eqCI(&a.host[0], &b.host[0])
+}
+
+/// Performs one request and reads the whole response into `buf` (capacity `cap`): the header block,
+/// then the body, NUL-terminated. Follows redirects unless `opts.followRedirects` is false: 303
+/// becomes GET, 301/302 turn POST into GET, the body is dropped then; 307/308 keep method and body
+/// (not possible with a `source`); custom headers are dropped when the host, port or scheme changes.
+/// Returns `FETCH_OK` or a `FETCH_ERR_*` code, which is also stored in `out.error`.
+export fn fetch(url: *ui8, opts: *FetchOptions, buf: *ui8, cap: usize, out: *Response) -> i32 {
+    out.status = 0
+    out.ok = false
+    out.headers = buf
+    out.body = buf
+    out.bodyLen = 0
+    out.error = FETCH_OK
+    if cap < 2 {
+        out.error = FETCH_ERR_TOO_LARGE
+        return FETCH_ERR_TOO_LARGE
+    }
+    buf[0] = 0
+    local o: FetchOptions = *opts
+    local cur: Url
+    local next: Url
+    local s: HttpStream
+    if !urlParse(url, &cur) {
+        out.error = FETCH_ERR_URL
+        return FETCH_ERR_URL
+    }
+    local hops: i32 = 0
+    while true {
+        local e: i32 = openStream(&s, &cur, &o, buf, cap)
+        if e != FETCH_OK {
+            out.error = e
+            return e
+        }
+        if o.followRedirects && isRedirect(s.status) {
+            local loc: *ui8 = headerLookup(buf, "location")
+            if loc != nil {
+                local st: i32 = s.status
+                local ok: bool = hops < o.maxRedirects && resolveLocation(loc, &cur, &next)
+                if ok && (st == 307 || st == 308) && o.hasSource { ok = false }
+                closeStream(&s)
+                if !ok {
+                    out.error = FETCH_ERR_REDIRECT
+                    return FETCH_ERR_REDIRECT
+                }
+                local method: *ui8 = "GET"
+                if o.method != nil { method = o.method }
+                if st == 303 || ((st == 301 || st == 302) && strEq(method, "POST")) {
+                    if !strEq(method, "HEAD") { o.method = nil }
+                    o.body = nil
+                    o.bodyLen = 0
+                    o.hasSource = false
+                }
+                if !sameOrigin(&cur, &next) { o.headers = nil }
+                cur = next
+                hops = hops + 1
+                continue
+            }
+        }
+        // read the body after the header block
+        local start: usize = s.headerLen
+        local room: usize = 0
+        if cap > start + 1 { room = cap - 1 - start }
+        local bl: usize = 0
+        local err: i32 = FETCH_OK
+        while true {
+            if bl == room {
+                local probe: ui8 = 0
+                local pr: isize = streamRead(&s, &probe, 1)
+                if pr < 0 { err = FETCH_ERR_BODY }
+                if pr > 0 { err = FETCH_ERR_TOO_LARGE }
+                break
+            }
+            local r: isize = streamRead(&s, &buf[start + bl], room - bl)
+            if r < 0 {
+                err = FETCH_ERR_BODY
+                break
+            }
+            if r == 0 { break }
+            bl = bl + (r as usize)
+        }
+        closeStream(&s)
+        if err != FETCH_OK {
+            out.error = err
+            return err
+        }
+        buf[start + bl] = 0
+        out.status = s.status
+        out.ok = s.status >= 200 && s.status < 300
+        out.body = &buf[start]
+        out.bodyLen = bl
+        return FETCH_OK
+    }
+    return FETCH_OK
+}
+
+/// `fetch` of `url` with default options.
+export fn fetchGet(url: *ui8, buf: *ui8, cap: usize, out: *Response) -> i32 {
+    local o: FetchOptions
+    fetchInit(&o)
+    return fetch(url, &o, buf, cap, out)
+}
+
+/// POST of the NUL-terminated `body` with the given `Content-Type`.
+export fn fetchPost(url: *ui8, contentType: *ui8, body: *ui8, buf: *ui8, cap: usize, out: *Response) -> i32 {
+    local o: FetchOptions
+    fetchInit(&o)
+    local hdr: [ui8; 320]
+    local at: usize = 0
+    at = append(&hdr[0], at, 316, "Content-Type: ")
+    at = append(&hdr[0], at, 316, contentType)
+    at = append(&hdr[0], at, 316, "\r\n")
+    hdr[at] = 0
+    o.method = "POST"
+    o.headers = &hdr[0]
+    o.body = body
+    o.bodyLen = strlen(body)
+    return fetch(url, &o, buf, cap, out)
 }
