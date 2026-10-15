@@ -1,0 +1,178 @@
+// std/http/server: the connection loop of the HTTP/HTTPS server. It reads one request per connection
+// (headers, then `Content-Length` bytes), fills a `Context` and hands it to `routerDispatch`.
+// Chunked request bodies are not supported.
+from "../sys" import sysTcpSocket, sysTcpListen, sysTcpAccept, sysClose, sysRead, sysUnmap
+from "../memory" import mapGrow
+from "../io" import eprint
+from "../tls" import TlsConn, TlsCredentials, tlsRead, tlsClose, tlsListen, tlsAccept
+from "util" import strEq, lower, headerEnd, terminateLines
+from "context" import Context, ctxInit, ctxString
+from "router" import Router, routerDispatch
+
+/// Reads from the plain socket or the TLS session.
+fn connRead(fd: i32, tls: *TlsConn, buf: *ui8, n: usize) -> isize {
+    if tls != nil { return tlsRead(tls, buf, n) }
+    return sysRead(fd, buf, n)
+}
+
+/// Value of the `Content-Length` header found in the first `end` bytes, 0 when absent.
+fn contentLength(s: *ui8, end: usize) -> usize {
+    local name: *ui8 = "content-length:"
+    local i: usize = 0
+    while i + 15 < end {
+        local k: usize = 0
+        while k < 15 && lower(s[i + k]) == name[k] { k = k + 1 }
+        if k == 15 {
+            local p: usize = i + 15
+            while s[p] == 32 { p = p + 1 }
+            local v: usize = 0
+            while s[p] >= 48 && s[p] <= 57 {
+                v = v * 10 + ((s[p] - 48) as usize)
+                p = p + 1
+            }
+            return v
+        }
+        i = i + 1
+    }
+    return 0
+}
+
+/// Answers a request that is rejected before parsing (header or body too large).
+fn rejectEarly(fd: i32, tls: *TlsConn, status: i32, text: *ui8) {
+    local c: Context
+    ctxInit(&c, fd, tls)
+    ctxString(&c, status, text)
+}
+
+fn dispatch(r: *Router, fd: i32, tls: *TlsConn, buf: *ui8, n: usize) {
+    local he: usize = headerEnd(buf, n) as usize
+    terminateLines(buf, he)
+    // "METHOD PATH?QUERY HTTP/1.1\0\n...": split in place at the spaces.
+    local c: Context
+    ctxInit(&c, fd, tls)
+    c.headers = &buf[0]
+    c.method = &buf[0]
+    local i: usize = 0
+    while buf[i] != 0 && buf[i] != 32 { i = i + 1 }
+    if buf[i] == 0 { return }
+    buf[i] = 0
+    i = i + 1
+    c.path = &buf[i]
+    while buf[i] != 0 && buf[i] != 32 && buf[i] != 63 { i = i + 1 }
+    if buf[i] == 63 {
+        buf[i] = 0
+        i = i + 1
+        c.query = &buf[i]
+        local q: usize = i
+        while buf[i] != 0 && buf[i] != 32 {
+            if buf[i] == 38 { buf[i] = 0 }
+            i = i + 1
+        }
+        c.queryLen = i - q
+    }
+    buf[i] = 0
+    c.body = &buf[he + 4]
+    c.bodyLen = n - (he + 4)
+    c.isHead = strEq(c.method, "HEAD")
+    routerDispatch(r, &c)
+}
+
+fn serveConnection(r: *Router, fd: i32, tls: *TlsConn) {
+    // The buffer doubles as needed; the request is read in full (headers, then Content-Length bytes).
+    local cap: usize = 4096
+    local buf: *ui8 = mapGrow(nil, 0, cap) as *ui8
+    if buf == nil { return }
+    local total: usize = 0
+    local want: usize = 0          // total bytes expected once the headers are known
+    local gotHeaders: bool = false
+    local alive: bool = true
+    local rejected: bool = false
+    while alive && (!gotHeaders || total < want) {
+        if total + 1 >= cap {
+            local bigger: *ui8 = mapGrow(buf as *void, cap, cap * 2) as *ui8
+            if bigger == nil {
+                sysUnmap(buf as *void, cap)
+                return
+            }
+            buf = bigger
+            cap = cap * 2
+        }
+        local got: isize = connRead(fd, tls, &buf[total], cap - 1 - total)
+        if got <= 0 {
+            alive = false
+        } else {
+            total = total + (got as usize)
+            buf[total] = 0
+            if !gotHeaders {
+                local he: isize = headerEnd(buf, total)
+                if he >= 0 {
+                    gotHeaders = true
+                    local bodyLen: usize = contentLength(buf, he as usize)
+                    if (he as usize) + 4 > r.maxHeaderBytes {
+                        rejectEarly(fd, tls, 431, "request header too large")
+                        rejected = true
+                        alive = false
+                    } else {
+                        if bodyLen > r.maxBodyBytes {
+                            rejectEarly(fd, tls, 413, "request body too large")
+                            rejected = true
+                            alive = false
+                        }
+                    }
+                    want = (he as usize) + 4 + bodyLen
+                } else {
+                    if total > r.maxHeaderBytes {
+                        rejectEarly(fd, tls, 431, "request header too large")
+                        rejected = true
+                        alive = false
+                    }
+                }
+            }
+        }
+    }
+    if gotHeaders && !rejected { dispatch(r, fd, tls, buf, total) }
+    sysUnmap(buf as *void, cap)
+}
+
+/// Binds `ip:port` (host-order IPv4, `127.0.0.1` = 2130706433), calls `onListen` once, then serves
+/// forever. Returns -1 when the socket could not be set up.
+export fn routerServe(r: *Router, ip: ui32, port: ui16, onListen: fn()) -> i32 {
+    local fd: i32 = sysTcpSocket()
+    if fd < 0 {
+        eprint("routerServe: cannot create socket\n")
+        return -1
+    }
+    if sysTcpListen(fd, ip, port) < 0 {
+        eprint("routerServe: cannot bind/listen (port already in use?)\n")
+        sysClose(fd)
+        return -1
+    }
+    onListen()
+    while true {
+        local conn: i32 = sysTcpAccept(fd)
+        if conn >= 0 {
+            serveConnection(r, conn, nil)
+            sysClose(conn)
+        }
+    }
+    return 0
+}
+
+/// `routerServe` over TLS 1.3 (HTTPS): `cr` comes from `tlsLoadCredentials`. A connection whose
+/// handshake fails is dropped and the loop continues. Returns -1 when the socket could not be set up.
+export fn routerServeTls(r: *Router, ip: ui32, port: ui16, cr: *TlsCredentials, onListen: fn()) -> i32 {
+    local fd: i32 = tlsListen(ip, port)
+    if fd < 0 {
+        eprint("routerServeTls: cannot bind/listen (port already in use?)\n")
+        return -1
+    }
+    onListen()
+    while true {
+        local c: TlsConn
+        if tlsAccept(fd, cr, &c) == 0 {
+            serveConnection(r, c.fd, &c)
+            tlsClose(&c)
+        }
+    }
+    return 0
+}

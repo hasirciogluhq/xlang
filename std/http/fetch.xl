@@ -1,0 +1,191 @@
+// std/http/fetch: whole-response requests. `fetch` reads status, headers and body into one caller
+// buffer and follows redirects; `fetchGet`/`fetchPost`/`fetchPut`/`fetchPatch`/`fetchDelete`/
+// `fetchHead`/`fetchOptions` cover every common method, `fetchMethod` any token.
+from "../memory" import strlen
+from "util" import strEq, eqCI, startsCI, memMove, append, headerLookup
+from "url" import Url, FetchOptions, urlParse, urlParsePath, fetchInit, FETCH_OK, FETCH_ERR_URL, FETCH_ERR_TOO_LARGE, FETCH_ERR_REDIRECT, FETCH_ERR_BODY
+from "stream" import HttpStream, streamOpen, streamRead, streamClose
+
+/// Result of `fetch`. `headers`, `body` point into the caller's buffer; `headers` is the raw block
+/// (status line first, read with `responseHeader`), `body` is NUL-terminated.
+export struct Response {
+    status: i32
+    ok: bool              // status 200..299
+    headers: *ui8
+    body: *ui8
+    bodyLen: usize
+    error: i32            // FETCH_OK or the FETCH_ERR_* code `fetch` returned
+}
+
+export fn responseHeader(resp: *Response, name: *ui8) -> *ui8 {
+    return headerLookup(resp.headers, name)
+}
+
+fn isRedirect(status: i32) -> bool {
+    return status == 301 || status == 302 || status == 303 || status == 307 || status == 308
+}
+
+/// Resolves a `Location` value against `cur` into `next`: an absolute http(s) URL or a `/`-path.
+fn resolveLocation(l: *ui8, cur: *Url, next: *Url) -> bool {
+    if startsCI(l, "http://") || startsCI(l, "https://") { return urlParse(l, next) }
+    if l[0] == 47 && l[1] != 47 {
+        next.https = cur.https
+        next.port = cur.port
+        memMove(&next.host[0], &cur.host[0], 256)
+        return urlParsePath(next, l, 0)
+    }
+    return false
+}
+
+fn sameOrigin(a: *Url, b: *Url) -> bool {
+    return a.https == b.https && a.port == b.port && eqCI(&a.host[0], &b.host[0])
+}
+
+/// Performs one request and reads the whole response into `buf` (capacity `cap`): the header block,
+/// then the body, NUL-terminated. Follows redirects unless `opts.followRedirects` is false: 303
+/// becomes GET, 301/302 turn POST into GET, the body is dropped then; 307/308 keep method and body
+/// (not possible with a `source`); custom headers are dropped when the host, port or scheme changes.
+/// Returns `FETCH_OK` or a `FETCH_ERR_*` code, which is also stored in `out.error`.
+export fn fetch(url: *ui8, opts: *FetchOptions, buf: *ui8, cap: usize, out: *Response) -> i32 {
+    out.status = 0
+    out.ok = false
+    out.headers = buf
+    out.body = buf
+    out.bodyLen = 0
+    out.error = FETCH_OK
+    if cap < 2 {
+        out.error = FETCH_ERR_TOO_LARGE
+        return FETCH_ERR_TOO_LARGE
+    }
+    buf[0] = 0
+    local o: FetchOptions = *opts
+    local cur: Url
+    local next: Url
+    local s: HttpStream
+    if !urlParse(url, &cur) {
+        out.error = FETCH_ERR_URL
+        return FETCH_ERR_URL
+    }
+    local hops: i32 = 0
+    while true {
+        local e: i32 = streamOpen(&s, &cur, &o, buf, cap)
+        if e != FETCH_OK {
+            out.error = e
+            return e
+        }
+        if o.followRedirects && isRedirect(s.status) {
+            local loc: *ui8 = headerLookup(buf, "location")
+            if loc != nil {
+                local st: i32 = s.status
+                local ok: bool = hops < o.maxRedirects && resolveLocation(loc, &cur, &next)
+                if ok && (st == 307 || st == 308) && o.hasSource { ok = false }
+                streamClose(&s)
+                if !ok {
+                    out.error = FETCH_ERR_REDIRECT
+                    return FETCH_ERR_REDIRECT
+                }
+                local method: *ui8 = "GET"
+                if o.method != nil { method = o.method }
+                if st == 303 || ((st == 301 || st == 302) && strEq(method, "POST")) {
+                    if !strEq(method, "HEAD") { o.method = nil }
+                    o.body = nil
+                    o.bodyLen = 0
+                    o.hasSource = false
+                }
+                if !sameOrigin(&cur, &next) { o.headers = nil }
+                cur = next
+                hops = hops + 1
+                continue
+            }
+        }
+        // read the body after the header block
+        local start: usize = s.headerLen
+        local room: usize = 0
+        if cap > start + 1 { room = cap - 1 - start }
+        local bl: usize = 0
+        local err: i32 = FETCH_OK
+        while true {
+            if bl == room {
+                local probe: ui8 = 0
+                local pr: isize = streamRead(&s, &probe, 1)
+                if pr < 0 { err = FETCH_ERR_BODY }
+                if pr > 0 { err = FETCH_ERR_TOO_LARGE }
+                break
+            }
+            local r: isize = streamRead(&s, &buf[start + bl], room - bl)
+            if r < 0 {
+                err = FETCH_ERR_BODY
+                break
+            }
+            if r == 0 { break }
+            bl = bl + (r as usize)
+        }
+        streamClose(&s)
+        if err != FETCH_OK {
+            out.error = err
+            return err
+        }
+        buf[start + bl] = 0
+        out.status = s.status
+        out.ok = s.status >= 200 && s.status < 300
+        out.body = &buf[start]
+        out.bodyLen = bl
+        return FETCH_OK
+    }
+    return FETCH_OK
+}
+
+/// `fetch` of `url` with default options (GET).
+export fn fetchGet(url: *ui8, buf: *ui8, cap: usize, out: *Response) -> i32 {
+    local o: FetchOptions
+    fetchInit(&o)
+    return fetch(url, &o, buf, cap, out)
+}
+
+/// `method` (any token) with the NUL-terminated `body` (nil for none) and, when `contentType` is
+/// not nil, a `Content-Type` header.
+export fn fetchMethod(method: *ui8, url: *ui8, contentType: *ui8, body: *ui8, buf: *ui8, cap: usize, out: *Response) -> i32 {
+    local o: FetchOptions
+    fetchInit(&o)
+    local hdr: [ui8; 320]
+    hdr[0] = 0
+    o.method = method
+    if contentType != nil {
+        local at: usize = 0
+        at = append(&hdr[0], at, 316, "Content-Type: ")
+        at = append(&hdr[0], at, 316, contentType)
+        at = append(&hdr[0], at, 316, "\r\n")
+        hdr[at] = 0
+        o.headers = &hdr[0]
+    }
+    if body != nil {
+        o.body = body
+        o.bodyLen = strlen(body)
+    }
+    return fetch(url, &o, buf, cap, out)
+}
+
+export fn fetchPost(url: *ui8, contentType: *ui8, body: *ui8, buf: *ui8, cap: usize, out: *Response) -> i32 {
+    return fetchMethod("POST", url, contentType, body, buf, cap, out)
+}
+
+export fn fetchPut(url: *ui8, contentType: *ui8, body: *ui8, buf: *ui8, cap: usize, out: *Response) -> i32 {
+    return fetchMethod("PUT", url, contentType, body, buf, cap, out)
+}
+
+export fn fetchPatch(url: *ui8, contentType: *ui8, body: *ui8, buf: *ui8, cap: usize, out: *Response) -> i32 {
+    return fetchMethod("PATCH", url, contentType, body, buf, cap, out)
+}
+
+export fn fetchDelete(url: *ui8, buf: *ui8, cap: usize, out: *Response) -> i32 {
+    return fetchMethod("DELETE", url, nil, nil, buf, cap, out)
+}
+
+/// Headers only: `out.bodyLen` is 0.
+export fn fetchHead(url: *ui8, buf: *ui8, cap: usize, out: *Response) -> i32 {
+    return fetchMethod("HEAD", url, nil, nil, buf, cap, out)
+}
+
+export fn fetchOptions(url: *ui8, buf: *ui8, cap: usize, out: *Response) -> i32 {
+    return fetchMethod("OPTIONS", url, nil, nil, buf, cap, out)
+}

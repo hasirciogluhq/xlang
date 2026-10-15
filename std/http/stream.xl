@@ -1,0 +1,392 @@
+// std/http/stream: the HTTP/1.1 client connection. `httpOpen` sends a request and reads the status line
+// and headers; `httpRead` then yields the body incrementally (Content-Length, chunked or until close).
+// Request bodies come from a buffer or, chunked, from a `source` callback. Every request sends
+// `Connection: close`.
+from "../sys" import sysTcpSocket, sysTcpConnect, sysClose, sysRead, sysWrite, sysUnmap, sysSetRecvTimeout
+from "../memory" import strlen, mapGrow
+from "../dns" import dnsResolve
+from "../tls" import TlsConn, TLS_ERR_DNS, tlsConnectHost, tlsWrite, tlsRead, tlsClose
+from "util" import strEq, startsCI, memMove, formatUInt, formatHex, append, hexDigit, headerEnd, terminateLines, headerLookup, hasHeader
+from "url" import Url, FetchOptions, urlParse, FETCH_OK, FETCH_ERR_URL, FETCH_ERR_DNS, FETCH_ERR_CONNECT, FETCH_ERR_TLS, FETCH_ERR_IO, FETCH_ERR_TOO_LARGE, FETCH_ERR_BODY
+
+/// An open client connection with a response being read. Fill it with `httpOpen`, read with
+/// `httpRead`. Do not copy a stream.
+export struct HttpStream {
+    conn: TlsConn
+    fd: i32
+    isTls: bool
+    open: bool
+    status: i32
+    mode: i32             // 0 until close, 1 Content-Length, 2 chunked
+    remaining: usize      // mode 1: bytes left; mode 2: bytes left in the current chunk
+    done: bool
+    failed: bool
+    headers: *ui8         // the header block in the caller's buffer, see `httpHeader`
+    headerLen: usize      // bytes the header block occupies (the body would start here)
+    tlsError: i32         // the `TLS_ERR_*` code behind `FETCH_ERR_TLS`
+    pend: [ui8; 4096]     // body bytes that arrived together with the headers
+    pendPos: usize
+    pendLen: usize
+}
+
+export fn streamClose(s: *HttpStream) {
+    if !s.open { return }
+    if s.isTls { tlsClose(&s.conn) } else { sysClose(s.fd) }
+    s.open = false
+}
+
+fn failOpen(s: *HttpStream, code: i32) -> i32 {
+    streamClose(s)
+    return code
+}
+
+fn sendRaw(s: *HttpStream, data: *ui8, n: usize) -> bool {
+    if s.isTls { return tlsWrite(&s.conn, data, n) }
+    local done: usize = 0
+    while done < n {
+        local w: isize = sysWrite(s.fd, &data[done], n - done)
+        if w <= 0 { return false }
+        done = done + (w as usize)
+    }
+    return true
+}
+
+/// Raw bytes from the connection, serving the headers' leftover first.
+fn rawRead(s: *HttpStream, out: *ui8, n: usize) -> isize {
+    if s.pendPos < s.pendLen {
+        local avail: usize = s.pendLen - s.pendPos
+        if avail > n { avail = n }
+        memMove(out, &s.pend[s.pendPos], avail)
+        s.pendPos = s.pendPos + avail
+        return avail as isize
+    }
+    if s.isTls { return tlsRead(&s.conn, out, n) }
+    return sysRead(s.fd, out, n)
+}
+
+fn rawByte(s: *HttpStream, out: *ui8) -> bool {
+    return rawRead(s, out, 1) == 1
+}
+
+/// Reads a chunk-size line; returns the size or -1 on a malformed line.
+fn readChunkSize(s: *HttpStream) -> isize {
+    local size: usize = 0
+    local digits: usize = 0
+    local ext: bool = false
+    local count: usize = 0
+    local ch: ui8 = 0
+    while true {
+        if !rawByte(s, &ch) { return -1 }
+        count = count + 1
+        if count > 1024 { return -1 }
+        if ch == 10 { break }
+        if !ext {
+            local h: i32 = hexDigit(ch)
+            if h >= 0 {
+                size = size * 16 + (h as usize)
+                digits = digits + 1
+                if size > 140737488355327 { return -1 }
+            } else {
+                if ch != 13 { ext = true }
+            }
+        }
+    }
+    if digits == 0 { return -1 }
+    return size as isize
+}
+
+/// Consumes the trailer section after the last chunk; false on a read failure.
+fn skipTrailers(s: *HttpStream) -> bool {
+    local ch: ui8 = 0
+    local count: usize = 0
+    while true {
+        local len: usize = 0
+        while true {
+            if !rawByte(s, &ch) { return false }
+            count = count + 1
+            if count > 65536 { return false }
+            if ch == 10 { break }
+            if ch != 13 { len = len + 1 }
+        }
+        if len == 0 { return true }
+    }
+    return true
+}
+
+fn streamFail(s: *HttpStream) -> isize {
+    s.failed = true
+    return -1
+}
+
+/// Body bytes of the response: the count, 0 at the end of the body, -1 on a protocol or network
+/// error (a body shorter than its `Content-Length`, a bad chunk).
+export fn streamRead(s: *HttpStream, out: *ui8, n: usize) -> isize {
+    if s.failed { return -1 }
+    if s.done || n == 0 { return 0 }
+    if s.mode == 0 {
+        local r: isize = rawRead(s, out, n)
+        if r <= 0 {
+            s.done = true
+            return 0
+        }
+        return r
+    }
+    if s.mode == 1 {
+        if s.remaining == 0 {
+            s.done = true
+            return 0
+        }
+        local want: usize = n
+        if want > s.remaining { want = s.remaining }
+        local r: isize = rawRead(s, out, want)
+        if r <= 0 { return streamFail(s) }
+        s.remaining = s.remaining - (r as usize)
+        if s.remaining == 0 { s.done = true }
+        return r
+    }
+    // chunked
+    if s.remaining == 0 {
+        local size: isize = readChunkSize(s)
+        if size < 0 { return streamFail(s) }
+        if size == 0 {
+            if !skipTrailers(s) { return streamFail(s) }
+            s.done = true
+            return 0
+        }
+        s.remaining = size as usize
+    }
+    local want: usize = n
+    if want > s.remaining { want = s.remaining }
+    local r: isize = rawRead(s, out, want)
+    if r <= 0 { return streamFail(s) }
+    s.remaining = s.remaining - (r as usize)
+    if s.remaining == 0 {
+        local crlf: ui8 = 0
+        if !rawByte(s, &crlf) { return streamFail(s) }
+        if crlf == 13 {
+            if !rawByte(s, &crlf) { return streamFail(s) }
+        }
+        if crlf != 10 { return streamFail(s) }
+    }
+    return r
+}
+
+/// Sends the request body described by `o` (after the head).
+fn sendBody(s: *HttpStream, o: *FetchOptions) -> bool {
+    if o.hasSource {
+        // frame: [room for the hex size line][data][CRLF]; the size line is right-aligned before the data
+        local frame: [ui8; 4120]
+        while true {
+            local n: usize = o.source(o.sourceCtx, &frame[16], 4096)
+            if n == 0 { break }
+            if n > 4096 { return false }
+            local hex: [ui8; 24]
+            local h: usize = formatHex(n, &hex[0])
+            local start: usize = 16 - h - 2
+            memMove(&frame[start], &hex[0], h)
+            frame[start + h] = 13
+            frame[start + h + 1] = 10
+            frame[16 + n] = 13
+            frame[16 + n + 1] = 10
+            if !sendRaw(s, &frame[start], 16 + n + 2 - start) { return false }
+        }
+        return sendRaw(s, "0\r\n\r\n", 5)
+    }
+    if o.body != nil && o.bodyLen > 0 { return sendRaw(s, o.body, o.bodyLen) }
+    return true
+}
+
+/// Connects, sends the request and reads the status line and headers into `hbuf` (capacity `hcap`,
+/// the header block ends up NUL-terminated line by line). Leaves the body to `streamRead`.
+export fn streamOpen(s: *HttpStream, u: *Url, o: *FetchOptions, hbuf: *ui8, hcap: usize) -> i32 {
+    s.open = false
+    s.done = false
+    s.failed = false
+    s.pendPos = 0
+    s.pendLen = 0
+    s.status = 0
+    s.tlsError = 0
+    s.remaining = 0
+    s.mode = 0
+    s.isTls = u.https
+    s.headers = hbuf
+    s.headerLen = 0
+
+    local method: *ui8 = "GET"
+    if o.method != nil { method = o.method }
+    if method[0] == 0 { return FETCH_ERR_URL }
+    local mi: usize = 0
+    while method[mi] != 0 {
+        if method[mi] <= 32 || method[mi] >= 127 { return FETCH_ERR_URL }
+        mi = mi + 1
+    }
+    local host: *ui8 = &u.host[0]
+    local path: *ui8 = &u.path[0]
+
+    if u.https {
+        local e: i32 = tlsConnectHost(&s.conn, host, u.port)
+        if e != 0 {
+            s.tlsError = e
+            if e == TLS_ERR_DNS { return FETCH_ERR_DNS }
+            return FETCH_ERR_TLS
+        }
+        s.fd = s.conn.fd
+    } else {
+        local ip: ui32 = 0
+        if !dnsResolve(host, &ip) { return FETCH_ERR_DNS }
+        s.fd = sysTcpSocket()
+        if s.fd < 0 { return FETCH_ERR_CONNECT }
+        if sysTcpConnect(s.fd, ip, u.port) < 0 {
+            sysClose(s.fd)
+            return FETCH_ERR_CONNECT
+        }
+    }
+    s.open = true
+    if o.timeoutMs > 0 { sysSetRecvTimeout(s.fd, o.timeoutMs) }
+
+    // ---- request head
+    local isHead: bool = strEq(method, "HEAD")
+    local hasBody: bool = o.body != nil && o.bodyLen > 0
+    local hl: usize = 0
+    if o.headers != nil { hl = strlen(o.headers) }
+    local reqCap: usize = strlen(method) + strlen(path) + strlen(host) + hl + 256
+    local req: *ui8 = mapGrow(nil, 0, reqCap) as *ui8
+    if req == nil { return failOpen(s, FETCH_ERR_IO) }
+    local len: usize = 0
+    len = append(req, len, reqCap, method)
+    len = append(req, len, reqCap, " ")
+    len = append(req, len, reqCap, path)
+    len = append(req, len, reqCap, " HTTP/1.1\r\n")
+    if !hasHeader(o.headers, "host") {
+        len = append(req, len, reqCap, "Host: ")
+        len = append(req, len, reqCap, host)
+        local def: ui16 = 80
+        if u.https { def = 443 }
+        if u.port != def {
+            local num: [ui8; 24]
+            local nl: usize = formatUInt(u.port as usize, &num[0])
+            num[nl] = 0
+            len = append(req, len, reqCap, ":")
+            len = append(req, len, reqCap, &num[0])
+        }
+        len = append(req, len, reqCap, "\r\n")
+    }
+    if !hasHeader(o.headers, "user-agent") { len = append(req, len, reqCap, "User-Agent: xlang\r\n") }
+    if !hasHeader(o.headers, "accept") { len = append(req, len, reqCap, "Accept: */*\r\n") }
+    len = append(req, len, reqCap, "Connection: close\r\n")
+    if o.hasSource {
+        len = append(req, len, reqCap, "Transfer-Encoding: chunked\r\n")
+    } else {
+        if hasBody {
+            local num: [ui8; 24]
+            local nl: usize = formatUInt(o.bodyLen, &num[0])
+            num[nl] = 0
+            len = append(req, len, reqCap, "Content-Length: ")
+            len = append(req, len, reqCap, &num[0])
+            len = append(req, len, reqCap, "\r\n")
+        } else {
+            if strEq(method, "POST") || strEq(method, "PUT") || strEq(method, "PATCH") {
+                len = append(req, len, reqCap, "Content-Length: 0\r\n")
+            }
+        }
+    }
+    if o.headers != nil && hl > 0 {
+        len = append(req, len, reqCap, o.headers)
+        if o.headers[hl - 1] != 10 { len = append(req, len, reqCap, "\r\n") }
+    }
+    len = append(req, len, reqCap, "\r\n")
+    local sent: bool = sendRaw(s, req, len)
+    sysUnmap(req as *void, reqCap)
+    if !sent { return failOpen(s, FETCH_ERR_IO) }
+    if !sendBody(s, o) { return failOpen(s, FETCH_ERR_IO) }
+
+    // ---- response head; reads are capped at 4096 so the leftover fits `pend`
+    local total: usize = 0
+    local he: isize = -1
+    hbuf[0] = 0
+    while he < 0 {
+        if total + 1 >= hcap { return failOpen(s, FETCH_ERR_TOO_LARGE) }
+        local want: usize = hcap - 1 - total
+        if want > 4096 { want = 4096 }
+        local r: isize = rawRead(s, &hbuf[total], want)
+        if r <= 0 { return failOpen(s, FETCH_ERR_IO) }
+        total = total + (r as usize)
+        hbuf[total] = 0
+        he = headerEnd(hbuf, total)
+    }
+    local hend: usize = (he as usize) + 4
+    local left: usize = total - hend
+    memMove(&s.pend[0], &hbuf[hend], left)
+    s.pendLen = left
+    s.headerLen = hend
+
+    if !startsCI(hbuf, "HTTP/1.") { return failOpen(s, FETCH_ERR_BODY) }
+    local p: usize = 0
+    while hbuf[p] != 0 && hbuf[p] != 32 { p = p + 1 }
+    if hbuf[p] == 0 { return failOpen(s, FETCH_ERR_BODY) }
+    p = p + 1
+    local status: i32 = 0
+    local digits: i32 = 0
+    while hbuf[p] >= 48 && hbuf[p] <= 57 {
+        status = status * 10 + ((hbuf[p] - 48) as i32)
+        digits = digits + 1
+        p = p + 1
+    }
+    if digits != 3 { return failOpen(s, FETCH_ERR_BODY) }
+    s.status = status
+    terminateLines(hbuf, he as usize)
+
+    if isHead || (status >= 100 && status < 200) || status == 204 || status == 304 {
+        s.mode = 1
+        s.remaining = 0
+        s.done = true
+        return FETCH_OK
+    }
+    local te: *ui8 = headerLookup(hbuf, "transfer-encoding")
+    if te != nil && startsCI(te, "chunked") {
+        s.mode = 2
+        return FETCH_OK
+    }
+    local cl: *ui8 = headerLookup(hbuf, "content-length")
+    if cl != nil {
+        local v: usize = 0
+        local nd: usize = 0
+        while cl[nd] >= 48 && cl[nd] <= 57 {
+            v = v * 10 + ((cl[nd] - 48) as usize)
+            nd = nd + 1
+            if nd > 18 { return failOpen(s, FETCH_ERR_BODY) }
+        }
+        if nd == 0 { return failOpen(s, FETCH_ERR_BODY) }
+        s.mode = 1
+        s.remaining = v
+        if v == 0 { s.done = true }
+        return FETCH_OK
+    }
+    s.mode = 0
+    return FETCH_OK
+}
+
+/// Opens `url` and reads the status line and headers into `hbuf` (capacity `hcap`). Returns
+/// `FETCH_OK` or a `FETCH_ERR_*` code (the connection is then closed). Redirects are not followed:
+/// check `s.status` and `httpHeader(s, "location")`. Read the body with `httpRead`, finish with
+/// `httpClose`.
+export fn httpOpen(s: *HttpStream, url: *ui8, opts: *FetchOptions, hbuf: *ui8, hcap: usize) -> i32 {
+    local u: Url
+    if !urlParse(url, &u) { return FETCH_ERR_URL }
+    return streamOpen(s, &u, opts, hbuf, hcap)
+}
+
+/// Reads up to `n` body bytes (chunked bodies are decoded). Returns the count, 0 at the end of the
+/// body, -1 on an error (truncated body, bad chunk, receive timeout).
+export fn httpRead(s: *HttpStream, out: *ui8, n: usize) -> isize {
+    return streamRead(s, out, n)
+}
+
+export fn httpClose(s: *HttpStream) {
+    streamClose(s)
+}
+
+/// Response header `name` (case-insensitive) of an open stream, or nil.
+export fn httpHeader(s: *HttpStream, name: *ui8) -> *ui8 {
+    return headerLookup(s.headers, name)
+}

@@ -16,6 +16,7 @@ pass=0; fail=0
 tests=(
   "language|0||0|1"
   "controlflow|0|controlflow ok|0|1"
+  "router|0|router ok|0|1"
   "stdlib|0|499500|0|1"
   "fsjson|0||0|1"
   "panics|134|before|0|0"

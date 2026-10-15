@@ -1,0 +1,134 @@
+// std/http/url: URL parsing, request options and the error codes of the HTTP client.
+from "util" import startsCI
+
+export define FETCH_OK = 0
+export define FETCH_ERR_URL = -1          // not an http:// or https:// URL, or too long / malformed
+export define FETCH_ERR_DNS = -2
+export define FETCH_ERR_CONNECT = -3
+export define FETCH_ERR_TLS = -4          // handshake or certificate failure (`HttpStream.tlsError`)
+export define FETCH_ERR_IO = -5           // write failed, or the connection ended before the headers
+export define FETCH_ERR_TOO_LARGE = -6    // headers or body do not fit the caller's buffer
+export define FETCH_ERR_REDIRECT = -7     // too many redirects or a Location that cannot be followed
+export define FETCH_ERR_BODY = -8         // malformed response or a body cut short
+
+export fn fetchErrorText(code: i32) -> *ui8 {
+    if code == FETCH_OK { return "ok" }
+    if code == FETCH_ERR_URL { return "invalid URL" }
+    if code == FETCH_ERR_DNS { return "host name could not be resolved" }
+    if code == FETCH_ERR_CONNECT { return "could not connect" }
+    if code == FETCH_ERR_TLS { return "TLS handshake or certificate validation failed" }
+    if code == FETCH_ERR_IO { return "network I/O error" }
+    if code == FETCH_ERR_TOO_LARGE { return "response does not fit the buffer" }
+    if code == FETCH_ERR_REDIRECT { return "too many redirects or unusable Location" }
+    if code == FETCH_ERR_BODY { return "malformed or truncated response" }
+    return "unknown error"
+}
+
+/// A parsed `http://` or `https://` URL.
+export struct Url {
+    https: bool
+    port: ui16
+    host: [ui8; 256]
+    path: [ui8; 2048]     // path and query, always starts with `/`
+}
+
+/// Parses the path part starting at `s[start]` (the fragment is dropped, a missing path becomes `/`).
+export fn urlParsePath(u: *Url, s: *ui8, start: usize) -> bool {
+    local p: usize = start
+    local o: usize = 0
+    if s[p] != 47 {
+        u.path[0] = 47
+        o = 1
+    }
+    while s[p] != 0 && s[p] != 35 {
+        local c: ui8 = s[p]
+        if c <= 32 || c == 127 { return false }
+        if o + 1 >= 2048 { return false }
+        u.path[o] = c
+        o = o + 1
+        p = p + 1
+    }
+    u.path[o] = 0
+    return true
+}
+
+/// Parses `http://[user@]host[:port][/path][?query][#fragment]` (and `https://`). IPv6 literals are
+/// not supported. The user info is dropped.
+export fn urlParse(s: *ui8, u: *Url) -> bool {
+    local i: usize = 0
+    if startsCI(s, "https://") {
+        u.https = true
+        u.port = 443
+        i = 8
+    } else {
+        if startsCI(s, "http://") {
+            u.https = false
+            u.port = 80
+            i = 7
+        } else {
+            return false
+        }
+    }
+    local aStart: usize = i
+    local aEnd: usize = i
+    while s[aEnd] != 0 && s[aEnd] != 47 && s[aEnd] != 63 && s[aEnd] != 35 { aEnd = aEnd + 1 }
+    local k: usize = aStart
+    while k < aEnd {
+        if s[k] == 64 { aStart = k + 1 }
+        k = k + 1
+    }
+    if aStart >= aEnd || s[aStart] == 91 { return false }
+    local h: usize = aStart
+    while h < aEnd && s[h] != 58 { h = h + 1 }
+    local hostLen: usize = h - aStart
+    if hostLen == 0 || hostLen >= 256 { return false }
+    k = 0
+    while k < hostLen {
+        local c: ui8 = s[aStart + k]
+        if c <= 32 || c >= 127 { return false }
+        u.host[k] = c
+        k = k + 1
+    }
+    u.host[hostLen] = 0
+    if h < aEnd {
+        h = h + 1
+        if h == aEnd { return false }
+        local v: usize = 0
+        while h < aEnd {
+            local d: ui8 = s[h]
+            if d < 48 || d > 57 { return false }
+            v = v * 10 + ((d - 48) as usize)
+            if v > 65535 { return false }
+            h = h + 1
+        }
+        if v == 0 { return false }
+        u.port = v as ui16
+    }
+    return urlParsePath(u, s, aEnd)
+}
+
+/// Request description for `fetch` and `httpOpen`; initialize with `fetchInit`.
+export struct FetchOptions {
+    method: *ui8          // nil means GET; any token (`POST`, `PUT`, `DELETE`, `HEAD`, ...)
+    headers: *ui8         // raw lines `Name: value\r\n`, each ending in CRLF; nil for none
+    body: *ui8            // request body bytes, or nil
+    bodyLen: usize
+    hasSource: bool       // true: the body comes from `source` and is sent chunked
+    source: fn(*void, *ui8, usize) -> usize   // fills the buffer, returns the byte count, 0 ends the body
+    sourceCtx: *void
+    timeoutMs: i32        // receive timeout after connecting; 0 blocks (TLS handshake keeps its own 20 s)
+    followRedirects: bool
+    maxRedirects: i32
+}
+
+export fn fetchInit(o: *FetchOptions) {
+    o.method = nil
+    o.headers = nil
+    o.body = nil
+    o.bodyLen = 0
+    o.hasSource = false
+    o.sourceCtx = nil
+    o.timeoutMs = 0
+    o.followRedirects = true
+    o.maxRedirects = 5
+}

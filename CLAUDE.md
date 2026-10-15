@@ -1,193 +1,70 @@
-# xlang — project notes for Claude
+# xlang — notes for Claude
 
-## Language rules
+## Language
+- Repo content is English (code, comments, docs, commits, diagnostics). User chat is Turkish.
 
-- **Everything written to the repo is in English**: source code, comments, docs, commit messages, this file,
-  diagnostics text produced by the compiler.
-- Chat replies to the user stay in Turkish (the user writes Turkish).
+## Docs
+- `KNOWN-LIMITATIONS.md`: open decisions and intentional incompleteness.
+- `src/README.md`: layout. `std/`: stdlib. `test/e2e/`: end-to-end programs.
+- `docs/`: human docs (English, accurate to implementation).
+- `docs-ai/`: AI docs (matching topics). Format: title + 5–10 plain one-line sentences. Prose only. No code, examples, tables, lists, quotes, backticks, filler. Every sentence is a rule or behavior. Update both `docs/` and `docs-ai/` together.
 
-## Project documents
+## Core rules
+- No compatibility layers. Language and compiler can change freely.
+- Ignore `examples/`, `test/xlang/`, old `.xlang` files, and `.cursor/`.
+- Maintain only `std/` (`.xl`) and `test/e2e/`.
+- Compiler knows only the language, CPU primitives, and a closed builtin list (`syscall`, `__builtin_` atomics/fence/asm, `sizeOf`-style, `staticAssert`, `nil`, `MemoryOrder`).
+- Roles via `register`: `panic`, `allocator`. Bodies of builtins come from the compiler; everything else from stdlib.
+- `memcpy` family, `malloc`/`free`/allocator are **not** builtins. They live in stdlib (`std/memory`, `std/mem`).
+- Compiler loads default stdlib but gives no special treatment to names inside it.
+- **libc is forbidden.** Never use, call, imitate, or suggest it (or any OS C runtime).
+- Native OS libraries allowed only when necessary, via `@library("name") declare fn`. Prefer raw `syscall`. Imports stay in `std/sys/<os>.xl` behind `#if os`. No shared C runtime across OSes.
+- Do not invent features. Record decisions in `KNOWN-LIMITATIONS.md` or ask.
+- File changes only with Read/Edit/Write tools. Bash is for build/run/inspect only.
 
-- `KNOWN-LIMITATIONS.md`: what is intentionally incomplete and the open decisions. The original plan
-  (`plan/`, `plan/eg/`) was completed and removed; it remains in git history.
-- `src/README.md`: source layout. `std/`: the standard library. `test/e2e/`: end-to-end programs.
-- `docs/`: documentation for humans, one markdown file per topic (what it is, rules, exact behavior,
-  examples, restrictions, how it works). Written in English, accurate to the implementation: verify every
-  stated behavior against the compiler before writing it.
-- `docs-ai/`: documentation for AI readers, one markdown file per topic, named like the matching `docs/`
-  file. Format rules: a title line, then a few plain sentences that summarize the topic's logic (about 5 to 10
-  one-line sentences, no more); prose only, no code blocks, no examples, no tables, no lists; no quotation
-  marks, no apostrophes (write `cannot`, not `can't`) and no backticks; name keywords and error codes as
-  plain words; no filler, no motivation, no history. Every sentence states a rule or a behavior. Update the
-  matching `docs/` and `docs-ai/` files in the same change that alters the feature.
+## Feature assessment
+When user adds a feature, give honest assessment (no praise):
 
-## Working rules
+| Aspect         | Content |
+|----------------|---------|
+| Impact         | Complexity (low/medium/high), phases, maintenance |
+| Value          | huge / good / marginal / junk (with reason) |
+| Comparison     | vs clang/gcc, Rust, Zig, Go, Swift, Odin, etc. |
+| Risk           | Pitfalls, conflicts, future cost |
+| Recommendation | Now / later / reduced version + short alternative |
 
-- **No backward or forward compatibility.** The compiler has never been used; syntax, AST, CLI and IR can be
-  rewritten from scratch. Do not write compatibility layers.
-- **Do not read or adapt to `examples/`, `test/xlang/`, or old `.xlang` files.** They are disposable. The
-  stdlib lives in `std/` (`.xl`) and the end-to-end programs in `test/e2e/`; those are maintained.
-- **Do not read anything under `.cursor/`** (rules or plans).
-- The compiler knows only the language, CPU primitives (syscall, atomics, function pointers, inline asm), the
-  closed builtin list (`syscall`, the `__builtin_` atomics, fence and asm; `sizeOf`-style queries,
-  `staticAssert`; `nil`; `MemoryOrder`) and the roles bound with
-  `register` (`panic`, `allocator`). A builtin's body is provided by the compiler itself; if the compiler will not
-  directly support something, it is not a builtin and goes to the stdlib. `memcpy` family, `malloc`/`free`/the
-  allocator are NOT builtins: they come from the stdlib (`std/memory`, `std/mem`). The compiler loads the default
-  stdlib (a driver decision: `--no-std` / `--std=<path>` change it) but never gives special treatment to any name,
-  type or function inside it (no precedence rules; roles bind only via `register`). Thread, scheduler and print concepts do not belong in the
-  compiler; they are xlang stdlib.
-- **libc is forbidden**, absolutely: never used, never called, never imitated. Do not suggest it, do not put it in
-  examples (`puts`, `FILE`, `environ`, ...). The same goes for any shared "C runtime" layer of an OS
-  (libSystem's libc half, msvcrt/ucrt, glibc, musl).
-- **Native OS libraries are allowed, tight coupling is not.** Order of preference, per OS: (1) raw `syscall`
-  (Linux, macOS BSD layer); (2) where the OS's stable boundary is a user-mode library and the thing cannot be done
-  with a syscall (Windows: ntdll `Nt*` exports, crypt32 root certificate store, ws2_32 sockets, bcrypt RNG), import
-  it with `@library("name") declare fn ...`. The linker driver builds the import library itself (`llvm-dlltool`,
-  no SDK). Such imports live only in `std/sys/<os>.xl` or the single std module that needs them, behind
-  `#if os`, never in the compiler or the language core; one OS's library is never a dependency of another OS's
-  build, and nothing is shared across all OSes (no common libc). If a syscall can do the job, use the syscall.
-- Do not invent features or design beyond what the user asked for. If a decision is needed, record it in
-  `KNOWN-LIMITATIONS.md` or ask.
-- **File changes are made ONLY with the built-in Read/Edit/Write tools.** Bash/python/sed/perl/awk/`echo >`/heredocs
-  must never create or modify a file (no scripted find-and-replace, even for many files: use repeated Edit calls).
-  Bash is for building, running and inspecting only.
+Object to bad ideas but leave decision to user. Cite real precedents. Do not re-ask closed topics (e.g. libc).
 
-## Feature assessment (applies in every session)
-
-When the user adds a feature or decision, give an **honest assessment** alongside the change.
-No filler praise; state weaknesses plainly. For each feature cover:
-
-| Heading | Content |
-|---------|---------|
-| Impact | Cost to the compiler: complexity (low/medium/high), phases touched, maintenance load |
-| Value | Benefit to users/the language: huge / good / marginal / junk (with reasoning) |
-| Comparison | Which compiler/language it is better or worse than (clang/gcc, Rust, Zig, Go, Swift, Odin, ...); concrete differences |
-| Risk | Known pitfalls, conflicts with other features, places that will become expensive later |
-| Recommendation | Now, later, or a reduced version; a short alternative if there is one |
-
-- If you see a conflict or a bad idea, do not just accept it: object, but leave the decision to the user and apply it.
-- Cite real-world precedent concretely (other languages that tried the same path or backed out of it).
-- Do not re-ask topics the user closed with "do not ask again" (e.g. external libraries/libc); if needed, give a
-  one-time risk note instead.
-
-## Language decisions (summary)
-
-- Functions: `fn name(a: i32) -> i32 { }` (no `->` means `void`).
-- Control flow: `while`, `do { } while c`, `for init; cond; step { }`, `for i in lo..hi { }`, `break`/`continue`
-  with optional labels (`outer: while ...`; outside a loop `E0709`), `switch` (`case a, b { }` / `default { }`,
-  no fallthrough), `defer`, `c ? a : b`, compound assignment `op=` and statement `x++`/`x--`. No generics or
-  tuples yet (see `KNOWN-LIMITATIONS.md`).
-- Naming (no snake_case in xl names): types are `PascalCase` (`Point`, `Allocator`, `MemoryOrder`); functions, methods,
-  variables, fields and builtins are `camelCase` (`setAllocator`, `sizeOf`, `staticAssert`, `MemoryOrder.seqCst`);
-  the `__builtin_` prefix stays and the rest is camelCase (`__builtin_atomicLoad`, `__builtin_asm`). Names that
-  come from outside xl keep their own spelling (C/OS symbols in `declare`, `uint8_t`, `x86_64`, CLI flags, std
-  feature names like `default-allocator`).
-- Types: `i8 i16 i32 i64 isize`, `ui8 ui16 ui32 ui64 usize`, `f32 f64`, `bool`, `void`, `*T`, `fn(A) -> R`,
-  `[T; N]` (fixed-size array value type, `N` a compile-time constant; literals `[a, b]` / `[v; N]`; `a[i]` is
-  bounds-checked under `--safety=checked`, default, calling `panic`; `p[i]` on `*T` is unchecked).
-- `enum Name: T { A, B = 5 }`: `T` is any type that can hold a constant (integers, floats, bool, `*ui8` strings);
-  defaults to `i32`; access `Name.A`; conversions with explicit `as`. `MemoryOrder` is a builtin enum.
-- Diagnostic codes: `W` = warning, `E` = error (e.g. `E0302` non-C type in `export(c)`, `E0501` no allocator for
-  `new`, `E0502` duplicate `register`, `E0503` role contract not met, `E0504` interface used without `impl`, `W0301` `declare`d symbol not resolved in this compilation, `W0402` local name shadows a registered one,
-  `E0601` implicit signedness-changing conversion, `W0601` implicit signed int -> float conversion).
-- Implicit conversions (no `as` written): same-signedness integer widening is implicit; signed integer -> `f32/f64`
-  is implicit with `W0601` (silence with `as`, `@allow(W0601)` on a statement/block/fn, `@file(allow = W0601)` for a whole file, or `--allow`);
-  unsigned <-> signed implicit is error `E0601` for every type, floats included (floats count as signed, so
-  `ui -> f` is `E0601`); allowed only inside an `unsafe { ... }` block (same or wider target; narrowing always
-  needs `as`). `unsafe` relaxes nothing else (`--safety`, `*T` are unaffected). Everything else is
-  explicit `as`.
-- `register(role) decl` / `register decl`: a single prefix like `declare`, opposite direction: the declared name
-  becomes **global** (no import) as soon as the module enters the compilation, and implies `export`. Roles:
-  `panic` (`fn(msg: *ui8)`, noreturn; the compiler's inserted failure paths — division by zero, array bounds —
-  call it, plain trap if unregistered) and `allocator` (a mutable global whose type is
-  the `Allocator` interface or a type with `impl Allocator for T`; `new T` calls its `alloc`). One registration per role. Registered names are
-  shadowed (with `W0402`) by local definitions. `panic` lives in `std/runtime`, `assert!` in `std/assert`.
-- Memory layout: default xlang layout; `@repr(c)` gives C/C++ layout.
-- `class` (single inheritance, vptr) and `interface` (fat pointer `{data, itable}`) are compiler features.
-- Conditional compilation: line-based `#if/#elif/#else/#endif/#ifdef/#ifndef/#error`; the condition is the normal
-  `if` expression syntax; body on the same line means no `#endif`, body on a later line requires `#endif`;
-  inactive regions are only lexed. CLI: `-D`, `-U`, `--target`, `-O`, `-g`.
-- Type alias: `type Name = T` (transparent). Macros: `define N = const`, `define f(x: expr) { ... }`, call `f!(...)`;
-  brace-delimited body, no `\` and no `#`/`##`, typed parameters, hygienic. There is no `stringify!`.
-- Source extension `.xl`. No default export; `export` (between xl modules) and `export(c)` (unmangled C symbol).
-- Name mangling is on by default; overrides: `--mangle=`, `@file(mangle = ...)`, `@mangle(...)` (fn > file > project).
-- `new T { fields }` and `new(a) T { fields }`: allocate via `alloc(self, size, align) -> *void`, initialize, return
-  `*T`. An allocator is the `std/mem` `Allocator` interface (`alloc` + `free`): a type must have an explicit
-  `impl Allocator for T` (interfaces are nominal; matching method names never count, missing impl is `E0504`),
-  and freeing always goes to the same allocator. `new T` uses the `register(allocator)` global (the compiler looks for the registration, not a name, and
-  does not know `malloc`); at most one registration in the whole program. The stdlib (`std/mem`) registers
-  `currentAllocator` under the std feature `default-allocator` (on by default); a user either calls
-  `std/mem.setAllocator(a)` once at the start of `main` (set-once, second call panics; `new` and `free` follow)
-  or turns the feature off with `--std-features=-default-allocator` and registers their own. With no
-  registration, `new T` is error `E0501` (use `new(a) T`). `sqrt` and math come from `std/math`.
-- Global variable initializers are compile-time constants (static init, no runtime init order): literals, `define`
-  constants, enum members, `sizeOf`-style queries, `&global`, `&global[const]`, `as` casts, constant struct/class/
-  array literals; no function calls or reads of other globals. No initializer means zero-initialized.
-- Safety: `*T` unchecked; arrays bounds-checked (`--safety=checked|unchecked`); no borrow checker. There is no `ref T` (removed from the plan).
-- Outputs: `--emit=obj|ir|bc|header|exe|static|shared`, default `exe`. The compiler produces every output itself and
-  runs the rest of the pipeline to the end by default (calling LLVM + linker/archiver when needed); `ir`/`bc`/`obj`/
-  `header` stop at that stage. It links only its own output (no libc/external libs). Linking into a C++ project is
-  the user's build script (xmake): take `--emit=obj`.
-- Atomics are builtins with the `__builtin_` prefix: `__builtin_atomicLoad/Store/Xchg/Cas/Add`, `__builtin_fence`.
-  The order argument is a compile-time `MemoryOrder` member (`MemoryOrder.seqCst`). Inline asm is
-  `__builtin_asm("template", in(reg) x, out(reg) y, clobber("rcx"), options("noreturn"))` (`in(reg) x`, `out("rax") y`, `inout(reg) z`, `clobber("cc")`, `options("nomem"|"noreturn")`; `{0}` placeholders by operand order): the template is target-specific and chosen with `#if arch` / `#if os`, Intel dialect on
-  x86, memory is assumed touched unless `options("nomem")`.
-  `mutex` exists in the stdlib (`std/sync`, built on the atomics + OS wait); there is no `lock_guard`/RAII guard.
-- Global namespace has two tiers: (a) the closed builtin list: `syscall`, atomics/`fence`/asm, `sizeOf`-style
-  queries, `staticAssert`, the `nil` constant, the `MemoryOrder` enum; (b) names bound with `register` in any loaded module.
-  Builtins come in two spellings: `__builtin_xx` (atomics, fence, asm) and unprefixed (`syscall`, `sizeOf` family,
-  ...); not all carry the `__builtin_` prefix. `syscall` is always plain `syscall`. `register`'d names are not
-  builtins (their body is ordinary xl). `print`, `alloc`, `memcpy`, `assert` and anything neither builtin nor
-  registered come from the stdlib via import.
-- `declare` is a single prefix: `declare fn/global/struct/class/interface/type`; no special global syntax; attributes
-  (`@repr(c)`, `@mangle`, ...) are the same as for normal declarations; it is only for things coming from other
-  objects/libraries.
-- No libc: xl has its own stdlib; `memcpy/memset/memmove/memcmp` (LLVM emits implicit calls)
-  are written in xl in the stdlib and exported with `export(c)`; `alloc/free` live in the stdlib too.
-- The language itself links no external library and the compiler never links one implicitly. The stdlib talks to
-  each OS through raw `syscall` + `#if os` first; only when that is impossible or unstable (Windows has no stable
-  syscall numbers) it imports native OS libraries with `@library("name")` on a `declare fn` (see the rule above).
-  Never libc. Do not ask again.
-- Stdlib is optional: `--no-std`, `--std=<path>`; the default stdlib (`std/`, embedded in the compiler) contains
-  a Go-like M:N scheduler. Std features (`--std-features=a,-b`) reach `#if` as bool constants named
-  `feature` + CamelCase (`default-allocator` -> `featureDefaultAllocator`).
-- The inline asm builtin is mandatory (thread trampoline, scheduler context switch).
-- Two exports or two imports binding the same name is an error (reported on the import/export line):
-  `import * from a` + `import * from b` with a common name is an error; `import * as aa from a` +
-  `import * as bb from b` is fine; the same entity arriving via two paths is not an error but a detailed
-  warning (`W0401`) plus a log entry. Module resolution strategies are not planned yet.
-- `@repr(c)` is not required on `declare`; layout resolution order: layout record in the object -> `xl.layout`
-  history -> C assumption + warning. Layout schemes are versioned and frozen (v1, v2, v3...); objects carry a
-  layout record.
-- Diagnostics: the compiler does not restrict, it warns (`what + detail + reason + how to fix`); coded, with
-  `--allow/--deny/@allow/--explain`. The faulty spot is shown at the end of the line with `<======= pinpoint comment`
-  (both sides of a conflict); logged with `--diag-log=<file>`. Context lines: error -10/+10, warning -2/+2
-  (`--context-errors/--context-warnings/--context`); line numbers right-aligned.
-- Module path: `"x"` -> `x.xl` or `x/index.xl`. Re-exports: `export * from "m"`, `export * as ns from "m"`,
-  `export { a, b as c } from "m"`, `export * from "m" except a`. `import "std"` provides everything.
-- Import: both `from "m" import x` and `import x from "m"` are valid; also `import * from "m"` and
-  `import * as a from "m"`.
-- Syscall: builtin `syscall(nr, args...)`. The argument count is dynamic: the compiler forwards exactly the number
-  given, with no fixed limit in the language. The per-target maximum (from the target OS/arch table) is checked
-  at compile time and exceeding it is a compile error. Do not write "0-6" or similar fixed counts anywhere.
-  Arguments may be any integer type or `*T` with no `as` (the compiler converts to register width; this exception is `syscall`-only). The return is always `i64` with errors as negative `-errno` on every target (macOS carry flag is normalized by
-  the compiler; Windows returns the NTSTATUS sign-extended).
+## Language summary
+- Functions: `fn name(a: i32) -> i32 { }` (no `->` = void).
+- Control: `while`, `do {} while`, `for`, `for i in lo..hi`, labeled `break`/`continue`, `switch` (no fallthrough), `defer`, ternary, compound assignment, `x++`/`x--`. No generics/tuples yet.
+- Naming: types `PascalCase`, functions/vars/fields `camelCase`. `__builtin_` prefix stays. External names keep original spelling.
+- Types: `i8..i64`, `ui8..ui64`, `f32/f64`, `bool`, `void`, `*T`, `fn(A)->R`, `[T; N]` (fixed array). Bounds check under `--safety=checked` (default).
+- `enum Name: T { ... }` (default `i32`). Access `Name.A`. Explicit `as` for conversions. `MemoryOrder` is builtin enum.
+- Diagnostics: `E` error, `W` warning (e.g. `E0501`, `W0402`).
+- Implicit conversions: same-signedness integer widening only. Signed int → float warns (`W0601`). Unsigned ↔ signed is error (`E0601`). `unsafe` allows some relaxations; narrowing always needs `as`.
+- `register(role) decl`: makes name global + exported. Roles: `panic` (noreturn), `allocator`. One per role. Shadowing warns.
+- Memory: default xlang layout; `@repr(c)` for C layout. `class` (single inheritance + vptr), `interface` (fat pointer).
+- Conditional: `#if/#elif/#else/#endif` (normal expression syntax). Inactive regions only lexed.
+- `type Name = T` (transparent). Macros: `define`, `define f(x: expr) { ... }`, call with `f!(...)`. Hygienic, no stringify.
+- Source: `.xl`. `export` (modules) and `export(c)` (unmangled). Mangling on by default.
+- `new T` / `new(a) T`: allocate via registered `Allocator` or explicit one. `E0501` if no allocator. Stdlib registers default (`default-allocator` feature).
+- Globals: compile-time constant initializers only. Zero-init if none.
+- Safety: `*T` unchecked, arrays checked by default. No borrow checker.
+- Emit: `--emit=obj|ir|bc|header|exe|static|shared`. Compiler runs full pipeline by default. Links only its own output.
+- Atomics: `__builtin_atomic*` + `__builtin_fence`. Order is compile-time `MemoryOrder`. Inline asm: `__builtin_asm(...)`.
+- Global namespace: closed builtins + `register`d names. `print`/`alloc`/`memcpy`/`assert` come from stdlib via import.
+- `declare`: single prefix for external things. Same attributes as normal decls.
+- Stdlib optional (`--no-std`, `--std=<path>`). Features become `featureXxx` constants for `#if`.
+- Two exports/imports of same name = error. Same entity via two paths = warning `W0401`.
+- Layout: `@repr(c)` not required on `declare`. Versioned layout records.
+- Diagnostics: warn with code + how to fix. `--allow`/`--deny`/`@allow`/`--explain`. Context lines configurable.
+- Modules: `"x"` → `x.xl` or `x/index.xl`. Re-exports supported. `import "std"` gives everything.
+- Import syntax: both `from "m" import x` and `import x from "m"` valid. Also `import *`.
+- `syscall(nr, args...)`: dynamic arg count (target max checked at compile time). Args integer or `*T` (auto-converted). Returns `i64` (`-errno` style).
 
 ## Build
-
-- Build system is xmake: `xmake build`; output `build/xlang`. LLVM comes from `llvm-config` (`$LLVM_CONFIG`
-  or Homebrew's `llvm`); the compiler links it statically.
-- `xlang build <file> [-o out] [--emit=exe|obj|ir|bc|header|static|shared] [--incremental]`, `xlang parse <file>
-  [--ast]`, `xlang check <file> [--hir]`, `xlang layout <file> [Type]`, `xlang run <file>` (build to a temp executable, run it, exit with its status),
-  `xlang test [patterns...] [-x pattern] [--list] [--no-color]`
-  (`*.test.xl` files using `std/testing`; patterns: file, directory, glob with `**`/`*`/`?`, `re:<regex>`, path
-  substring), `xlang --explain <CODE>`; build options
-  `-D/-U/--target/-O/-g/--cpu/--mangle/--safety/--no-std/--std/--std-features/--print-cfg`.
-- The standard library is xl source in `std/`, embedded into the compiler at build time (`--std=<dir>` overrides);
-  `xmake build std` type-checks it.
-- Tests: `xmake build xlang-tests && xmake run xlang-tests` (frontend + sema + HIR, `test/compiler/`) and
-  `xmake run e2e` (`test/e2e/run.sh`: builds and runs programs natively, with Docker on Linux aarch64/x86_64,
-  and with `cxrun <exe>` (CrossOver/Wine) as Windows x86_64 executables; the TLS and HTTPS server/client pairs run
-  in every leg). Scratch files go to the scratchpad; `test/e2e/*.xl` are the maintained end-to-end programs.
-  Windows executables: `xlang build x.xl --target x86_64-pc-windows-msvc -o x.exe`, then `cxrun x.exe`.
+- xmake. `xmake build`. LLVM from `llvm-config` (static link).
+- CLI: `xlang build|parse|check|layout|run|test`, plus `--explain`, flags for defines/target/opt/debug/cpu/mangle/safety/std.
+- Stdlib embedded at build time. `xmake build std` type-checks it.
+- Tests: `xmake build xlang-tests && xmake run xlang-tests` (frontend/sema/HIR) and `xmake run e2e` (native + Docker + CrossOver for Windows).

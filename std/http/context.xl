@@ -1,0 +1,323 @@
+// std/http/context: the per-request `Context` of the server and everything a handler does with it:
+// read the request (headers, query, route params), write the response (whole or chunked) and steer
+// the handler chain (`ctxNext`, `ctxAbort`), modelled on Gin's `gin.Context`.
+from "../memory" import strlen
+from "../tls" import TlsConn, tlsWrite
+from "../sys" import sysWrite
+from "util" import strEq, formatUInt, formatHex, append, headerLookup
+
+export define HTTP_MAX_CHAIN = 8      // middleware + handler per route
+export define HTTP_MAX_PARAMS = 8
+
+/// What a handler sees. `method`, `path`, `body`, `headers` and `query` point into the request buffer.
+export struct Context {
+    fd: i32
+    tls: *TlsConn         // the TLS session of an HTTPS connection, nil for plain HTTP
+    method: *ui8
+    path: *ui8            // without the query string
+    body: *ui8            // NUL-terminated, `bodyLen` bytes
+    bodyLen: usize
+    user: *void           // set by middleware (`ctxSetUser`), read by handlers (`ctxUser`)
+    responded: bool
+    streaming: bool       // a chunked response was started with `ctxBeginStream`
+    isHead: bool
+    headers: *ui8         // the request header block, read with `ctxHeader`
+    query: *ui8           // raw `a=1\0b=2` pairs, read with `ctxQuery`; nil without a query string
+    queryLen: usize
+    extra: [ui8; 1024]    // response headers added with `ctxSetHeader`
+    extraLen: usize
+    chain: [fn(*Context); 8]   // the middleware and handler of the matched route
+    chainLen: i32
+    chainIdx: i32
+    paramCount: i32
+    paramName: [*ui8; 8]
+    paramVal: [*ui8; 8]
+    paramBuf: [ui8; 512]  // `name\0value\0` copies of the route parameters
+    paramLen: usize
+}
+
+/// Prepares `c` for a connection; the router fills in the request fields.
+export fn ctxInit(c: *Context, fd: i32, tls: *TlsConn) {
+    c.fd = fd
+    c.tls = tls
+    c.method = ""
+    c.path = ""
+    c.body = ""
+    c.bodyLen = 0
+    c.user = nil
+    c.responded = false
+    c.streaming = false
+    c.isHead = false
+    c.headers = nil
+    c.query = nil
+    c.queryLen = 0
+    c.extraLen = 0
+    c.chainLen = 0
+    c.chainIdx = 0
+    c.paramCount = 0
+    c.paramLen = 0
+}
+
+fn sendAll(c: *Context, data: *ui8, n: usize) {
+    if c.tls != nil {
+        tlsWrite(c.tls, data, n)
+        return
+    }
+    local done: usize = 0
+    while done < n {
+        local w: isize = sysWrite(c.fd, &data[done], n - done)
+        if w <= 0 { return }
+        done = done + (w as usize)
+    }
+}
+
+fn sendStr(c: *Context, s: *ui8) {
+    sendAll(c, s, strlen(s))
+}
+
+/// Reason phrase of a status code.
+export fn statusText(status: i32) -> *ui8 {
+    if status == 200 { return "OK" }
+    if status == 201 { return "Created" }
+    if status == 202 { return "Accepted" }
+    if status == 204 { return "No Content" }
+    if status == 206 { return "Partial Content" }
+    if status == 301 { return "Moved Permanently" }
+    if status == 302 { return "Found" }
+    if status == 303 { return "See Other" }
+    if status == 304 { return "Not Modified" }
+    if status == 307 { return "Temporary Redirect" }
+    if status == 308 { return "Permanent Redirect" }
+    if status == 400 { return "Bad Request" }
+    if status == 401 { return "Unauthorized" }
+    if status == 403 { return "Forbidden" }
+    if status == 404 { return "Not Found" }
+    if status == 405 { return "Method Not Allowed" }
+    if status == 408 { return "Request Timeout" }
+    if status == 409 { return "Conflict" }
+    if status == 410 { return "Gone" }
+    if status == 411 { return "Length Required" }
+    if status == 413 { return "Payload Too Large" }
+    if status == 414 { return "URI Too Long" }
+    if status == 415 { return "Unsupported Media Type" }
+    if status == 422 { return "Unprocessable Entity" }
+    if status == 429 { return "Too Many Requests" }
+    if status == 431 { return "Request Header Fields Too Large" }
+    if status == 500 { return "Internal Server Error" }
+    if status == 501 { return "Not Implemented" }
+    if status == 502 { return "Bad Gateway" }
+    if status == 503 { return "Service Unavailable" }
+    if status == 504 { return "Gateway Timeout" }
+    return "Unknown"
+}
+
+/// Status line, `Content-Type` and the headers added with `ctxSetHeader`.
+fn sendHead(c: *Context, status: i32, contentType: *ui8) {
+    local num: [ui8; 24]
+    local len: usize = formatUInt(status as usize, &num[0])
+    sendStr(c, "HTTP/1.1 ")
+    sendAll(c, &num[0], len)
+    sendStr(c, " ")
+    sendStr(c, statusText(status))
+    sendStr(c, "\r\nContent-Type: ")
+    sendStr(c, contentType)
+    sendStr(c, "\r\n")
+    if c.extraLen > 0 { sendAll(c, &c.extra[0], c.extraLen) }
+}
+
+/// Sends a complete response. Headers added with `ctxSetHeader` go out too; a HEAD request gets the
+/// headers (with the `Content-Length` of `body`) but no body. Only the first response of a request is
+/// sent.
+export fn ctxRespond(c: *Context, status: i32, contentType: *ui8, body: *ui8) {
+    if c.responded { return }
+    local num: [ui8; 24]
+    sendHead(c, status, contentType)
+    sendStr(c, "Content-Length: ")
+    local len: usize = formatUInt(strlen(body), &num[0])
+    sendAll(c, &num[0], len)
+    sendStr(c, "\r\nConnection: close\r\n\r\n")
+    if !c.isHead { sendStr(c, body) }
+    c.responded = true
+}
+
+export fn ctxString(c: *Context, status: i32, body: *ui8) {
+    ctxRespond(c, status, "text/plain; charset=utf-8", body)
+}
+
+export fn ctxHTML(c: *Context, status: i32, body: *ui8) {
+    ctxRespond(c, status, "text/html; charset=utf-8", body)
+}
+
+export fn ctxJSON(c: *Context, status: i32, body: *ui8) {
+    ctxRespond(c, status, "application/json", body)
+}
+
+/// Answers with `status` and an empty body.
+export fn ctxStatus(c: *Context, status: i32) {
+    ctxRespond(c, status, "text/plain; charset=utf-8", "")
+}
+
+/// Starts a chunked response of unknown length; send the body with `ctxWriteChunk`, finish with
+/// `ctxEndStream`. Headers must be set before this call.
+export fn ctxBeginStream(c: *Context, status: i32, contentType: *ui8) {
+    if c.responded { return }
+    sendHead(c, status, contentType)
+    if c.isHead {
+        sendStr(c, "Content-Length: 0\r\nConnection: close\r\n\r\n")
+    } else {
+        sendStr(c, "Transfer-Encoding: chunked\r\nConnection: close\r\n\r\n")
+    }
+    c.responded = true
+    c.streaming = true
+}
+
+/// Sends `n` bytes as one chunk (nothing for `n` = 0 or a HEAD request).
+export fn ctxWriteChunk(c: *Context, data: *ui8, n: usize) {
+    if !c.streaming || n == 0 || c.isHead { return }
+    local hex: [ui8; 24]
+    local h: usize = formatHex(n, &hex[0])
+    hex[h] = 13
+    hex[h + 1] = 10
+    sendAll(c, &hex[0], h + 2)
+    sendAll(c, data, n)
+    sendAll(c, "\r\n", 2)
+}
+
+export fn ctxEndStream(c: *Context) {
+    if !c.streaming { return }
+    if !c.isHead { sendAll(c, "0\r\n\r\n", 5) }
+    c.streaming = false
+}
+
+/// Adds a response header (call before responding). Returns false when it does not fit (1024 bytes
+/// in total) or when `name`/`value` contain a line break.
+export fn ctxSetHeader(c: *Context, name: *ui8, value: *ui8) -> bool {
+    local nl: usize = strlen(name)
+    local vl: usize = strlen(value)
+    if nl == 0 || c.extraLen + nl + vl + 4 > 1024 { return false }
+    local i: usize = 0
+    while i < nl {
+        if name[i] <= 32 || name[i] == 58 || name[i] >= 127 { return false }
+        i = i + 1
+    }
+    i = 0
+    while i < vl {
+        if value[i] == 10 || value[i] == 13 { return false }
+        i = i + 1
+    }
+    local at: usize = c.extraLen
+    at = append(&c.extra[0], at, 1024, name)
+    at = append(&c.extra[0], at, 1024, ": ")
+    at = append(&c.extra[0], at, 1024, value)
+    at = append(&c.extra[0], at, 1024, "\r\n")
+    c.extraLen = at
+    return true
+}
+
+/// Answers with `status` (301/302/303/307/308) and a `Location` header.
+export fn ctxRedirect(c: *Context, status: i32, location: *ui8) {
+    ctxSetHeader(c, "Location", location)
+    ctxRespond(c, status, "text/plain; charset=utf-8", "")
+}
+
+export fn ctxSetUser(c: *Context, user: *void) {
+    c.user = user
+}
+
+export fn ctxUser(c: *Context) -> *void {
+    return c.user
+}
+
+/// Request header `name` (case-insensitive), or nil.
+export fn ctxHeader(c: *Context, name: *ui8) -> *ui8 {
+    return headerLookup(c.headers, name)
+}
+
+/// Raw (not percent-decoded; see `urlDecode`) value of query parameter `name`, or nil. A parameter
+/// without `=` has the empty string as value.
+export fn ctxQuery(c: *Context, name: *ui8) -> *ui8 {
+    if c.query == nil { return nil }
+    local nl: usize = strlen(name)
+    local idx: usize = 0
+    while idx <= c.queryLen {
+        local pair: *ui8 = &c.query[idx]
+        local k: usize = 0
+        while k < nl && pair[k] == name[k] { k = k + 1 }
+        if k == nl && (pair[nl] == 61 || pair[nl] == 0) {
+            if pair[nl] == 61 { return &pair[nl + 1] }
+            return &pair[nl]
+        }
+        local j: usize = idx
+        while c.query[j] != 0 { j = j + 1 }
+        idx = j + 1
+    }
+    return nil
+}
+
+/// Like `ctxQuery`, `fallback` when the parameter is absent.
+export fn ctxDefaultQuery(c: *Context, name: *ui8, fallback: *ui8) -> *ui8 {
+    local v: *ui8 = ctxQuery(c, name)
+    if v == nil { return fallback }
+    return v
+}
+
+/// Value of route parameter `name` (`:name` or `*name`), or nil. A catch-all value starts with `/`.
+export fn ctxParam(c: *Context, name: *ui8) -> *ui8 {
+    local i: i32 = 0
+    while i < c.paramCount {
+        if strEq(c.paramName[i], name) { return c.paramVal[i] }
+        i = i + 1
+    }
+    return nil
+}
+
+/// Records a route parameter (used by the router while matching); false when it does not fit.
+export fn ctxAddParam(c: *Context, name: *ui8, nameLen: usize, val: *ui8, valLen: usize) -> bool {
+    if c.paramCount >= 8 || c.paramLen + nameLen + valLen + 2 > 512 { return false }
+    local at: usize = c.paramLen
+    local i: usize = 0
+    c.paramName[c.paramCount] = &c.paramBuf[at]
+    while i < nameLen {
+        c.paramBuf[at] = name[i]
+        at = at + 1
+        i = i + 1
+    }
+    c.paramBuf[at] = 0
+    at = at + 1
+    c.paramVal[c.paramCount] = &c.paramBuf[at]
+    i = 0
+    while i < valLen {
+        c.paramBuf[at] = val[i]
+        at = at + 1
+        i = i + 1
+    }
+    c.paramBuf[at] = 0
+    at = at + 1
+    c.paramLen = at
+    c.paramCount = c.paramCount + 1
+    return true
+}
+
+/// Runs the rest of the handler chain, then returns (call it from middleware to wrap the handler).
+export fn ctxNext(c: *Context) {
+    c.chainIdx = c.chainIdx + 1
+    while c.chainIdx < c.chainLen {
+        c.chain[c.chainIdx](c)
+        c.chainIdx = c.chainIdx + 1
+    }
+}
+
+/// Stops the chain: handlers after the current one do not run.
+export fn ctxAbort(c: *Context) {
+    c.chainIdx = c.chainLen
+}
+
+/// `ctxAbort` and answer with `status` and an empty body.
+export fn ctxAbortWithStatus(c: *Context, status: i32) {
+    ctxAbort(c)
+    ctxStatus(c, status)
+}
+
+export fn ctxIsAborted(c: *Context) -> bool {
+    return c.chainIdx >= c.chainLen
+}

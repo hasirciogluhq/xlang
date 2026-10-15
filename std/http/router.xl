@@ -1,0 +1,307 @@
+// std/http/router: a Gin-style router. Routes are registered on the `Router` itself or on `Group`s
+// (shared prefix and middleware); patterns may contain `:name` (one segment) and `*name` (the rest of
+// the path, including its leading `/`). Static routes win over parameterized ones, HEAD falls back to
+// GET, a missing or extra trailing slash is redirected, a known path with another method gets 405.
+from "../memory" import strlen, mapGrow
+from "context" import Context, ctxAddParam, ctxNext, ctxString, ctxRedirect, ctxSetHeader, ctxInit
+
+export define HTTP_MAX_PATH = 128
+
+/// One registered route. The pattern and the handler chain are stored inline.
+export struct Route {
+    method: [ui8; 12]
+    path: [ui8; 128]
+    isStatic: bool
+    chain: [fn(*Context); 8]   // group middleware, then the handler
+    chainLen: i32
+}
+
+/// A set of routes with a common prefix and middleware, like `gin.RouterGroup`.
+export struct Group {
+    router: *Router
+    prefix: [ui8; 128]
+    mw: [fn(*Context); 8]
+    mwCount: i32
+}
+
+export struct Router {
+    routes: *Route
+    count: usize
+    cap: usize
+    root: Group
+    noRoute: fn(*Context)
+    hasNoRoute: bool
+    redirectSlash: bool       // default true
+    maxHeaderBytes: usize     // default 16384, larger request headers get 431
+    maxBodyBytes: usize       // default 1048576, larger bodies get 413
+}
+
+export fn routerInit(r: *Router) {
+    r.routes = nil
+    r.count = 0
+    r.cap = 0
+    r.root.router = r
+    r.root.prefix[0] = 0
+    r.root.mwCount = 0
+    r.hasNoRoute = false
+    r.redirectSlash = true
+    r.maxHeaderBytes = 16384
+    r.maxBodyBytes = 1048576
+}
+
+/// Handler used for 404 when none was set with `routerNoRoute`.
+fn defaultNotFound(c: *Context) {
+    ctxString(c, 404, "404 page not found")
+}
+
+fn defaultNotAllowed(c: *Context) {
+    ctxString(c, 405, "405 method not allowed")
+}
+
+/// Sets the handler that runs (after the global middleware) when no route matches.
+export fn routerNoRoute(r: *Router, handler: fn(*Context)) {
+    r.noRoute = handler
+    r.hasNoRoute = true
+}
+
+/// Adds global middleware: it runs for every route registered afterwards and for 404/405 answers.
+export fn routerUse(r: *Router, mw: fn(*Context)) {
+    groupUse(&r.root, mw)
+}
+
+/// Adds middleware to `g`; routes registered on `g` (and its sub-groups) afterwards run it first.
+export fn groupUse(g: *Group, mw: fn(*Context)) {
+    if g.mwCount >= 7 { panic("too many middleware on a route group") }
+    g.mw[g.mwCount] = mw
+    g.mwCount = g.mwCount + 1
+}
+
+/// Creates a sub-group of `parent` with `parent.prefix + prefix` and a copy of its middleware.
+export fn groupSub(parent: *Group, prefix: *ui8, out: *Group) {
+    out.router = parent.router
+    out.mwCount = parent.mwCount
+    local i: i32 = 0
+    while i < parent.mwCount {
+        out.mw[i] = parent.mw[i]
+        i = i + 1
+    }
+    local at: usize = 0
+    while parent.prefix[at] != 0 {
+        out.prefix[at] = parent.prefix[at]
+        at = at + 1
+    }
+    local k: usize = 0
+    while prefix[k] != 0 {
+        if at + 1 >= 128 { panic("route group prefix too long") }
+        out.prefix[at] = prefix[k]
+        at = at + 1
+        k = k + 1
+    }
+    out.prefix[at] = 0
+}
+
+/// Group of the router root.
+export fn routerGroup(r: *Router, prefix: *ui8, out: *Group) {
+    groupSub(&r.root, prefix, out)
+}
+
+fn copyInto(dst: *ui8, at: usize, cap: usize, s: *ui8) -> usize {
+    local n: usize = at
+    local i: usize = 0
+    while s[i] != 0 {
+        if n + 1 >= cap { panic("route path too long") }
+        dst[n] = s[i]
+        n = n + 1
+        i = i + 1
+    }
+    dst[n] = 0
+    return n
+}
+
+/// Registers `handler` for `method` and `path` (relative to the group prefix).
+export fn groupHandle(g: *Group, method: *ui8, path: *ui8, handler: fn(*Context)) {
+    local r: *Router = g.router
+    if r.count == r.cap {
+        local newCap: usize = r.cap * 2
+        if newCap == 0 { newCap = 16 }
+        local grown: *void = mapGrow(r.routes as *void, r.cap * sizeOf(Route), newCap * sizeOf(Route))
+        if grown == nil { panic("out of memory") }
+        r.routes = grown as *Route
+        r.cap = newCap
+    }
+    local rt: *Route = &r.routes[r.count]
+    copyInto(&rt.method[0], 0, 12, method)
+    local at: usize = copyInto(&rt.path[0], 0, 128, &g.prefix[0])
+    copyInto(&rt.path[0], at, 128, path)
+    rt.isStatic = true
+    local i: usize = 0
+    while rt.path[i] != 0 {
+        if rt.path[i] == 58 || rt.path[i] == 42 { rt.isStatic = false }
+        i = i + 1
+    }
+    local m: i32 = 0
+    while m < g.mwCount {
+        rt.chain[m] = g.mw[m]
+        m = m + 1
+    }
+    rt.chain[m] = handler
+    rt.chainLen = m + 1
+    r.count = r.count + 1
+}
+
+export fn groupGet(g: *Group, path: *ui8, h: fn(*Context)) { groupHandle(g, "GET", path, h) }
+export fn groupPost(g: *Group, path: *ui8, h: fn(*Context)) { groupHandle(g, "POST", path, h) }
+export fn groupPut(g: *Group, path: *ui8, h: fn(*Context)) { groupHandle(g, "PUT", path, h) }
+export fn groupDelete(g: *Group, path: *ui8, h: fn(*Context)) { groupHandle(g, "DELETE", path, h) }
+export fn groupPatch(g: *Group, path: *ui8, h: fn(*Context)) { groupHandle(g, "PATCH", path, h) }
+export fn groupHead(g: *Group, path: *ui8, h: fn(*Context)) { groupHandle(g, "HEAD", path, h) }
+export fn groupOptions(g: *Group, path: *ui8, h: fn(*Context)) { groupHandle(g, "OPTIONS", path, h) }
+
+/// Registers `h` for GET, POST, PUT, PATCH, DELETE, HEAD and OPTIONS.
+export fn groupAny(g: *Group, path: *ui8, h: fn(*Context)) {
+    groupHandle(g, "GET", path, h)
+    groupHandle(g, "POST", path, h)
+    groupHandle(g, "PUT", path, h)
+    groupHandle(g, "PATCH", path, h)
+    groupHandle(g, "DELETE", path, h)
+    groupHandle(g, "HEAD", path, h)
+    groupHandle(g, "OPTIONS", path, h)
+}
+
+export fn routerHandle(r: *Router, method: *ui8, path: *ui8, h: fn(*Context)) { groupHandle(&r.root, method, path, h) }
+export fn routerGet(r: *Router, path: *ui8, h: fn(*Context)) { groupHandle(&r.root, "GET", path, h) }
+export fn routerPost(r: *Router, path: *ui8, h: fn(*Context)) { groupHandle(&r.root, "POST", path, h) }
+export fn routerPut(r: *Router, path: *ui8, h: fn(*Context)) { groupHandle(&r.root, "PUT", path, h) }
+export fn routerDelete(r: *Router, path: *ui8, h: fn(*Context)) { groupHandle(&r.root, "DELETE", path, h) }
+export fn routerPatch(r: *Router, path: *ui8, h: fn(*Context)) { groupHandle(&r.root, "PATCH", path, h) }
+export fn routerHead(r: *Router, path: *ui8, h: fn(*Context)) { groupHandle(&r.root, "HEAD", path, h) }
+export fn routerOptions(r: *Router, path: *ui8, h: fn(*Context)) { groupHandle(&r.root, "OPTIONS", path, h) }
+export fn routerAny(r: *Router, path: *ui8, h: fn(*Context)) { groupAny(&r.root, path, h) }
+
+fn eq(a: *ui8, b: *ui8) -> bool {
+    local i: usize = 0
+    while a[i] != 0 && a[i] == b[i] { i = i + 1 }
+    return a[i] == b[i]
+}
+
+/// Matches `path` against the pattern; fills the route parameters of `c` on success.
+fn matchPath(pat: *ui8, path: *ui8, c: *Context) -> bool {
+    c.paramCount = 0
+    c.paramLen = 0
+    local pi: usize = 0
+    local si: usize = 0
+    while true {
+        local pc: ui8 = pat[pi]
+        if pc == 0 { return path[si] == 0 }
+        if pc == 58 {
+            local ne: usize = pi + 1
+            while pat[ne] != 0 && pat[ne] != 47 { ne = ne + 1 }
+            local ve: usize = si
+            while path[ve] != 0 && path[ve] != 47 { ve = ve + 1 }
+            if ve == si { return false }
+            if !ctxAddParam(c, &pat[pi + 1], ne - pi - 1, &path[si], ve - si) { return false }
+            pi = ne
+            si = ve
+        } else {
+            if pc == 42 {
+                if pi == 0 || pat[pi - 1] != 47 || si == 0 || path[si - 1] != 47 { return false }
+                local ne: usize = pi + 1
+                while pat[ne] != 0 { ne = ne + 1 }
+                local len: usize = strlen(&path[si - 1])
+                return ctxAddParam(c, &pat[pi + 1], ne - pi - 1, &path[si - 1], len)
+            }
+            if pc != path[si] { return false }
+            pi = pi + 1
+            si = si + 1
+        }
+    }
+    return false
+}
+
+/// Index of the best route for `method` (nil = any method) and `path`, or -1. Static routes first.
+fn find(r: *Router, method: *ui8, path: *ui8, c: *Context) -> isize {
+    local pass: i32 = 0
+    while pass < 2 {
+        local i: usize = 0
+        while i < r.count {
+            local rt: *Route = &r.routes[i]
+            if rt.isStatic == (pass == 0) {
+                local ok: bool = method == nil || eq(&rt.method[0], method)
+                if ok && matchPath(&rt.path[0], path, c) { return i as isize }
+            }
+            i = i + 1
+        }
+        pass = pass + 1
+    }
+    return -1
+}
+
+fn findHead(r: *Router, c: *Context) -> isize {
+    local i: isize = find(r, c.method, c.path, c)
+    if i < 0 && eq(c.method, "HEAD") { i = find(r, "GET", c.path, c) }
+    return i
+}
+
+fn runChain(c: *Context) {
+    c.chainIdx = -1
+    ctxNext(c)
+}
+
+/// Routes the request in `c` (`method`, `path` set) and runs the chain of the matching route.
+export fn routerDispatch(r: *Router, c: *Context) {
+    local i: isize = findHead(r, c)
+    if i >= 0 {
+        local rt: *Route = &r.routes[i as usize]
+        local k: i32 = 0
+        while k < rt.chainLen {
+            c.chain[k] = rt.chain[k]
+            k = k + 1
+        }
+        c.chainLen = rt.chainLen
+        runChain(c)
+        return
+    }
+    if r.redirectSlash && c.path[1] != 0 {
+        local alt: [ui8; 140]
+        local n: usize = strlen(c.path)
+        if n < 128 {
+            local k: usize = 0
+            while k < n {
+                alt[k] = c.path[k]
+                k = k + 1
+            }
+            if alt[n - 1] == 47 {
+                alt[n - 1] = 0
+            } else {
+                alt[n] = 47
+                alt[n + 1] = 0
+            }
+            local saved: *ui8 = c.path
+            c.path = &alt[0]
+            local j: isize = findHead(r, c)
+            c.path = saved
+            if j >= 0 {
+                local st: i32 = 307
+                if eq(c.method, "GET") || eq(c.method, "HEAD") { st = 301 }
+                ctxRedirect(c, st, &alt[0])
+                return
+            }
+        }
+    }
+    // 405 when the path exists for another method, otherwise 404; both run the global middleware
+    local handler: fn(*Context) = defaultNotFound
+    if find(r, nil, c.path, c) >= 0 {
+        handler = defaultNotAllowed
+    } else {
+        if r.hasNoRoute { handler = r.noRoute }
+    }
+    c.paramCount = 0
+    local m: i32 = 0
+    while m < r.root.mwCount {
+        c.chain[m] = r.root.mw[m]
+        m = m + 1
+    }
+    c.chain[m] = handler
+    c.chainLen = m + 1
+    runChain(c)
+}

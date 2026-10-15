@@ -58,10 +58,14 @@ Everything in the original plan is implemented; this file lists what is intentio
 ## Stdlib: files, JSON, HTTP
 - **`std/http`:** the server speaks HTTP (`routerServe`) or HTTPS (`routerServeTls`, TLS 1.3; one connection
   at a time, blocking `accept`, `Connection: close`; a slow client stalls everyone for up to the 20 s receive
-  timeout). Routes match the exact path; there are no route groups or path parameters. Route table
-  and request buffer grow on demand with no upper bound (a client can make the server map arbitrary memory).
-  `httpGet` takes an IPv4 address and is plain HTTP; `httpsGet` resolves a name (`std/dns`) and speaks TLS 1.3.
-  Redirects, cookies, keep-alive and request bodies/headers are not supported in the client.
+  timeout). The router is Gin-style (`:name`, `*name`, groups, middleware chains, 404/405, trailing-slash
+  redirect). Limits: path 127 bytes, 7 middleware per route, 8 route parameters (512 bytes total), 1024 bytes
+  of response headers; registration beyond them panics or fails. Request bodies need `Content-Length` (chunked
+  request bodies are not supported); the request buffer is capped by `maxHeaderBytes`/`maxBodyBytes`. There is
+  no panic recovery middleware, no body binding and no template/static-file helpers. Routes are matched by a
+  linear scan (static first), not a radix tree.
+  The client is `fetch*`/`httpOpen` (http and https, redirects, streaming bodies, every method); it has no
+  cookies, keep-alive, compression, proxy, IPv6 or HTTP/2. Source is split in `std/http/*.xl`.
 - **`std/tls` is TLS 1.3 only, client and server:** X25519 key exchange, suites `TLS_CHACHA20_POLY1305_SHA256`
   (preferred) and `TLS_AES_128_GCM_SHA256`; no TLS 1.2 or older (a TLS 1.2-only peer fails with `TLS_ERR_VERSION`;
   the server answers it with a `protocol_version` alert), no session resumption/0-RTT/NewSessionTicket, no
