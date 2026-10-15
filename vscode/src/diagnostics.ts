@@ -2,6 +2,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { execFile } from "node:child_process";
 import * as vscode from "vscode";
+import { findStdRoot } from "./paths";
 
 const DIAGNOSTIC_SOURCE = "xlang";
 
@@ -92,7 +93,7 @@ export class XlangDiagnostics {
     try {
       const result = await runProcess(
         compilerPath,
-        ["check", target, ...compilerFlags(), "--diag-format", "json", "--context", "0"],
+        ["check", target, ...compilerFlags(), ...stdFlags(filePath, compilerPath), "--diag-format", "json", "--context", "0"],
         path.dirname(filePath)
       );
       output = result.text;
@@ -226,6 +227,20 @@ export function compilerFlags(): string[] {
     flags.push("--target", target);
   }
   return flags;
+}
+
+/**
+ * A file inside the stdlib sources is checked with `--no-std`: otherwise the compiler loads its
+ * embedded copy of that same module next to the file being checked and reports every `export(c)`
+ * symbol as defined twice (E0401).
+ */
+export function stdFlags(filePath: string, compilerPath: string): string[] {
+  const stdRoot = findStdRoot(filePath, compilerPath);
+  if (!stdRoot) {
+    return [];
+  }
+  const rel = path.relative(stdRoot, path.normalize(filePath));
+  return rel && !rel.startsWith("..") && !path.isAbsolute(rel) ? ["--no-std"] : [];
 }
 
 export async function resolveCompilerPath(): Promise<string> {
