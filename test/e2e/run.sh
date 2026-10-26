@@ -42,6 +42,7 @@ tests=(
   "printpanic|134|format: 2 placeholders, got 1 arguments|0|0"
   "init|0|init ok|0|1"
   "initset|0|initset ok|0|1"
+  "cyclic|0|cyclic ok|0|1"
 )
 [ "${XLANG_E2E_NET:-}" = 1 ] && tests+=("https|0|https ok|0|1")
 

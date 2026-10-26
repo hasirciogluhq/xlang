@@ -427,6 +427,25 @@ struct Multi {
     }
 };
 
+void testCyclicModules() {
+    {
+        // A name that reaches the importer only through an `export *` loop is never exported.
+        Multi r({{"app/a.xl", "export * from \"b\"\nfn main() -> i32 { return 0 }\n"},
+                 {"app/b.xl", "export * from \"a\"\nfrom \"a\" import ghost\n"}});
+        CHECK(r.failedWith("E0711"));
+    }
+    {
+        // Mutual imports with calls in both directions are legal.
+        Multi r({{"app/a.xl",
+                  "from \"b\" import fb\nexport fn fa() -> i32 { return 1 }\n"
+                  "fn main() -> i32 { return fb() }\n"},
+                 {"app/b.xl", "from \"a\" import fa\nexport fn fb() -> i32 { return fa() + 1 }\n"}});
+        CHECK(!r.diag->hasErrors());
+        CHECK(r.has("fn fa("));
+        CHECK(r.has("fn b::fb("));
+    }
+}
+
 void testModulesImportAndExport() {
     {
         Multi r({{"app/main.xl",
@@ -778,6 +797,7 @@ void runLowerTests() {
     testImportsAreExternal();
     testEnumsAndStaticAssertInBodies();
     testModulesImportAndExport();
+    testCyclicModules();
     testModulesShareTypes();
     testModuleRegistrationsAndMangling();
     testClassesAndInterfacesChecks();

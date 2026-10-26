@@ -117,8 +117,9 @@ constexpr std::size_t kLeadWidth = 40;
          "interface does not have, or a method has a different signature."},
         {"E0714", Severity::Error, "code generation failed",
          "The back end could not lower the program: an unresolved external reference, a syscall "
-         "form the target does not support, or a generated module that failed LLVM verification "
-         "(an internal error)."},
+         "form the target does not support, a generated module that failed LLVM verification, or "
+         "a module whose back end returned no object without a reason (an internal error that "
+         "names the module)."},
         {"E0403", Severity::Error, "ambiguous overloaded call or use",
          "Several overloads of a function match the arguments (or the expected function type) "
          "equally well, so no one is chosen. Give the arguments types that prefer one overload, "

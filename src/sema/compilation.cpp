@@ -153,7 +153,7 @@ ModuleInfo* Compilation::importTarget(ModuleInfo& from, const std::string& spec,
     ModuleInfo* target = nullptr;
     if (path) {
         target = loadModule(*path, false);
-    } else if (!diag_.hasErrors() || true) {
+    } else {
         diag_.error("E0711",
                     at,
                     std::format("module `{}` not found", spec),

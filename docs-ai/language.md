@@ -9,4 +9,4 @@ A string literal is a pointer to ui8 when one is expected, a zero-padded ui8 arr
 Functions are written fn name(a: T) -> R, locals with local name: T = value, globals with global name: T = constant, and read-only constants with const name = value whose initializers must be compile-time constants.
 Implicit conversions are same-signedness integer widening only, and every other conversion needs as.
 Struct holds data, class has methods, single inheritance and optional init constructors and drop destructors, and interface is nominal and needs an impl block.
-Imports use from "m" import x and export from re-exports, and the global namespace holds only the closed builtins and the registered panic and allocator names, which a user registration of the same role replaces.
+Imports use from "m" import x, modules may import each other, and export * from "m" re-exports; the global namespace holds only the closed builtins and the registered panic and allocator names, which a user registration of the same role replaces.

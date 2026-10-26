@@ -189,8 +189,8 @@ fn putText(buf: *ui8, at: usize, s: *ui8) -> usize {
     return at + n
 }
 
-/// Panics with "Vec: index I out of range for length L". It builds the text by hand because
-/// std/str imports std/vec, so std/vec cannot import std/io (module cycles are not supported).
+/// Panics with "Vec: index I out of range for length L". The text is built by hand, so this module
+/// does not depend on std/io.
 fn indexPanic(i: usize, n: usize) {
     local buf: [ui8; 96]
     local at: usize = putText(&buf[0], 0, "Vec: index ")
