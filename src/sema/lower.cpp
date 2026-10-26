@@ -327,10 +327,17 @@ class Lowerer {
                      const Expr& value,
                      const Span& span,
                      std::vector<hir::Stmt>& out);
-    /// Stores the value of `value_ast` into `target` (already checked as a place).
-    void assignTo(EP target, const Expr& value_ast, const Span& span, std::vector<hir::Stmt>& out);
+    /// Stores the value of `value_ast` into `target` (already checked as a place). `raw` stores without
+    /// dropping the old value (a constructor's droppable field).
+    void assignTo(EP target,
+                  const Expr& value_ast,
+                  const Span& span,
+                  std::vector<hir::Stmt>& out,
+                  bool raw = false);
     /// `__builtin_setRegistered("allocator", value)` in an `@init` function.
     void lowerSetRegistered(const Expr& call, const Span& span, std::vector<hir::Stmt>& out);
+    /// `__builtin_write(p, value)` as a statement: stores without dropping the old value.
+    void lowerRawWrite(const Expr& call, const Span& span, std::vector<hir::Stmt>& out);
     void lowerCompound(const Stmt& s, std::vector<hir::Stmt>& out);
     void lowerFor(const Stmt& s, std::vector<hir::Stmt>& out);
     void lowerForRange(const Stmt& s, std::vector<hir::Stmt>& out);
@@ -415,6 +422,7 @@ class Lowerer {
     std::vector<std::string> init_order_;  ///< this module's `@init` functions (qualified names)
     ScopeStack scopes_;
     hir::Function* fn_{nullptr};
+    bool in_ctor_{false};  ///< the function is a class `init`: `self.f = v` on a droppable field is a raw store
     Type ret_;
     int unsafe_{0};
     struct LoopCtx {
@@ -1952,6 +1960,7 @@ void Lowerer::lowerFunction(const FnDecl& f,
     out.ret = resolved(f.return_type);
 
     fn_ = &out;
+    in_ctor_ = !owner.empty() && self_type != nullptr && f.name == "init";
     ret_ = out.ret;
     unsafe_ = 0;
     loops_.clear();
@@ -2069,6 +2078,7 @@ void Lowerer::lowerFunction(const FnDecl& f,
                     std::make_move_iterator(head.end()));
     scopes_.pop();
     fn_ = nullptr;
+    in_ctor_ = false;
     mod_.functions.push_back(std::move(out));
 }
 
@@ -2802,6 +2812,45 @@ hir::LocalId Lowerer::hiddenLocal(const char* prefix, const Type& type, const Sp
     return addLocal(std::format("${}{}", prefix, hidden_counter_++), type, false, span);
 }
 
+void Lowerer::lowerRawWrite(const Expr& call, const Span& span, std::vector<hir::Stmt>& out) {
+    if (call.args.size() != 2) {
+        err("E0710",
+            call.span,
+            "`__builtin_write` takes a pointer and a value",
+            "write it as `__builtin_write(p, v)`");
+        return;
+    }
+    EP p = expr(*call.args[0], nullptr);
+    if (!p) {
+        return;
+    }
+    if (p->type.kind != TypeKind::Pointer || !p->type.elem) {
+        err("E0709",
+            call.args[0]->span,
+            std::format("`__builtin_write` needs a pointer, found `{}`", typeToString(p->type)),
+            "pass `&x`");
+        return;
+    }
+    const Type t = *p->type.elem;
+    EP v = expr(*call.args[1], &t);
+    if (v) {
+        v = coerce(std::move(v), t, call.args[1]->span);
+    }
+    v = moveOut(std::move(v));
+    if (!v) {
+        return;
+    }
+    EP target = mk(hir::ExprKind::Deref, t, span);
+    target->lhs = std::move(p);
+    target->lvalue = true;
+    hir::Stmt h;
+    h.kind = hir::StmtKind::Assign;
+    h.span = span;
+    h.target = std::move(target);
+    h.value = std::move(v);
+    out.push_back(std::move(h));
+}
+
 void Lowerer::lowerAssign(const Expr& target_ast,
                           const Expr& value_ast,
                           const Span& span,
@@ -2828,10 +2877,17 @@ void Lowerer::lowerAssign(const Expr& target_ast,
             "not a place (variable, `*p`, field or element)");
         target.reset();
     }
-    assignTo(std::move(target), value_ast, span, out);
+    // In a class `init`, `self.f = v` initializes a field that holds zeroed memory, so nothing is dropped.
+    const bool raw = in_ctor_ && target_ast.kind == Expr::Kind::Field && target_ast.lhs != nullptr &&
+                     target_ast.lhs->kind == Expr::Kind::Name && target_ast.lhs->text == "self";
+    assignTo(std::move(target), value_ast, span, out, raw);
 }
 
-void Lowerer::assignTo(EP target, const Expr& value_ast, const Span& span, std::vector<hir::Stmt>& out) {
+void Lowerer::assignTo(EP target,
+                       const Expr& value_ast,
+                       const Span& span,
+                       std::vector<hir::Stmt>& out,
+                       bool raw) {
     const Type want = target ? target->type : unknownType();
     EP value = expr(value_ast, target ? &want : nullptr);
     if (target && value) {
@@ -2841,7 +2897,7 @@ void Lowerer::assignTo(EP target, const Expr& value_ast, const Span& span, std::
     if (!target || !value) {
         return;
     }
-    if (needsDrop(target->type)) {
+    if (!raw && needsDrop(target->type)) {
         lowerDropAssign(std::move(target), std::move(value), span, out);
         return;
     }
@@ -3443,6 +3499,11 @@ void Lowerer::lowerStmt(const Stmt& s, std::vector<hir::Stmt>& out) {
         if (s.expr->kind == Expr::Kind::Call && s.expr->lhs->kind == Expr::Kind::Name &&
             s.expr->lhs->text == "__builtin_setRegistered") {
             lowerSetRegistered(*s.expr, s.span, out);
+            return;
+        }
+        if (s.expr->kind == Expr::Kind::Call && s.expr->lhs->kind == Expr::Kind::Name &&
+            s.expr->lhs->text == "__builtin_write") {
+            lowerRawWrite(*s.expr, s.span, out);
             return;
         }
         EP v = expr(*s.expr, nullptr);
@@ -4400,6 +4461,38 @@ Lowerer::EP Lowerer::builtinCall(const Expr& e, const std::string& name) {
             "`__builtin_setRegistered` is a statement, not a value",
             "call it as a statement inside an `@init` function");
         return nullptr;
+    }
+    if (name == "__builtin_write") {
+        err("E0709",
+            e.span,
+            "`__builtin_write` is a statement, not a value",
+            "call it as a statement: `__builtin_write(p, v)`");
+        return nullptr;
+    }
+    if (name == "__builtin_read") {
+        // `__builtin_read(p)`: the value at `p`, copied out. Nothing is dropped or moved; the caller owns the copy.
+        if (e.args.size() != 1) {
+            err("E0710", e.span, "`__builtin_read` takes one pointer", "wrong number of arguments");
+            return nullptr;
+        }
+        EP p = expr(*e.args[0], nullptr);
+        if (!p) {
+            return nullptr;
+        }
+        if (p->type.kind != TypeKind::Pointer || !p->type.elem) {
+            err("E0709",
+                e.args[0]->span,
+                std::format("`__builtin_read` needs a pointer, found `{}`", typeToString(p->type)),
+                "pass `&x`");
+            return nullptr;
+        }
+        if (p->type.elem->isVoid()) {
+            err("E0709", e.args[0]->span, "`__builtin_read` cannot read a `void`", "pass a pointer to a typed value");
+            return nullptr;
+        }
+        EP r = mk(hir::ExprKind::RawRead, *p->type.elem, e.span);
+        r->lhs = std::move(p);
+        return r;
     }
     if (name == "__builtin_needsDrop") {
         // `__builtin_needsDrop<T>()`: a compile-time bool.

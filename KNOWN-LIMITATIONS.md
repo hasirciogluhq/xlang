@@ -1,6 +1,6 @@
 # Known limitations and open decisions
 
-The original plan is implemented except the items below, which are intentionally incomplete or blocked. The largest open item is `Vec<T>` (core-language phase 7), blocked on a raw-move operation the spec does not define.
+The original plan is implemented except the items below, which are intentionally incomplete or blocked. The largest open item is `Vec<T>` (core-language phase 7); the raw moves it needs, `__builtin_read` and `__builtin_write`, are implemented.
 
 ## Platform support
 - **macOS raw threads:** `bsdthread_register` returns `EINVAL` in a process that did not come up through
@@ -54,10 +54,8 @@ The original plan is implemented except the items below, which are intentionally
   A bodyless `@init fn boot();` is the parser's `E0002`; the sema check for a missing body in `E0729` is therefore only a
   guard.
 - No tuples/multiple return values (not defined by the plan).
-- **`Vec<T>` (core-language phase 7) is not implemented.** Its `push(v: T)` and `set(i, v)` cannot be written for a droppable
-  `T` with the rules of phase 5: storing the value into a slot needs a raw move that does not drop the old slot content
-  (`p[i] = v` drops the old value first, and an unused slot holds zeroed memory), and passing `v` to a helper moves it into a
-  callee that drops it again. The spec has no operation for a raw move. Open decision; see the phase 7 report.
+- **`Vec<T>` (core-language phase 7) is not implemented.** Slots are written with `__builtin_write` and read with
+  `__builtin_read`; the container itself is not written yet.
 - `String` (core-language phase 7): the HTTP and TLS modules still use `*ui8` buffers. `fsReadAllString` is in `std/fs`.
 - `const` (core-language phase 2): a `const` is not a `define` constant, so it cannot be an array length, a `staticAssert`
   operand or a `define` argument. Its initializer cannot read another variable or `const` (a `GlobalRef` is not a compile-time
@@ -65,12 +63,8 @@ The original plan is implemented except the items below, which are intentionally
   `: T`). Block-level `const` names are not `define` names: they are read-only globals with a unique symbol.
 - Ownership (core-language phase 5): drops are statically dispatched (deleting a derived object through a base pointer runs
   only the base drop). There is no explicit base constructor call: a derived `init` runs the base's argument-less `init`
-  automatically. **Assigning a droppable field (`self.f = T(...)`) drops the old value of that field first, and in a
-  constructor that old value is the zeroed object `T(...)` created**, so the user `drop` runs on zeroed data. This follows
-  the spec's assignment rule; a constructor cannot initialize a droppable field without it. Open decision. An array
-  whose element needs drop is `E0721` at locals, parameters, fields and globals, because arrays do not drop their elements.
-  `delete(a)` needs an interface
-  allocator value. Temporaries used as receivers are materialized with a drop flag; a droppable temporary inside `&&`/`||`
+  automatically. An array whose element needs drop is `E0721` at locals, parameters, fields and globals, because arrays do
+  not drop their elements. `delete(a)` needs an interface allocator value. Temporaries used as receivers are materialized with a drop flag; a droppable temporary inside `&&`/`||`
   or a `?:` branch is dropped only if it was created.
 - Overloading (core-language phase 3): an overloaded function's HIR name is its qualified name plus its mangled parameter
   types (not the link symbol); this is the unique key codegen uses. Overload resolution lowers each non-literal argument

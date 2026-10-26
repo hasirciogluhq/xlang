@@ -24,6 +24,14 @@ class Pair {
     second: Counter
 }
 
+class Holder {
+    c: Counter
+
+    fn init(self, id: i32) {
+        self.c = Counter(id)
+    }
+}
+
 class Base {
     fn drop(self) { order = order * 10 + 9 }
 }
@@ -147,6 +155,33 @@ fn main() -> i32 {
     check("new runs init", np.id == 9)
     delete np
     check("delete drops then frees", drops == 1 && order == 9)
+
+    order = 0
+    drops = 0
+    {
+        local c = Counter(1)
+        __builtin_write(&c, Counter(2))
+        check("raw write does not drop the old value", drops == 0)
+    }
+    check("raw write stores the new value", drops == 1 && order == 2)
+
+    order = 0
+    drops = 0
+    {
+        local src = Counter(3)
+        local copy = __builtin_read(&src)
+        check("raw read copies the value", copy.id == 3)
+        __builtin_write(&src, Counter(4))
+    }
+    check("raw read owns its copy and the slot keeps its own drop", drops == 2 && order == 34)
+
+    order = 0
+    drops = 0
+    {
+        local h = Holder(5)
+        check("constructor field store does not drop the zeroed value", drops == 0)
+    }
+    check("holder drops its field", drops == 1 && order == 5)
 
     if failures == 0 {
         print("raii ok\n")

@@ -67,6 +67,8 @@ enum class ExprKind {
     Move,           ///< lhs (a droppable local) read by value; clears the drop flag `local`
     Materialize,    ///< lhs (a droppable temporary) stored in local `local`, drop flag `index` set; an
                     ///< lvalue: the stored object
+    RawRead,        ///< `__builtin_read`: lhs = pointer; the pointee read by value. Neither the drop flag nor
+                    ///< the place changes; the caller owns the copy. Codegen treats it as `Deref`
 };
 
 

@@ -66,6 +66,7 @@ void dumpExpr(std::ostream& out, const Function* fn, const Expr& e) {
     case ExprKind::Select: sub("select"); break;
     case ExprKind::Index: sub(e.checked ? "index.checked" : "index"); break;
     case ExprKind::Deref: sub("deref"); break;
+    case ExprKind::RawRead: sub("rawRead"); break;
     case ExprKind::AddrOf: sub("addr"); break;
     case ExprKind::ArrayList: sub("array"); break;
     case ExprKind::ArrayRepeat: out << std::format("(array.repeat {}", e.int_value); break;

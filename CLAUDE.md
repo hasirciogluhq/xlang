@@ -46,8 +46,9 @@ Object to bad ideas but leave decision to user. Cite real precedents. Do not re-
 - Diagnostics: `E` error, `W` warning (e.g. `E0501`, `W0402`).
 - Implicit conversions: same-signedness integer widening only. Signed int → float warns (`W0601`). Unsigned ↔ signed is error (`E0601`). `unsafe` allows some relaxations; narrowing always needs `as`.
 - `register(role) decl`: makes name global + exported. Roles: `panic` (noreturn), `allocator`. One per role per group. Shadowing warns. Group 1 (stdlib) is the default; a group 2 (user) registration of the same role replaces it; a same-group duplicate is `E0502`; `register(start)` is `E0503`.
-- `@init fn name() { }`: module-level boot function, no params, no return. Run order: stdlib group first, then user; per group, imports before importers, source order within a module. Calling it is `E0727`; bad signature or method use is `E0729`.
+- `@init fn name() { }`: module-level boot function, no params, no return. Run order: stdlib group first, then user; per group, imports before importers, source order within a module. Calling it, or using its name as a value, is `E0727`; bad signature or method use is `E0729`.
 - `__builtin_setRegistered("role", value)`: replaces a registered global; only inside an `@init` fn (`E0728`).
+- `__builtin_read(p)` / `__builtin_write(p, v)`: raw move through a pointer, no drop; `__builtin_write` is a statement (`E0709` as a value).
 - Memory: default xlang layout; `@repr(c)` for C layout. `class` (single inheritance + vptr), `interface` (fat pointer).
 - Conditional: `#if/#elif/#else/#endif` (normal expression syntax). Inactive regions only lexed.
 - `type Name = T` (transparent). Macros: `define`, `define f(x: expr) { ... }`, call with `f!(...)`. Hygienic, no stringify.

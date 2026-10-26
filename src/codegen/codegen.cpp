@@ -925,6 +925,7 @@ llvm::Value* Gen::genAddr(const hir::Expr& e) {
         }
         return it->second;
     }
+    case hir::ExprKind::RawRead:
     case hir::ExprKind::Deref: return genScalar(*e.lhs);
     case hir::ExprKind::Field: {
         llvm::Value* base = e.through_pointer ? genScalar(*e.lhs) : genAddr(*e.lhs);
@@ -1094,6 +1095,7 @@ llvm::Value* Gen::genMem(const hir::Expr& e) {
     switch (e.kind) {
     case hir::ExprKind::LocalRef:
     case hir::ExprKind::GlobalRef:
+    case hir::ExprKind::RawRead:
     case hir::ExprKind::Deref:
     case hir::ExprKind::Field:
     case hir::ExprKind::Index:
@@ -1783,6 +1785,7 @@ llvm::Value* Gen::genScalar(const hir::Expr& e) {
     }
     case hir::ExprKind::LocalRef:
     case hir::ExprKind::GlobalRef:
+    case hir::ExprKind::RawRead:
     case hir::ExprKind::Deref:
     case hir::ExprKind::Field:
     case hir::ExprKind::Index:

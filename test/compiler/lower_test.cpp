@@ -645,6 +645,30 @@ void testGenerics() {
     }
 }
 
+void testRawMoves() {
+    {
+        Lowered r("fn main() -> i32 {\n local x: i32 = 0\n __builtin_write(&x, 1)\n"
+                  " return __builtin_read(&x) }\n");
+        CHECK(!r.diag->hasErrors());
+    }
+    {
+        Lowered r("fn main() -> i32 {\n local x: i32 = 0\n local y = __builtin_write(&x, 1)\n return 0 }\n");
+        CHECK(r.failedWith("E0709"));
+    }
+    {
+        Lowered r("fn main() -> i32 {\n local x: i32 = 0\n return __builtin_read(x) }\n");
+        CHECK(r.failedWith("E0709"));
+    }
+    {
+        Lowered r("fn main() -> i32 {\n __builtin_write(1, 2)\n return 0 }\n");
+        CHECK(r.failedWith("E0709"));
+    }
+    {
+        Lowered r("fn main() -> i32 {\n return __builtin_read() }\n");
+        CHECK(r.failedWith("E0710"));
+    }
+}
+
 void testDroppableArraysAndNotes() {
     const std::string cls = "class C { fn drop(self) { } }\n";
     {
@@ -762,5 +786,6 @@ void runLowerTests() {
     testOverloads();
     testOwnership();
     testDroppableArraysAndNotes();
+    testRawMoves();
     testGenerics();
 }
