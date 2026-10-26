@@ -182,13 +182,13 @@ fn sendBody(s: *HttpStream, o: *FetchOptions) -> bool {
             if n > 4096 { return false }
             local hex: [ui8; 24]
             local h: usize = formatHex(n, &hex[0])
-            local start: usize = 16 - h - 2
-            memMove(&frame[start], &hex[0], h)
-            frame[start + h] = 13
-            frame[start + h + 1] = 10
+            local at: usize = 16 - h - 2
+            memMove(&frame[at], &hex[0], h)
+            frame[at + h] = 13
+            frame[at + h + 1] = 10
             frame[16 + n] = 13
             frame[16 + n + 1] = 10
-            if !sendRaw(s, &frame[start], 16 + n + 2 - start) { return false }
+            if !sendRaw(s, &frame[at], 16 + n + 2 - at) { return false }
         }
         return sendRaw(s, "0\r\n\r\n", 5)
     }

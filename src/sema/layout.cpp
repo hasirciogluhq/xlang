@@ -10,11 +10,19 @@ namespace xlang {
 
 std::string formatLayoutRecord(const LayoutRecord& record) {
     const TypeLayout& l = record.layout;
-    std::string out = std::format("type {} size={} align={} scheme={} repr={} vptr={} shuffled={} seed={}\n",
-                                  record.name, l.size, l.align, l.scheme, l.repr_c ? "c" : "xl",
-                                  l.has_vptr ? 1 : 0, l.shuffled ? 1 : 0, l.seed);
+    std::string out =
+        std::format("type {} size={} align={} scheme={} repr={} vptr={} shuffled={} seed={}\n",
+                    record.name,
+                    l.size,
+                    l.align,
+                    l.scheme,
+                    l.repr_c ? "c" : "xl",
+                    l.has_vptr ? 1 : 0,
+                    l.shuffled ? 1 : 0,
+                    l.seed);
     for (const FieldLayout& f : l.fields) {
-        out += std::format("  field {} offset={} size={} align={}\n", f.name, f.offset, f.size, f.align);
+        out += std::format(
+            "  field {} offset={} size={} align={}\n", f.name, f.offset, f.size, f.align);
     }
     return out;
 }
@@ -51,7 +59,7 @@ namespace {
     return {};
 }
 
-}  // namespace
+} // namespace
 
 LayoutHistory LayoutHistory::load(const std::string& path) {
     LayoutHistory history;
@@ -90,7 +98,8 @@ LayoutHistory LayoutHistory::load(const std::string& path) {
                 current.layout.repr_c = valueOf(words, "repr") == "c";
                 current.layout.has_vptr = valueOf(words, "vptr") == "1";
                 current.layout.shuffled = valueOf(words, "shuffled") == "1";
-                current.layout.seed = std::stoull(valueOf(words, "seed").empty() ? "0" : valueOf(words, "seed"));
+                current.layout.seed =
+                    std::stoull(valueOf(words, "seed").empty() ? "0" : valueOf(words, "seed"));
                 current.layout.source = "record";
                 open = true;
             } else if (words[0] == "field" && words.size() >= 2 && open) {
@@ -111,4 +120,4 @@ LayoutHistory LayoutHistory::load(const std::string& path) {
     return history;
 }
 
-}  // namespace xlang
+} // namespace xlang

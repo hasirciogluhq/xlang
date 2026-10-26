@@ -49,10 +49,10 @@ fn skipValue(s: *ui8, i: usize) -> usize {
     return p
 }
 
-fn keyIs(s: *ui8, start: usize, end: usize, key: *ui8) -> bool {
+fn keyIs(s: *ui8, begin: usize, end: usize, key: *ui8) -> bool {
     local i: usize = 0
-    while start + i < end {
-        if key[i] == 0 || key[i] != s[start + i] { return false }
+    while begin + i < end {
+        if key[i] == 0 || key[i] != s[begin + i] { return false }
         i = i + 1
     }
     return key[i] == 0

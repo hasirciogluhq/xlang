@@ -48,8 +48,8 @@ namespace {
         return "0";
     }
     const bool negative = v < 0;
-    unsigned __int128 u = negative ? static_cast<unsigned __int128>(-(v + 1)) + 1
-                                   : static_cast<unsigned __int128>(v);
+    unsigned __int128 u =
+        negative ? static_cast<unsigned __int128>(-(v + 1)) + 1 : static_cast<unsigned __int128>(v);
     std::string out;
     while (u != 0) {
         out += static_cast<char>('0' + static_cast<int>(u % 10));
@@ -74,7 +74,8 @@ namespace {
     return align <= 1 ? value : (value + align - 1) / align * align;
 }
 
-[[nodiscard]] const Attribute* findAttr(const std::vector<Attribute>& attrs, std::string_view name) {
+[[nodiscard]] const Attribute* findAttr(const std::vector<Attribute>& attrs,
+                                        std::string_view name) {
     for (const Attribute& a : attrs) {
         if (a.name == name) {
             return &a;
@@ -102,7 +103,8 @@ namespace {
 [[nodiscard]] Int128 wrapInt(Int128 value, unsigned bits, bool is_signed) {
     if (bits >= 64) {
         const auto u = static_cast<std::uint64_t>(value);
-        return is_signed ? static_cast<Int128>(static_cast<std::int64_t>(u)) : static_cast<Int128>(u);
+        return is_signed ? static_cast<Int128>(static_cast<std::int64_t>(u))
+                         : static_cast<Int128>(u);
     }
     const std::uint64_t mask = (std::uint64_t{1} << bits) - 1;
     const std::uint64_t u = static_cast<std::uint64_t>(value) & mask;
@@ -112,14 +114,18 @@ namespace {
     return static_cast<Int128>(u);
 }
 
-}  // namespace
+} // namespace
 
 std::string ConstValue::toString() const {
     switch (kind) {
-    case Kind::Int: return int128ToString(int_value);
-    case Kind::Float: return std::format("{}", float_value);
-    case Kind::Bool: return bool_value ? "true" : "false";
-    case Kind::String: return "\"" + string_value + "\"";
+    case Kind::Int:
+        return int128ToString(int_value);
+    case Kind::Float:
+        return std::format("{}", float_value);
+    case Kind::Bool:
+        return bool_value ? "true" : "false";
+    case Kind::String:
+        return "\"" + string_value + "\"";
     }
     return {};
 }
@@ -127,7 +133,9 @@ std::string ConstValue::toString() const {
 // ---------------------------------------------------------------------------------------------
 // Sema: setup and symbols
 
-Sema::Sema(const Program& program, const BuildConfig& config, DiagnosticEngine& diagnostics,
+Sema::Sema(const Program& program,
+           const BuildConfig& config,
+           DiagnosticEngine& diagnostics,
            const LayoutHistory* history)
     : program_(program), config_(config), diag_(diagnostics), history_(history) {
     // Builtin `MemoryOrder` is an ordinary enum (plan 6.1 / 2.6).
@@ -145,7 +153,8 @@ Sema::Sema(const Program& program, const BuildConfig& config, DiagnosticEngine& 
 }
 
 void Sema::error(const char* code, const Span& at, std::string message, std::string label) {
-    const std::string key = std::format("{}:{}:{}:{}:{}", code, at.file, at.line, at.column, message);
+    const std::string key =
+        std::format("{}:{}:{}:{}:{}", code, at.file, at.line, at.column, message);
     if (!reported_.insert(key).second) {
         return;
     }
@@ -265,23 +274,32 @@ std::optional<Type> Sema::resolve(const Type& type) {
     } else if (type.path.size() == 2) {
         ref = lookupQualified(type.path);
         if (!ref && comp_ == nullptr) {
-            return type;  // standalone: `alias.Name` stays unresolved
+            return type; // standalone: `alias.Name` stays unresolved
         }
     } else {
         return type;
     }
     const std::string shown = joinDotted(type.path);
     if (!ref) {
-        error("E0706", type.span, std::format("unknown type `{}`", shown), "not declared in this module");
+        error("E0706",
+              type.span,
+              std::format("unknown type `{}`", shown),
+              "not declared in this module");
         return std::nullopt;
     }
     Sema& owner = *ref->owner;
     Type out = type;
     out.path = {ref->qname()};
     switch (ref->sym->kind) {
-    case Symbol::Kind::Struct: out.kind = TypeKind::Struct; return out;
-    case Symbol::Kind::Class: out.kind = TypeKind::Class; return out;
-    case Symbol::Kind::Interface: out.kind = TypeKind::Interface; return out;
+    case Symbol::Kind::Struct:
+        out.kind = TypeKind::Struct;
+        return out;
+    case Symbol::Kind::Class:
+        out.kind = TypeKind::Class;
+        return out;
+    case Symbol::Kind::Interface:
+        out.kind = TypeKind::Interface;
+        return out;
     case Symbol::Kind::Enum: {
         const auto& decl = std::get<EnumDecl>(ref->sym->item->decl);
         out.kind = TypeKind::Enum;
@@ -294,7 +312,10 @@ std::optional<Type> Sema::resolve(const Type& type) {
     }
     case Symbol::Kind::Alias: {
         if (!owner.alias_in_progress_.insert(ref->local).second) {
-            error("E0704", type.span, std::format("type alias `{}` refers to itself", shown), "cyclic alias");
+            error("E0704",
+                  type.span,
+                  std::format("type alias `{}` refers to itself", shown),
+                  "cyclic alias");
             return std::nullopt;
         }
         auto target = owner.resolve(std::get<TypeAliasDecl>(ref->sym->item->decl).target);
@@ -306,7 +327,10 @@ std::optional<Type> Sema::resolve(const Type& type) {
         return target;
     }
     default:
-        error("E0706", type.span, std::format("`{}` is not a type", shown), "this name is not a type");
+        error("E0706",
+              type.span,
+              std::format("`{}` is not a type", shown),
+              "this name is not a type");
         return std::nullopt;
     }
 }
@@ -455,28 +479,36 @@ std::optional<Type> Sema::exprToType(const Expr& expr) {
 
 std::optional<ConstValue> Sema::fromConfig(const ConfigValue& v) {
     switch (v.kind) {
-    case ConfigValue::Kind::Bool: return ConstValue::makeBool(v.bool_value);
-    case ConfigValue::Kind::Int: return ConstValue::makeInt(v.int_value);
-    case ConfigValue::Kind::String: return ConstValue::makeString(v.string_value);
+    case ConfigValue::Kind::Bool:
+        return ConstValue::makeBool(v.bool_value);
+    case ConfigValue::Kind::Int:
+        return ConstValue::makeInt(v.int_value);
+    case ConfigValue::Kind::String:
+        return ConstValue::makeString(v.string_value);
     }
     return std::nullopt;
 }
 
 std::optional<ConstValue> Sema::evalConst(const Expr& expr) {
     switch (expr.kind) {
-    case Expr::Kind::IntLiteral: return ConstValue::makeInt(static_cast<Int128>(expr.int_value));
-    case Expr::Kind::FloatLiteral: return ConstValue::makeFloat(expr.float_value);
-    case Expr::Kind::BoolLiteral: return ConstValue::makeBool(expr.bool_value);
-    case Expr::Kind::StringLiteral: return ConstValue::makeString(expr.text);
+    case Expr::Kind::IntLiteral:
+        return ConstValue::makeInt(static_cast<Int128>(expr.int_value));
+    case Expr::Kind::FloatLiteral:
+        return ConstValue::makeFloat(expr.float_value);
+    case Expr::Kind::BoolLiteral:
+        return ConstValue::makeBool(expr.bool_value);
+    case Expr::Kind::StringLiteral:
+        return ConstValue::makeString(expr.text);
     case Expr::Kind::Name: {
-        // `-D NAME=...` and builtins (`os`, `pointerWidth`, ...) come first: CLI wins over `define`.
+        // `-D NAME=...` and builtins (`os`, `pointerWidth`, ...) come first: CLI wins over
+        // `define`.
         if (const auto cfg = config_.lookup(expr.text)) {
             return fromConfig(*cfg);
         }
         const Symbol* sym = find(expr.text);
         if (sym == nullptr) {
-            if (const auto ref = lookupEntity(expr.text); ref && ref->owner != this &&
-                                                           ref->sym->kind == Symbol::Kind::Define) {
+            if (const auto ref = lookupEntity(expr.text);
+                ref && ref->owner != this && ref->sym->kind == Symbol::Kind::Define) {
                 Expr remote;
                 remote.kind = Expr::Kind::Name;
                 remote.text = ref->local;
@@ -492,7 +524,9 @@ std::optional<ConstValue> Sema::evalConst(const Expr& expr) {
             return it->second;
         }
         if (!define_in_progress_.insert(expr.text).second) {
-            error("E0707", expr.span, std::format("`define {}` depends on itself", expr.text),
+            error("E0707",
+                  expr.span,
+                  std::format("`define {}` depends on itself", expr.text),
                   "cyclic constant");
             return std::nullopt;
         }
@@ -586,12 +620,18 @@ std::optional<ConstValue> Sema::evalBinary(const Expr& expr) {
 
     const auto cmpResult = [&](int c) {
         switch (expr.binary_op) {
-        case BinaryOp::Eq: return c == 0;
-        case BinaryOp::Ne: return c != 0;
-        case BinaryOp::Lt: return c < 0;
-        case BinaryOp::Le: return c <= 0;
-        case BinaryOp::Gt: return c > 0;
-        default: return c >= 0;
+        case BinaryOp::Eq:
+            return c == 0;
+        case BinaryOp::Ne:
+            return c != 0;
+        case BinaryOp::Lt:
+            return c < 0;
+        case BinaryOp::Le:
+            return c <= 0;
+        case BinaryOp::Gt:
+            return c > 0;
+        default:
+            return c >= 0;
         }
     };
     const bool is_cmp = expr.binary_op >= BinaryOp::Eq && expr.binary_op <= BinaryOp::Ge;
@@ -604,7 +644,8 @@ std::optional<ConstValue> Sema::evalBinary(const Expr& expr) {
         return std::nullopt;
     }
     if (l->kind == ConstValue::Kind::Bool && r->kind == ConstValue::Kind::Bool && is_cmp) {
-        return ConstValue::makeBool(cmpResult(static_cast<int>(l->bool_value) - static_cast<int>(r->bool_value)));
+        return ConstValue::makeBool(
+            cmpResult(static_cast<int>(l->bool_value) - static_cast<int>(r->bool_value)));
     }
     if (l->kind == ConstValue::Kind::Bool || r->kind == ConstValue::Kind::Bool) {
         notConstant(expr.span, "bool operands only support `==`, `!=`, `&&`, `||`");
@@ -618,29 +659,41 @@ std::optional<ConstValue> Sema::evalBinary(const Expr& expr) {
             return ConstValue::makeBool(cmpResult(a < b ? -1 : (a > b ? 1 : 0)));
         }
         switch (expr.binary_op) {
-        case BinaryOp::Add: return ConstValue::makeInt(a + b);
-        case BinaryOp::Sub: return ConstValue::makeInt(a - b);
-        case BinaryOp::Mul: return ConstValue::makeInt(a * b);
+        case BinaryOp::Add:
+            return ConstValue::makeInt(a + b);
+        case BinaryOp::Sub:
+            return ConstValue::makeInt(a - b);
+        case BinaryOp::Mul:
+            return ConstValue::makeInt(a * b);
         case BinaryOp::Div:
         case BinaryOp::Mod:
             if (b == 0) {
-                error("E0707", expr.span, "division by zero in a constant expression", "divisor is 0");
+                error("E0707",
+                      expr.span,
+                      "division by zero in a constant expression",
+                      "divisor is 0");
                 return std::nullopt;
             }
             return ConstValue::makeInt(expr.binary_op == BinaryOp::Div ? a / b : a % b);
-        case BinaryOp::BitAnd: return ConstValue::makeInt(a & b);
-        case BinaryOp::BitOr: return ConstValue::makeInt(a | b);
-        case BinaryOp::BitXor: return ConstValue::makeInt(a ^ b);
+        case BinaryOp::BitAnd:
+            return ConstValue::makeInt(a & b);
+        case BinaryOp::BitOr:
+            return ConstValue::makeInt(a | b);
+        case BinaryOp::BitXor:
+            return ConstValue::makeInt(a ^ b);
         case BinaryOp::Shl:
         case BinaryOp::Shr:
             if (b < 0 || b > 126) {
-                error("E0707", expr.span, "shift count out of range in a constant expression",
+                error("E0707",
+                      expr.span,
+                      "shift count out of range in a constant expression",
                       "the count must be between 0 and 126");
                 return std::nullopt;
             }
             return ConstValue::makeInt(expr.binary_op == BinaryOp::Shl ? a << static_cast<int>(b)
                                                                        : a >> static_cast<int>(b));
-        default: break;
+        default:
+            break;
         }
     }
 
@@ -653,10 +706,14 @@ std::optional<ConstValue> Sema::evalBinary(const Expr& expr) {
         return ConstValue::makeBool(cmpResult(a < b ? -1 : (a > b ? 1 : 0)));
     }
     switch (expr.binary_op) {
-    case BinaryOp::Add: return ConstValue::makeFloat(a + b);
-    case BinaryOp::Sub: return ConstValue::makeFloat(a - b);
-    case BinaryOp::Mul: return ConstValue::makeFloat(a * b);
-    case BinaryOp::Div: return ConstValue::makeFloat(a / b);
+    case BinaryOp::Add:
+        return ConstValue::makeFloat(a + b);
+    case BinaryOp::Sub:
+        return ConstValue::makeFloat(a - b);
+    case BinaryOp::Mul:
+        return ConstValue::makeFloat(a * b);
+    case BinaryOp::Div:
+        return ConstValue::makeFloat(a / b);
     default:
         notConstant(expr.span, "`%` needs integer operands");
         return std::nullopt;
@@ -679,9 +736,15 @@ std::optional<ConstValue> Sema::evalCast(const Expr& expr) {
     case TypeKind::Int: {
         Int128 raw = 0;
         switch (v->kind) {
-        case ConstValue::Kind::Int: raw = v->int_value; break;
-        case ConstValue::Kind::Float: raw = static_cast<Int128>(v->float_value); break;
-        case ConstValue::Kind::Bool: raw = v->bool_value ? 1 : 0; break;
+        case ConstValue::Kind::Int:
+            raw = v->int_value;
+            break;
+        case ConstValue::Kind::Float:
+            raw = static_cast<Int128>(v->float_value);
+            break;
+        case ConstValue::Kind::Bool:
+            raw = v->bool_value ? 1 : 0;
+            break;
         case ConstValue::Kind::String:
             notConstant(expr.span, "a string address is not a constant integer");
             return std::nullopt;
@@ -695,7 +758,8 @@ std::optional<ConstValue> Sema::evalCast(const Expr& expr) {
         }
         if (v->kind == ConstValue::Kind::Float) {
             return v->float_value == v->float_value && target->bits == 32
-                       ? ConstValue::makeFloat(static_cast<double>(static_cast<float>(v->float_value)))
+                       ? ConstValue::makeFloat(
+                             static_cast<double>(static_cast<float>(v->float_value)))
                        : v;
         }
         break;
@@ -722,7 +786,10 @@ std::optional<ConstValue> Sema::evalCall(const Expr& expr) {
     const std::string& callee = expr.lhs->text;
     if (callee == "sizeOf" || callee == "alignOf") {
         if (expr.args.size() != 1) {
-            error("E0707", expr.span, std::format("`{}` takes one type argument", callee), "wrong argument count");
+            error("E0707",
+                  expr.span,
+                  std::format("`{}` takes one type argument", callee),
+                  "wrong argument count");
             return std::nullopt;
         }
         auto type = exprToType(*expr.args[0]);
@@ -738,13 +805,18 @@ std::optional<ConstValue> Sema::evalCall(const Expr& expr) {
     }
     if (callee == "offsetOf") {
         if (expr.args.size() != 2 || expr.args[1]->kind != Expr::Kind::Name) {
-            error("E0707", expr.span, "`offsetOf` takes a type and a field name", "wrong arguments");
+            error(
+                "E0707", expr.span, "`offsetOf` takes a type and a field name", "wrong arguments");
             return std::nullopt;
         }
         auto type = exprToType(*expr.args[0]);
         auto resolved = type ? resolve(*type) : std::nullopt;
-        if (!resolved || (resolved->kind != TypeKind::Struct && resolved->kind != TypeKind::Class)) {
-            error("E0707", expr.args[0]->span, "`offsetOf` needs a struct or class", "not an aggregate");
+        if (!resolved ||
+            (resolved->kind != TypeKind::Struct && resolved->kind != TypeKind::Class)) {
+            error("E0707",
+                  expr.args[0]->span,
+                  "`offsetOf` needs a struct or class",
+                  "not an aggregate");
             return std::nullopt;
         }
         auto layout = layoutOf(*resolved, expr.args[0]->span);
@@ -756,7 +828,8 @@ std::optional<ConstValue> Sema::evalCall(const Expr& expr) {
                 return ConstValue::makeInt(f.offset);
             }
         }
-        error("E0707", expr.args[1]->span,
+        error("E0707",
+              expr.args[1]->span,
               std::format("`{}` has no field `{}`", typeToString(*resolved), expr.args[1]->text),
               "unknown field");
         return std::nullopt;
@@ -768,8 +841,8 @@ std::optional<ConstValue> Sema::evalCall(const Expr& expr) {
 // ---------------------------------------------------------------------------------------------
 // Enums
 
-std::optional<ConstValue> Sema::enumMember(const std::string& enum_name, const std::string& member,
-                                           const Span& at) {
+std::optional<ConstValue>
+Sema::enumMember(const std::string& enum_name, const std::string& member, const Span& at) {
     const Symbol* sym = find(enum_name);
     if (sym == nullptr || sym->kind != Symbol::Kind::Enum) {
         error("E0706", at, std::format("unknown enum `{}`", enum_name), "not an enum");
@@ -804,7 +877,10 @@ std::optional<ConstValue> Sema::enumMember(const std::string& enum_name, const s
             return values[i];
         }
     }
-    error("E0706", at, std::format("enum `{}` has no member `{}`", enum_name, member), "unknown member");
+    error("E0706",
+          at,
+          std::format("enum `{}` has no member `{}`", enum_name, member),
+          "unknown member");
     return std::nullopt;
 }
 
@@ -814,13 +890,13 @@ void Sema::checkEnum(const EnumDecl& decl) {
         return;
     }
     const bool integral = under->kind == TypeKind::Int;
-    const bool constant_capable = integral || under->kind == TypeKind::Float ||
-                                  under->kind == TypeKind::Bool ||
-                                  (under->kind == TypeKind::Pointer && under->elem &&
-                                   under->elem->kind == TypeKind::Int && under->elem->bits == 8 &&
-                                   !under->elem->is_signed);
+    const bool constant_capable =
+        integral || under->kind == TypeKind::Float || under->kind == TypeKind::Bool ||
+        (under->kind == TypeKind::Pointer && under->elem && under->elem->kind == TypeKind::Int &&
+         under->elem->bits == 8 && !under->elem->is_signed);
     if (!constant_capable) {
-        error("E0705", decl.underlying.span.valid() ? decl.underlying.span : decl.name_span,
+        error("E0705",
+              decl.underlying.span.valid() ? decl.underlying.span : decl.name_span,
               std::format("`{}` cannot be the underlying type of an enum", typeToString(*under)),
               "must hold a constant: integer, float, bool or *ui8");
         return;
@@ -829,10 +905,15 @@ void Sema::checkEnum(const EnumDecl& decl) {
     std::vector<std::pair<Int128, std::string>> seen;
     for (const EnumMember& m : decl.members) {
         if (!names.insert(m.name).second) {
-            error("E0705", m.span, std::format("enum member `{}` is defined twice", m.name), "duplicate member");
+            error("E0705",
+                  m.span,
+                  std::format("enum member `{}` is defined twice", m.name),
+                  "duplicate member");
         }
         if (!m.value && !integral) {
-            error("E0705", m.span, std::format("member `{}` needs an explicit value", m.name),
+            error("E0705",
+                  m.span,
+                  std::format("member `{}` needs an explicit value", m.name),
                   "only integer enums are auto-numbered");
             continue;
         }
@@ -841,14 +922,17 @@ void Sema::checkEnum(const EnumDecl& decl) {
             continue;
         }
         if (m.value) {
-            const bool ok = (integral && value->kind == ConstValue::Kind::Int) ||
-                            (under->kind == TypeKind::Float && value->kind != ConstValue::Kind::String &&
-                             value->kind != ConstValue::Kind::Bool) ||
-                            (under->kind == TypeKind::Bool && value->kind == ConstValue::Kind::Bool) ||
-                            (under->kind == TypeKind::Pointer && value->kind == ConstValue::Kind::String);
+            const bool ok =
+                (integral && value->kind == ConstValue::Kind::Int) ||
+                (under->kind == TypeKind::Float && value->kind != ConstValue::Kind::String &&
+                 value->kind != ConstValue::Kind::Bool) ||
+                (under->kind == TypeKind::Bool && value->kind == ConstValue::Kind::Bool) ||
+                (under->kind == TypeKind::Pointer && value->kind == ConstValue::Kind::String);
             if (!ok) {
-                error("E0705", m.value->span,
-                      std::format("value of `{}` does not match the underlying type `{}`", m.name,
+                error("E0705",
+                      m.value->span,
+                      std::format("value of `{}` does not match the underlying type `{}`",
+                                  m.name,
                                   typeToString(*under)),
                       "wrong kind of constant");
             }
@@ -903,7 +987,9 @@ std::optional<TypeLayout> Sema::layoutOf(const Type& type, const Span& at) {
         auto value = len != nullptr ? evalConst(*len) : std::nullopt;
         if (!value || value->kind != ConstValue::Kind::Int || value->int_value < 0) {
             if (value) {
-                error("E0707", len->span, "array length must be a non-negative integer constant",
+                error("E0707",
+                      len->span,
+                      "array length must be a non-negative integer constant",
                       "invalid length");
             }
             return std::nullopt;
@@ -921,13 +1007,18 @@ std::optional<TypeLayout> Sema::layoutOf(const Type& type, const Span& at) {
     case TypeKind::Class: {
         const auto ref = entityByQName(t.path.front());
         if (!ref) {
-            error("E0706", at, std::format("unknown type `{}`", t.path.front()), "not a struct or class");
+            error("E0706",
+                  at,
+                  std::format("unknown type `{}`", t.path.front()),
+                  "not a struct or class");
             return std::nullopt;
         }
         return ref->owner->layoutOfName(ref->local, at);
     }
     case TypeKind::Named:
-        error("E0703", at, std::format("size of `{}` is unknown", typeToString(t)),
+        error("E0703",
+              at,
+              std::format("size of `{}` is unknown", typeToString(t)),
               "type comes from another module (module loading not available here)");
         return std::nullopt;
     default: {
@@ -954,7 +1045,9 @@ std::optional<TypeLayout> Sema::layoutOfName(const std::string& name, const Span
         return std::nullopt;
     }
     if (!layout_in_progress_.insert(name).second) {
-        error("E0703", at, std::format("`{}` contains itself by value", name),
+        error("E0703",
+              at,
+              std::format("`{}` contains itself by value", name),
               "recursive type has infinite size; use a pointer");
         return std::nullopt;
     }
@@ -964,7 +1057,8 @@ std::optional<TypeLayout> Sema::layoutOfName(const std::string& name, const Span
     return result;
 }
 
-std::optional<TypeLayout> Sema::aggregateLayout(const std::string& name, const Item& item, const Span& at) {
+std::optional<TypeLayout>
+Sema::aggregateLayout(const std::string& name, const Item& item, const Span& at) {
     const DeclBase& base_decl = declBase(item);
     const std::vector<FieldDecl>* fields = nullptr;
     const ClassDecl* cls = nullptr;
@@ -978,7 +1072,9 @@ std::optional<TypeLayout> Sema::aggregateLayout(const std::string& name, const I
         opaque = cls->opaque;
     }
     if (opaque) {
-        error("E0703", at, std::format("`{}` is opaque and has no known size", name),
+        error("E0703",
+              at,
+              std::format("`{}` is opaque and has no known size", name),
               "opaque `declare` types can only be used behind a pointer");
         return std::nullopt;
     }
@@ -991,7 +1087,9 @@ std::optional<TypeLayout> Sema::aggregateLayout(const std::string& name, const I
     if (const Attribute* layout_attr = findAttr(base_decl.attributes, "layout")) {
         if (const AttributeArg* scheme = attrKey(*layout_attr, "scheme")) {
             if (scheme->text != kCurrentLayoutScheme) {
-                error("E0705", scheme->span, std::format("unknown layout scheme `{}`", scheme->text),
+                error("E0705",
+                      scheme->span,
+                      std::format("unknown layout scheme `{}`", scheme->text),
                       "known schemes: v1");
             }
             out.scheme = scheme->text;
@@ -1005,11 +1103,12 @@ std::optional<TypeLayout> Sema::aggregateLayout(const std::string& name, const I
     }
     std::uint64_t min_align = 1;
     if (const Attribute* a = findAttr(base_decl.attributes, "align")) {
-        if (!a->args.empty() && a->args[0].kind == AttributeArg::Kind::Int && a->args[0].number > 0 &&
-            (a->args[0].number & (a->args[0].number - 1)) == 0) {
+        if (!a->args.empty() && a->args[0].kind == AttributeArg::Kind::Int &&
+            a->args[0].number > 0 && (a->args[0].number & (a->args[0].number - 1)) == 0) {
             min_align = static_cast<std::uint64_t>(a->args[0].number);
         } else {
-            error("E0705", a->span, "`@align(N)` needs a power-of-two integer", "invalid alignment");
+            error(
+                "E0705", a->span, "`@align(N)` needs a power-of-two integer", "invalid alignment");
         }
     }
 
@@ -1019,12 +1118,15 @@ std::optional<TypeLayout> Sema::aggregateLayout(const std::string& name, const I
             if (const LayoutRecord* rec = history_->find(qualify(name))) {
                 TypeLayout recorded = rec->layout;
                 recorded.source = "record";
-                const std::string current = config_.layout_scheme.empty() ? kCurrentLayoutScheme
-                                                                          : config_.layout_scheme;
+                const std::string current =
+                    config_.layout_scheme.empty() ? kCurrentLayoutScheme : config_.layout_scheme;
                 if (recorded.scheme != current) {
-                    diag_.warning("W0203", base_decl.name_span,
-                                  std::format("layout record of `{}` uses scheme {}, current is {}", name,
-                                              recorded.scheme, current),
+                    diag_.warning("W0203",
+                                  base_decl.name_span,
+                                  std::format("layout record of `{}` uses scheme {}, current is {}",
+                                              name,
+                                              recorded.scheme,
+                                              current),
                                   "record scheme differs");
                 }
                 std::vector<std::string> declared_names;
@@ -1038,9 +1140,12 @@ std::optional<TypeLayout> Sema::aggregateLayout(const std::string& name, const I
                 std::sort(declared_names.begin(), declared_names.end());
                 std::sort(recorded_names.begin(), recorded_names.end());
                 if (!fields->empty() && declared_names != recorded_names) {
-                    diag_.warning("W0202", base_decl.name_span,
-                                  std::format("declared fields of `{}` differ from its recorded layout", name),
-                                  "fields do not match the record");
+                    diag_.warning(
+                        "W0202",
+                        base_decl.name_span,
+                        std::format("declared fields of `{}` differ from its recorded layout",
+                                    name),
+                        "fields do not match the record");
                 }
                 // Use the record's offsets, keep types from the declaration where names match.
                 for (FieldLayout& rf : recorded.fields) {
@@ -1072,7 +1177,8 @@ std::optional<TypeLayout> Sema::aggregateLayout(const std::string& name, const I
     std::uint64_t align = 1;
 
     if (cls != nullptr) {
-        out.has_vptr = std::ranges::any_of(cls->methods, [](const FnDecl& m) { return m.is_virtual; });
+        out.has_vptr =
+            std::ranges::any_of(cls->methods, [](const FnDecl& m) { return m.is_virtual; });
         if (cls->has_base) {
             Type base_type = Type::makeNamed(cls->base);
             base_type.span = base_decl.name_span;
@@ -1081,7 +1187,9 @@ std::optional<TypeLayout> Sema::aggregateLayout(const std::string& name, const I
                 return std::nullopt;
             }
             if (base_resolved->kind != TypeKind::Class) {
-                error("E0706", base_decl.name_span, std::format("base `{}` is not a class", joinDotted(cls->base)),
+                error("E0706",
+                      base_decl.name_span,
+                      std::format("base `{}` is not a class", joinDotted(cls->base)),
                       "single inheritance needs a class base");
                 return std::nullopt;
             }
@@ -1157,7 +1265,7 @@ std::optional<TypeLayout> Sema::aggregateLayout(const std::string& name, const I
     out.data_size = cursor;
     align = std::max(align, min_align);
     if (cls != nullptr && !cls->has_base && !out.has_vptr && fields->empty() && out.repr_c) {
-        cursor = std::max<std::uint64_t>(cursor, 1);  // C++: an empty class is one byte
+        cursor = std::max<std::uint64_t>(cursor, 1); // C++: an empty class is one byte
     }
     out.align = align;
     out.size = alignUp(cursor, align);
@@ -1181,7 +1289,9 @@ void Sema::checkType(const Type& type, const Span& at) {
             if (t.length != nullptr) {
                 const auto v = evalConst(*t.length);
                 if (v && (v->kind != ConstValue::Kind::Int || v->int_value < 0)) {
-                    error("E0707", t.length->span, "array length must be a non-negative integer constant",
+                    error("E0707",
+                          t.length->span,
+                          "array length must be a non-negative integer constant",
                           "invalid length");
                 }
             }
@@ -1206,7 +1316,8 @@ void Sema::checkType(const Type& type, const Span& at) {
 }
 
 void Sema::checkExpr(const Expr& e) {
-    if (e.kind == Expr::Kind::Cast || e.kind == Expr::Kind::New || e.kind == Expr::Kind::StructLiteral) {
+    if (e.kind == Expr::Kind::Cast || e.kind == Expr::Kind::New ||
+        e.kind == Expr::Kind::StructLiteral) {
         checkType(e.type, e.span);
     }
     if (e.lhs) {
@@ -1254,7 +1365,10 @@ void Sema::checkStaticAssertCall(const Expr& c) {
         return;
     }
     if (c.args.empty() || c.args.size() > 2) {
-        error("E0702", c.span, "`staticAssert` takes a condition and an optional message", "wrong arguments");
+        error("E0702",
+              c.span,
+              "`staticAssert` takes a condition and an optional message",
+              "wrong arguments");
         return;
     }
     const auto value = evalConst(*c.args[0]);
@@ -1262,7 +1376,10 @@ void Sema::checkStaticAssertCall(const Expr& c) {
         return;
     }
     if (value->kind != ConstValue::Kind::Bool) {
-        error("E0702", c.args[0]->span, "`staticAssert` condition must be a bool constant", "not a bool");
+        error("E0702",
+              c.args[0]->span,
+              "`staticAssert` condition must be a bool constant",
+              "not a bool");
         return;
     }
     if (!value->bool_value) {
@@ -1292,7 +1409,7 @@ void Sema::analyze() {
             checkType(a->target, base.span);
             Type self = Type::makeNamed({base.name});
             self.span = base.name_span;
-            (void)resolve(self);  // cyclic aliases
+            (void)resolve(self); // cyclic aliases
         } else if (std::holds_alternative<DefineConstDecl>(item.decl)) {
             Expr name;
             name.kind = Expr::Kind::Name;
@@ -1349,4 +1466,4 @@ void Sema::analyze() {
     }
 }
 
-}  // namespace xlang
+} // namespace xlang

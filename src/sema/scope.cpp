@@ -38,4 +38,4 @@ const ScopeEntry* ScopeStack::lookupModule(std::string_view name) const {
     return found == scopes_.front().names.end() ? nullptr : &found->second;
 }
 
-}  // namespace xlang
+} // namespace xlang

@@ -62,7 +62,11 @@ fn main() {                          // entry point
 }
 ```
 
-**Entry point:** `fn main()` — parameterless or typed, may return `int32`.
+**Entry points:** the OS entry symbol (`_start`, or `mainCRTStartup` on Windows) runs the registered `start` first and then `main`, and the process exits with `main`'s `int32` result (0 when `main` returns nothing).
+
+- `main` is the user program's entry: `fn main()` with no parameters, optionally returning `int32`.
+- `start` is the boot hook: `register(start) fn start()` with no parameters and no return type. The stdlib (`std/runtime`) defines it as an empty function; with `--no-std` no `start` is registered and nothing runs before `main`.
+- No entry stub is emitted when the program has no `main`.
 
 ---
 

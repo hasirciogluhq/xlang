@@ -99,9 +99,9 @@ export fn fetch(url: *ui8, opts: *FetchOptions, buf: *ui8, cap: usize, out: *Res
             }
         }
         // read the body after the header block
-        local start: usize = s.headerLen
+        local bodyAt: usize = s.headerLen
         local room: usize = 0
-        if cap > start + 1 { room = cap - 1 - start }
+        if cap > bodyAt + 1 { room = cap - 1 - bodyAt }
         local bl: usize = 0
         local err: i32 = FETCH_OK
         while true {
@@ -112,7 +112,7 @@ export fn fetch(url: *ui8, opts: *FetchOptions, buf: *ui8, cap: usize, out: *Res
                 if pr > 0 { err = FETCH_ERR_TOO_LARGE }
                 break
             }
-            local r: isize = streamRead(&s, &buf[start + bl], room - bl)
+            local r: isize = streamRead(&s, &buf[bodyAt + bl], room - bl)
             if r < 0 {
                 err = FETCH_ERR_BODY
                 break
@@ -125,10 +125,10 @@ export fn fetch(url: *ui8, opts: *FetchOptions, buf: *ui8, cap: usize, out: *Res
             out.error = err
             return err
         }
-        buf[start + bl] = 0
+        buf[bodyAt + bl] = 0
         out.status = s.status
         out.ok = s.status >= 200 && s.status < 300
-        out.body = &buf[start]
+        out.body = &buf[bodyAt]
         out.bodyLen = bl
         return FETCH_OK
     }

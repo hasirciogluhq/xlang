@@ -228,6 +228,7 @@ struct Module {
     std::vector<Enum> enums;
     std::string panic_function;     ///< `register(panic)` function, empty = plain trap
     std::string allocator_global;   ///< `register(allocator)` global, empty = none
+    std::string start_function;     ///< `register(start)` function, empty = none
 };
 
 void dumpModule(std::ostream& out, const Module& module);

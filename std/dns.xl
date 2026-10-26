@@ -30,8 +30,8 @@ fn isDigit(c: ui8) -> bool {
 
 /// Parses a dotted-quad IPv4 literal that ends at NUL, whitespace or newline. Returns the index just
 /// past it, or 0 when `s` is not an IPv4 literal.
-fn parseIPv4At(s: *ui8, start: usize, out: *ui32) -> usize {
-    local i: usize = start
+fn parseIPv4At(s: *ui8, begin: usize, out: *ui32) -> usize {
+    local i: usize = begin
     local value: ui32 = 0
     local part: usize = 0
     while part < 4 {

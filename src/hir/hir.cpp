@@ -186,6 +186,9 @@ void dumpModule(std::ostream& out, const Module& m) {
     if (!m.allocator_global.empty()) {
         out << "register(allocator) " << m.allocator_global << '\n';
     }
+    if (!m.start_function.empty()) {
+        out << "register(start) " << m.start_function << '\n';
+    }
     for (const Enum& e : m.enums) {
         out << "enum " << e.name << ": " << typeName(e.underlying) << '\n';
         for (const EnumMemberValue& v : e.members) {

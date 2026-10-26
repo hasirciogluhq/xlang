@@ -56,7 +56,8 @@ namespace {
     return 6;
 }
 
-[[nodiscard]] const Attribute* findAttribute(const std::vector<Attribute>& attrs, std::string_view name) {
+[[nodiscard]] const Attribute* findAttribute(const std::vector<Attribute>& attrs,
+                                             std::string_view name) {
     for (const Attribute& a : attrs) {
         if (a.name == name) {
             return &a;
@@ -65,7 +66,7 @@ namespace {
     return nullptr;
 }
 
-}  // namespace
+} // namespace
 
 /// State shared by the per-module lowerers of one program.
 struct LowerShared {
@@ -75,7 +76,7 @@ struct LowerShared {
         const Item* item{nullptr};
         std::string type_q;
         std::string iface_q;
-        std::string prefix;  ///< `Type.Iface.`
+        std::string prefix; ///< `Type.Iface.`
         Span span;
     };
     struct SlotInfo {
@@ -97,14 +98,14 @@ struct LowerShared {
 };
 
 class Lowerer {
-public:
+  public:
     Lowerer(Sema& sema, LowerShared& shared) : s_(sema), sh_(shared), mod_(shared.module) {}
 
     void collectImpls();
     void checkRegistrations();
     void run();
 
-private:
+  private:
     using EP = hir::ExprPtr;
     using ImplInfo = LowerShared::ImplInfo;
     using SlotInfo = LowerShared::SlotInfo;
@@ -113,8 +114,8 @@ private:
         enum class Kind { Direct, Virtual, Itable } kind{Kind::Direct};
         std::string fn_name;
         const FnDecl* decl{nullptr};
-        Sema* owner{nullptr};    ///< module that resolves the declaration's types
-        std::uint32_t index{0};  ///< Itable: method index, Virtual: vtable slot
+        Sema* owner{nullptr};   ///< module that resolves the declaration's types
+        std::uint32_t index{0}; ///< Itable: method index, Virtual: vtable slot
         bool from_impl{false};
     };
 
@@ -125,34 +126,50 @@ private:
 
     // --- setup
     void buildModuleScope();
-    [[nodiscard]] ScopeEntry entryOf(Sema::EntityRef ref, const std::string& local, const Span& span);
+    [[nodiscard]] ScopeEntry
+    entryOf(Sema::EntityRef ref, const std::string& local, const Span& span);
 
     // --- module items
     void lowerItems();
-    void lowerFunction(const FnDecl& f, const Modifiers& mods, const std::string& qname, const std::string& local_name,
-                       const std::vector<Attribute>& attrs, const std::string& owner, const Type* self_type);
+    void lowerFunction(const FnDecl& f,
+                       const Modifiers& mods,
+                       const std::string& qname,
+                       const std::string& local_name,
+                       const std::vector<Attribute>& attrs,
+                       const std::string& owner,
+                       const Type* self_type);
     void lowerGlobal(const GlobalDecl& g, const Modifiers& mods);
     void lowerEnum(const EnumDecl& e);
     void lowerAggregate(const Item& item);
     void checkImpl(const ImplInfo& info);
     [[nodiscard]] bool cCompatible(Sema& sema, const Type& t);
-    void assignSymbol(const std::vector<Attribute>& attrs, bool export_c, bool declared, const std::string& local_name,
-                      const std::vector<Type>& params, std::string& symbol, const Span& at);
+    void assignSymbol(const std::vector<Attribute>& attrs,
+                      bool export_c,
+                      bool declared,
+                      const std::string& local_name,
+                      const std::vector<Type>& params,
+                      std::string& symbol,
+                      const Span& at);
 
     // --- statements
     void lowerBlock(const Block& block, std::vector<hir::Stmt>& out, bool new_scope);
     void lowerStmt(const Stmt& s, std::vector<hir::Stmt>& out);
-    void lowerAssign(const Expr& target, const Expr& value, const Span& span, std::vector<hir::Stmt>& out);
+    void lowerAssign(const Expr& target,
+                     const Expr& value,
+                     const Span& span,
+                     std::vector<hir::Stmt>& out);
     void lowerCompound(const Stmt& s, std::vector<hir::Stmt>& out);
     void lowerFor(const Stmt& s, std::vector<hir::Stmt>& out);
     void lowerForRange(const Stmt& s, std::vector<hir::Stmt>& out);
     void lowerSwitch(const Stmt& s, std::vector<hir::Stmt>& out);
     void lowerJump(const Stmt& s, std::vector<hir::Stmt>& out);
-    /// Appends clones of the deferred statements of the frames `[from, defers_.size())`, innermost first.
+    /// Appends clones of the deferred statements of the frames `[from, defers_.size())`, innermost
+    /// first.
     void emitDefers(std::size_t from, std::vector<hir::Stmt>& out) const;
     EP ternaryExpr(const Expr& e, const Type* expected);
     hir::LocalId hiddenLocal(const char* prefix, const Type& type, const Span& span);
-    hir::LocalId addLocal(const std::string& name, const Type& type, bool is_param, const Span& span);
+    hir::LocalId
+    addLocal(const std::string& name, const Type& type, bool is_param, const Span& span);
     void bindLocal(const std::string& name, hir::LocalId id, const Type& type, const Span& span);
 
     // --- expressions
@@ -177,7 +194,9 @@ private:
     EP constExpr(const Expr& e, const Type* expected);
     EP fromConst(const ConstValue& v, const Type* expected, const Span& span);
 
-    bool lowerArgs(const Expr& call, const std::vector<Type>& params, std::vector<EP>& out,
+    bool lowerArgs(const Expr& call,
+                   const std::vector<Type>& params,
+                   std::vector<EP>& out,
                    const std::string& callee);
     void lowerFields(const Expr& e, const Type& agg, std::vector<hir::FieldInit>& out);
 
@@ -192,7 +211,8 @@ private:
     [[nodiscard]] Type normalized(Sema& sema, const Type& t);
     [[nodiscard]] Type fnTypeOf(Sema& owner, const FnDecl& f);
     [[nodiscard]] std::optional<MethodRef> findMethod(const Type& agg, const std::string& name);
-    [[nodiscard]] const ImplInfo* findImpl(const std::string& type_q, const std::string& iface_q) const;
+    [[nodiscard]] const ImplInfo* findImpl(const std::string& type_q,
+                                           const std::string& iface_q) const;
     [[nodiscard]] bool hasAllocMethod(const Type& t);
     [[nodiscard]] std::optional<Sema::EntityRef> entityOfType(const Type& t);
     void collectFields(const std::string& qname, std::vector<FieldInfo>& out);
@@ -201,8 +221,8 @@ private:
     [[nodiscard]] std::optional<std::uint64_t> arrayLength(Sema& sema, const Type& t);
     [[nodiscard]] const ScopeEntry* lookupName(const std::string& name);
     [[nodiscard]] const ScopeEntry* chainEntry(const Expr& e);
-    [[nodiscard]] const ScopeEntry* namespaceMember(const ScopeEntry& ns, const std::string& name, const Span& at,
-                                                    bool report);
+    [[nodiscard]] const ScopeEntry*
+    namespaceMember(const ScopeEntry& ns, const std::string& name, const Span& at, bool report);
     [[nodiscard]] bool isRegisteredName(const std::string& name) const;
 
     // --- helpers
@@ -221,15 +241,16 @@ private:
     int unsafe_{0};
     struct LoopCtx {
         std::string label;
-        std::size_t defer_mark;  ///< `defers_.size()` when the loop was entered
+        std::size_t defer_mark; ///< `defers_.size()` when the loop was entered
     };
-    std::vector<LoopCtx> loops_;  ///< enclosing loops of the statement being lowered, innermost last
-    /// One frame per block being lowered: the lowered `defer` statements registered in it, in order.
+    std::vector<LoopCtx> loops_; ///< enclosing loops of the statement being lowered, innermost last
+    /// One frame per block being lowered: the lowered `defer` statements registered in it, in
+    /// order.
     std::vector<std::vector<hir::Stmt>> defers_;
-    unsigned hidden_counter_{0};  ///< unique suffix for compiler-made locals
+    unsigned hidden_counter_{0}; ///< unique suffix for compiler-made locals
     bool star_import_{false};
     std::set<std::string> registered_names_;
-    std::map<std::string, ScopeEntry> extra_entries_;  ///< registered globals / namespace members
+    std::map<std::string, ScopeEntry> extra_entries_; ///< registered globals / namespace members
 };
 
 // ---------------------------------------------------------------------------------------------
@@ -270,7 +291,8 @@ static bool astHasSideEffects(const Expr& e) {
     case Expr::Kind::MacroCall:
     case Expr::Kind::New:
         return true;
-    default: break;
+    default:
+        break;
     }
     if (e.lhs && astHasSideEffects(*e.lhs)) {
         return true;
@@ -408,7 +430,8 @@ static bool breaksOut(const std::vector<hir::Stmt>& body, std::uint32_t level) {
                 return true;
             }
             break;
-        default: break;
+        default:
+            break;
         }
     }
     return false;
@@ -427,7 +450,8 @@ static bool terminates(const std::vector<hir::Stmt>& body, const std::string& pa
             }
             break;
         case hir::StmtKind::If:
-            if (!s.else_body.empty() && terminates(s.body, panic_fn) && terminates(s.else_body, panic_fn)) {
+            if (!s.else_body.empty() && terminates(s.body, panic_fn) &&
+                terminates(s.else_body, panic_fn)) {
                 return true;
             }
             break;
@@ -441,11 +465,13 @@ static bool terminates(const std::vector<hir::Stmt>& body, const std::string& pa
             if (s.value->kind == hir::ExprKind::Asm && s.value->noreturn) {
                 return true;
             }
-            if (s.value->kind == hir::ExprKind::Call && !panic_fn.empty() && s.value->text == panic_fn) {
+            if (s.value->kind == hir::ExprKind::Call && !panic_fn.empty() &&
+                s.value->text == panic_fn) {
                 return true;
             }
             break;
-        default: break;
+        default:
+            break;
         }
     }
     return false;
@@ -489,7 +515,8 @@ Type Lowerer::normalized(Sema& sema, const Type& t) {
             out.length = len;
         }
     }
-    if ((t.kind == TypeKind::Array || t.kind == TypeKind::Pointer || t.kind == TypeKind::Enum) && t.elem) {
+    if ((t.kind == TypeKind::Array || t.kind == TypeKind::Pointer || t.kind == TypeKind::Enum) &&
+        t.elem) {
         out.elem = std::make_shared<const Type>(normalized(sema, *t.elem));
     }
     if (t.kind == TypeKind::FnPtr) {
@@ -548,7 +575,8 @@ void Lowerer::collectFields(const std::string& qname, std::vector<FieldInfo>& ou
     }
     if (c->has_base) {
         Type base = Type::makeNamed(c->base);
-        if (const auto r = ref->owner->resolve(base); r && r->kind == TypeKind::Class && r->path.front() != qname) {
+        if (const auto r = ref->owner->resolve(base);
+            r && r->kind == TypeKind::Class && r->path.front() != qname) {
             collectFields(r->path.front(), out);
         }
     }
@@ -557,7 +585,8 @@ void Lowerer::collectFields(const std::string& qname, std::vector<FieldInfo>& ou
     }
 }
 
-const Lowerer::ImplInfo* Lowerer::findImpl(const std::string& type_q, const std::string& iface_q) const {
+const Lowerer::ImplInfo* Lowerer::findImpl(const std::string& type_q,
+                                           const std::string& iface_q) const {
     for (const ImplInfo& i : sh_.impls) {
         if (i.type_q == type_q && i.iface_q == iface_q) {
             return &i;
@@ -615,24 +644,32 @@ const std::vector<LowerShared::SlotInfo>& Lowerer::vtableOf(const std::string& q
         const bool found = idx != slots.size();
         if (m.is_override) {
             if (!found) {
-                owner.error("E0712", m.name_span, std::format("`{}` overrides nothing", m.name),
+                owner.error("E0712",
+                            m.name_span,
+                            std::format("`{}` overrides nothing", m.name),
                             "no virtual method with this name in a base class");
                 continue;
             }
             if (signature(owner, m) != signature(*slots[idx].owner, *slots[idx].decl)) {
-                owner.error("E0712", m.name_span, std::format("override `{}` has a different signature", m.name),
+                owner.error("E0712",
+                            m.name_span,
+                            std::format("override `{}` has a different signature", m.name),
                             "parameters and return type must match the base method");
             }
             slots[idx] = SlotInfo{{m.name, fname}, &m, &owner};
         } else if (m.is_virtual) {
             if (found) {
-                owner.error("E0712", m.name_span, std::format("`{}` is already virtual in a base class", m.name),
+                owner.error("E0712",
+                            m.name_span,
+                            std::format("`{}` is already virtual in a base class", m.name),
                             "write `override fn` to replace it");
                 continue;
             }
             slots.push_back(SlotInfo{{m.name, fname}, &m, &owner});
         } else if (found) {
-            owner.error("E0712", m.name_span, std::format("`{}` hides a virtual method of a base class", m.name),
+            owner.error("E0712",
+                        m.name_span,
+                        std::format("`{}` hides a virtual method of a base class", m.name),
                         "write `override fn` to replace it");
         }
     }
@@ -651,13 +688,19 @@ ScopeEntry Lowerer::entryOf(Sema::EntityRef ref, const std::string& local, const
     e.owner = ref.owner;
     e.qname = ref.qname();
     switch (ref.sym->kind) {
-    case Sema::Symbol::Kind::Fn: e.kind = ScopeEntry::Kind::Function; break;
+    case Sema::Symbol::Kind::Fn:
+        e.kind = ScopeEntry::Kind::Function;
+        break;
     case Sema::Symbol::Kind::Global:
         e.kind = ScopeEntry::Kind::Global;
         e.type = resolvedIn(*ref.owner, std::get<GlobalDecl>(ref.sym->item->decl).type);
         break;
-    case Sema::Symbol::Kind::Define: e.kind = ScopeEntry::Kind::Constant; break;
-    default: e.kind = ScopeEntry::Kind::Type; break;
+    case Sema::Symbol::Kind::Define:
+        e.kind = ScopeEntry::Kind::Constant;
+        break;
+    default:
+        e.kind = ScopeEntry::Kind::Type;
+        break;
     }
     return e;
 }
@@ -680,7 +723,7 @@ void Lowerer::buildModuleScope() {
         }
         if (const auto* imp = std::get_if<ImportDecl>(&item.decl)) {
             if (s_.comp_ != nullptr) {
-                continue;  // bindings come from the compilation below
+                continue; // bindings come from the compilation below
             }
             // Standalone module: imports stay external until module loading is available.
             const auto bind = [&](ScopeEntry entry) {
@@ -706,7 +749,9 @@ void Lowerer::buildModuleScope() {
                 bind(std::move(ns));
                 break;
             }
-            case ImportDecl::Form::Star: star_import_ = true; break;
+            case ImportDecl::Form::Star:
+                star_import_ = true;
+                break;
             case ImportDecl::Form::Names:
                 for (const ImportName& n : imp->names) {
                     ScopeEntry ext;
@@ -734,8 +779,10 @@ void Lowerer::buildModuleScope() {
             e.type = resolved(g->type);
         } else if (std::holds_alternative<DefineConstDecl>(item.decl)) {
             e.kind = ScopeEntry::Kind::Constant;
-        } else if (std::holds_alternative<StructDecl>(item.decl) || std::holds_alternative<ClassDecl>(item.decl) ||
-                   std::holds_alternative<InterfaceDecl>(item.decl) || std::holds_alternative<EnumDecl>(item.decl) ||
+        } else if (std::holds_alternative<StructDecl>(item.decl) ||
+                   std::holds_alternative<ClassDecl>(item.decl) ||
+                   std::holds_alternative<InterfaceDecl>(item.decl) ||
+                   std::holds_alternative<EnumDecl>(item.decl) ||
                    std::holds_alternative<TypeAliasDecl>(item.decl)) {
             e.kind = ScopeEntry::Kind::Type;
         } else {
@@ -777,13 +824,16 @@ const ScopeEntry* Lowerer::lookupName(const std::string& name) {
             return &it->second;
         }
         if (const auto ref = s_.comp_->findRegistered(name)) {
-            return &(extra_entries_["reg:" + name] = entryOf(*ref, name, declBase(*ref->sym->item).name_span));
+            return &(extra_entries_["reg:" + name] =
+                         entryOf(*ref, name, declBase(*ref->sym->item).name_span));
         }
     }
     return nullptr;
 }
 
-const ScopeEntry* Lowerer::namespaceMember(const ScopeEntry& ns, const std::string& name, const Span& at,
+const ScopeEntry* Lowerer::namespaceMember(const ScopeEntry& ns,
+                                           const std::string& name,
+                                           const Span& at,
                                            bool report) {
     if (s_.comp_ == nullptr) {
         // Standalone namespace: members are external names.
@@ -803,7 +853,9 @@ const ScopeEntry* Lowerer::namespaceMember(const ScopeEntry& ns, const std::stri
     const auto it = m->exports.find(name);
     if (it == m->exports.end()) {
         if (report) {
-            err("E0706", at, std::format("module `{}` has no exported name `{}`", ns.name, name),
+            err("E0706",
+                at,
+                std::format("module `{}` has no exported name `{}`", ns.name, name),
                 "only `export`ed names are visible");
         }
         return nullptr;
@@ -850,7 +902,9 @@ void Lowerer::collectImpls() {
         const Type target = resolved(impl->target);
         if (!isAggregate(target)) {
             if (!isUnknown(target)) {
-                err("E0706", impl->span, std::format("`{}` cannot implement an interface", typeToString(target)),
+                err("E0706",
+                    impl->span,
+                    std::format("`{}` cannot implement an interface", typeToString(target)),
                     "only structs and classes have `impl`");
             }
             continue;
@@ -862,7 +916,9 @@ void Lowerer::collectImpls() {
             continue;
         }
         if (ir->kind != TypeKind::Interface) {
-            err("E0706", impl->span, std::format("`{}` is not an interface", joinPath(impl->interface_path)),
+            err("E0706",
+                impl->span,
+                std::format("`{}` is not an interface", joinPath(impl->interface_path)),
                 "not declared as an interface");
             continue;
         }
@@ -905,11 +961,12 @@ void Lowerer::checkRegistrations() {
         bool ok = false;
         std::string why;
         if (role == "panic") {
-            ok = fn != nullptr && fn->params.size() == 1 && !fn->params[0].is_self && fn->return_type.isVoid();
+            ok = fn != nullptr && fn->params.size() == 1 && !fn->params[0].is_self &&
+                 fn->return_type.isVoid();
             if (ok) {
                 const Type p = resolved(fn->params[0].type);
-                ok = p.kind == TypeKind::Pointer && p.elem && p.elem->kind == TypeKind::Int && p.elem->bits == 8 &&
-                     !p.elem->is_signed;
+                ok = p.kind == TypeKind::Pointer && p.elem && p.elem->kind == TypeKind::Int &&
+                     p.elem->bits == 8 && !p.elem->is_signed;
             }
             why = "`register(panic)` needs `fn(msg: *ui8)` with no return type";
         } else if (role == "allocator") {
@@ -917,15 +974,23 @@ void Lowerer::checkRegistrations() {
                 const Type t = resolved(global->type);
                 ok = isUnknown(t) || t.kind == TypeKind::Interface || hasAllocMethod(t);
             }
-            why = "`register(allocator)` needs a global whose type is an interface or has an `impl` with `alloc`";
+            why = "`register(allocator)` needs a global whose type is an interface or has an "
+                  "`impl` with `alloc`";
+        } else if (role == "start") {
+            ok = fn != nullptr && fn->has_body && fn->params.empty() && fn->return_type.isVoid();
+            why = "`register(start)` needs `fn()` with no parameters and no return type";
         } else {
-            why = std::format("unknown role `{}`; known roles: panic, allocator", role);
+            why = std::format("unknown role `{}`; known roles: panic, allocator, start", role);
         }
         if (!ok) {
-            err("E0503", base.name_span, std::format("`{}` does not fit role `{}`", base.name, role), why);
+            err("E0503",
+                base.name_span,
+                std::format("`{}` does not fit role `{}`", base.name, role),
+                why);
             continue;
         }
-        const auto [it, inserted] = sh_.roles.emplace(role, LowerShared::Role{base.name_span, base.name});
+        const auto [it, inserted] =
+            sh_.roles.emplace(role, LowerShared::Role{base.name_span, base.name});
         if (!inserted) {
             Diagnostic d;
             d.code = "E0502";
@@ -937,7 +1002,14 @@ void Lowerer::checkRegistrations() {
             s_.diag_.report(std::move(d));
             continue;
         }
-        (role == "panic" ? mod_.panic_function : mod_.allocator_global) = s_.qualify(base.name);
+        const std::string qname = s_.qualify(base.name);
+        if (role == "panic") {
+            mod_.panic_function = qname;
+        } else if (role == "allocator") {
+            mod_.allocator_global = qname;
+        } else {
+            mod_.start_function = qname;
+        }
     }
 }
 
@@ -953,27 +1025,35 @@ bool Lowerer::cCompatible(Sema& sema, const Type& t) {
     case TypeKind::FnPtr:
     case TypeKind::Pointer:
         return true;
-    case TypeKind::Enum: return t.elem && t.elem->kind == TypeKind::Int;
+    case TypeKind::Enum:
+        return t.elem && t.elem->kind == TypeKind::Int;
     case TypeKind::Struct: {
         const auto ref = sema.entityByQName(t.path.front());
         if (!ref) {
             return false;
         }
         const Attribute* repr = findAttribute(declBase(*ref->sym->item).attributes, "repr");
-        return repr != nullptr && std::ranges::any_of(repr->args, [](const AttributeArg& a) { return a.text == "c"; });
+        return repr != nullptr &&
+               std::ranges::any_of(repr->args, [](const AttributeArg& a) { return a.text == "c"; });
     }
-    default: return false;
+    default:
+        return false;
     }
 }
 
-void Lowerer::assignSymbol(const std::vector<Attribute>& attrs, bool export_c, bool declared,
-                           const std::string& local_name, const std::vector<Type>& params, std::string& symbol,
+void Lowerer::assignSymbol(const std::vector<Attribute>& attrs,
+                           bool export_c,
+                           bool declared,
+                           const std::string& local_name,
+                           const std::vector<Type>& params,
+                           std::string& symbol,
                            const Span& at) {
     // Priority: export(c) > @mangle on the item > @file(mangle) > --mangle (plan 4.9).
-    std::optional<std::string> plain;  // an explicit/unmangled symbol
+    std::optional<std::string> plain; // an explicit/unmangled symbol
     if (export_c) {
         plain = local_name;
-    } else if (const Attribute* m = findAttribute(attrs, "mangle"); m != nullptr && !m->args.empty()) {
+    } else if (const Attribute* m = findAttribute(attrs, "mangle");
+               m != nullptr && !m->args.empty()) {
         const AttributeArg& a = m->args[0];
         plain = a.kind == AttributeArg::Kind::String ? a.text : local_name;
         if (a.kind == AttributeArg::Kind::Ident && a.text != "none") {
@@ -1056,8 +1136,11 @@ void Lowerer::lowerGlobal(const GlobalDecl& g, const Modifiers& mods) {
     out.register_role = mods.register_role;
     out.span = g.span;
     if (mods.export_c && !cCompatible(s_, out.type)) {
-        err("E0302", g.name_span, std::format("`{}` has a type that C cannot express", typeToString(out.type)),
-            "`export(c)` needs C-compatible types (integers, floats, bool, pointers, `@repr(c)` structs)");
+        err("E0302",
+            g.name_span,
+            std::format("`{}` has a type that C cannot express", typeToString(out.type)),
+            "`export(c)` needs C-compatible types (integers, floats, bool, pointers, `@repr(c)` "
+            "structs)");
     }
     assignSymbol(g.attributes, mods.export_c, mods.declared, g.name, {}, out.symbol, g.name_span);
     if (g.init) {
@@ -1066,7 +1149,9 @@ void Lowerer::lowerGlobal(const GlobalDecl& g, const Modifiers& mods) {
             const hir::Expr* offender = nullptr;
             if (!isConstValue(*init, &offender)) {
                 const hir::Expr& at = offender != nullptr ? *offender : *init;
-                err("E0707", at.span, "global initializer is not a compile-time constant",
+                err("E0707",
+                    at.span,
+                    "global initializer is not a compile-time constant",
                     "globals are statically initialized: no calls, no reads of other globals");
             }
             out.init = std::move(init);
@@ -1075,9 +1160,13 @@ void Lowerer::lowerGlobal(const GlobalDecl& g, const Modifiers& mods) {
     mod_.globals.push_back(std::move(out));
 }
 
-void Lowerer::lowerFunction(const FnDecl& f, const Modifiers& mods, const std::string& qname,
-                            const std::string& local_name, const std::vector<Attribute>& attrs,
-                            const std::string& owner, const Type* self_type) {
+void Lowerer::lowerFunction(const FnDecl& f,
+                            const Modifiers& mods,
+                            const std::string& qname,
+                            const std::string& local_name,
+                            const std::vector<Attribute>& attrs,
+                            const std::string& owner,
+                            const Type* self_type) {
     hir::Function out;
     out.name = qname;
     out.module = s_.key_;
@@ -1089,7 +1178,10 @@ void Lowerer::lowerFunction(const FnDecl& f, const Modifiers& mods, const std::s
         if (lib->args.size() == 1 && lib->args[0].kind == AttributeArg::Kind::String) {
             out.import_library = lib->args[0].text;
         } else {
-            err("E0705", f.name_span, "`@library` takes one string (the OS library name)", "invalid argument");
+            err("E0705",
+                f.name_span,
+                "`@library` takes one string (the OS library name)",
+                "invalid argument");
         }
     }
     out.registered = mods.registered;
@@ -1111,7 +1203,10 @@ void Lowerer::lowerFunction(const FnDecl& f, const Modifiers& mods, const std::s
         Type t;
         if (p.is_self) {
             if (self_type == nullptr) {
-                err("E0709", p.span, "`self` outside of a method", "only class and `impl` methods have `self`");
+                err("E0709",
+                    p.span,
+                    "`self` outside of a method",
+                    "only class and `impl` methods have `self`");
                 t = unknownType();
             } else {
                 t = *self_type;
@@ -1130,17 +1225,24 @@ void Lowerer::lowerFunction(const FnDecl& f, const Modifiers& mods, const std::s
             ok = ok && cCompatible(s_, t);
         }
         if (!ok) {
-            err("E0302", f.name_span, "`export(c)` signature uses a type that C cannot express",
-                "integers, floats, bool, pointers, function pointers, `@repr(c)` structs and integer enums only");
+            err("E0302",
+                f.name_span,
+                "`export(c)` signature uses a type that C cannot express",
+                "integers, floats, bool, pointers, function pointers, `@repr(c)` structs and "
+                "integer enums only");
         }
     }
-    assignSymbol(attrs, mods.export_c, mods.declared, local_name, param_types, out.symbol, f.name_span);
+    assignSymbol(
+        attrs, mods.export_c, mods.declared, local_name, param_types, out.symbol, f.name_span);
     if (f.has_body) {
         lowerBlock(f.body, out.body, false);
-        if (!out.ret.isVoid() && !isUnknown(out.ret) && !terminates(out.body, mod_.panic_function)) {
-            s_.diag_.warning("W0701", f.name_span,
-                             std::format("`{}` can reach the end without returning a value", f.name),
-                             "not every path returns");
+        if (!out.ret.isVoid() && !isUnknown(out.ret) &&
+            !terminates(out.body, mod_.panic_function)) {
+            s_.diag_.warning(
+                "W0701",
+                f.name_span,
+                std::format("`{}` can reach the end without returning a value", f.name),
+                "not every path returns");
         }
     }
     scopes_.pop();
@@ -1155,7 +1257,9 @@ void Lowerer::lowerAggregate(const Item& item) {
         a.opaque = st->opaque;
         a.span = st->span;
         const Attribute* repr = findAttribute(st->attributes, "repr");
-        a.repr_c = repr != nullptr && std::ranges::any_of(repr->args, [](const AttributeArg& x) { return x.text == "c"; });
+        a.repr_c = repr != nullptr && std::ranges::any_of(repr->args, [](const AttributeArg& x) {
+                       return x.text == "c";
+                   });
         for (const FieldDecl& f : st->fields) {
             a.fields.push_back({f.name, resolved(f.type)});
         }
@@ -1167,7 +1271,9 @@ void Lowerer::lowerAggregate(const Item& item) {
         a.opaque = cl->opaque;
         a.span = cl->span;
         const Attribute* repr = findAttribute(cl->attributes, "repr");
-        a.repr_c = repr != nullptr && std::ranges::any_of(repr->args, [](const AttributeArg& x) { return x.text == "c"; });
+        a.repr_c = repr != nullptr && std::ranges::any_of(repr->args, [](const AttributeArg& x) {
+                       return x.text == "c";
+                   });
         if (cl->has_base) {
             Type base = Type::makeNamed(cl->base);
             base.span = cl->name_span;
@@ -1204,7 +1310,8 @@ void Lowerer::checkImpl(const ImplInfo& info) {
             }
         }
         if (found == nullptr) {
-            err("E0713", info.decl->span,
+            err("E0713",
+                info.decl->span,
                 std::format("`impl {} for {}` is missing `{}`", info.iface_q, info.type_q, im.name),
                 "every interface method must be implemented");
             continue;
@@ -1212,15 +1319,20 @@ void Lowerer::checkImpl(const ImplInfo& info) {
         const Type want = fnTypeOf(*iref->owner, im);
         const Type have = fnTypeOf(s_, *found);
         if (!sameType(want, have)) {
-            err("E0713", found->name_span,
-                std::format("`{}` has signature `{}`, the interface declares `{}`", im.name, typeToString(have),
+            err("E0713",
+                found->name_span,
+                std::format("`{}` has signature `{}`, the interface declares `{}`",
+                            im.name,
+                            typeToString(have),
                             typeToString(want)),
                 "signature differs from the interface");
         }
     }
     for (const FnDecl& m : info.decl->methods) {
         if (!iface_names.contains(m.name)) {
-            err("E0713", m.name_span, std::format("`{}` is not a method of `{}`", m.name, info.iface_q),
+            err("E0713",
+                m.name_span,
+                std::format("`{}` is not a method of `{}`", m.name, info.iface_q),
                 "not part of the interface");
         }
     }
@@ -1230,7 +1342,8 @@ void Lowerer::lowerItems() {
     for (const Item& item : s_.program_.items) {
         if (const auto* e = std::get_if<EnumDecl>(&item.decl)) {
             lowerEnum(*e);
-        } else if (std::holds_alternative<StructDecl>(item.decl) || std::holds_alternative<ClassDecl>(item.decl)) {
+        } else if (std::holds_alternative<StructDecl>(item.decl) ||
+                   std::holds_alternative<ClassDecl>(item.decl)) {
             lowerAggregate(item);
         } else if (const auto* in = std::get_if<InterfaceDecl>(&item.decl)) {
             hir::Interface i;
@@ -1251,7 +1364,8 @@ void Lowerer::lowerItems() {
         } else if (const auto* g = std::get_if<GlobalDecl>(&item.decl)) {
             lowerGlobal(*g, item.modifiers);
         } else if (const auto* f = std::get_if<FnDecl>(&item.decl)) {
-            lowerFunction(*f, item.modifiers, s_.qualify(f->name), f->name, f->attributes, {}, nullptr);
+            lowerFunction(
+                *f, item.modifiers, s_.qualify(f->name), f->name, f->attributes, {}, nullptr);
         }
     }
     // Methods after all signatures/types exist.
@@ -1260,7 +1374,13 @@ void Lowerer::lowerItems() {
             const std::string cq = s_.qualify(cl->name);
             const Type self = Type::makePointer(resolved(Type::makeNamed({cl->name})));
             for (const FnDecl& m : cl->methods) {
-                lowerFunction(m, item.modifiers, cq + "." + m.name, cl->name + "." + m.name, m.attributes, cq, &self);
+                lowerFunction(m,
+                              item.modifiers,
+                              cq + "." + m.name,
+                              cl->name + "." + m.name,
+                              m.attributes,
+                              cq,
+                              &self);
             }
         }
     }
@@ -1271,7 +1391,8 @@ void Lowerer::lowerItems() {
         checkImpl(info);
         Type target_type;
         if (const auto tref = s_.entityByQName(info.type_q)) {
-            target_type.kind = tref->sym->kind == Sema::Symbol::Kind::Class ? TypeKind::Class : TypeKind::Struct;
+            target_type.kind =
+                tref->sym->kind == Sema::Symbol::Kind::Class ? TypeKind::Class : TypeKind::Struct;
             target_type.path = {info.type_q};
         }
         const Type self = Type::makePointer(target_type);
@@ -1281,7 +1402,12 @@ void Lowerer::lowerItems() {
         out.type = info.type_q;
         out.span = info.span;
         for (const FnDecl& m : info.decl->methods) {
-            lowerFunction(m, Modifiers{}, info.prefix + m.name, info.prefix + m.name, m.attributes, info.type_q,
+            lowerFunction(m,
+                          Modifiers{},
+                          info.prefix + m.name,
+                          info.prefix + m.name,
+                          m.attributes,
+                          info.type_q,
                           &self);
         }
         if (iref) {
@@ -1296,14 +1422,20 @@ void Lowerer::lowerItems() {
 // ---------------------------------------------------------------------------------------------
 // Statements
 
-hir::LocalId Lowerer::addLocal(const std::string& name, const Type& type, bool is_param, const Span& span) {
+hir::LocalId
+Lowerer::addLocal(const std::string& name, const Type& type, bool is_param, const Span& span) {
     fn_->locals.push_back(hir::Local{name, type, is_param, span});
     return static_cast<hir::LocalId>(fn_->locals.size() - 1);
 }
 
-void Lowerer::bindLocal(const std::string& name, hir::LocalId id, const Type& type, const Span& span) {
+void Lowerer::bindLocal(const std::string& name,
+                        hir::LocalId id,
+                        const Type& type,
+                        const Span& span) {
     if (isRegisteredName(name)) {
-        s_.diag_.warning("W0402", span, std::format("`{}` shadows a registered global", name),
+        s_.diag_.warning("W0402",
+                         span,
+                         std::format("`{}` shadows a registered global", name),
                          "a `register`ed name is hidden here; its role binding is unaffected");
     }
     ScopeEntry e;
@@ -1359,11 +1491,16 @@ hir::LocalId Lowerer::hiddenLocal(const char* prefix, const Type& type, const Sp
     return addLocal(std::format("${}{}", prefix, hidden_counter_++), type, false, span);
 }
 
-void Lowerer::lowerAssign(const Expr& target_ast, const Expr& value_ast, const Span& span,
+void Lowerer::lowerAssign(const Expr& target_ast,
+                          const Expr& value_ast,
+                          const Span& span,
                           std::vector<hir::Stmt>& out) {
     EP target = expr(target_ast, nullptr);
     if (target && !target->lvalue && !isUnknown(target->type)) {
-        err("E0709", target_ast.span, "cannot assign to this expression", "not a place (variable, `*p`, field or element)");
+        err("E0709",
+            target_ast.span,
+            "cannot assign to this expression",
+            "not a place (variable, `*p`, field or element)");
         target.reset();
     }
     const Type want = target ? target->type : unknownType();
@@ -1385,7 +1522,8 @@ void Lowerer::lowerAssign(const Expr& target_ast, const Expr& value_ast, const S
 /// `t op= v`  =>  `t = t op v`; a target with side effects is evaluated once through a pointer.
 void Lowerer::lowerCompound(const Stmt& s, std::vector<hir::Stmt>& out) {
     if (!astHasSideEffects(*s.target)) {
-        const ExprPtr bin = astBinary(s.compound_op, cloneAst(*s.target), cloneAst(*s.expr), s.span);
+        const ExprPtr bin =
+            astBinary(s.compound_op, cloneAst(*s.target), cloneAst(*s.expr), s.span);
         lowerAssign(*s.target, *bin, s.span, out);
         return;
     }
@@ -1394,7 +1532,10 @@ void Lowerer::lowerCompound(const Stmt& s, std::vector<hir::Stmt>& out) {
         return;
     }
     if (!target->lvalue && !isUnknown(target->type)) {
-        err("E0709", s.target->span, "cannot assign to this expression", "not a place (variable, `*p`, field or element)");
+        err("E0709",
+            s.target->span,
+            "cannot assign to this expression",
+            "not a place (variable, `*p`, field or element)");
         return;
     }
     if (isUnknown(target->type)) {
@@ -1413,8 +1554,11 @@ void Lowerer::lowerCompound(const Stmt& s, std::vector<hir::Stmt>& out) {
     out.push_back(std::move(decl));
     bindLocal(name, id, ptr, s.span);
     const ExprPtr place = astUnary(UnaryOp::Deref, astName(name, s.target->span), s.target->span);
-    const ExprPtr bin = astBinary(s.compound_op, astUnary(UnaryOp::Deref, astName(name, s.target->span), s.target->span),
-                                  cloneAst(*s.expr), s.span);
+    const ExprPtr bin =
+        astBinary(s.compound_op,
+                  astUnary(UnaryOp::Deref, astName(name, s.target->span), s.target->span),
+                  cloneAst(*s.expr),
+                  s.span);
     lowerAssign(*place, *bin, s.span, out);
 }
 
@@ -1422,7 +1566,10 @@ void Lowerer::lowerJump(const Stmt& s, std::vector<hir::Stmt>& out) {
     const bool is_break = s.kind == Stmt::Kind::Break;
     const char* word = is_break ? "break" : "continue";
     if (loops_.empty()) {
-        err("E0709", s.span, std::format("`{}` outside of a loop", word), "there is no enclosing loop");
+        err("E0709",
+            s.span,
+            std::format("`{}` outside of a loop", word),
+            "there is no enclosing loop");
         return;
     }
     std::size_t target = loops_.size() - 1;
@@ -1436,7 +1583,9 @@ void Lowerer::lowerJump(const Stmt& s, std::vector<hir::Stmt>& out) {
             }
         }
         if (!found) {
-            err("E0709", s.span, std::format("no enclosing loop is labeled `{}`", s.name),
+            err("E0709",
+                s.span,
+                std::format("no enclosing loop is labeled `{}`", s.name),
                 "write `label: while ...` on the loop first");
             return;
         }
@@ -1455,7 +1604,7 @@ void Lowerer::lowerFor(const Stmt& s, std::vector<hir::Stmt>& out) {
     block.kind = hir::StmtKind::Block;
     block.span = s.span;
     scopes_.push(ScopeKind::Block);
-    defers_.emplace_back();  // the header scope (no defers can land here, but keeps frames aligned)
+    defers_.emplace_back(); // the header scope (no defers can land here, but keeps frames aligned)
     if (s.init) {
         lowerStmt(*s.init, block.body);
     }
@@ -1493,7 +1642,9 @@ void Lowerer::lowerForRange(const Stmt& s, std::vector<hir::Stmt>& out) {
     const Type t = lo->type;
     EP hi = expr(*s.expr2, &t);
     if (!isUnknown(t) && t.kind != TypeKind::Int) {
-        err("E0708", s.expr->span, std::format("a range needs integer bounds, found `{}`", typeToString(t)),
+        err("E0708",
+            s.expr->span,
+            std::format("a range needs integer bounds, found `{}`", typeToString(t)),
             "write `for i in 0..n`");
         return;
     }
@@ -1563,10 +1714,12 @@ void Lowerer::lowerForRange(const Stmt& s, std::vector<hir::Stmt>& out) {
 void Lowerer::lowerSwitch(const Stmt& s, std::vector<hir::Stmt>& out) {
     const Type boolean = Type::makeBool();
     EP scrutinee = expr(*s.expr, nullptr);
-    const bool usable = scrutinee && (scrutinee->type.kind == TypeKind::Int || scrutinee->type.kind == TypeKind::Bool ||
+    const bool usable = scrutinee && (scrutinee->type.kind == TypeKind::Int ||
+                                      scrutinee->type.kind == TypeKind::Bool ||
                                       scrutinee->type.kind == TypeKind::Enum);
     if (scrutinee && !usable && !isUnknown(scrutinee->type)) {
-        err("E0708", s.expr->span,
+        err("E0708",
+            s.expr->span,
             std::format("cannot `switch` on `{}`", typeToString(scrutinee->type)),
             "integers, bools and enums can be switched on; use `if` for other types");
     }
@@ -1599,7 +1752,10 @@ void Lowerer::lowerSwitch(const Stmt& s, std::vector<hir::Stmt>& out) {
         Arm arm;
         if (c.is_default) {
             if (has_default) {
-                err("E0709", c.span, "a `switch` has more than one `default`", "remove the duplicate");
+                err("E0709",
+                    c.span,
+                    "a `switch` has more than one `default`",
+                    "remove the duplicate");
             }
             has_default = true;
             lowerBlock(*c.body, default_body, true);
@@ -1611,10 +1767,14 @@ void Lowerer::lowerSwitch(const Stmt& s, std::vector<hir::Stmt>& out) {
         ExprPtr cond_ast;
         for (const ExprPtr& v : c.values) {
             ExprPtr eq = astBinary(BinaryOp::Eq, astName(name, v->span), cloneAst(*v), v->span);
-            cond_ast = cond_ast ? astBinary(BinaryOp::Or, std::move(cond_ast), std::move(eq), v->span)
-                                : std::move(eq);
+            cond_ast = cond_ast
+                           ? astBinary(BinaryOp::Or, std::move(cond_ast), std::move(eq), v->span)
+                           : std::move(eq);
             if (v->kind == Expr::Kind::IntLiteral && !seen.insert(v->int_value).second) {
-                err("E0709", v->span, "duplicate `case` value", "this value is already handled by an earlier `case`");
+                err("E0709",
+                    v->span,
+                    "duplicate `case` value",
+                    "this value is already handled by an earlier `case`");
             }
         }
         if (cond_ast && usable) {
@@ -1670,7 +1830,10 @@ Lowerer::EP Lowerer::ternaryExpr(const Expr& e, const Type* expected) {
         return nullptr;
     }
     if (a->type.isVoid() || isUnknown(a->type)) {
-        err("E0708", e.span, "the branches of `?:` need a value", "a `void` or unknown expression cannot be selected");
+        err("E0708",
+            e.span,
+            "the branches of `?:` need a value",
+            "a `void` or unknown expression cannot be selected");
         return nullptr;
     }
     const Type t = a->type;
@@ -1702,20 +1865,25 @@ void Lowerer::lowerStmt(const Stmt& s, std::vector<hir::Stmt>& out) {
             init = expr(*s.expr, nullptr);
             t = init ? init->type : unknownType();
             if (init && t.isVoid()) {
-                err("E0708", s.expr->span, std::format("`{}` cannot be bound to a `void` value", s.name),
+                err("E0708",
+                    s.expr->span,
+                    std::format("`{}` cannot be bound to a `void` value", s.name),
                     "the expression has no value");
                 init.reset();
                 t = unknownType();
             }
         } else {
-            err("E0708", s.span, std::format("cannot infer the type of `{}`", s.name),
+            err("E0708",
+                s.span,
+                std::format("cannot infer the type of `{}`", s.name),
                 "write a type (`local x: T`) or an initial value");
             t = unknownType();
         }
         h.kind = hir::StmtKind::Local;
         h.local = addLocal(s.name, t, false, s.span);
         h.value = std::move(init);
-        bindLocal(s.name, h.local, t, s.span);  // after the initializer: `local x = x` sees the outer `x`
+        bindLocal(
+            s.name, h.local, t, s.span); // after the initializer: `local x = x` sees the outer `x`
         break;
     }
     case Stmt::Kind::Assign:
@@ -1729,7 +1897,10 @@ void Lowerer::lowerStmt(const Stmt& s, std::vector<hir::Stmt>& out) {
         h.kind = hir::StmtKind::Return;
         if (s.expr) {
             if (ret_.isVoid()) {
-                err("E0708", s.expr->span, "a `void` function cannot return a value", "remove the value or add `-> T`");
+                err("E0708",
+                    s.expr->span,
+                    "a `void` function cannot return a value",
+                    "remove the value or add `-> T`");
                 (void)expr(*s.expr, nullptr);
             } else {
                 h.value = coerce(expr(*s.expr, &ret_), ret_, s.expr->span);
@@ -1738,7 +1909,10 @@ void Lowerer::lowerStmt(const Stmt& s, std::vector<hir::Stmt>& out) {
                 }
             }
         } else if (!ret_.isVoid() && !isUnknown(ret_)) {
-            err("E0708", s.span, std::format("`return` needs a value of type `{}`", typeToString(ret_)), "missing value");
+            err("E0708",
+                s.span,
+                std::format("`return` needs a value of type `{}`", typeToString(ret_)),
+                "missing value");
         }
         const bool pending = std::ranges::any_of(defers_, [](const auto& f) { return !f.empty(); });
         if (pending) {
@@ -1790,10 +1964,14 @@ void Lowerer::lowerStmt(const Stmt& s, std::vector<hir::Stmt>& out) {
         case Stmt::Kind::Continue:
         case Stmt::Kind::Defer:
         case Stmt::Kind::Local:
-            err("E0709", inner.span, "this statement cannot be deferred",
-                "a `defer` runs when the block is left; it cannot return, jump, declare a variable or defer again");
+            err("E0709",
+                inner.span,
+                "this statement cannot be deferred",
+                "a `defer` runs when the block is left; it cannot return, jump, declare a variable "
+                "or defer again");
             return;
-        default: break;
+        default:
+            break;
         }
         std::vector<hir::Stmt> lowered;
         lowerStmt(inner, lowered);
@@ -1867,7 +2045,9 @@ bool Lowerer::castable(const Type& from, const Type& to) const {
     const auto scalar = [](const Type& t) {
         return t.kind == TypeKind::Int || t.kind == TypeKind::Float || t.kind == TypeKind::Bool;
     };
-    const auto addr = [](const Type& t) { return t.kind == TypeKind::Pointer || t.kind == TypeKind::FnPtr; };
+    const auto addr = [](const Type& t) {
+        return t.kind == TypeKind::Pointer || t.kind == TypeKind::FnPtr;
+    };
     if (from.kind == TypeKind::Enum && from.elem) {
         return castable(*from.elem, to);
     }
@@ -1901,13 +2081,17 @@ Lowerer::EP Lowerer::toInterface(EP value, const Type& iface, const Span& at) {
     const std::string iface_q = iface.path.empty() ? std::string{} : iface.path.front();
     EP pointer;
     std::string type_q;
-    if (value->type.kind == TypeKind::Pointer && value->type.elem && isAggregate(*value->type.elem)) {
+    if (value->type.kind == TypeKind::Pointer && value->type.elem &&
+        isAggregate(*value->type.elem)) {
         type_q = value->type.elem->path.front();
         pointer = std::move(value);
     } else {
         type_q = value->type.path.front();
         if (!value->lvalue) {
-            err("E0709", at, "cannot convert a temporary to an interface", "the interface value points at the object; store it in a variable first");
+            err("E0709",
+                at,
+                "cannot convert a temporary to an interface",
+                "the interface value points at the object; store it in a variable first");
             return nullptr;
         }
         EP addr = mk(hir::ExprKind::AddrOf, Type::makePointer(value->type), at);
@@ -1944,7 +2128,10 @@ Lowerer::EP Lowerer::coerce(EP value, const Type& to, const Span& at) {
             value->type = to;
             return value;
         }
-        err("E0708", at, std::format("`nil` cannot be used as `{}`", typeToString(to)), "only pointers can be `nil`");
+        err("E0708",
+            at,
+            std::format("`nil` cannot be used as `{}`", typeToString(to)),
+            "only pointers can be `nil`");
         return nullptr;
     }
     if (to.kind == TypeKind::Interface) {
@@ -1952,12 +2139,16 @@ Lowerer::EP Lowerer::coerce(EP value, const Type& to, const Span& at) {
             if (sameType(value->type, to)) {
                 return value;
             }
-            err("E0708", at, std::format("expected `{}`, found `{}`", typeToString(to), typeToString(value->type)),
+            err("E0708",
+                at,
+                std::format(
+                    "expected `{}`, found `{}`", typeToString(to), typeToString(value->type)),
                 "different interfaces");
             return nullptr;
         }
-        const bool agg = isAggregate(value->type) ||
-                         (value->type.kind == TypeKind::Pointer && value->type.elem && isAggregate(*value->type.elem));
+        const bool agg =
+            isAggregate(value->type) || (value->type.kind == TypeKind::Pointer &&
+                                         value->type.elem && isAggregate(*value->type.elem));
         if (agg) {
             return toInterface(std::move(value), to, at);
         }
@@ -1967,24 +2158,31 @@ Lowerer::EP Lowerer::coerce(EP value, const Type& to, const Span& at) {
     case ConversionStatus::Ok:
         return castTo(std::move(value), to, true);
     case ConversionStatus::Warn:
-        s_.diag_.warning("W0601", at,
+        s_.diag_.warning("W0601",
+                         at,
                          std::format("`{}` is implicitly converted to `{}`, precision may be lost",
-                                     typeToString(value->type), typeToString(to)),
+                                     typeToString(value->type),
+                                     typeToString(to)),
                          "write `as` to silence");
         return castTo(std::move(value), to, true);
     case ConversionStatus::Signedness:
-        err("E0601", at,
-            std::format("implicit conversion from `{}` to `{}` changes signedness", typeToString(value->type),
+        err("E0601",
+            at,
+            std::format("implicit conversion from `{}` to `{}` changes signedness",
+                        typeToString(value->type),
                         typeToString(to)),
             "write `as`, or use `unsafe { }`");
         return nullptr;
     case ConversionStatus::NeedsCast:
-        err("E0708", at,
+        err("E0708",
+            at,
             std::format("expected `{}`, found `{}`", typeToString(to), typeToString(value->type)),
             r.note.empty() ? "an explicit `as` is required" : r.note);
         return nullptr;
     case ConversionStatus::Invalid:
-        err("E0708", at, std::format("expected `{}`, found `{}`", typeToString(to), typeToString(value->type)),
+        err("E0708",
+            at,
+            std::format("expected `{}`, found `{}`", typeToString(to), typeToString(value->type)),
             "no conversion exists");
         return nullptr;
     }
@@ -2004,12 +2202,15 @@ Lowerer::EP Lowerer::fromConst(const ConstValue& v, const Type* expected, const 
             return e;
         }
         Type t = (want.kind == TypeKind::Int || want.kind == TypeKind::Enum) ? want
-                 : (v.int_value > 2147483647 || v.int_value < -2147483648LL) ? Type::makeInt(64, true)
-                                                                              : Type::makeInt(32, true);
+                 : (v.int_value > 2147483647 || v.int_value < -2147483648LL)
+                     ? Type::makeInt(64, true)
+                     : Type::makeInt(32, true);
         return intConst(static_cast<std::uint64_t>(v.int_value), std::move(t), span);
     }
     case ConstValue::Kind::Float: {
-        EP e = mk(hir::ExprKind::FloatConst, want.kind == TypeKind::Float ? want : Type::makeFloat(64), span);
+        EP e = mk(hir::ExprKind::FloatConst,
+                  want.kind == TypeKind::Float ? want : Type::makeFloat(64),
+                  span);
         e->float_value = v.float_value;
         return e;
     }
@@ -2041,13 +2242,16 @@ Lowerer::EP Lowerer::expr(const Expr& e, const Type* expected) {
             f->float_value = static_cast<double>(e.int_value);
             return f;
         }
-        Type t = want.kind == TypeKind::Int ? want
-                 : e.int_value > 2147483647ULL ? Type::makeInt(64, true) : Type::makeInt(32, true);
+        Type t = want.kind == TypeKind::Int    ? want
+                 : e.int_value > 2147483647ULL ? Type::makeInt(64, true)
+                                               : Type::makeInt(32, true);
         return intConst(e.int_value, std::move(t), e.span);
     }
     case Expr::Kind::FloatLiteral: {
         Type want = expected != nullptr ? resolved(*expected) : unknownType();
-        EP f = mk(hir::ExprKind::FloatConst, want.kind == TypeKind::Float ? want : Type::makeFloat(64), e.span);
+        EP f = mk(hir::ExprKind::FloatConst,
+                  want.kind == TypeKind::Float ? want : Type::makeFloat(64),
+                  e.span);
         f->float_value = e.float_value;
         return f;
     }
@@ -2061,23 +2265,40 @@ Lowerer::EP Lowerer::expr(const Expr& e, const Type* expected) {
         str->text = e.text;
         return str;
     }
-    case Expr::Kind::Name: return nameExpr(e, expected);
-    case Expr::Kind::Field: return fieldExpr(e);
-    case Expr::Kind::Unary: return unaryExpr(e, expected);
-    case Expr::Kind::Binary: return binaryExpr(e, expected);
-    case Expr::Kind::Ternary: return ternaryExpr(e, expected);
-    case Expr::Kind::Cast: return castExpr(e);
-    case Expr::Kind::Call: return callExpr(e, expected);
-    case Expr::Kind::Index: return indexExpr(e);
+    case Expr::Kind::Name:
+        return nameExpr(e, expected);
+    case Expr::Kind::Field:
+        return fieldExpr(e);
+    case Expr::Kind::Unary:
+        return unaryExpr(e, expected);
+    case Expr::Kind::Binary:
+        return binaryExpr(e, expected);
+    case Expr::Kind::Ternary:
+        return ternaryExpr(e, expected);
+    case Expr::Kind::Cast:
+        return castExpr(e);
+    case Expr::Kind::Call:
+        return callExpr(e, expected);
+    case Expr::Kind::Index:
+        return indexExpr(e);
     case Expr::Kind::ArrayList:
-    case Expr::Kind::ArrayRepeat: return arrayExpr(e, expected);
-    case Expr::Kind::StructLiteral: return structLiteral(e);
-    case Expr::Kind::New: return newExpr(e);
+    case Expr::Kind::ArrayRepeat:
+        return arrayExpr(e, expected);
+    case Expr::Kind::StructLiteral:
+        return structLiteral(e);
+    case Expr::Kind::New:
+        return newExpr(e);
     case Expr::Kind::MacroCall:
-        err("E0004", e.span, std::format("macro `{}!` was not expanded", e.text), "no macro with this name is visible; import it");
+        err("E0004",
+            e.span,
+            std::format("macro `{}!` was not expanded", e.text),
+            "no macro with this name is visible; import it");
         return nullptr;
     case Expr::Kind::AsmOperand:
-        err("E0709", e.span, "inline asm operands are only valid inside `__builtin_asm`", "misplaced operand");
+        err("E0709",
+            e.span,
+            "inline asm operands are only valid inside `__builtin_asm`",
+            "misplaced operand");
         return nullptr;
     }
     return nullptr;
@@ -2098,7 +2319,10 @@ Lowerer::EP Lowerer::nameExpr(const Expr& e, const Type* expected) {
             x->member = e.text;
             return x;
         }
-        err("E0706", e.span, std::format("unknown name `{}`", e.text), "not declared in this scope");
+        err("E0706",
+            e.span,
+            std::format("unknown name `{}`", e.text),
+            "not declared in this scope");
         return nullptr;
     }
     return fromEntry(*entry, e, expected);
@@ -2121,7 +2345,8 @@ Lowerer::EP Lowerer::fromEntry(const ScopeEntry& entry, const Expr& at, const Ty
     }
     case ScopeEntry::Kind::Function: {
         Sema& owner = entry.owner != nullptr ? *entry.owner : s_;
-        EP f = mk(hir::ExprKind::FuncRef, fnTypeOf(owner, std::get<FnDecl>(entry.item->decl)), at.span);
+        EP f = mk(
+            hir::ExprKind::FuncRef, fnTypeOf(owner, std::get<FnDecl>(entry.item->decl)), at.span);
         f->text = entry.qname.empty() ? entry.name : entry.qname;
         return f;
     }
@@ -2136,10 +2361,15 @@ Lowerer::EP Lowerer::fromEntry(const ScopeEntry& entry, const Expr& at, const Ty
         return v ? fromConst(*v, expected, at.span) : nullptr;
     }
     case ScopeEntry::Kind::Type:
-        err("E0706", at.span, std::format("`{}` is a type, not a value", entry.name), "a value is expected here");
+        err("E0706",
+            at.span,
+            std::format("`{}` is a type, not a value", entry.name),
+            "a value is expected here");
         return nullptr;
     case ScopeEntry::Kind::Namespace:
-        err("E0706", at.span, std::format("`{}` is a module, not a value", entry.name),
+        err("E0706",
+            at.span,
+            std::format("`{}` is a module, not a value", entry.name),
             std::format("use `{}.name`", entry.name));
         return nullptr;
     case ScopeEntry::Kind::External: {
@@ -2169,7 +2399,8 @@ Lowerer::EP Lowerer::fieldExpr(const Expr& e) {
             et.span = e.span;
             const Type enum_type = resolvedIn(owner, et);
             EP out = fromConst(*v, nullptr, e.span);
-            if (out && out->kind != hir::ExprKind::FloatConst && out->kind != hir::ExprKind::BoolConst) {
+            if (out && out->kind != hir::ExprKind::FloatConst &&
+                out->kind != hir::ExprKind::BoolConst) {
                 out->type = enum_type;
             }
             return out;
@@ -2192,7 +2423,9 @@ Lowerer::EP Lowerer::fieldExpr(const Expr& e) {
         agg = *agg.elem;
     }
     if (!isAggregate(agg)) {
-        err("E0709", e.span, std::format("`{}` has no field `{}`", typeToString(base->type), e.text),
+        err("E0709",
+            e.span,
+            std::format("`{}` has no field `{}`", typeToString(base->type), e.text),
             "only structs and classes have fields");
         return nullptr;
     }
@@ -2200,7 +2433,8 @@ Lowerer::EP Lowerer::fieldExpr(const Expr& e) {
     collectFields(agg.path.front(), fields);
     for (std::size_t i = 0; i < fields.size(); ++i) {
         if (fields[i].decl->name == e.text) {
-            EP f = mk(hir::ExprKind::Field, resolvedIn(*fields[i].owner, fields[i].decl->type), e.span);
+            EP f = mk(
+                hir::ExprKind::Field, resolvedIn(*fields[i].owner, fields[i].decl->type), e.span);
             f->text = e.text;
             f->index = static_cast<std::uint32_t>(i);
             f->through_pointer = through;
@@ -2209,7 +2443,10 @@ Lowerer::EP Lowerer::fieldExpr(const Expr& e) {
             return f;
         }
     }
-    err("E0709", e.span, std::format("`{}` has no field `{}`", typeToString(agg), e.text), "unknown field");
+    err("E0709",
+        e.span,
+        std::format("`{}` has no field `{}`", typeToString(agg), e.text),
+        "unknown field");
     return nullptr;
 }
 
@@ -2228,8 +2465,11 @@ Lowerer::EP Lowerer::unaryExpr(const Expr& e, const Type* expected) {
         if (!v || isUnknown(v->type)) {
             return v;
         }
-        if (!(v->type.kind == TypeKind::Float || (v->type.kind == TypeKind::Int && v->type.is_signed))) {
-            err("E0709", e.span, std::format("cannot negate `{}`", typeToString(v->type)),
+        if (!(v->type.kind == TypeKind::Float ||
+              (v->type.kind == TypeKind::Int && v->type.is_signed))) {
+            err("E0709",
+                e.span,
+                std::format("cannot negate `{}`", typeToString(v->type)),
                 "negation needs a signed integer or a float");
             return nullptr;
         }
@@ -2244,7 +2484,9 @@ Lowerer::EP Lowerer::unaryExpr(const Expr& e, const Type* expected) {
             return v;
         }
         if (v->type.kind != TypeKind::Int) {
-            err("E0709", e.span, std::format("cannot apply `~` to `{}`", typeToString(v->type)),
+            err("E0709",
+                e.span,
+                std::format("cannot apply `~` to `{}`", typeToString(v->type)),
                 "bitwise not needs an integer");
             return nullptr;
         }
@@ -2273,7 +2515,10 @@ Lowerer::EP Lowerer::unaryExpr(const Expr& e, const Type* expected) {
             return v;
         }
         if (v->type.kind != TypeKind::Pointer || !v->type.elem) {
-            err("E0709", e.span, std::format("cannot dereference `{}`", typeToString(v->type)), "not a pointer");
+            err("E0709",
+                e.span,
+                std::format("cannot dereference `{}`", typeToString(v->type)),
+                "not a pointer");
             return nullptr;
         }
         if (v->type.elem->isVoid()) {
@@ -2291,13 +2536,18 @@ Lowerer::EP Lowerer::unaryExpr(const Expr& e, const Type* expected) {
             return nullptr;
         }
         if (v->kind == hir::ExprKind::FuncRef) {
-            return v;  // `&fn` is the function pointer itself
+            return v; // `&fn` is the function pointer itself
         }
         if (!isUnknown(v->type) && !v->lvalue) {
-            err("E0709", e.span, "cannot take the address of this expression", "not a place (variable, `*p`, field or element)");
+            err("E0709",
+                e.span,
+                "cannot take the address of this expression",
+                "not a place (variable, `*p`, field or element)");
             return nullptr;
         }
-        EP a = mk(hir::ExprKind::AddrOf, isUnknown(v->type) ? unknownType() : Type::makePointer(v->type), e.span);
+        EP a = mk(hir::ExprKind::AddrOf,
+                  isUnknown(v->type) ? unknownType() : Type::makePointer(v->type),
+                  e.span);
         a->lhs = std::move(v);
         return a;
     }
@@ -2358,9 +2608,12 @@ Lowerer::EP Lowerer::binaryExpr(const Expr& e, const Type* expected) {
         // The result has the type of the left operand; the count may be any integer type and is
         // converted to it. A count >= the bit width yields 0 (`>>` of a negative signed value: -1).
         if (l->type.kind != TypeKind::Int || r->type.kind != TypeKind::Int) {
-            err("E0709", e.span,
-                std::format("operator `{}` does not apply to `{}` and `{}`", binaryOpName(op),
-                            typeToString(l->type), typeToString(r->type)),
+            err("E0709",
+                e.span,
+                std::format("operator `{}` does not apply to `{}` and `{}`",
+                            binaryOpName(op),
+                            typeToString(l->type),
+                            typeToString(r->type)),
                 "shifts need integer operands");
             return nullptr;
         }
@@ -2379,8 +2632,11 @@ Lowerer::EP Lowerer::binaryExpr(const Expr& e, const Type* expected) {
     if (isNumeric(l->type) && isNumeric(r->type)) {
         const CommonTypeResult c = commonBinaryType(l->type, r->type, ptrBits());
         if (c.status == ConversionStatus::Signedness) {
-            err("E0601", e.span,
-                std::format("`{}` and `{}` have different signedness", typeToString(l->type), typeToString(r->type)),
+            err("E0601",
+                e.span,
+                std::format("`{}` and `{}` have different signedness",
+                            typeToString(l->type),
+                            typeToString(r->type)),
                 "write `as` on one side");
             return nullptr;
         }
@@ -2389,10 +2645,12 @@ Lowerer::EP Lowerer::binaryExpr(const Expr& e, const Type* expected) {
             return nullptr;
         }
         if (c.warn) {
-            s_.diag_.warning("W0601", e.span,
-                             std::format("signed integer is implicitly converted to `{}`, precision may be lost",
-                                         typeToString(c.type)),
-                             "write `as` to silence");
+            s_.diag_.warning(
+                "W0601",
+                e.span,
+                std::format("signed integer is implicitly converted to `{}`, precision may be lost",
+                            typeToString(c.type)),
+                "write `as` to silence");
         }
         common = c.type;
         l = castTo(std::move(l), common, true);
@@ -2407,16 +2665,22 @@ Lowerer::EP Lowerer::binaryExpr(const Expr& e, const Type* expected) {
         const bool eq_only = op == BinaryOp::Eq || op == BinaryOp::Ne;
         const bool scalar = l->type.kind == TypeKind::Pointer || l->type.kind == TypeKind::Bool ||
                             l->type.kind == TypeKind::Enum || l->type.kind == TypeKind::FnPtr;
-        if (!sameType(l->type, r->type) || !scalar || (!eq_only && l->type.kind != TypeKind::Enum)) {
-            err("E0709", e.span,
-                std::format("cannot compare `{}` with `{}`", typeToString(l->type), typeToString(r->type)),
+        if (!sameType(l->type, r->type) || !scalar ||
+            (!eq_only && l->type.kind != TypeKind::Enum)) {
+            err("E0709",
+                e.span,
+                std::format(
+                    "cannot compare `{}` with `{}`", typeToString(l->type), typeToString(r->type)),
                 "operands must have the same comparable type");
             return nullptr;
         }
         common = l->type;
     } else {
-        err("E0709", e.span,
-            std::format("operator `{}` does not apply to `{}` and `{}`", binaryOpName(op), typeToString(l->type),
+        err("E0709",
+            e.span,
+            std::format("operator `{}` does not apply to `{}` and `{}`",
+                        binaryOpName(op),
+                        typeToString(l->type),
                         typeToString(r->type)),
             "arithmetic needs numeric operands; cast pointers with `as usize`");
         return nullptr;
@@ -2427,13 +2691,15 @@ Lowerer::EP Lowerer::binaryExpr(const Expr& e, const Type* expected) {
     }
     if ((op == BinaryOp::BitAnd || op == BinaryOp::BitOr || op == BinaryOp::BitXor) &&
         common.kind != TypeKind::Int) {
-        err("E0709", e.span, std::format("operator `{}` needs integer operands", binaryOpName(op)),
+        err("E0709",
+            e.span,
+            std::format("operator `{}` needs integer operands", binaryOpName(op)),
             "bitwise operators apply to integers only");
         return nullptr;
     }
     EP b = mk(hir::ExprKind::Binary, is_cmp ? boolean : common, e.span);
     b->binary_op = op;
-    b->checked =(op == BinaryOp::Div || op == BinaryOp::Mod) && common.kind == TypeKind::Int;
+    b->checked = (op == BinaryOp::Div || op == BinaryOp::Mod) && common.kind == TypeKind::Int;
     b->lhs = std::move(l);
     b->rhs = std::move(r);
     return b;
@@ -2445,12 +2711,15 @@ Lowerer::EP Lowerer::castExpr(const Expr& e) {
     if (!v) {
         return nullptr;
     }
-    if (v->kind == hir::ExprKind::Nil && (to.kind == TypeKind::Pointer || to.kind == TypeKind::FnPtr)) {
+    if (v->kind == hir::ExprKind::Nil &&
+        (to.kind == TypeKind::Pointer || to.kind == TypeKind::FnPtr)) {
         v->type = to;
         return v;
     }
     if (!castable(v->type, to)) {
-        err("E0709", e.span, std::format("cannot cast `{}` to `{}`", typeToString(v->type), typeToString(to)),
+        err("E0709",
+            e.span,
+            std::format("cannot cast `{}` to `{}`", typeToString(v->type), typeToString(to)),
             "no explicit conversion exists");
         return nullptr;
     }
@@ -2459,11 +2728,15 @@ Lowerer::EP Lowerer::castExpr(const Expr& e) {
     return c;
 }
 
-bool Lowerer::lowerArgs(const Expr& call, const std::vector<Type>& params, std::vector<EP>& out,
+bool Lowerer::lowerArgs(const Expr& call,
+                        const std::vector<Type>& params,
+                        std::vector<EP>& out,
                         const std::string& callee) {
     if (call.args.size() != params.size()) {
-        err("E0710", call.span,
-            std::format("`{}` takes {} argument(s), {} given", callee, params.size(), call.args.size()),
+        err("E0710",
+            call.span,
+            std::format(
+                "`{}` takes {} argument(s), {} given", callee, params.size(), call.args.size()),
             "wrong number of arguments");
         for (const ExprPtr& a : call.args) {
             (void)expr(*a, nullptr);
@@ -2486,10 +2759,13 @@ Lowerer::EP Lowerer::syscallExpr(const Expr& e) {
     }
     const auto limit = syscallMaxArgs(s_.config_.target);
     if (limit && e.args.size() - 1 > *limit) {
-        err("E0710", e.span,
-            std::format("`syscall` has {} argument(s) after the number, `{}` allows at most {}", e.args.size() - 1,
-                        s_.config_.target.triple.empty() ? s_.config_.target.os + "/" + s_.config_.target.arch
-                                                         : s_.config_.target.triple,
+        err("E0710",
+            e.span,
+            std::format("`syscall` has {} argument(s) after the number, `{}` allows at most {}",
+                        e.args.size() - 1,
+                        s_.config_.target.triple.empty()
+                            ? s_.config_.target.os + "/" + s_.config_.target.arch
+                            : s_.config_.target.triple,
                         *limit),
             "too many arguments for this target");
         return nullptr;
@@ -2502,8 +2778,12 @@ Lowerer::EP Lowerer::syscallExpr(const Expr& e) {
             ok = false;
             continue;
         }
-        if (!isUnknown(v->type) && v->type.kind != TypeKind::Int && v->type.kind != TypeKind::Pointer) {
-            err("E0708", a->span, std::format("`syscall` arguments are integers or pointers, found `{}`", typeToString(v->type)),
+        if (!isUnknown(v->type) && v->type.kind != TypeKind::Int &&
+            v->type.kind != TypeKind::Pointer) {
+            err("E0708",
+                a->span,
+                std::format("`syscall` arguments are integers or pointers, found `{}`",
+                            typeToString(v->type)),
                 "integer or `*T` expected");
             ok = false;
         }
@@ -2521,9 +2801,11 @@ std::optional<std::uint32_t> Lowerer::memoryOrder(const Expr& arg) {
     if (!v) {
         return std::nullopt;
     }
-    if (v->kind != hir::ExprKind::IntConst || v->type.kind != TypeKind::Enum || v->type.path.empty() ||
-        v->type.path.front() != "MemoryOrder") {
-        err("E0708", arg.span, "the memory order must be a `MemoryOrder` member",
+    if (v->kind != hir::ExprKind::IntConst || v->type.kind != TypeKind::Enum ||
+        v->type.path.empty() || v->type.path.front() != "MemoryOrder") {
+        err("E0708",
+            arg.span,
+            "the memory order must be a `MemoryOrder` member",
             "write `MemoryOrder.seqCst` (a compile-time constant)");
         return std::nullopt;
     }
@@ -2541,7 +2823,10 @@ Lowerer::EP Lowerer::builtinCall(const Expr& e, const std::string& name) {
     }
     if (name == "__builtin_fence") {
         if (e.args.size() != 1) {
-            err("E0710", e.span, "`__builtin_fence` takes the memory order", "wrong number of arguments");
+            err("E0710",
+                e.span,
+                "`__builtin_fence` takes the memory order",
+                "wrong number of arguments");
             return nullptr;
         }
         const auto order = memoryOrder(*e.args[0]);
@@ -2549,7 +2834,10 @@ Lowerer::EP Lowerer::builtinCall(const Expr& e, const std::string& name) {
             return nullptr;
         }
         if (*order == 0) {
-            err("E0708", e.args[0]->span, "a fence cannot be `relaxed`", "use acquire, release, acqRel or seqCst");
+            err("E0708",
+                e.args[0]->span,
+                "a fence cannot be `relaxed`",
+                "use acquire, release, acqRel or seqCst");
             return nullptr;
         }
         EP f = mk(hir::ExprKind::Fence, Type::makeVoid(), e.span);
@@ -2557,12 +2845,17 @@ Lowerer::EP Lowerer::builtinCall(const Expr& e, const std::string& name) {
         return f;
     }
     if (!(is_load || is_store || is_xchg || is_cas || is_add)) {
-        err("E0706", e.lhs->span, std::format("unknown builtin `{}`", name), "not in the closed builtin list");
+        err("E0706",
+            e.lhs->span,
+            std::format("unknown builtin `{}`", name),
+            "not in the closed builtin list");
         return nullptr;
     }
     const std::size_t want_args = is_load ? 2 : (is_cas ? 4 : 3);
     if (e.args.size() != want_args) {
-        err("E0710", e.span, std::format("`{}` takes {} arguments, {} given", name, want_args, e.args.size()),
+        err("E0710",
+            e.span,
+            std::format("`{}` takes {} arguments, {} given", name, want_args, e.args.size()),
             "wrong number of arguments");
         for (const ExprPtr& a : e.args) {
             (void)expr(*a, nullptr);
@@ -2577,15 +2870,20 @@ Lowerer::EP Lowerer::builtinCall(const Expr& e, const std::string& name) {
         return mk(hir::ExprKind::AtomicLoad, unknownType(), e.span);
     }
     if (ptr->type.kind != TypeKind::Pointer || !ptr->type.elem) {
-        err("E0708", e.args[0]->span, std::format("atomics take a pointer, found `{}`", typeToString(ptr->type)),
+        err("E0708",
+            e.args[0]->span,
+            std::format("atomics take a pointer, found `{}`", typeToString(ptr->type)),
             "pointer expected");
         return nullptr;
     }
     const Type elem = *ptr->type.elem;
-    const bool ok_type = elem.kind == TypeKind::Int || elem.kind == TypeKind::Bool || elem.kind == TypeKind::Pointer;
+    const bool ok_type =
+        elem.kind == TypeKind::Int || elem.kind == TypeKind::Bool || elem.kind == TypeKind::Pointer;
     if (!ok_type) {
-        err("E0708", e.args[0]->span,
-            std::format("atomics work on integers, `bool` and pointers, not `{}`", typeToString(elem)),
+        err("E0708",
+            e.args[0]->span,
+            std::format("atomics work on integers, `bool` and pointers, not `{}`",
+                        typeToString(elem)),
             "unsupported atomic type");
         return nullptr;
     }
@@ -2598,16 +2896,22 @@ Lowerer::EP Lowerer::builtinCall(const Expr& e, const std::string& name) {
         return nullptr;
     }
     if (is_load && (*order == 2 || *order == 3)) {
-        err("E0708", e.args[want_args - 1]->span, "a load cannot be `release` or `acqRel`",
+        err("E0708",
+            e.args[want_args - 1]->span,
+            "a load cannot be `release` or `acqRel`",
             "use relaxed, acquire or seqCst");
         return nullptr;
     }
     if (is_store && (*order == 1 || *order == 3)) {
-        err("E0708", e.args[want_args - 1]->span, "a store cannot be `acquire` or `acqRel`",
+        err("E0708",
+            e.args[want_args - 1]->span,
+            "a store cannot be `acquire` or `acqRel`",
             "use relaxed, release or seqCst");
         return nullptr;
     }
-    const auto valueArg = [&](std::size_t i) { return coerce(expr(*e.args[i], &elem), elem, e.args[i]->span); };
+    const auto valueArg = [&](std::size_t i) {
+        return coerce(expr(*e.args[i], &elem), elem, e.args[i]->span);
+    };
     hir::ExprKind kind = hir::ExprKind::AtomicLoad;
     Type result = elem;
     if (is_store) {
@@ -2641,7 +2945,10 @@ Lowerer::EP Lowerer::builtinCall(const Expr& e, const std::string& name) {
 
 Lowerer::EP Lowerer::asmCall(const Expr& e) {
     if (e.args.empty() || e.args[0]->kind != Expr::Kind::StringLiteral) {
-        err("E0709", e.span, "`__builtin_asm` needs a template string first", "write `__builtin_asm(\"nop\")`");
+        err("E0709",
+            e.span,
+            "`__builtin_asm` needs a template string first",
+            "write `__builtin_asm(\"nop\")`");
         return nullptr;
     }
     EP out = mk(hir::ExprKind::Asm, Type::makeVoid(), e.span);
@@ -2651,7 +2958,7 @@ Lowerer::EP Lowerer::asmCall(const Expr& e) {
         const Expr& a = *e.args[i];
         if (a.kind == Expr::Kind::AsmOperand) {
             hir::AsmOperand op;
-            op.kind = a.text == "in" ? hir::AsmOperand::Kind::In
+            op.kind = a.text == "in"    ? hir::AsmOperand::Kind::In
                       : a.text == "out" ? hir::AsmOperand::Kind::Out
                                         : hir::AsmOperand::Kind::InOut;
             if (a.lhs->kind == Expr::Kind::StringLiteral) {
@@ -2659,7 +2966,10 @@ Lowerer::EP Lowerer::asmCall(const Expr& e) {
             } else if (a.lhs->kind == Expr::Kind::Name && a.lhs->text == "reg") {
                 op.reg = "reg";
             } else {
-                err("E0709", a.lhs->span, "register must be `reg` or a register name string", "invalid register");
+                err("E0709",
+                    a.lhs->span,
+                    "register must be `reg` or a register name string",
+                    "invalid register");
                 ok = false;
                 continue;
             }
@@ -2668,15 +2978,21 @@ Lowerer::EP Lowerer::asmCall(const Expr& e) {
                 ok = false;
                 continue;
             }
-            if (!isUnknown(v->type) && v->type.kind != TypeKind::Int && v->type.kind != TypeKind::Pointer &&
-                v->type.kind != TypeKind::Float && v->type.kind != TypeKind::FnPtr) {
-                err("E0708", a.rhs->span, std::format("asm operands are scalars, found `{}`", typeToString(v->type)),
+            if (!isUnknown(v->type) && v->type.kind != TypeKind::Int &&
+                v->type.kind != TypeKind::Pointer && v->type.kind != TypeKind::Float &&
+                v->type.kind != TypeKind::FnPtr) {
+                err("E0708",
+                    a.rhs->span,
+                    std::format("asm operands are scalars, found `{}`", typeToString(v->type)),
                     "integer, float or pointer expected");
                 ok = false;
                 continue;
             }
             if (op.kind != hir::AsmOperand::Kind::In && !v->lvalue) {
-                err("E0709", a.rhs->span, "an asm output needs a place", "write a variable or `*p`");
+                err("E0709",
+                    a.rhs->span,
+                    "an asm output needs a place",
+                    "write a variable or `*p`");
                 ok = false;
                 continue;
             }
@@ -2686,7 +3002,10 @@ Lowerer::EP Lowerer::asmCall(const Expr& e) {
                    (a.lhs->text == "clobber" || a.lhs->text == "options")) {
             for (const ExprPtr& arg : a.args) {
                 if (arg->kind != Expr::Kind::StringLiteral) {
-                    err("E0709", arg->span, std::format("`{}` takes strings", a.lhs->text), "string expected");
+                    err("E0709",
+                        arg->span,
+                        std::format("`{}` takes strings", a.lhs->text),
+                        "string expected");
                     ok = false;
                     continue;
                 }
@@ -2697,13 +3016,17 @@ Lowerer::EP Lowerer::asmCall(const Expr& e) {
                 } else if (arg->text == "noreturn") {
                     out->noreturn = true;
                 } else {
-                    err("E0709", arg->span, std::format("unknown asm option `{}`", arg->text),
+                    err("E0709",
+                        arg->span,
+                        std::format("unknown asm option `{}`", arg->text),
                         "known options: nomem, noreturn");
                     ok = false;
                 }
             }
         } else {
-            err("E0709", a.span, "unexpected `__builtin_asm` argument",
+            err("E0709",
+                a.span,
+                "unexpected `__builtin_asm` argument",
                 "operands are `in(..)`, `out(..)`, `inout(..)`, `clobber(..)`, `options(..)`");
             ok = false;
         }
@@ -2742,7 +3065,8 @@ std::optional<Lowerer::MethodRef> Lowerer::findMethod(const Type& agg, const std
             for (const FnDecl& m : c->methods) {
                 if (m.name == name) {
                     MethodRef r;
-                    r.kind = (m.is_virtual || m.is_override) ? MethodRef::Kind::Virtual : MethodRef::Kind::Direct;
+                    r.kind = (m.is_virtual || m.is_override) ? MethodRef::Kind::Virtual
+                                                             : MethodRef::Kind::Direct;
                     r.fn_name = cur + "." + name;
                     r.decl = &m;
                     r.owner = ref->owner;
@@ -2809,7 +3133,9 @@ Lowerer::EP Lowerer::methodCall(const Expr& e, const Expr& recv_ast) {
         agg = *agg.elem;
     }
     if (agg.kind != TypeKind::Interface && !isAggregate(agg)) {
-        err("E0709", callee.span, std::format("`{}` has no method `{}`", typeToString(recv->type), callee.text),
+        err("E0709",
+            callee.span,
+            std::format("`{}` has no method `{}`", typeToString(recv->type), callee.text),
             "only structs, classes and interfaces have methods");
         return nullptr;
     }
@@ -2843,7 +3169,10 @@ Lowerer::EP Lowerer::methodCall(const Expr& e, const Expr& recv_ast) {
     }
     const auto m = findMethod(agg, callee.text);
     if (!m) {
-        err("E0709", callee.span, std::format("`{}` has no method `{}`", typeToString(agg), callee.text), "unknown method");
+        err("E0709",
+            callee.span,
+            std::format("`{}` has no method `{}`", typeToString(agg), callee.text),
+            "unknown method");
         for (const ExprPtr& a : e.args) {
             (void)expr(*a, nullptr);
         }
@@ -2862,7 +3191,7 @@ Lowerer::EP Lowerer::methodCall(const Expr& e, const Expr& recv_ast) {
     }
 
     if (m->kind == MethodRef::Kind::Itable) {
-        if (through) {  // pointer to an interface value: call through the value
+        if (through) { // pointer to an interface value: call through the value
             EP d = mk(hir::ExprKind::Deref, agg, recv->span);
             d->lvalue = true;
             d->lhs = std::move(recv);
@@ -2881,14 +3210,20 @@ Lowerer::EP Lowerer::methodCall(const Expr& e, const Expr& recv_ast) {
         self = std::move(recv);
     } else {
         if (!recv->lvalue) {
-            err("E0709", recv_ast.span, "a method needs an addressable receiver", "store the value in a variable first");
+            err("E0709",
+                recv_ast.span,
+                "a method needs an addressable receiver",
+                "store the value in a variable first");
             return nullptr;
         }
         EP addr = mk(hir::ExprKind::AddrOf, Type::makePointer(agg), recv->span);
         addr->lhs = std::move(recv);
         self = std::move(addr);
     }
-    EP c = mk(m->kind == MethodRef::Kind::Virtual ? hir::ExprKind::CallVirtual : hir::ExprKind::Call, ret, e.span);
+    EP c =
+        mk(m->kind == MethodRef::Kind::Virtual ? hir::ExprKind::CallVirtual : hir::ExprKind::Call,
+           ret,
+           e.span);
     c->text = m->fn_name;
     c->index = m->index;
     c->member = callee.text;
@@ -2956,8 +3291,9 @@ Lowerer::EP Lowerer::callExpr(const Expr& e, const Type* expected) {
             if (EP c = callEntry(e, *entry, name)) {
                 return c;
             }
-            if (entry->kind == ScopeEntry::Kind::Function || entry->kind == ScopeEntry::Kind::External) {
-                return nullptr;  // diagnosed
+            if (entry->kind == ScopeEntry::Kind::Function ||
+                entry->kind == ScopeEntry::Kind::External) {
+                return nullptr; // diagnosed
             }
         } else if (star_import_) {
             EP c = mk(hir::ExprKind::ExternalCall, unknownType(), e.span);
@@ -2970,7 +3306,8 @@ Lowerer::EP Lowerer::callExpr(const Expr& e, const Type* expected) {
         }
     } else if (callee.kind == Expr::Kind::Field) {
         // `ns.fn(...)` (module namespace) or `value.method(...)`.
-        if (const ScopeEntry* head = chainEntry(*callee.lhs); head != nullptr && head->kind == ScopeEntry::Kind::Namespace) {
+        if (const ScopeEntry* head = chainEntry(*callee.lhs);
+            head != nullptr && head->kind == ScopeEntry::Kind::Namespace) {
             const ScopeEntry* member = namespaceMember(*head, callee.text, callee.span, true);
             if (member == nullptr) {
                 return nullptr;
@@ -2978,11 +3315,13 @@ Lowerer::EP Lowerer::callExpr(const Expr& e, const Type* expected) {
             if (EP c = callEntry(e, *member, callee.text)) {
                 return c;
             }
-            if (member->kind == ScopeEntry::Kind::Function || member->kind == ScopeEntry::Kind::External) {
+            if (member->kind == ScopeEntry::Kind::Function ||
+                member->kind == ScopeEntry::Kind::External) {
                 return nullptr;
             }
         }
-        if (const ScopeEntry* ent = chainEntry(callee); ent == nullptr || ent->kind == ScopeEntry::Kind::Local ||
+        if (const ScopeEntry* ent = chainEntry(callee); ent == nullptr ||
+                                                        ent->kind == ScopeEntry::Kind::Local ||
                                                         ent->kind == ScopeEntry::Kind::Global) {
             return methodCall(e, *callee.lhs);
         }
@@ -3001,7 +3340,10 @@ Lowerer::EP Lowerer::callExpr(const Expr& e, const Type* expected) {
         return c;
     }
     if (f->type.kind != TypeKind::FnPtr || !f->type.ret) {
-        err("E0709", e.span, std::format("`{}` is not callable", typeToString(f->type)), "expected a function or function pointer");
+        err("E0709",
+            e.span,
+            std::format("`{}` is not callable", typeToString(f->type)),
+            "expected a function or function pointer");
         return nullptr;
     }
     std::vector<EP> args;
@@ -3009,7 +3351,9 @@ Lowerer::EP Lowerer::callExpr(const Expr& e, const Type* expected) {
     if (!lowerArgs(e, f->type.params, args, label)) {
         return nullptr;
     }
-    EP c = mk(f->kind == hir::ExprKind::FuncRef ? hir::ExprKind::Call : hir::ExprKind::CallIndirect, *f->type.ret, e.span);
+    EP c = mk(f->kind == hir::ExprKind::FuncRef ? hir::ExprKind::Call : hir::ExprKind::CallIndirect,
+              *f->type.ret,
+              e.span);
     if (f->kind == hir::ExprKind::FuncRef) {
         c->text = f->text;
     } else {
@@ -3032,12 +3376,16 @@ Lowerer::EP Lowerer::indexExpr(const Expr& e) {
         return i;
     }
     if (!isUnknown(idx->type) && idx->type.kind != TypeKind::Int) {
-        err("E0708", e.rhs->span, std::format("index must be an integer, found `{}`", typeToString(idx->type)),
+        err("E0708",
+            e.rhs->span,
+            std::format("index must be an integer, found `{}`", typeToString(idx->type)),
             "integer expected");
         return nullptr;
     }
     if (base->type.kind != TypeKind::Array && base->type.kind != TypeKind::Pointer) {
-        err("E0709", e.span, std::format("`{}` cannot be indexed", typeToString(base->type)),
+        err("E0709",
+            e.span,
+            std::format("`{}` cannot be indexed", typeToString(base->type)),
             "only arrays and pointers can be indexed");
         return nullptr;
     }
@@ -3051,9 +3399,12 @@ Lowerer::EP Lowerer::indexExpr(const Expr& e) {
     }
     if (is_array && e.rhs->kind == Expr::Kind::IntLiteral) {
         if (const auto len = arrayLength(s_, base->type); len && e.rhs->int_value >= *len) {
-            err("E0701", e.rhs->span,
-                std::format("index {} is out of bounds for `{}` (length {})", e.rhs->int_value,
-                            typeToString(base->type), *len),
+            err("E0701",
+                e.rhs->span,
+                std::format("index {} is out of bounds for `{}` (length {})",
+                            e.rhs->int_value,
+                            typeToString(base->type),
+                            *len),
                 "constant index out of range");
             return nullptr;
         }
@@ -3076,7 +3427,10 @@ Lowerer::EP Lowerer::arrayExpr(const Expr& e, const Type* expected) {
             return nullptr;
         }
         if (n->kind != ConstValue::Kind::Int || n->int_value < 0) {
-            err("E0707", e.rhs->span, "array length must be a non-negative integer constant", "invalid length");
+            err("E0707",
+                e.rhs->span,
+                "array length must be a non-negative integer constant",
+                "invalid length");
             return nullptr;
         }
         auto len = std::make_shared<Expr>();
@@ -3120,7 +3474,10 @@ Lowerer::EP Lowerer::arrayExpr(const Expr& e, const Type* expected) {
     }
     if (!have) {
         if (elem_hint == nullptr) {
-            err("E0708", e.span, "cannot infer the element type of an empty array", "write a type: `local a: [T; 0]`");
+            err("E0708",
+                e.span,
+                "cannot infer the element type of an empty array",
+                "write a type: `local a: [T; 0]`");
             return nullptr;
         }
         elem = *elem_hint;
@@ -3146,14 +3503,20 @@ void Lowerer::lowerFields(const Expr& e, const Type& agg, std::vector<hir::Field
             }
         }
         if (index == fields.size()) {
-            err("E0709", init.span, std::format("`{}` has no field `{}`", typeToString(agg), init.name), "unknown field");
+            err("E0709",
+                init.span,
+                std::format("`{}` has no field `{}`", typeToString(agg), init.name),
+                "unknown field");
             if (init.value) {
                 (void)expr(*init.value, nullptr);
             }
             continue;
         }
         if (!seen.insert(init.name).second) {
-            err("E0709", init.span, std::format("field `{}` is initialized twice", init.name), "duplicate field");
+            err("E0709",
+                init.span,
+                std::format("field `{}` is initialized twice", init.name),
+                "duplicate field");
             continue;
         }
         const Type ft = resolvedIn(*fields[index].owner, fields[index].decl->type);
@@ -3175,7 +3538,10 @@ Lowerer::EP Lowerer::structLiteral(const Expr& e) {
         return nullptr;
     }
     if (!isAggregate(t)) {
-        err("E0709", e.span, std::format("`{}` is not a struct or class", typeToString(t)), "cannot build it with `{ ... }`");
+        err("E0709",
+            e.span,
+            std::format("`{}` is not a struct or class", typeToString(t)),
+            "cannot build it with `{ ... }`");
         return nullptr;
     }
     EP out = mk(hir::ExprKind::StructLit, t, e.span);
@@ -3189,7 +3555,10 @@ Lowerer::EP Lowerer::newExpr(const Expr& e) {
         return nullptr;
     }
     if (!isAggregate(t)) {
-        err("E0709", e.span, std::format("`new` needs a struct or class, found `{}`", typeToString(t)), "not allocatable");
+        err("E0709",
+            e.span,
+            std::format("`new` needs a struct or class, found `{}`", typeToString(t)),
+            "not allocatable");
         return nullptr;
     }
     EP out = mk(hir::ExprKind::New, Type::makePointer(t), e.span);
@@ -3261,11 +3630,13 @@ bool Lowerer::isConstValue(const hir::Expr& e, const hir::Expr** offender) const
     case hir::ExprKind::Binary:
         return e.lhs && e.rhs && isConstValue(*e.lhs, offender) && isConstValue(*e.rhs, offender);
     case hir::ExprKind::ArrayList:
-        return std::ranges::all_of(e.args, [&](const hir::ExprPtr& a) { return isConstValue(*a, offender); });
+        return std::ranges::all_of(
+            e.args, [&](const hir::ExprPtr& a) { return isConstValue(*a, offender); });
     case hir::ExprKind::ArrayRepeat:
         return e.lhs && isConstValue(*e.lhs, offender);
     case hir::ExprKind::StructLit:
-        return std::ranges::all_of(e.fields, [&](const hir::FieldInit& f) { return isConstValue(*f.value, offender); });
+        return std::ranges::all_of(
+            e.fields, [&](const hir::FieldInit& f) { return isConstValue(*f.value, offender); });
     case hir::ExprKind::AddrOf: {
         // `&global`, `&global[const]`, `&global.field`
         const hir::Expr* cur = e.lhs.get();
@@ -3319,4 +3690,4 @@ hir::Module Sema::lower() {
     return lowerProgram({this});
 }
 
-}  // namespace xlang
+} // namespace xlang

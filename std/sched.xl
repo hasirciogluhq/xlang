@@ -64,17 +64,17 @@ global heap: Heap
 // ---- context switching -------------------------------------------------------------------
 
 /// Saves the callee-saved registers on the current stack and its pointer in `*save`, then either
-/// resumes the context whose stack pointer is `load`, or (when `start` is not nil) calls `start`
+/// resumes the context whose stack pointer is `load`, or (when `entry` is not nil) calls `entry`
 /// on the fresh stack `load`. Both contexts are suspended at this very asm block, so they share
 /// the frame of this function; frame pointers are always kept (the code generator does it).
-fn switchContext(save: *usize, load: usize, start: fn()) {
+fn switchContext(save: *usize, load: usize, entry: fn()) {
 #if arch == "x86_64"
     __builtin_asm("push rbp\npush rbx\npush r12\npush r13\npush r14\npush r15\nmov [rdi], rsp\nmov rsp, rsi\ntest rdx, rdx\njnz 2f\npop r15\npop r14\npop r13\npop r12\npop rbx\npop rbp\njmp 3f\n2:\ncall rdx\nud2\n3:",
-                  in("rdi") save, in("rsi") load, in("rdx") start, clobber("rax"), clobber("rcx"),
+                  in("rdi") save, in("rsi") load, in("rdx") entry, clobber("rax"), clobber("rcx"),
                   clobber("r8"), clobber("r9"), clobber("r10"), clobber("r11"), clobber("cc"))
 #elif arch == "aarch64"
     __builtin_asm("stp x29, x30, [sp, #-16]!\nstp x19, x20, [sp, #-16]!\nstp x21, x22, [sp, #-16]!\nstp x23, x24, [sp, #-16]!\nstp x25, x26, [sp, #-16]!\nstp x27, x28, [sp, #-16]!\nstp d8, d9, [sp, #-16]!\nstp d10, d11, [sp, #-16]!\nstp d12, d13, [sp, #-16]!\nstp d14, d15, [sp, #-16]!\nmov x9, sp\nstr x9, [x0]\nmov sp, x1\ncbnz x2, 2f\nldp d14, d15, [sp], #16\nldp d12, d13, [sp], #16\nldp d10, d11, [sp], #16\nldp d8, d9, [sp], #16\nldp x27, x28, [sp], #16\nldp x25, x26, [sp], #16\nldp x23, x24, [sp], #16\nldp x21, x22, [sp], #16\nldp x19, x20, [sp], #16\nldp x29, x30, [sp], #16\nb 3f\n2:\nblr x2\nbrk #1\n3:",
-                  in("x0") save, in("x1") load, in("x2") start, clobber("x9"), clobber("x3"), clobber("x4"),
+                  in("x0") save, in("x1") load, in("x2") entry, clobber("x9"), clobber("x3"), clobber("x4"),
                   clobber("x5"), clobber("x6"), clobber("x7"), clobber("x8"), clobber("x10"), clobber("x11"),
                   clobber("x12"), clobber("x13"), clobber("x14"), clobber("x15"), clobber("x16"), clobber("x17"),
                   clobber("cc"))

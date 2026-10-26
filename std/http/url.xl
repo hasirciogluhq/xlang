@@ -32,9 +32,9 @@ export struct Url {
     path: [ui8; 2048]     // path and query, always starts with `/`
 }
 
-/// Parses the path part starting at `s[start]` (the fragment is dropped, a missing path becomes `/`).
-export fn urlParsePath(u: *Url, s: *ui8, start: usize) -> bool {
-    local p: usize = start
+/// Parses the path part starting at `s[begin]` (the fragment is dropped, a missing path becomes `/`).
+export fn urlParsePath(u: *Url, s: *ui8, begin: usize) -> bool {
+    local p: usize = begin
     local o: usize = 0
     if s[p] != 47 {
         u.path[0] = 47

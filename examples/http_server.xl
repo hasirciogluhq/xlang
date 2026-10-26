@@ -8,7 +8,6 @@ struct User {
 }
 
 global admin: User = User { name: "admin" }
-global router: Router
 global page: [ui8; 65536]
 
 fn onListen() {
@@ -41,6 +40,7 @@ fn handleMe(c: *Context) {
 }
 
 fn main() -> i32 {
+    local router: Router
     routerInit(&router)
     routerUse(&router, authMiddleware)
     routerGet(&router, "/", handleIndex)

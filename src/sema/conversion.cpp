@@ -13,18 +13,22 @@ namespace {
         return false;
     }
     switch (a.kind) {
-    case TypeKind::Int: return a.bits == b.bits && a.is_signed == b.is_signed;
-    case TypeKind::Float: return a.bits == b.bits;
+    case TypeKind::Int:
+        return a.bits == b.bits && a.is_signed == b.is_signed;
+    case TypeKind::Float:
+        return a.bits == b.bits;
     case TypeKind::Void:
-    case TypeKind::Bool: return true;
-    default: return typeToString(a) == typeToString(b);
+    case TypeKind::Bool:
+        return true;
+    default:
+        return typeToString(a) == typeToString(b);
     }
 }
 
-}  // namespace
+} // namespace
 
-ConversionResult implicitConversion(const Type& from, const Type& to, bool in_unsafe,
-                                    unsigned pointer_bits) {
+ConversionResult
+implicitConversion(const Type& from, const Type& to, bool in_unsafe, unsigned pointer_bits) {
     ConversionResult r;
     if (sameShape(from, to)) {
         r.status = ConversionStatus::Ok;
@@ -35,10 +39,10 @@ ConversionResult implicitConversion(const Type& from, const Type& to, bool in_un
     const bool to_num = to.kind == TypeKind::Int || to.kind == TypeKind::Float;
     if (!from_num || !to_num) {
         // bool, pointers, enums, aggregates: only an explicit `as` can convert (when anything can).
-        const bool castable = (from_num || from.kind == TypeKind::Bool || from.isPointer() ||
-                               from.kind == TypeKind::Enum) &&
-                              (to_num || to.kind == TypeKind::Bool || to.isPointer() ||
-                               to.kind == TypeKind::Enum);
+        const bool castable =
+            (from_num || from.kind == TypeKind::Bool || from.isPointer() ||
+             from.kind == TypeKind::Enum) &&
+            (to_num || to.kind == TypeKind::Bool || to.isPointer() || to.kind == TypeKind::Enum);
         r.status = castable ? ConversionStatus::NeedsCast : ConversionStatus::Invalid;
         return r;
     }
@@ -68,7 +72,7 @@ ConversionResult implicitConversion(const Type& from, const Type& to, bool in_un
 
     if (from.kind == TypeKind::Int && to.kind == TypeKind::Float) {
         if (from.is_signed) {
-            r.status = ConversionStatus::Warn;  // W0601
+            r.status = ConversionStatus::Warn; // W0601
             return r;
         }
         // Floats count as signed: `ui -> f` is E0601; `unsafe` accepts it (W0601 still applies).
@@ -86,7 +90,7 @@ ConversionResult implicitConversion(const Type& from, const Type& to, bool in_un
         return r;
     }
 
-    r.status = ConversionStatus::NeedsCast;  // float -> int
+    r.status = ConversionStatus::NeedsCast; // float -> int
     return r;
 }
 
@@ -128,4 +132,4 @@ CommonTypeResult commonBinaryType(const Type& a, const Type& b, unsigned pointer
     return r;
 }
 
-}  // namespace xlang
+} // namespace xlang
