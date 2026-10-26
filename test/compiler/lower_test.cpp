@@ -645,6 +645,66 @@ void testGenerics() {
     }
 }
 
+void testDroppableArraysAndNotes() {
+    const std::string cls = "class C { fn drop(self) { } }\n";
+    {
+        Lowered r(cls + "fn main() -> i32 {\n local a: [C; 2]\n return 0 }\n");
+        CHECK(r.failedWith("E0721"));
+    }
+    {
+        Lowered r(cls + "fn f(a: [C; 2]) { }\nfn main() -> i32 { return 0 }\n");
+        CHECK(r.failedWith("E0721"));
+    }
+    {
+        Lowered r(cls + "global g: [C; 2]\n");
+        CHECK(r.failedWith("E0721"));
+    }
+    {
+        Lowered r(cls + "struct S { a: [C; 2] }\n");
+        CHECK(r.failedWith("E0721"));
+    }
+    {
+        Lowered r(cls + "class D { a: [C; 2] }\n");
+        CHECK(r.failedWith("E0721"));
+    }
+    {
+        Lowered r(cls + "fn main() -> i32 {\n local a: [[C; 2]; 2]\n return 0 }\n");
+        CHECK(r.failedWith("E0721"));
+    }
+    {
+        Lowered r("fn main() -> i32 {\n local a: [i32; 2]\n return 0 }\n");
+        CHECK(!r.diag->hasErrors());
+    }
+    {
+        Lowered r("@init fn boot() { }\nfn main() -> i32 {\n local f = boot\n return 0 }\n");
+        CHECK(r.failedWith("E0727"));
+    }
+    {
+        Lowered r("fn bad<T>(x: T) -> i32 {\n return missingName\n}\n"
+                  "fn main() -> i32 {\n return bad<i32>(1)\n}\n");
+        CHECK(r.failedWith("E0706"));
+        CHECK(r.out.str().find("in instantiation of `bad<i32>` requested here") !=
+              std::string::npos);
+    }
+    {
+        Lowered r("fn inner<T>(x: T) -> i32 {\n return missingName\n}\n"
+                  "fn outer<T>(x: T) -> i32 {\n return inner<T>(x)\n}\n"
+                  "fn main() -> i32 {\n return outer<i32>(1)\n}\n");
+        CHECK(r.diag->hasErrors());
+        CHECK(r.out.str().find("in instantiation of `inner<i32>` requested here") !=
+              std::string::npos);
+        CHECK(r.out.str().find("in instantiation of `outer<i32>` requested here") !=
+              std::string::npos);
+    }
+    {
+        // Each argument is lowered once, so six nested calls with four overloads stay linear.
+        Lowered r("fn f(x: i64) -> i64 { return x }\nfn f(x: i32) -> i64 { return x as i64 }\n"
+                  "fn f(x: bool) -> i64 { return 1 }\nfn f(x: f64) -> i64 { return 2 }\n"
+                  "fn main() -> i32 {\n return f(f(f(f(f(f(1)))))) as i32\n}\n");
+        CHECK(!r.diag->hasErrors());
+    }
+}
+
 void testOwnership() {
     {
         Lowered b("class C { fn drop(self) { } }\nclass H { c: C }\n"
@@ -701,5 +761,6 @@ void runLowerTests() {
     testConst();
     testOverloads();
     testOwnership();
+    testDroppableArraysAndNotes();
     testGenerics();
 }

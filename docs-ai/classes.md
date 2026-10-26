@@ -7,6 +7,6 @@ A class with an init cannot be built with a field literal, and a derived init fi
 A class needs drop when it has a drop method or a field or base class that needs drop, and values that need drop are move-only.
 A droppable local or by-value parameter is dropped when its block ends, and the drop runs the user drop body, then the field drops in reverse declaration order, then the base drop.
 Moving a droppable local by value cancels its drop, and moving a field, an element or a dereferenced pointer by value is an error.
-A class that needs drop cannot be a struct field or a global.
+A class that needs drop cannot be a struct field or a global, and an array whose elements need drop is rejected as a local, parameter, field or global.
 new T allocates through the registered allocator, and delete runs the drop of the pointee before it frees the memory.
 Drops are statically dispatched, so deleting a derived object through a base pointer runs only the base drop.

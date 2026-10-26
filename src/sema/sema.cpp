@@ -158,7 +158,32 @@ void Sema::error(const char* code, const Span& at, std::string message, std::str
     if (!reported_.insert(key).second) {
         return;
     }
-    diag_.error(code, at, std::move(message), std::move(label));
+    diag_.error(code, at, std::move(message), std::move(label), instantiationNotes());
+}
+
+std::vector<Note> Sema::instantiationNotes() const {
+    constexpr std::size_t max_levels = 8;
+    std::vector<Note> notes;
+    const Sema* owner = this;
+    std::string local = current_instance_;
+    while (!local.empty() && owner != nullptr && notes.size() < max_levels) {
+        const InstanceInfo* info = owner->instanceInfo(local);
+        if (info == nullptr) {
+            break;
+        }
+        if (info->requested_at.valid()) {
+            notes.push_back({info->requested_at,
+                             std::format("in instantiation of `{}` requested here", local)});
+        }
+        owner = info->parent_owner;
+        local = info->parent;
+    }
+    return notes;
+}
+
+void Sema::setCurrentInstance(const Item* item) {
+    const auto it = item_instance_.find(item);
+    current_instance_ = it == item_instance_.end() ? std::string{} : it->second;
 }
 
 void Sema::notConstant(const Span& at, std::string why) {
@@ -442,7 +467,8 @@ std::optional<Sema::EntityRef> Sema::instantiate(const EntityRef& generic,
             sym.overloads = {item};
         }
         owner.symbols_.emplace(local, std::move(sym));
-        owner.instance_info_[local] = InstanceInfo{generic.qname(), args};
+        owner.instance_info_[local] = InstanceInfo{generic.qname(), args, at, current_instance_, this};
+        owner.item_instance_[item] = local;
         owner.pending_instances_.push_back(item);
     }
     return EntityRef{&owner, &owner.symbols_.at(local), local};

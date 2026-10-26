@@ -49,22 +49,6 @@ namespace {
     return t.kind == TypeKind::Struct || t.kind == TypeKind::Class;
 }
 
-namespace {
-
-/// Quiet trial lowering for the lifetime of the scope.
-class QuietScope {
-public:
-    explicit QuietScope(DiagnosticEngine& diag) : diag_(diag) { diag_.beginQuiet(); }
-    ~QuietScope() { diag_.endQuiet(); }
-    QuietScope(const QuietScope&) = delete;
-    QuietScope& operator=(const QuietScope&) = delete;
-
-private:
-    DiagnosticEngine& diag_;
-};
-
-}  // namespace
-
 /// Default type of an untyped `const` from its value: integers i32 (i64 when they do not fit),
 /// floats f64, bools, strings str. nullopt when the value is not a literal constant.
 [[nodiscard]] std::optional<Type> literalConstType(Sema& sema, const Expr& init) {
@@ -229,6 +213,10 @@ class Lowerer {
     // --- ownership: drop glue, drop flags, moves (core-language phase 5)
     /// A class needs drop when it has a `drop` method or a field or base class that needs drop.
     [[nodiscard]] bool needsDrop(const Type& t);
+    /// An array whose element type needs drop, at any depth of nested arrays.
+    [[nodiscard]] bool droppableArray(const Type& t);
+    /// E0721 when `t` is a droppable array; `where` completes "cannot be ...".
+    void rejectDroppableArray(const Type& t, const Span& at, const char* where);
     [[nodiscard]] static std::string dropGlueName(const std::string& qname);
     void emitDropGlue(const std::string& qname, const ClassDecl& c, const Span& span);
     [[nodiscard]] EP localRef(hir::LocalId id, const Type& type, const Span& span);
@@ -289,10 +277,21 @@ class Lowerer {
         std::string key;
     };
     [[nodiscard]] std::vector<OverloadCandidate> candidatesOf(const ScopeEntry& entry);
+    /// An argument of an overloaded call, lowered once for overload resolution. A non-literal keeps
+    /// its value; an untyped literal (int, float, string, `nil`) keeps only its AST and is costed and
+    /// lowered with the parameter type of the chosen overload.
+    struct PreArg {
+        EP value;
+        Type type;  ///< the value's type, or the type a literal takes without a context
+        bool literal{false};
+    };
+    [[nodiscard]] std::vector<PreArg> preLowerArgs(const Expr& call);
     /// Instances of the generic overloads of `entry` that fit the call: type arguments come from
-    /// `f<...>(...)`, or are inferred from the argument types (E0724 when one stays unknown).
+    /// `f<...>(...)`, or are inferred from the pre-lowered argument types (E0724 when one stays
+    /// unknown).
     [[nodiscard]] std::vector<OverloadCandidate> genericCandidates(const ScopeEntry& entry,
-                                                                   const Expr& call);
+                                                                   const Expr& call,
+                                                                   const std::vector<PreArg>& pre);
     /// Binds the type parameters `names` so that `pattern` matches `actual`.
     [[nodiscard]] bool unifyParam(const Type& pattern,
                                   const Type& actual,
@@ -304,7 +303,19 @@ class Lowerer {
     /// Index of the overload a call binds to (E0403 ambiguous, E0404 none); nullopt when diagnosed.
     [[nodiscard]] std::optional<std::size_t> resolveOverload(const Expr& call,
                                                              const std::string& name,
-                                                             const std::vector<OverloadCandidate>& cands);
+                                                             const std::vector<OverloadCandidate>& cands,
+                                                             const std::vector<PreArg>& pre);
+    /// Lowers the arguments of the chosen overload from `pre` (E0710 on a wrong count).
+    bool lowerArgsPre(const Expr& call,
+                      const std::vector<Type>& params,
+                      std::vector<PreArg>& pre,
+                      std::vector<EP>& out,
+                      const std::string& callee);
+    /// Whether a lowered value converts implicitly to `to`: the rules of `coerce`, without
+    /// lowering or diagnostics.
+    [[nodiscard]] bool convertible(const hir::Expr& value, const Type& to);
+    /// Whether the untyped literal `arg` can take the type `param` (the rules of `expr`).
+    [[nodiscard]] bool literalFits(const Expr& arg, const Type& param);
     /// Signature text for diagnostics: `name(i32, str)`.
     [[nodiscard]] static std::string signatureOf(const std::string& name,
                                                  const std::vector<Type>& params);
@@ -1407,15 +1418,48 @@ bool Lowerer::unifyParam(const Type& pattern,
     return concrete && sameType(*concrete, actual);
 }
 
+std::vector<Lowerer::PreArg> Lowerer::preLowerArgs(const Expr& call) {
+    std::vector<PreArg> out;
+    for (const ExprPtr& a : call.args) {
+        PreArg p;
+        switch (a->kind) {
+        case Expr::Kind::IntLiteral:
+            p.literal = true;
+            p.type = a->int_value > 2147483647ULL ? Type::makeInt(64, true) : Type::makeInt(32, true);
+            break;
+        case Expr::Kind::FloatLiteral:
+            p.literal = true;
+            p.type = Type::makeFloat(64);
+            break;
+        case Expr::Kind::StringLiteral:
+            p.literal = true;
+            p.type = Type::makeStr();
+            break;
+        case Expr::Kind::Name:
+            if (a->text == "nil") {
+                p.literal = true;
+                p.type = unknownType();
+                break;
+            }
+            [[fallthrough]];
+        default:
+            p.value = expr(*a, nullptr);
+            p.type = p.value ? p.value->type : unknownType();
+            break;
+        }
+        out.push_back(std::move(p));
+    }
+    return out;
+}
+
 std::vector<Lowerer::OverloadCandidate> Lowerer::genericCandidates(const ScopeEntry& entry,
-                                                                   const Expr& call) {
+                                                                   const Expr& call,
+                                                                   const std::vector<PreArg>& pre) {
     Sema& owner = entry.owner != nullptr ? *entry.owner : s_;
     std::vector<const Item*> items = entry.overloads;
     if (items.empty()) {
         items.push_back(entry.item);
     }
-    std::vector<EP> trial;
-    bool have_trial = false;
     const std::vector<Type> no_args;
     std::vector<OverloadCandidate> out;
     for (const Item* item : items) {
@@ -1450,13 +1494,6 @@ std::vector<Lowerer::OverloadCandidate> Lowerer::genericCandidates(const ScopeEn
                 targs.push_back(resolved(a));
             }
         } else {
-            if (!have_trial) {
-                QuietScope quiet(s_.diag_);
-                for (const ExprPtr& a : call.args) {
-                    trial.push_back(expr(*a, nullptr));
-                }
-                have_trial = true;
-            }
             std::map<std::string, Type> bound;
             bool ok = true;
             std::size_t i = 0;
@@ -1464,8 +1501,7 @@ std::vector<Lowerer::OverloadCandidate> Lowerer::genericCandidates(const ScopeEn
                 if (p.is_self) {
                     continue;
                 }
-                if (!trial[i] || isUnknown(trial[i]->type) ||
-                    !unifyParam(p.type, trial[i]->type, names, bound, owner)) {
+                if (isUnknown(pre[i].type) || !unifyParam(p.type, pre[i].type, names, bound, owner)) {
                     ok = false;
                     break;
                 }
@@ -1532,10 +1568,11 @@ std::vector<Lowerer::OverloadCandidate> Lowerer::candidatesOf(const ScopeEntry& 
 
 namespace {
 
-/// Cost of passing `arg` to a parameter of type `param` (lower is better). Untyped literals use
-/// their own rules; a typed argument costs 0 when the types match, 1 for integer widening or
-/// wrapping in an interface, 2 for an integer to float conversion and 3 for other conversions.
-[[nodiscard]] int argumentCost(const Expr& arg, const hir::Expr* trial, const Type& param) {
+/// Cost of passing `arg`, whose type is `from`, to a parameter of type `param` (lower is better).
+/// Untyped literals use their own rules; a typed argument costs 0 when the types match, 1 for
+/// integer widening or wrapping in an interface, 2 for an integer to float conversion and 3 for
+/// other conversions.
+[[nodiscard]] int argumentCost(const Expr& arg, const Type& from, const Type& param) {
     switch (arg.kind) {
     case Expr::Kind::IntLiteral:
         if (param.kind == TypeKind::Int) {
@@ -1562,50 +1599,126 @@ namespace {
         break;
     default: break;
     }
-    if (trial == nullptr || isUnknown(trial->type) || sameType(trial->type, param)) {
+    if (isUnknown(from) || sameType(from, param)) {
         return 0;
     }
-    if (param.kind == TypeKind::Int && trial->type.kind == TypeKind::Int) {
+    if (param.kind == TypeKind::Int && from.kind == TypeKind::Int) {
         return 1;
     }
     if (param.kind == TypeKind::Interface) {
         return 1;
     }
-    if (param.kind == TypeKind::Float && (trial->type.kind == TypeKind::Int || trial->type.kind == TypeKind::Float)) {
+    if (param.kind == TypeKind::Float && (from.kind == TypeKind::Int || from.kind == TypeKind::Float)) {
         return 2;
     }
     return 3;
 }
 
 /// What an argument looks like in a diagnostic.
-[[nodiscard]] std::string argumentText(const Expr& arg, const hir::Expr* trial) {
+[[nodiscard]] std::string argumentText(const Expr& arg, const Type& from) {
     switch (arg.kind) {
     case Expr::Kind::IntLiteral: return "integer literal";
     case Expr::Kind::FloatLiteral: return "float literal";
     case Expr::Kind::StringLiteral: return "string literal";
     default: break;
     }
-    return trial != nullptr ? typeToString(trial->type) : "unknown";
+    return isUnknown(from) ? "unknown" : typeToString(from);
 }
 
 }  // namespace
 
+bool Lowerer::convertible(const hir::Expr& value, const Type& to) {
+    if (isUnknown(value.type) || isUnknown(to)) {
+        return true;
+    }
+    if (to.kind == TypeKind::Interface) {
+        if (value.type.kind == TypeKind::Interface) {
+            return sameType(value.type, to);
+        }
+        const bool pointer = value.type.kind == TypeKind::Pointer && value.type.elem &&
+                             isAggregate(*value.type.elem);
+        if (pointer || isAggregate(value.type)) {
+            if (!pointer && !value.lvalue) {
+                return false;  // `coerce` reports a temporary (E0709)
+            }
+            const Type& object = pointer ? *value.type.elem : value.type;
+            const std::string iface_q = to.path.empty() ? std::string{} : to.path.front();
+            return findImpl(object.path.front(), iface_q) != nullptr;
+        }
+    }
+    const ConversionResult r = implicitConversion(value.type, to, inUnsafe(), ptrBits());
+    return r.status == ConversionStatus::Ok || r.status == ConversionStatus::Warn;
+}
+
+bool Lowerer::literalFits(const Expr& arg, const Type& param) {
+    if (isUnknown(param)) {
+        return true;
+    }
+    switch (arg.kind) {
+    case Expr::Kind::IntLiteral:
+        return param.kind == TypeKind::Int || param.kind == TypeKind::Float ||
+               param.kind == TypeKind::Enum;
+    case Expr::Kind::FloatLiteral: return param.kind == TypeKind::Float;
+    case Expr::Kind::StringLiteral:
+        if (param.kind == TypeKind::Str || param.kind == TypeKind::Pointer) {
+            return true;
+        }
+        if (param.kind == TypeKind::Enum) {
+            return param.elem && param.elem->kind == TypeKind::Pointer;
+        }
+        if (param.kind == TypeKind::Array && param.elem && param.elem->kind == TypeKind::Int &&
+            param.elem->bits == 8 && !param.elem->is_signed) {
+            const auto n = arrayLength(s_, param);
+            return n && arg.text.size() <= *n;
+        }
+        return false;
+    case Expr::Kind::Name:
+        return arg.text == "nil" && (param.kind == TypeKind::Pointer || param.kind == TypeKind::FnPtr);
+    default: return false;
+    }
+}
+
+bool Lowerer::lowerArgsPre(const Expr& call,
+                           const std::vector<Type>& params,
+                           std::vector<PreArg>& pre,
+                           std::vector<EP>& out,
+                           const std::string& callee) {
+    if (call.args.size() != params.size()) {
+        err("E0710",
+            call.span,
+            std::format(
+                "`{}` takes {} argument(s), {} given", callee, params.size(), call.args.size()),
+            "wrong number of arguments");
+        return false;
+    }
+    bool ok = true;
+    for (std::size_t i = 0; i < params.size(); ++i) {
+        EP v = pre[i].literal ? expr(*call.args[i], &params[i]) : std::move(pre[i].value);
+        EP a = moveOut(coerce(std::move(v), params[i], call.args[i]->span));
+        ok = ok && a != nullptr;
+        out.push_back(std::move(a));
+    }
+    return ok;
+}
+
 std::optional<std::size_t> Lowerer::resolveOverload(const Expr& call,
                                                     const std::string& name,
-                                                    const std::vector<OverloadCandidate>& cands) {
-    // The arguments are lowered once without a type to learn their types (and literal kinds),
-    // and once per candidate with its parameter type to check that they convert.
-    std::vector<EP> trial;
-    {
-        QuietScope quiet(s_.diag_);
-        for (const ExprPtr& a : call.args) {
-            trial.push_back(expr(*a, nullptr));
+                                                    const std::vector<OverloadCandidate>& cands,
+                                                    const std::vector<PreArg>& pre) {
+    // A non-literal argument that failed to lower has reported its error already.
+    for (const PreArg& p : pre) {
+        if (!p.literal && !p.value) {
+            return std::nullopt;
         }
+    }
+    if (cands.size() == 1) {
+        return 0;  // a single candidate is checked by `lowerArgsPre`
     }
     struct Scored {
         std::size_t index;
         int cost;
     };
+    // Costs and viability come from the cached types only: no lowering, no diagnostics.
     std::vector<Scored> viable;
     for (std::size_t c = 0; c < cands.size(); ++c) {
         const OverloadCandidate& cand = cands[c];
@@ -1616,12 +1729,10 @@ std::optional<std::size_t> Lowerer::resolveOverload(const Expr& call,
         bool ok = true;
         for (std::size_t i = 0; i < call.args.size() && ok; ++i) {
             const Expr& arg = *call.args[i];
+            const PreArg& p = pre[i];
             const Type& param = cand.params[i];
-            {
-                QuietScope quiet(s_.diag_);
-                ok = coerce(expr(arg, &param), param, arg.span) != nullptr;
-            }
-            cost += argumentCost(arg, trial[i].get(), param);
+            ok = p.literal ? literalFits(arg, param) : convertible(*p.value, param);
+            cost += argumentCost(arg, p.type, param);
         }
         if (ok) {
             viable.push_back({c, cost});
@@ -1634,7 +1745,7 @@ std::optional<std::size_t> Lowerer::resolveOverload(const Expr& call,
             candidates += "\n  " + signatureOf(name, cand.params);
         }
         for (std::size_t i = 0; i < call.args.size(); ++i) {
-            shown += (i != 0 ? ", " : "") + argumentText(*call.args[i], trial[i].get());
+            shown += (i != 0 ? ", " : "") + argumentText(*call.args[i], pre[i].type);
         }
         Diagnostic d;
         d.code = "E0404";
@@ -1697,6 +1808,7 @@ void Lowerer::lowerGlobal(const GlobalDecl& g, const Modifiers& mods) {
     out.module = s_.key_;
     out.constant = g.is_const;
     out.type = globalType(s_, g);
+    rejectDroppableArray(out.type, g.name_span, "a global");
     if (needsDrop(out.type)) {
         err("E0721",
             g.name_span,
@@ -1875,6 +1987,9 @@ void Lowerer::lowerFunction(const FnDecl& f,
         param_types.push_back(t);
         const hir::LocalId id = addLocal(p.is_self ? "self" : p.name, t, true, p.span);
         bindLocal(p.is_self ? "self" : p.name, id, t, p.span);
+        if (!p.is_self) {
+            rejectDroppableArray(t, p.span, "a parameter");
+        }
         if (!p.is_self && needsDrop(t)) {
             owned_params.push_back({id, t, p.span});
         }
@@ -1975,6 +2090,7 @@ void Lowerer::lowerAggregate(const Item& item) {
                     std::format("`{}` needs drop and cannot be a struct field", typeToString(ft)),
                     "use a class field instead; structs are plain data");
             }
+            rejectDroppableArray(ft, f.span, "a struct field");
             a.fields.push_back({f.name, ft});
         }
         mod_.aggregates.push_back(std::move(a));
@@ -2019,7 +2135,9 @@ void Lowerer::lowerAggregate(const Item& item) {
             }
         }
         for (const FieldDecl& f : cl->fields) {
-            a.fields.push_back({f.name, resolved(f.type)});
+            const Type ft = resolved(f.type);
+            rejectDroppableArray(ft, f.span, "a class field");
+            a.fields.push_back({f.name, ft});
         }
         for (const FnDecl& m : cl->methods) {
             a.methods.push_back(a.name + "." + m.name);
@@ -2091,12 +2209,14 @@ bool Lowerer::lowerPendingInstances() {
         any = true;
         lowerBatch(batch);
     }
+    s_.setCurrentInstance(nullptr);
     return any;
 }
 
 void Lowerer::lowerBatch(const std::vector<const Item*>& items) {
     for (const Item* ip : items) {
         const Item& item = *ip;
+        s_.setCurrentInstance(ip);
         if (!Sema::genericParamsOf(item).empty()) {
             continue;  // a generic declaration is lowered per instance
         }
@@ -2149,6 +2269,7 @@ void Lowerer::lowerBatch(const std::vector<const Item*>& items) {
     // Methods after all signatures/types exist.
     for (const Item* ip : items) {
         const Item& item = *ip;
+        s_.setCurrentInstance(ip);
         if (!Sema::genericParamsOf(item).empty()) {
             continue;
         }
@@ -2274,6 +2395,20 @@ void Lowerer::bindLocal(const std::string& name,
 // Ownership (core-language phase 5). Droppable locals carry a drop flag; the drop of a local is
 // a deferred statement `if flag { glue(&x); flag = false }`, so the existing defer machinery runs
 // it on every exit path.
+
+bool Lowerer::droppableArray(const Type& t) {
+    return t.kind == TypeKind::Array && t.elem && (needsDrop(*t.elem) || droppableArray(*t.elem));
+}
+
+void Lowerer::rejectDroppableArray(const Type& t, const Span& at, const char* where) {
+    if (droppableArray(t)) {
+        err("E0721",
+            at,
+            std::format("`{}` is an array of a type that needs drop and cannot be {}",
+                        typeToString(t), where),
+            "arrays do not drop their elements; use a class value instead");
+    }
+}
 
 bool Lowerer::needsDrop(const Type& t) {
     if (t.kind != TypeKind::Class || t.path.empty()) {
@@ -2598,13 +2733,16 @@ bool Lowerer::lowerInitCall(const Expr& e, const Type& t, std::string& key, std:
     }
     std::size_t pick = 0;
     if (cands.size() > 1) {
-        const auto chosen = resolveOverload(e, cls->name, cands);
+        std::vector<PreArg> pre = preLowerArgs(e);
+        const auto chosen = resolveOverload(e, cls->name, cands, pre);
         if (!chosen) {
             return false;
         }
         pick = *chosen;
-    }
-    if (!lowerArgs(e, cands[pick].params, args, cls->name)) {
+        if (!lowerArgsPre(e, cands[pick].params, pre, args, cls->name)) {
+            return false;
+        }
+    } else if (!lowerArgs(e, cands[pick].params, args, cls->name)) {
         return false;
     }
     key = cands[pick].key;
@@ -3119,6 +3257,7 @@ void Lowerer::lowerStmt(const Stmt& s, std::vector<hir::Stmt>& out) {
         init = moveOut(std::move(init));
         h.kind = hir::StmtKind::Local;
         h.local = addLocal(s.name, t, false, s.span);
+        rejectDroppableArray(t, s.span, "a local");
         if (needsDrop(t)) {
             registerDrop(h.local, t, init != nullptr, s.span, out);
         }
@@ -3747,6 +3886,13 @@ Lowerer::EP Lowerer::fromEntry(const ScopeEntry& entry, const Expr& at, const Ty
                 return nullptr;
             }
             pick = match.front();
+        }
+        if (sh_.init_fns.contains(cands[pick].key)) {
+            err("E0727",
+                at.span,
+                std::format("`{}` is an `@init` function and cannot be used as a value", entry.name),
+                "`@init` functions run once before `main`; take a normal function instead");
+            return nullptr;
         }
         EP f = mk(hir::ExprKind::FuncRef, fnTypeOf(owner, *cands[pick].decl), at.span);
         f->text = cands[pick].key;
@@ -4654,16 +4800,23 @@ Lowerer::EP Lowerer::methodCall(const Expr& e, const Expr& recv_ast) {
         }
         return nullptr;
     }
+    std::vector<EP> args;
+    bool overloaded_args = false;
     if (m->kind == MethodRef::Kind::Direct && m->cls != nullptr) {
         // Non-virtual methods of one class may overload each other.
         const auto cands = methodCandidates(*m, callee.text);
         if (cands.size() > 1) {
-            const auto chosen = resolveOverload(e, callee.text, cands);
+            std::vector<PreArg> pre = preLowerArgs(e);
+            const auto chosen = resolveOverload(e, callee.text, cands, pre);
             if (!chosen) {
                 return nullptr;
             }
             m->decl = cands[*chosen].decl;
             m->fn_name = cands[*chosen].key;
+            overloaded_args = true;
+            if (!lowerArgsPre(e, cands[*chosen].params, pre, args, callee.text)) {
+                return nullptr;
+            }
         }
     }
     std::vector<Type> params;
@@ -4673,8 +4826,7 @@ Lowerer::EP Lowerer::methodCall(const Expr& e, const Expr& recv_ast) {
         }
     }
     const Type ret = resolvedIn(*m->owner, m->decl->return_type);
-    std::vector<EP> args;
-    if (!lowerArgs(e, params, args, callee.text)) {
+    if (!overloaded_args && !lowerArgs(e, params, args, callee.text)) {
         return nullptr;
     }
 
@@ -4724,8 +4876,23 @@ Lowerer::EP Lowerer::methodCall(const Expr& e, const Expr& recv_ast) {
 
 Lowerer::EP Lowerer::callEntry(const Expr& e, const ScopeEntry& entry, const std::string& name) {
     if (entry.kind == ScopeEntry::Kind::Function) {
+        // Overloaded or generic calls lower their arguments once here; the choice is made from
+        // their cached types.
+        std::vector<const Item*> items = entry.overloads;
+        if (items.empty()) {
+            items.push_back(entry.item);
+        }
+        bool generic = false;
+        for (const Item* item : items) {
+            generic = generic || !Sema::genericParamsOf(*item).empty();
+        }
+        const bool many = items.size() > 1 || generic;
+        std::vector<PreArg> pre;
+        if (many) {
+            pre = preLowerArgs(e);
+        }
         auto cands = candidatesOf(entry);
-        for (OverloadCandidate& g : genericCandidates(entry, e)) {
+        for (OverloadCandidate& g : genericCandidates(entry, e, pre)) {
             cands.push_back(std::move(g));
         }
         if (cands.empty()) {
@@ -4736,8 +4903,8 @@ Lowerer::EP Lowerer::callEntry(const Expr& e, const ScopeEntry& entry, const std
             return nullptr;
         }
         std::size_t pick = 0;
-        if (cands.size() > 1) {
-            const auto chosen = resolveOverload(e, name, cands);
+        if (many) {
+            const auto chosen = resolveOverload(e, name, cands, pre);
             if (!chosen) {
                 return nullptr;
             }
@@ -4753,7 +4920,9 @@ Lowerer::EP Lowerer::callEntry(const Expr& e, const ScopeEntry& entry, const std
             return nullptr;
         }
         std::vector<EP> args;
-        if (!lowerArgs(e, cand.params, args, name)) {
+        const bool lowered = many ? lowerArgsPre(e, cand.params, pre, args, name)
+                                  : lowerArgs(e, cand.params, args, name);
+        if (!lowered) {
             return nullptr;
         }
         EP c = mk(hir::ExprKind::Call, cand.ret, e.span);

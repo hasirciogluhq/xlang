@@ -123,6 +123,9 @@ public:
     struct InstanceInfo {
         std::string generic;  ///< qualified name of the generic declaration
         std::vector<Type> args;
+        Span requested_at;               ///< where the instance was first requested
+        std::string parent;              ///< local name of the instance that requested it, if any
+        const Sema* parent_owner{nullptr};  ///< the module that owns `parent`
     };
     /// The instance of the generic declaration `generic` for `args` (created on first use, cached;
     /// E0724 on a wrong argument count, E0725 when the nesting of arguments is too deep).
@@ -133,6 +136,9 @@ public:
     [[nodiscard]] std::vector<const Item*> takePendingInstances();
     /// Origin of an instance by its local name (nullptr when `local` is not an instance).
     [[nodiscard]] const InstanceInfo* instanceInfo(const std::string& local) const;
+    /// Marks which instance's body is being lowered (empty for other code), so that diagnostics
+    /// can name the instantiation chain.
+    void setCurrentInstance(const Item* item);
     /// Names of the type parameters of a `fn`, `struct` or `class` (empty when not generic).
     [[nodiscard]] static std::vector<std::string> genericParamsOf(const Item& item);
     /// By qualified name (as stored in resolved types).
@@ -174,6 +180,8 @@ private:
                                                             const Span& at);
     void notConstant(const Span& at, std::string why);
     void error(const char* code, const Span& at, std::string message, std::string label);
+    /// Notes for the instantiation chain of the instance being lowered (at most 8 levels).
+    [[nodiscard]] std::vector<Note> instantiationNotes() const;
 
     const Program& program_;
     const BuildConfig& config_;
@@ -188,6 +196,8 @@ private:
     // are stored here; `pending_instances_` are the ones not lowered yet.
     std::deque<Item> instances_;
     std::map<std::string, InstanceInfo> instance_info_;  ///< instance local name -> origin
+    std::map<const Item*, std::string> item_instance_;   ///< instance item -> its local name
+    std::string current_instance_;  ///< local name of the instance whose body is lowered
     std::vector<const Item*> pending_instances_;
     std::map<std::string, std::optional<ConstValue>> define_cache_;
     std::set<std::string> define_in_progress_;

@@ -43,16 +43,16 @@ The original plan is implemented except the items below, which are intentionally
   blocks, constraints on type parameters, explicit type arguments on class methods, and generic function values without
   a call (`E0724`). Generic instances are not `linkonce_odr` (the whole program is one module). Expression-level
   `f<T>(x)` is recognized when the `>` is followed by `(` or `{`, so `i < j > (k)` is a generic call. `__builtin_needsDrop`
-  and `__builtin_drop` take their type with `<...>`, not as an argument, because a type is not an expression. Instances
-  report errors at the generic declaration without a "in instantiation of" note.
+  and `__builtin_drop` take their type with `<...>`, not as an argument, because a type is not an expression. An error
+  inside an instance is followed by one "in instantiation of" note per level, at most 8.
 - **Boot and registrations (core-language phase 10).** The generated init entry is `_xl_initAll`, not `$xl$initAll`
   as the plan said: in the raw AT&T entry stub a `$` that starts an operand is an immediate prefix, so
   `call $xl$initAll` would not assemble. The Linux and macOS paths are verified only through the Docker e2e runs.
   **Allocator replacement is not tracked per block:** after `__builtin_setRegistered("allocator", v)`, `new`, `delete`,
   `free` and `String` all use `v`, so a block allocated before the replacement and freed afterwards goes to `v.free`. The
   compiler does not check the pairing. `std/sched` keeps using `Heap` and `sysMap` directly and is not redirected. An
-  `@init` function can still be taken as a function pointer value with no `E0727` check. A bodyless `@init fn boot();` is
-  the parser's `E0002`; the sema check for a missing body in `E0729` is therefore only a guard.
+  A bodyless `@init fn boot();` is the parser's `E0002`; the sema check for a missing body in `E0729` is therefore only a
+  guard.
 - No tuples/multiple return values (not defined by the plan).
 - **`Vec<T>` (core-language phase 7) is not implemented.** Its `push(v: T)` and `set(i, v)` cannot be written for a droppable
   `T` with the rules of phase 5: storing the value into a slot needs a raw move that does not drop the old slot content
@@ -67,13 +67,15 @@ The original plan is implemented except the items below, which are intentionally
   only the base drop). There is no explicit base constructor call: a derived `init` runs the base's argument-less `init`
   automatically. **Assigning a droppable field (`self.f = T(...)`) drops the old value of that field first, and in a
   constructor that old value is the zeroed object `T(...)` created**, so the user `drop` runs on zeroed data. This follows
-  the spec's assignment rule; a constructor cannot initialize a droppable field without it. Open decision. Arrays of
-  droppable elements are not rejected (`E0721` covers struct fields and globals only). `delete(a)` needs an interface
+  the spec's assignment rule; a constructor cannot initialize a droppable field without it. Open decision. An array
+  whose element needs drop is `E0721` at locals, parameters, fields and globals, because arrays do not drop their elements.
+  `delete(a)` needs an interface
   allocator value. Temporaries used as receivers are materialized with a drop flag; a droppable temporary inside `&&`/`||`
   or a `?:` branch is dropped only if it was created.
 - Overloading (core-language phase 3): an overloaded function's HIR name is its qualified name plus its mangled parameter
-  types (not the link symbol); this is the unique key codegen uses. Overload resolution lowers each argument once per
-  candidate plus once more, so nested overloaded calls cost time exponential in their depth. Class-to-base pointer
+  types (not the link symbol); this is the unique key codegen uses. Overload resolution lowers each non-literal argument
+  once, with no expected type, so an array literal passed to an overloaded or generic call has no element type context
+  and must be written with a typed local. Nested overloaded calls cost time linear in their size. Class-to-base pointer
   conversion is not an implicit conversion in this language, so it does not count as a candidate. Virtual methods are not
   overloadable (`E0405`); `init` constructors are.
 - `str` (phase 1 of the core-language work): no `==`/`!=` in the compiler (`strEq` in std), no implicit or `as`

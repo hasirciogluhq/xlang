@@ -147,15 +147,36 @@ constexpr std::size_t kLeadWidth = 40;
          "A symbol named `_start`, `mainCRTStartup` or `_xl_initAll` was requested through `export(c)`, "
          "`@mangle` or `declare`. The compiler generates these symbols to start the program. Rename the "
          "function or global."},
-        {"E0727", Severity::Error, "call to an `@init` function",
-         "An `@init` function runs once before `main` and cannot be called from code. Move the shared "
-         "code into a normal function and call that."},
+        {"E0727", Severity::Error, "call or value use of an `@init` function",
+         "An `@init` function runs once before `main` and cannot be called from code or used as a "
+         "function value. Move the shared code into a normal function and call or use that."},
         {"E0728", Severity::Error, "`__builtin_setRegistered` outside an `@init` function",
          "`__builtin_setRegistered(role, value)` is a statement that only works inside an `@init` "
          "function. It cannot be used as a value."},
         {"E0729", Severity::Error, "invalid `@init` function",
          "`@init` marks a module-level function with no generics, no parameters, no return type and a "
          "body. It is not allowed on methods or on other kinds of declarations."},
+        {"E0720", Severity::Error, "move out of a field, element or pointer",
+         "A value that needs drop was moved out of a class field, an array element or a dereferenced "
+         "pointer. Only locals and parameters can give up ownership. Take its address or copy it "
+         "through a `clone()` method."},
+        {"E0721", Severity::Error, "value that needs drop in a place that cannot own it",
+         "A global, a struct field, a local or a parameter has a type that needs drop, or an array "
+         "whose element type needs drop. Structs and globals are plain data, and arrays do not drop "
+         "their elements. Use a class field or a local of a class type."},
+        {"E0722", Severity::Error, "invalid `init` or `drop` method",
+         "An `init` method takes no return type, and a `drop` method takes only `self`, returns "
+         "nothing and cannot be virtual. A class whose `init` needs a base constructor requires that "
+         "base to have an `init` without arguments."},
+        {"E0723", Severity::Error, "literal for a class or struct with an `init`",
+         "A class with an `init` cannot be built with a field literal, because the literal would skip "
+         "the constructor. Build it with `T(...)` or allocate it with `new T(...)`."},
+        {"E0724", Severity::Error, "wrong or missing type arguments",
+         "A generic declaration needs one type argument per type parameter. A non-generic declaration "
+         "takes none, and a generic function value needs its type arguments written out."},
+        {"E0725", Severity::Error, "generic instantiation too deep",
+         "The type arguments of a generic instance nest more than 64 levels. Use a simpler type "
+         "argument."},
         {"W0701", Severity::Warning, "missing return",
          "Control can fall off the end of a function that returns a value: some path has no "
          "`return` (a loop that ends with `break`, an `if` without `else`, ...). Add a `return`, "
@@ -418,7 +439,7 @@ void DiagnosticEngine::flush() {
 }
 
 void DiagnosticEngine::error(std::string code, const Span& span, std::string message,
-                             std::string label) {
+                             std::string label, std::vector<Note> notes) {
     Diagnostic d;
     d.code = std::move(code);
     d.severity = Severity::Error;
@@ -426,6 +447,7 @@ void DiagnosticEngine::error(std::string code, const Span& span, std::string mes
     if (span.valid()) {
         d.labels.push_back({span, std::move(label)});
     }
+    d.notes = std::move(notes);
     report(std::move(d));
 }
 
@@ -594,6 +616,13 @@ std::string DiagnosticEngine::renderText(const Diagnostic& diagnostic) const {
         out += std::format("{} |\n", blank_gutter);
     }
 
+    for (const Note& note : diagnostic.notes) {
+        out += std::format("note: {}\n", note.message);
+        if (note.span.valid()) {
+            out += std::format("  --> {}:{}:{}\n", sources_.file(note.span.file).path().string(),
+                               note.span.line, note.span.column);
+        }
+    }
     appendBlock(out, "detail: ", diagnostic.detail);
     appendBlock(out, "reason: ", diagnostic.reason);
     appendBlock(out, "fix:    ", diagnostic.fix);
@@ -624,6 +653,15 @@ std::string DiagnosticEngine::renderJson(const Diagnostic& diagnostic) const {
             "\"text\":\"{}\"}}",
             jsonEscape(sources_.file(label.span.file).path().string()), label.span.line,
             label.span.column, label.span.end_line, label.span.end_column, jsonEscape(label.text));
+    }
+    out += "]";
+    out += ",\"notes\":[";
+    for (std::size_t i = 0; i < diagnostic.notes.size(); ++i) {
+        const Note& note = diagnostic.notes[i];
+        out += std::format("{}{{\"file\":\"{}\",\"line\":{},\"column\":{},\"message\":\"{}\"}}",
+                           i == 0 ? "" : ",",
+                           jsonEscape(sources_.file(note.span.file).path().string()), note.span.line,
+                           note.span.column, jsonEscape(note.message));
     }
     out += "]";
     out += std::format(",\"detail\":\"{}\",\"reason\":\"{}\",\"fix\":\"{}\"}}",
