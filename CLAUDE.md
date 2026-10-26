@@ -8,6 +8,7 @@
 - `src/README.md`: layout. `std/`: stdlib. `test/e2e/`: end-to-end programs.
 - `docs/`: human docs (English, accurate to implementation).
 - `docs-ai/`: AI docs (matching topics). Format: title + 5–10 plain one-line sentences. Prose only. No code, examples, tables, lists, quotes, backticks, filler. Every sentence is a rule or behavior. Update both `docs/` and `docs-ai/` together.
+- **Every code change must update the affected docs in the same change** (`docs/`, `docs-ai/`, `KNOWN-LIMITATIONS.md`, `src/README.md`, doc comments). A code update is not done until the docs match it.
 
 ## Core rules
 - No compatibility layers. Language and compiler can change freely.
