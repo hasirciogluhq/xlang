@@ -119,6 +119,17 @@ constexpr std::size_t kLeadWidth = 40;
          "The back end could not lower the program: an unresolved external reference, a syscall "
          "form the target does not support, or a generated module that failed LLVM verification "
          "(an internal error)."},
+        {"E0403", Severity::Error, "ambiguous overloaded call or use",
+         "Several overloads of a function match the arguments (or the expected function type) "
+         "equally well, so no one is chosen. Give the arguments types that prefer one overload, "
+         "or use a typed value instead of an untyped literal."},
+        {"E0404", Severity::Error, "no overload matches",
+         "No overload of a function takes these arguments (or has the expected function type). "
+         "The diagnostic lists the declared signatures. Change the arguments or the call."},
+        {"E0405", Severity::Error, "function cannot be overloaded",
+         "A name with more than one declaration names a function that cannot be overloaded: `main`, "
+         "a `register`ed function, `export(c)` (one C symbol per name) or `declare` (one external "
+         "symbol). Keep a single declaration with that name."},
         {"E0715", Severity::Error, "`const` initializer is not a compile-time constant",
          "The value of a `const` (module level or in a block) must be known at compile time: "
          "literals, arithmetic and casts on them, `define` constants, arrays and struct literals "
@@ -336,6 +347,9 @@ bool DiagnosticEngine::isAllowed(const Diagnostic& diagnostic) const {
 }
 
 void DiagnosticEngine::report(Diagnostic diagnostic) {
+    if (quiet_ > 0) {
+        return;
+    }
     if (const DiagnosticInfo* info = findDiagnosticInfo(diagnostic.code)) {
         diagnostic.severity = info->severity;
     }

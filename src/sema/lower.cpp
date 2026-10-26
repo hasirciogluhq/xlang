@@ -164,6 +164,8 @@ class Lowerer {
         Sema* owner{nullptr};   ///< module that resolves the declaration's types
         std::uint32_t index{0}; ///< Itable: method index, Virtual: vtable slot
         bool from_impl{false};
+        const ClassDecl* cls{nullptr};  ///< Direct method of a class: its declaration (overloads)
+        std::string cls_q;              ///< qualified name of that class
     };
 
     struct FieldInfo {
@@ -184,7 +186,8 @@ class Lowerer {
                        const std::string& local_name,
                        const std::vector<Attribute>& attrs,
                        const std::string& owner,
-                       const Type* self_type);
+                       const Type* self_type,
+                       bool overloaded = false);
     void lowerGlobal(const GlobalDecl& g, const Modifiers& mods);
     void lowerLocalConst(const Stmt& s);
     void lowerEnum(const EnumDecl& e);
@@ -196,8 +199,30 @@ class Lowerer {
                       bool declared,
                       const std::string& local_name,
                       const std::vector<Type>& params,
+                      bool overloaded,
                       std::string& symbol,
                       const Span& at);
+    /// Unique name of an overloaded function: its qualified name plus its mangled parameter types.
+    [[nodiscard]] static std::string overloadKey(const std::string& qname,
+                                                 const std::vector<Type>& params);
+
+    /// A declaration a call may bind to; `key` is the name of its HIR function.
+    struct OverloadCandidate {
+        const FnDecl* decl{nullptr};
+        std::vector<Type> params;
+        Type ret;
+        std::string key;
+    };
+    [[nodiscard]] std::vector<OverloadCandidate> candidatesOf(const ScopeEntry& entry);
+    [[nodiscard]] std::vector<OverloadCandidate> methodCandidates(const MethodRef& m,
+                                                                  const std::string& name);
+    /// Index of the overload a call binds to (E0403 ambiguous, E0404 none); nullopt when diagnosed.
+    [[nodiscard]] std::optional<std::size_t> resolveOverload(const Expr& call,
+                                                             const std::string& name,
+                                                             const std::vector<OverloadCandidate>& cands);
+    /// Signature text for diagnostics: `name(i32, str)`.
+    [[nodiscard]] static std::string signatureOf(const std::string& name,
+                                                 const std::vector<Type>& params);
 
     // --- statements
     void lowerBlock(const Block& block, std::vector<hir::Stmt>& out, bool new_scope);
@@ -299,6 +324,7 @@ class Lowerer {
     /// order.
     std::vector<std::vector<hir::Stmt>> defers_;
     unsigned hidden_counter_{0}; ///< unique suffix for compiler-made locals
+    std::set<std::string> fn_keys_;  ///< HIR names of the module's functions (overloads included)
     bool star_import_{false};
     std::set<std::string> registered_names_;
     std::map<std::string, ScopeEntry> extra_entries_; ///< registered globals / namespace members
@@ -753,6 +779,7 @@ ScopeEntry Lowerer::entryOf(Sema::EntityRef ref, const std::string& local, const
     switch (ref.sym->kind) {
     case Sema::Symbol::Kind::Fn:
         e.kind = ScopeEntry::Kind::Function;
+        e.overloads = ref.sym->overloads;
         break;
     case Sema::Symbol::Kind::Global: {
         const auto& decl = std::get<GlobalDecl>(ref.sym->item->decl);
@@ -840,6 +867,9 @@ void Lowerer::buildModuleScope() {
         e.qname = s_.qualify(base.name);
         if (std::holds_alternative<FnDecl>(item.decl)) {
             e.kind = ScopeEntry::Kind::Function;
+            if (const Sema::Symbol* sym = s_.find(e.name)) {
+                e.overloads = sym->overloads;
+            }
         } else if (const auto* g = std::get_if<GlobalDecl>(&item.decl)) {
             e.kind = ScopeEntry::Kind::Global;
             e.type = globalType(s_, *g);
@@ -1113,63 +1143,246 @@ void Lowerer::assignSymbol(const std::vector<Attribute>& attrs,
                            bool declared,
                            const std::string& local_name,
                            const std::vector<Type>& params,
+                           bool overloaded,
                            std::string& symbol,
                            const Span& at) {
-    // Priority: export(c) > @mangle on the item > @file(mangle) > --mangle (plan 4.9).
-    std::optional<std::string> plain; // an explicit/unmangled symbol
-    if (export_c) {
-        plain = local_name;
-    } else if (const Attribute* m = findAttribute(attrs, "mangle");
-               m != nullptr && !m->args.empty()) {
-        const AttributeArg& a = m->args[0];
-        plain = a.kind == AttributeArg::Kind::String ? a.text : local_name;
-        if (a.kind == AttributeArg::Kind::Ident && a.text != "none") {
-            err("E0705", a.span, "`@mangle` takes `none` or a string", "invalid argument");
+    if (!overloaded && !export_c) {
+        if (const Attribute* m = findAttribute(attrs, "mangle");
+            m != nullptr && !m->args.empty() && m->args[0].kind == AttributeArg::Kind::Ident &&
+            m->args[0].text != "none") {
+            err("E0705", m->args[0].span, "`@mangle` takes `none` or a string", "invalid argument");
         }
-    } else {
-        std::optional<bool> file_none;
-        if (const Attribute* f = findAttribute(s_.program_.file_attributes, "file")) {
-            for (const AttributeArg& a : f->args) {
-                if (a.key == "mangle") {
-                    file_none = a.text == "none";
-                }
+    }
+    symbol = s_.linkName(attrs, export_c, declared, local_name, params, overloaded);
+    const auto [it, inserted] = sh_.link_names.emplace(symbol, at);
+    // Plain names must be unique; mangled names are unique by their parameter types.
+    if (!inserted && !declared && symbol.find("_xl$") != 0) {
+        Diagnostic d;
+        d.code = "E0401";
+        d.severity = Severity::Error;
+        d.message = std::format("symbol `{}` is defined twice", symbol);
+        d.labels.push_back({it->second, "first definition"});
+        d.labels.push_back({at, "second definition"});
+        d.fix = "enable name mangling or rename one with `@mangle(\"...\")`";
+        s_.diag_.report(std::move(d));
+    }
+}
+
+std::string Lowerer::overloadKey(const std::string& qname, const std::vector<Type>& params) {
+    std::string key = qname;
+    for (const Type& p : params) {
+        key += "$" + mangleType(p);
+    }
+    return key;
+}
+
+std::string Lowerer::signatureOf(const std::string& name, const std::vector<Type>& params) {
+    std::string out = name + "(";
+    for (std::size_t i = 0; i < params.size(); ++i) {
+        out += (i != 0 ? ", " : "") + typeToString(params[i]);
+    }
+    return out + ")";
+}
+
+std::vector<Lowerer::OverloadCandidate> Lowerer::methodCandidates(const MethodRef& m,
+                                                                  const std::string& name) {
+    const std::string qname = m.cls_q + "." + name;
+    std::vector<OverloadCandidate> out;
+    for (const FnDecl& fm : m.cls->methods) {
+        if (fm.name != name) {
+            continue;
+        }
+        OverloadCandidate c;
+        c.decl = &fm;
+        for (const Param& p : fm.params) {
+            if (!p.is_self) {
+                c.params.push_back(resolvedIn(*m.owner, p.type));
             }
         }
-        const bool none = file_none ? *file_none : s_.config_.mangle == "none";
-        if (none || declared) {
-            plain = local_name;
+        c.ret = resolvedIn(*m.owner, fm.return_type);
+        out.push_back(std::move(c));
+    }
+    const bool overloaded = out.size() > 1;
+    for (OverloadCandidate& c : out) {
+        c.key = overloaded ? overloadKey(qname, c.params) : qname;
+    }
+    return out;
+}
+
+std::vector<Lowerer::OverloadCandidate> Lowerer::candidatesOf(const ScopeEntry& entry) {
+    Sema& owner = entry.owner != nullptr ? *entry.owner : s_;
+    std::vector<const Item*> items = entry.overloads;
+    if (items.empty()) {
+        items.push_back(entry.item);
+    }
+    const bool overloaded = items.size() > 1;
+    const std::string qname = entry.qname.empty() ? entry.name : entry.qname;
+    std::vector<OverloadCandidate> out;
+    for (const Item* item : items) {
+        OverloadCandidate c;
+        c.decl = &std::get<FnDecl>(item->decl);
+        for (const Param& p : c.decl->params) {
+            c.params.push_back(resolvedIn(owner, p.type));
+        }
+        c.ret = resolvedIn(owner, c.decl->return_type);
+        c.key = overloaded ? overloadKey(qname, c.params) : qname;
+        out.push_back(std::move(c));
+    }
+    return out;
+}
+
+namespace {
+
+/// Quiet trial lowering for the lifetime of the scope.
+class QuietScope {
+public:
+    explicit QuietScope(DiagnosticEngine& diag) : diag_(diag) { diag_.beginQuiet(); }
+    ~QuietScope() { diag_.endQuiet(); }
+    QuietScope(const QuietScope&) = delete;
+    QuietScope& operator=(const QuietScope&) = delete;
+
+private:
+    DiagnosticEngine& diag_;
+};
+
+/// Cost of passing `arg` to a parameter of type `param` (lower is better). Untyped literals use
+/// their own rules; a typed argument costs 0 when the types match, 1 for integer widening or
+/// wrapping in an interface, 2 for an integer to float conversion and 3 for other conversions.
+[[nodiscard]] int argumentCost(const Expr& arg, const hir::Expr* trial, const Type& param) {
+    switch (arg.kind) {
+    case Expr::Kind::IntLiteral:
+        if (param.kind == TypeKind::Int) {
+            return param.bits == 64 && param.is_signed ? 1 : 2;
+        }
+        return 3;
+    case Expr::Kind::FloatLiteral:
+        if (param.kind == TypeKind::Float) {
+            return param.bits == 64 ? 1 : 2;
+        }
+        return 3;
+    case Expr::Kind::StringLiteral:
+        if (param.kind == TypeKind::Str) {
+            return 0;
+        }
+        if (param.kind == TypeKind::Pointer) {
+            return 1;
+        }
+        return param.kind == TypeKind::Array ? 2 : 3;
+    case Expr::Kind::Name:
+        if (arg.text == "nil") {
+            return 1;
+        }
+        break;
+    default: break;
+    }
+    if (trial == nullptr || isUnknown(trial->type) || sameType(trial->type, param)) {
+        return 0;
+    }
+    if (param.kind == TypeKind::Int && trial->type.kind == TypeKind::Int) {
+        return 1;
+    }
+    if (param.kind == TypeKind::Interface) {
+        return 1;
+    }
+    if (param.kind == TypeKind::Float && (trial->type.kind == TypeKind::Int || trial->type.kind == TypeKind::Float)) {
+        return 2;
+    }
+    return 3;
+}
+
+/// What an argument looks like in a diagnostic.
+[[nodiscard]] std::string argumentText(const Expr& arg, const hir::Expr* trial) {
+    switch (arg.kind) {
+    case Expr::Kind::IntLiteral: return "integer literal";
+    case Expr::Kind::FloatLiteral: return "float literal";
+    case Expr::Kind::StringLiteral: return "string literal";
+    default: break;
+    }
+    return trial != nullptr ? typeToString(trial->type) : "unknown";
+}
+
+}  // namespace
+
+std::optional<std::size_t> Lowerer::resolveOverload(const Expr& call,
+                                                    const std::string& name,
+                                                    const std::vector<OverloadCandidate>& cands) {
+    // The arguments are lowered once without a type to learn their types (and literal kinds),
+    // and once per candidate with its parameter type to check that they convert.
+    std::vector<EP> trial;
+    {
+        QuietScope quiet(s_.diag_);
+        for (const ExprPtr& a : call.args) {
+            trial.push_back(expr(*a, nullptr));
         }
     }
-    if (plain) {
-        symbol = *plain;
-        const auto [it, inserted] = sh_.link_names.emplace(symbol, at);
-        if (!inserted && !declared) {
-            Diagnostic d;
-            d.code = "E0401";
-            d.severity = Severity::Error;
-            d.message = std::format("symbol `{}` is defined twice", symbol);
-            d.labels.push_back({it->second, "first definition"});
-            d.labels.push_back({at, "second definition"});
-            d.fix = "enable name mangling or rename one with `@mangle(\"...\")`";
-            s_.diag_.report(std::move(d));
+    struct Scored {
+        std::size_t index;
+        int cost;
+    };
+    std::vector<Scored> viable;
+    for (std::size_t c = 0; c < cands.size(); ++c) {
+        const OverloadCandidate& cand = cands[c];
+        if (cand.params.size() != call.args.size()) {
+            continue;
         }
-        return;
+        int cost = 0;
+        bool ok = true;
+        for (std::size_t i = 0; i < call.args.size() && ok; ++i) {
+            const Expr& arg = *call.args[i];
+            const Type& param = cand.params[i];
+            {
+                QuietScope quiet(s_.diag_);
+                ok = coerce(expr(arg, &param), param, arg.span) != nullptr;
+            }
+            cost += argumentCost(arg, trial[i].get(), param);
+        }
+        if (ok) {
+            viable.push_back({c, cost});
+        }
     }
-    // `_xl$<module>$<name>$<param types>`; the module is the mangling name of the defining module.
-    std::string sig;
-    for (const Type& p : params) {
-        sig += "$" + typeToString(p);
+    if (viable.empty()) {
+        std::string shown;
+        std::string candidates;
+        for (const OverloadCandidate& cand : cands) {
+            candidates += "\n  " + signatureOf(name, cand.params);
+        }
+        for (std::size_t i = 0; i < call.args.size(); ++i) {
+            shown += (i != 0 ? ", " : "") + argumentText(*call.args[i], trial[i].get());
+        }
+        Diagnostic d;
+        d.code = "E0404";
+        d.severity = Severity::Error;
+        d.message = std::format("no `{}` takes ({})", name, shown);
+        d.labels.push_back({call.span, "no overload matches these arguments"});
+        d.fix = "candidates:" + candidates;
+        s_.diag_.report(std::move(d));
+        return std::nullopt;
     }
-    std::string module = s_.key_;
-    if (module.empty() && s_.comp_ != nullptr && s_.comp_->root() != nullptr) {
-        module = s_.comp_->root()->mangle_name;
+    int best = viable.front().cost;
+    for (const Scored& s : viable) {
+        best = std::min(best, s.cost);
     }
-    if (module.empty()) {
-        module = "main";
+    std::vector<std::size_t> tied;
+    for (const Scored& s : viable) {
+        if (s.cost == best) {
+            tied.push_back(s.index);
+        }
     }
-    std::replace(module.begin(), module.end(), '/', '.');
-    symbol = "_xl$" + module + "$" + local_name + sig;
-    sh_.link_names.emplace(symbol, at);
+    if (tied.size() > 1) {
+        std::string list;
+        for (const std::size_t t : tied) {
+            list += "\n  " + signatureOf(name, cands[t].params);
+        }
+        Diagnostic d;
+        d.code = "E0403";
+        d.severity = Severity::Error;
+        d.message = std::format("call to `{}` is ambiguous", name);
+        d.labels.push_back({call.span, "several overloads match equally well"});
+        d.fix = "write the argument types so one overload is closer, e.g. a typed literal:" + list;
+        s_.diag_.report(std::move(d));
+        return std::nullopt;
+    }
+    return tied.front();
 }
 
 void Lowerer::lowerEnum(const EnumDecl& decl) {
@@ -1216,7 +1429,8 @@ void Lowerer::lowerGlobal(const GlobalDecl& g, const Modifiers& mods) {
             "`export(c)` needs C-compatible types (integers, floats, bool, pointers, `@repr(c)` "
             "structs)");
     }
-    assignSymbol(g.attributes, mods.export_c, mods.declared, g.name, {}, out.symbol, g.name_span);
+    assignSymbol(
+        g.attributes, mods.export_c, mods.declared, g.name, {}, false, out.symbol, g.name_span);
     if (g.init) {
         EP init = g.has_type ? coerce(expr(*g.init, &out.type), out.type, g.init->span)
                              : expr(*g.init, nullptr);
@@ -1304,7 +1518,8 @@ void Lowerer::lowerFunction(const FnDecl& f,
                             const std::string& local_name,
                             const std::vector<Attribute>& attrs,
                             const std::string& owner,
-                            const Type* self_type) {
+                            const Type* self_type,
+                            bool overloaded) {
     hir::Function out;
     out.name = qname;
     out.module = s_.key_;
@@ -1370,8 +1585,14 @@ void Lowerer::lowerFunction(const FnDecl& f,
                 "integer enums only");
         }
     }
-    assignSymbol(
-        attrs, mods.export_c, mods.declared, local_name, param_types, out.symbol, f.name_span);
+    assignSymbol(attrs,
+                 mods.export_c,
+                 mods.declared,
+                 local_name,
+                 param_types,
+                 overloaded,
+                 out.symbol,
+                 f.name_span);
     if (f.has_body) {
         lowerBlock(f.body, out.body, false);
         if (!out.ret.isVoid() && !isUnknown(out.ret) &&
@@ -1502,8 +1723,26 @@ void Lowerer::lowerItems() {
         } else if (const auto* g = std::get_if<GlobalDecl>(&item.decl)) {
             lowerGlobal(*g, item.modifiers);
         } else if (const auto* f = std::get_if<FnDecl>(&item.decl)) {
-            lowerFunction(
-                *f, item.modifiers, s_.qualify(f->name), f->name, f->attributes, {}, nullptr);
+            const std::string qname = s_.qualify(f->name);
+            const Sema::Symbol* sym = s_.find(f->name);
+            const bool overloaded = sym != nullptr && sym->overloads.size() > 1;
+            std::vector<Type> params;
+            for (const Param& p : f->params) {
+                params.push_back(resolved(p.type));
+            }
+            const std::string key = overloaded ? overloadKey(qname, params) : qname;
+            if (!fn_keys_.insert(key).second) {
+                // Two overloads with the same parameter types (E0401).
+                Diagnostic d;
+                d.code = "E0401";
+                d.severity = Severity::Error;
+                d.message = std::format("`{}` is defined twice", signatureOf(f->name, params));
+                d.labels.push_back({f->name_span, "second definition"});
+                d.fix = "give the overloads different parameter types";
+                s_.diag_.report(std::move(d));
+                continue;
+            }
+            lowerFunction(*f, item.modifiers, key, f->name, f->attributes, {}, nullptr, overloaded);
         }
     }
     // Methods after all signatures/types exist.
@@ -1512,13 +1751,42 @@ void Lowerer::lowerItems() {
             const std::string cq = s_.qualify(cl->name);
             const Type self = Type::makePointer(resolved(Type::makeNamed({cl->name})));
             for (const FnDecl& m : cl->methods) {
+                const bool overloaded =
+                    std::ranges::count_if(cl->methods, [&](const FnDecl& o) {
+                        return o.name == m.name;
+                    }) > 1;
+                std::string key = cq + "." + m.name;
+                if (overloaded) {
+                    if (m.is_virtual || m.is_override) {
+                        err("E0405",
+                            m.name_span,
+                            std::format("`{}` cannot be overloaded: virtual methods have one slot",
+                                        m.name),
+                            "keep one declaration with this name");
+                    }
+                    std::vector<Type> params;
+                    for (const Param& p : m.params) {
+                        if (!p.is_self) {
+                            params.push_back(resolved(p.type));
+                        }
+                    }
+                    key = overloadKey(key, params);
+                }
+                if (!fn_keys_.insert(key).second) {
+                    err("E0401",
+                        m.name_span,
+                        std::format("`{}.{}` is defined twice", cl->name, m.name),
+                        "give the overloads different parameter types");
+                    continue;
+                }
                 lowerFunction(m,
                               item.modifiers,
-                              cq + "." + m.name,
+                              key,
                               cl->name + "." + m.name,
                               m.attributes,
                               cq,
-                              &self);
+                              &self,
+                              overloaded);
             }
         }
     }
@@ -2540,9 +2808,40 @@ Lowerer::EP Lowerer::fromEntry(const ScopeEntry& entry, const Expr& at, const Ty
     }
     case ScopeEntry::Kind::Function: {
         Sema& owner = entry.owner != nullptr ? *entry.owner : s_;
-        EP f = mk(
-            hir::ExprKind::FuncRef, fnTypeOf(owner, std::get<FnDecl>(entry.item->decl)), at.span);
-        f->text = entry.qname.empty() ? entry.name : entry.qname;
+        const auto cands = candidatesOf(entry);
+        std::size_t pick = 0;
+        if (cands.size() > 1) {
+            // An overloaded name used as a value is chosen by the expected `fn(...)` type.
+            const Type want = expected != nullptr ? resolved(*expected) : unknownType();
+            std::vector<std::size_t> match;
+            if (want.kind == TypeKind::FnPtr) {
+                for (std::size_t i = 0; i < cands.size(); ++i) {
+                    if (typeToString(Type::makeFnPtr(cands[i].params, cands[i].ret)) ==
+                        typeToString(want)) {
+                        match.push_back(i);
+                    }
+                }
+            }
+            if (match.size() != 1) {
+                if (want.kind != TypeKind::FnPtr || match.size() > 1) {
+                    err("E0403",
+                        at.span,
+                        std::format("`{}` used as a value is ambiguous", entry.name),
+                        "write a `fn(...)` type that matches exactly one overload");
+                } else {
+                    err("E0404",
+                        at.span,
+                        std::format("no overload of `{}` has type `{}`",
+                                    entry.name,
+                                    typeToString(want)),
+                        "the expected type must match one overload");
+                }
+                return nullptr;
+            }
+            pick = match.front();
+        }
+        EP f = mk(hir::ExprKind::FuncRef, fnTypeOf(owner, *cands[pick].decl), at.span);
+        f->text = cands[pick].key;
         return f;
     }
     case ScopeEntry::Kind::Constant: {
@@ -3290,6 +3589,8 @@ std::optional<Lowerer::MethodRef> Lowerer::findMethod(const Type& agg, const std
                     r.fn_name = cur + "." + name;
                     r.decl = &m;
                     r.owner = ref->owner;
+                    r.cls = c;
+                    r.cls_q = cur;
                     if (r.kind == MethodRef::Kind::Virtual) {
                         const auto& slots = vtableOf(agg.path.front());
                         for (std::size_t i = 0; i < slots.size(); ++i) {
@@ -3387,7 +3688,7 @@ Lowerer::EP Lowerer::methodCall(const Expr& e, const Expr& recv_ast) {
             return c;
         }
     }
-    const auto m = findMethod(agg, callee.text);
+    auto m = findMethod(agg, callee.text);
     if (!m) {
         err("E0709",
             callee.span,
@@ -3397,6 +3698,18 @@ Lowerer::EP Lowerer::methodCall(const Expr& e, const Expr& recv_ast) {
             (void)expr(*a, nullptr);
         }
         return nullptr;
+    }
+    if (m->kind == MethodRef::Kind::Direct && m->cls != nullptr) {
+        // Non-virtual methods of one class may overload each other.
+        const auto cands = methodCandidates(*m, callee.text);
+        if (cands.size() > 1) {
+            const auto chosen = resolveOverload(e, callee.text, cands);
+            if (!chosen) {
+                return nullptr;
+            }
+            m->decl = cands[*chosen].decl;
+            m->fn_name = cands[*chosen].key;
+        }
     }
     std::vector<Type> params;
     for (const Param& p : m->decl->params) {
@@ -3456,19 +3769,22 @@ Lowerer::EP Lowerer::methodCall(const Expr& e, const Expr& recv_ast) {
 
 Lowerer::EP Lowerer::callEntry(const Expr& e, const ScopeEntry& entry, const std::string& name) {
     if (entry.kind == ScopeEntry::Kind::Function) {
-        Sema& owner = entry.owner != nullptr ? *entry.owner : s_;
-        const auto& decl = std::get<FnDecl>(entry.item->decl);
-        std::vector<Type> params;
-        for (const Param& p : decl.params) {
-            params.push_back(resolvedIn(owner, p.type));
+        const auto cands = candidatesOf(entry);
+        std::size_t pick = 0;
+        if (cands.size() > 1) {
+            const auto chosen = resolveOverload(e, name, cands);
+            if (!chosen) {
+                return nullptr;
+            }
+            pick = *chosen;
         }
+        const OverloadCandidate& cand = cands[pick];
         std::vector<EP> args;
-        const Type ret = resolvedIn(owner, decl.return_type);
-        if (!lowerArgs(e, params, args, name)) {
+        if (!lowerArgs(e, cand.params, args, name)) {
             return nullptr;
         }
-        EP c = mk(hir::ExprKind::Call, ret, e.span);
-        c->text = entry.qname.empty() ? entry.name : entry.qname;
+        EP c = mk(hir::ExprKind::Call, cand.ret, e.span);
+        c->text = cand.key;
         c->args = std::move(args);
         return c;
     }

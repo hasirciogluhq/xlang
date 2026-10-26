@@ -2,6 +2,7 @@
 
 #include "xlang/lang/ast.h"
 
+#include <algorithm>
 #include <format>
 
 namespace xlang {
@@ -168,6 +169,45 @@ std::string typeToString(const Type& type) {
     case TypeKind::Named: return joinPath(type.path);
     }
     return "?";
+}
+
+std::string mangleType(const Type& type) {
+    switch (type.kind) {
+    case TypeKind::Void: return "void";
+    case TypeKind::Bool: return "bool";
+    case TypeKind::Str: return "str";
+    case TypeKind::Int:
+        if (type.bits == 0) {
+            return type.is_signed ? "isize" : "usize";
+        }
+        return std::format("{}{}", type.is_signed ? "i" : "ui", type.bits);
+    case TypeKind::Float: return std::format("f{}", type.bits);
+    case TypeKind::Pointer: return "P" + (type.elem ? mangleType(*type.elem) : "void");
+    case TypeKind::FnPtr: {
+        std::string out = "F";
+        for (const Type& p : type.params) {
+            out += mangleType(p);
+        }
+        out += "R" + (type.ret ? mangleType(*type.ret) : "void") + "E";
+        return out;
+    }
+    case TypeKind::Array: {
+        const std::uint64_t len =
+            type.length && type.length->kind == Expr::Kind::IntLiteral ? type.length->int_value : 0;
+        return std::format("A{}_", len) + (type.elem ? mangleType(*type.elem) : "void");
+    }
+    case TypeKind::Enum:
+    case TypeKind::Struct:
+    case TypeKind::Class:
+    case TypeKind::Interface:
+    case TypeKind::Named: {
+        std::string name = joinPath(type.path);
+        std::replace(name.begin(), name.end(), '.', '_');
+        std::replace(name.begin(), name.end(), '/', '_');
+        return std::format("N{}{}", name.size(), name);
+    }
+    }
+    return "void";
 }
 
 }  // namespace xlang

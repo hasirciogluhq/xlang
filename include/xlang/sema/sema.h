@@ -78,6 +78,8 @@ public:
     struct Symbol {
         enum class Kind { Struct, Class, Interface, Enum, Alias, Define, Global, Fn, Macro } kind;
         const Item* item{nullptr};
+        /// Fn: every declaration of the name in declaration order (more than one = overloads).
+        std::vector<const Item*> overloads;
     };
 
     /// An import binding made by the compilation: a name that stands for an entity of another
@@ -127,6 +129,16 @@ private:
     void checkStaticAssertCall(const Expr& call);
 
     [[nodiscard]] const Symbol* find(const std::string& name) const;
+
+    /// Link name of a function or global: the plain name for `export(c)`, `@mangle("x")`,
+    /// `declare`, and `--mangle=none` (an overloaded name is never plain), otherwise
+    /// `_xl$<module>$<name>$<mangled parameter types>`.
+    [[nodiscard]] std::string linkName(const std::vector<Attribute>& attrs,
+                                       bool export_c,
+                                       bool declared,
+                                       const std::string& local_name,
+                                       const std::vector<Type>& params,
+                                       bool overloaded) const;
     [[nodiscard]] std::optional<Type> exprToType(const Expr& expr);
     [[nodiscard]] std::optional<EntityRef> entityOfExpr(const Expr& expr);
     [[nodiscard]] std::optional<ConstValue> evalBinary(const Expr& expr);

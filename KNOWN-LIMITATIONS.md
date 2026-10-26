@@ -45,6 +45,11 @@ Everything in the original plan is implemented; this file lists what is intentio
   operand or a `define` argument. Its initializer cannot read another variable or `const` (a `GlobalRef` is not a compile-time
   value), and an untyped module-level `const` takes only the default type of a literal (an enum member or an array needs
   `: T`). Block-level `const` names are not `define` names: they are read-only globals with a unique symbol.
+- Overloading (core-language phase 3): an overloaded function's HIR name is its qualified name plus its mangled parameter
+  types (not the link symbol); this is the unique key codegen uses. Overload resolution lowers each argument once per
+  candidate plus once more, so nested overloaded calls cost time exponential in their depth. Class-to-base pointer
+  conversion is not an implicit conversion in this language, so it does not count as a candidate. Overloaded `init`
+  and virtual methods are not supported (virtual methods are `E0405`).
 - `str` (phase 1 of the core-language work): no `==`/`!=` in the compiler (`strEq` in std), no implicit or `as`
   conversion to `*ui8` (only `.ptr`), no way to make a `str` from a pointer except `std/str` (`strFromParts` reinterprets a
   `@repr(c)` two-word struct). A `str` view does not keep its bytes alive: the caller must. Writing through the `*ui8` of a

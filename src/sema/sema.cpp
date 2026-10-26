@@ -199,6 +199,15 @@ void Sema::collect() {
             continue;
         }
         const auto [it, inserted] = symbols_.emplace(base.name, sym);
+        if (sym.kind == Symbol::Kind::Fn) {
+            // Functions may share a name (overloads); the signatures are checked when lowered.
+            if (inserted) {
+                it->second.overloads.push_back(&item);
+            } else if (it->second.kind == Symbol::Kind::Fn) {
+                it->second.overloads.push_back(&item);
+                continue;
+            }
+        }
         if (!inserted && it->second.item != &memory_order_item_) {
             const DeclBase& first = declBase(*it->second.item);
             Diagnostic d;
@@ -211,6 +220,73 @@ void Sema::collect() {
             diag_.report(std::move(d));
         }
     }
+    // A name with overloads may only name ordinary functions.
+    for (const auto& [name, sym] : symbols_) {
+        if (sym.kind != Symbol::Kind::Fn || sym.overloads.size() < 2) {
+            continue;
+        }
+        for (const Item* f : sym.overloads) {
+            std::string why;
+            if (name == "main") {
+                why = "`main` is the entry point";
+            } else if (f->modifiers.registered) {
+                why = "a `register`ed function fills a role";
+            } else if (f->modifiers.export_c) {
+                why = "`export(c)` names one C symbol";
+            } else if (f->modifiers.declared) {
+                why = "a `declare`d function is one external symbol";
+            }
+            if (!why.empty()) {
+                diag_.error("E0405",
+                            declBase(*f).name_span,
+                            std::format("`{}` cannot be overloaded: {}", name, why),
+                            "keep one declaration with this name");
+            }
+        }
+    }
+}
+
+std::string Sema::linkName(const std::vector<Attribute>& attrs,
+                           bool export_c,
+                           bool declared,
+                           const std::string& local_name,
+                           const std::vector<Type>& params,
+                           bool overloaded) const {
+    if (!overloaded) {
+        // Priority: export(c) > @mangle on the item > @file(mangle) > --mangle.
+        if (export_c) {
+            return local_name;
+        }
+        if (const Attribute* m = findAttr(attrs, "mangle"); m != nullptr && !m->args.empty()) {
+            const AttributeArg& a = m->args[0];
+            return a.kind == AttributeArg::Kind::String ? a.text : local_name;
+        }
+        bool none = config_.mangle == "none";
+        if (const Attribute* f = findAttr(program_.file_attributes, "file")) {
+            for (const AttributeArg& a : f->args) {
+                if (a.key == "mangle") {
+                    none = a.text == "none";
+                }
+            }
+        }
+        if (none || declared) {
+            return local_name;
+        }
+    }
+    // `_xl$<module>$<name>$<param types>`; the module is the mangling name of the defining module.
+    std::string sig;
+    for (const Type& p : params) {
+        sig += "$" + mangleType(p);
+    }
+    std::string module = key_;
+    if (module.empty() && comp_ != nullptr && comp_->root() != nullptr) {
+        module = comp_->root()->mangle_name;
+    }
+    if (module.empty()) {
+        module = "main";
+    }
+    std::replace(module.begin(), module.end(), '/', '.');
+    return "_xl$" + module + "$" + local_name + sig;
 }
 
 const Sema::Symbol* Sema::find(const std::string& name) const {

@@ -530,6 +530,34 @@ void testConst() {
     }
 }
 
+void testOverloads() {
+    {
+        Lowered b("fn h(a: i64, b: i32) { }\nfn h(a: i32, b: i64) { }\n"
+                  "fn main() -> i32 {\n h(1, 2)\n return 0 }\n");
+        CHECK(b.failedWith("E0403"));
+    }
+    {
+        Lowered b("fn k(x: str) { }\nfn k(x: bool) { }\nfn main() -> i32 {\n k(1.5)\n return 0 }\n");
+        CHECK(b.failedWith("E0404"));
+    }
+    {
+        Lowered b("export(c) fn e(x: i32) { }\nfn e(x: i64) { }\n");
+        CHECK(b.failedWith("E0405"));
+    }
+    {
+        Lowered b("fn d(x: i32) { }\nfn d(x: i32) { }\n");
+        CHECK(b.failedWith("E0401"));
+    }
+    {
+        Lowered b("fn q(x: i32) { }\nfn q(x: str) { }\nfn main() -> i32 {\n local g = q\n return 0 }\n");
+        CHECK(b.failedWith("E0403"));
+    }
+    {
+        Lowered b("fn q(x: i32) { }\nfn q(x: str) { }\nfn main() -> i32 {\n q(\"a\")\n return 0 }\n");
+        CHECK(!b.diag->hasErrors());
+    }
+}
+
 }  // namespace
 
 void runLowerTests() {
@@ -554,4 +582,5 @@ void runLowerTests() {
     testClassesAndInterfacesChecks();
     testStrings();
     testConst();
+    testOverloads();
 }

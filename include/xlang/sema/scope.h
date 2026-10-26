@@ -29,6 +29,7 @@ struct ScopeEntry {
     std::string qname;               ///< qualified name of the entity
     std::string member;              ///< External: name inside `module` (empty for a whole module)
     bool readonly{false};            ///< Global: a `const` (its places cannot be written)
+    std::vector<const Item*> overloads;  ///< Function: every overload of the name (else empty)
 };
 
 /// Lexical scopes: module -> function -> nested blocks. Lookup walks from the innermost scope

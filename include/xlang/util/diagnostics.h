@@ -76,6 +76,11 @@ public:
     void report(Diagnostic diagnostic);
     void flush();
 
+    /// Trial lowering (overload resolution): while quiet, reports are dropped and do not count.
+    /// Calls nest; each `beginQuiet` needs one `endQuiet`.
+    void beginQuiet() { ++quiet_; }
+    void endQuiet() { --quiet_; }
+
     // Builders for the common shapes.
     void error(std::string code, const Span& span, std::string message, std::string label = {});
     void warning(std::string code, const Span& span, std::string message, std::string label = {});
@@ -108,6 +113,7 @@ private:
     std::optional<std::ofstream> log_;
     std::vector<Diagnostic> pending_;
     std::size_t errors_{0};
+    std::size_t quiet_{0};
     std::size_t warnings_{0};
 };
 

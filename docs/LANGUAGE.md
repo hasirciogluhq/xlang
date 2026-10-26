@@ -161,7 +161,10 @@ fn log(msg: *ui8) { ... }            // no `->` means void
 fn apply(f: fn(i32) -> i32, v: i32) -> i32 { return f(v) }
 ```
 
-- Functions are not overloaded: defining a name twice is an error (`E0401`).
+- Overloading: functions may share a name when their parameter types differ. Defining the same parameter types twice is `E0401`. `main`, `register`ed functions, `export(c)` and `declare` functions cannot be overloaded (`E0405`). Non-virtual methods of one class may overload each other; `virtual`/`override` methods cannot (`E0405`).
+- A call picks the overload with the lowest total argument cost: an exact type costs 0; an untyped integer literal costs 1 for `i64` and 2 for any other integer type; an untyped float literal costs 1 for `f64` and 2 for `f32`; a string literal costs 0 for `str`, 1 for `*ui8` and 2 for `[ui8; N]`; `nil` costs 1 for a pointer; integer widening costs 1; wrapping a value in an interface costs 1; an integer to float conversion costs 2; other conversions cost 3. An argument that does not convert makes the overload unavailable. A tie is `E0403`; no available overload is `E0404` and lists the signatures.
+- A function name used as a value is chosen by the expected `fn(...)` type. Without one, an overloaded name is `E0403`.
+- Overloaded functions are named with their parameter types in the link name, even under `--mangle=none`.
 - There are no variadic functions and no default arguments. (`syscall` is the one builtin with a variable argument count.)
 - A function with a return type must end every path in `return`, otherwise `W0701`.
 - `export fn` makes a function visible to importers; `export(c) fn` additionally keeps the C symbol name unmangled. Names are mangled by default (`--mangle=none` disables it).

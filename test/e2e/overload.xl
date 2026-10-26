@@ -1,0 +1,56 @@
+// Overloading: free functions and non-virtual methods may share a name when their parameter types
+// differ. A call picks the overload with the lowest argument cost (literals prefer i64 and f64).
+from "std" import println, print
+
+global failures: i32 = 0
+
+fn check(name: *ui8, ok: bool) {
+    if !ok {
+        failures = failures + 1
+        print("FAIL ")
+        println(name)
+    }
+}
+
+fn foo(a: str, b: i32) -> i32 { return b }
+fn foo(a: i32, b: str) -> i32 { return a + 100 }
+
+struct Rect { w: i32, h: i32 }
+struct Circle { r: i32 }
+
+fn area(r: Rect) -> i32 { return r.w * r.h }
+fn area(c: Circle) -> i32 { return c.r * 3 }
+
+fn f(x: i64) -> i64 { return 1 }
+fn f(x: i32) -> i32 { return 2 }
+
+fn twice(x: i32) -> i32 { return x * 2 }
+fn twice(x: f64) -> f64 { return x * 2.0 }
+
+fn apply(g: fn(i32) -> i32, x: i32) -> i32 { return g(x) }
+
+class Acc {
+    total: i64
+
+    fn add(self, n: i32) { self.total = self.total + n as i64 }
+    fn add(self, s: str) { self.total = self.total + s.len as i64 }
+}
+
+fn main() -> i32 {
+    check("str first", foo("a", 1) == 1)
+    check("str second", foo(1, "b") == 101)
+    check("struct area", area(Rect { w: 2, h: 3 }) == 6)
+    check("other struct area", area(Circle { r: 2 }) == 6)
+    check("literal picks i64", f(5) == 1)
+    local k: i32 = 3
+    check("typed picks i32", f(k) == 2)
+    check("function value", apply(twice, 2) == 4)
+    local a: Acc = Acc { total: 0 }
+    a.add(5)
+    a.add("abc")
+    check("class overloads", a.total == 8)
+    if failures == 0 {
+        println("overload ok")
+    }
+    return failures
+}

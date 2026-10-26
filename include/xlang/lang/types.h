@@ -69,4 +69,8 @@ struct Type {
 /// Source-like spelling: `*ui8`, `[i32; 4]`, `fn(i32) -> i32`, `io.Writer`.
 [[nodiscard]] std::string typeToString(const Type& type);
 
+/// Symbol-safe spelling for link names: no spaces, `[`, `;`, `*`, `(` or `<`. `*T` is `P<T>`,
+/// `[T; N]` is `A<N>_<T>`, `fn(A, B) -> R` is `F<A><B>R<R>E`, a named type is `N<len><name>`.
+[[nodiscard]] std::string mangleType(const Type& type);
+
 }  // namespace xlang

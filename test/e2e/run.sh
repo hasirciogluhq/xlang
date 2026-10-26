@@ -32,6 +32,7 @@ tests=(
   "x25519|0|x25519 ok|0|1"
   "ecdsa|0|ecdsa ok|0|1"
   "strings|0|strings ok|0|1"
+  "overload|0|overload ok|0|1"
 )
 [ "${XLANG_E2E_NET:-}" = 1 ] && tests+=("https|0|https ok|0|1")
 
