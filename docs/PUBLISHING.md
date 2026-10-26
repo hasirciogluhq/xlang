@@ -2,6 +2,8 @@
 
 This document describes how xlang packages are prepared and published. Command invocation (`xlang publish`) is defined in the [Package Manager](PACKAGE_MANAGER.md) reference; this document is the source of truth for **what** is published and **how** versions and artifacts are produced.
 
+> **Implementation status:** not implemented. There is no `xlang publish` command and no registry; see the status note in [Package Manager](PACKAGE_MANAGER.md).
+
 ---
 
 ## Table of Contents
@@ -74,7 +76,7 @@ Before publish:
 
 1. Ensure the project configuration lists the package, its entry (if runnable), and its public exports.
 2. Run `xlang parse` and `xlang test` on the relevant paths.
-3. If you ship a static library, build/compile it first (`xlang build …` or `xlang compile …`) so the artifact exists. A static library that has not been compiled is not installed or published.
+3. If you ship a static library, build/compile it first (`xlang build … --emit=static`) so the artifact exists. A static library that has not been compiled is not installed or published.
 4. Confirm dependency names are qualified (`publisher/name`) to avoid consumer-side conflicts.
 
 ---

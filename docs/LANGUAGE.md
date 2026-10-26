@@ -1,6 +1,6 @@
 # xlang Language Reference
 
-This document describes the syntax, types, module system, and compiler-provided language features.
+This document describes the syntax, types, module system and compiler-provided features of xlang as implemented today. Source files use the extension `.xl`. The standard library lives in `std/` and is written in xlang itself; the compiler gives no special treatment to names inside it.
 
 ---
 
@@ -9,64 +9,67 @@ This document describes the syntax, types, module system, and compiler-provided 
 1. [Overview](#overview)
 2. [Program structure](#program-structure)
 3. [Types](#types)
-4. [Variables](#variables)
-5. [Pointers and casts](#pointers-and-casts)
+4. [Variables and globals](#variables-and-globals)
+5. [Pointers and conversions](#pointers-and-conversions)
 6. [Functions](#functions)
 7. [Control flow](#control-flow)
 8. [Expressions and operators](#expressions-and-operators)
-9. [Struct and memory](#struct-and-memory)
+9. [Structs, classes, interfaces and enums](#structs-classes-interfaces-and-enums)
+10. [Memory and `new`](#memory-and-new)
 11. [Modules and import](#modules-and-import)
-12. [Print](#print)
-13. [External linking](#external-linking)
+12. [Attributes, `declare` and external linking](#attributes-declare-and-external-linking)
+13. [Conditional compilation, constants and macros](#conditional-compilation-constants-and-macros)
 14. [Compiler builtins](#compiler-builtins)
-15. [Testing](#testing)
-16. [Limitations](#limitations)
+15. [Standard library](#standard-library)
+16. [Testing](#testing)
+17. [Command line](#command-line)
+18. [Limitations](#limitations)
 
 ---
 
 ## Overview
 
-xlang is an extremely **low-level**, statically typed language compiled with LLVM. You can talk to the machine directly. It also ships optional **high-level APIs** (libraries such as `net` / `http`) so the same language can host REST services, database clients, and similar work without forcing that abstraction on everyone.
+xlang is a low-level, statically typed language compiled with LLVM. There is no libc and no C runtime: the compiler knows only the language, the CPU primitives and a closed list of builtins, and everything else (printing, memory allocation, `memcpy`, threads, sockets, HTTP, TLS) is ordinary xlang code in `std/`.
 
-Design goals:
+Design points:
 
-- **Low-level first** — direct control; high-level packages are opt-in imports, not the language core
-- **Explicit linkage** — external declarations resolve only from user-provided objects and libraries
-- **Native syscalls** — `declare syscall <n>` / `@syscall` emit CPU traps
-- **Simple syntax** — C/Go blend; `fn`, `local`, `struct`, `import`
-
+- Direct control: raw pointers, `syscall`, inline assembly and atomics are part of the language; higher-level APIs are opt-in imports.
+- No generics, no tuples and no multiple return values.
+- Safety: `*T` is unchecked; array indexing is bounds-checked by default (`--safety=checked`) and can be switched off with `--safety=unchecked`.
+- No borrow checker, no garbage collector, no exceptions.
 
 ---
 
 ## Program structure
 
-A `.xlang` file may contain at the top level:
+A `.xl` file contains top-level declarations only: `fn`, `global`, `struct`, `class`, `interface`, `impl`, `enum`, `type`, `define`, `import`/`from`, `export ... from` re-exports, macro invocations and calls such as `staticAssert(...)`. Declarations end at a line break; a semicolon is not used. Comments are `// line`, `/* block */` and `/// doc`.
 
-```xlang
-import scheduler                    // module import
-from math import add, mul           // selective import
+```
+from "std" import print, println, printInt
 
-struct Point { x: int32, y: int32 } // struct definition
+struct Point { x: i32, y: i32 }
 
-counter = 0                          // global variable
-declare xl_filesystem_open(path: string, mode: int32): int64  // bridge / C ABI
-declare syscall 1 write(fd: int64, buf: int64, n: int64): int64 // CPU-native
-declare external fn helper(x)        // external symbol (link time)
+global counter: i64 = 0
 
-export fn exported_fn() { ... }      // exported function
-fn internal_fn() { ... }             // file-local function
+export fn add(a: i32, b: i32) -> i32 {
+    return a + b
+}
 
-fn main() {                          // entry point
-    ...
+fn main() -> i32 {
+    local p: Point = Point { x: 1, y: 2 }
+    println("hello")
+    printInt(add(p.x, p.y) as i64)
+    println("")
     return 0
 }
 ```
 
 **Entry points:** the OS entry symbol (`_start`, or `mainCRTStartup` on Windows) runs the registered `start` first and then `main`, and the process exits with `main`'s `int32` result (0 when `main` returns nothing).
 
-- `main` is the user program's entry: `fn main()` with no parameters, optionally returning `int32`.
+- `main` is the user program's entry: `fn main()` with no parameters, optionally returning `i32` (any integer return type is used as the exit status).
 - `start` is the boot hook: `register(start) fn start()` with no parameters and no return type. The stdlib (`std/runtime`) defines it as an empty function; with `--no-std` no `start` is registered and nothing runs before `main`.
 - No entry stub is emitted when the program has no `main`.
+- Entry stubs exist for Linux and macOS on x86_64 and aarch64, and for Windows on x86_64.
 
 ---
 
@@ -74,839 +77,304 @@ fn main() {                          // entry point
 
 | Syntax | Description |
 |--------|-------------|
-| `int`, `int32` | 32-bit signed integer (default numeric type) |
-| `int64` | 64-bit signed integer |
-| `bigint` | 128-bit integer (LLVM i128) |
-| `float`, `float32` | 32-bit float |
-| `double`, `float64` | 64-bit float |
-| `bool` | boolean |
-| `char` | 8-bit character |
-| `string` | UTF-8 string (`i8*` ABI) |
-| `void` | Return type (rare) |
-| `StructName` | User-defined struct |
-| `*T` | Pointer (`*int32`, `*Point`) |
+| `i8`, `i16`, `i32`, `i64` | Signed integers |
+| `ui8`, `ui16`, `ui32`, `ui64` | Unsigned integers |
+| `isize`, `usize` | Pointer-sized signed / unsigned integers |
+| `f32`, `f64` | Floating point |
+| `bool` | `true` / `false` |
+| `void` | No value (the return type of a function without `->`) |
+| `*T` | Pointer to `T` (`*ui8`, `*Point`, `*void`) |
+| `fn(A, B) -> R` | Function pointer |
+| `[T; N]` | Fixed-size array; `N` is a compile-time constant |
+| `Name` | A `struct`, `class`, `interface` or `enum` |
 
-Type annotation:
+There is no `string` type: a string literal has type `*ui8` and points to NUL-terminated bytes. There are no character literals; write the byte value (`97`). `type Name = T` declares a transparent alias.
 
-```xlang
-local x: int32 = 10
-local name: string = "ali"
-local p: Point = new Point { x = 1, y = 2 }
-local ip: *int32 = &x
-```
-
-If no annotation is given, the default type is **`int32`**.
+Integer literals may be decimal or hexadecimal (`0xff`); float literals look like `1.5` or `1.5e3`. Escapes in string literals include `\n` and `\x1b`.
 
 ---
 
-## Variables
+## Variables and globals
 
-### Global
+Locals are declared with `local`; the type is written after a colon:
 
-```xlang
-counter = 0
-limit: int32 = 100
-export counter = 0    // exported with export
+```
+local i: i32 = 0
+local buf: [ui8; 64]          // no initializer
+local q: *Point = &p
+local n = 3                   // type inferred from the initializer
 ```
 
-### Local
+Globals use `global` with a mandatory type. Their initializer must be a compile-time constant; without one the global is zero-initialized:
 
-```xlang
-local i = 0
-local msg: string = "hello"
+```
+global counter: i64 = 10
+global table: [i32; 4]
+global banner: *ui8 = "xlang"
 ```
 
-Local variables are declared with `local` in a function body; type inference comes from the assignment expression.
-
-### Assignment
-
-```xlang
-counter = counter + 1
-p.x = 42
-arr[i] = value
-*ip = 7
-```
+Assignment is `target = value` and `target op= value` for `+ - * / % & | ^ << >>`. `x++` and `x--` are statements, not expressions.
 
 ---
 
-## Pointers and casts
+## Pointers and conversions
 
-### Pointer type
-
-Prefix `*` on a type: `*int32`, `*Point`, `**int32` (nested).
-
-```xlang
-local x: int32 = 1
-local p: *int32 = &x   // address-of
-local v = *p           // dereference (load)
-*p = 42                // store through pointer
-```
-
-| Op | Meaning |
-|----|---------|
-| `&expr` | Address of lvalue (variable, field, or index) → `*T` |
-| `*ptr` | Load through `*T` |
-| `*ptr = value` | Store through `*T` |
-| `null` | Null pointer (assign to `*T` or `null as *T`) |
-
-`delete` accepts a pointer or struct handle.
-
-### Casts (`as` / `reinterpret`)
-
-C++ `static_cast` / `reinterpret_cast` ruhu — iki basit yüzey:
-
-| Form | Role | Typical uses |
-|------|------|----------------|
-| `expr as T` | static-like | int/float widen-narrow, `struct as Interface`, `handle as User` |
-| `expr reinterpret T` | bit / pointer | `*T` ↔ `*U`, `*T` ↔ `int64` |
-
-```xlang
-local n: int32 = 7
-local w = n as int64
-local p: *int32 = &n
-local bits = p reinterpret int64
-local q = bits reinterpret *int32
-local g = c as Greeter
-```
+- `&x` takes an address, `*p` dereferences, `p.field` reaches a field through a pointer or a value, `p[i]` indexes a pointer or an array.
+- `nil` is the null pointer.
+- Conversions are explicit with `as`: `x as i64`, `p as *ui8`, `(addr as usize)`, `n as *void`.
+- Implicit conversions: same-signedness integer widening only. A signed integer converting to a float warns (`W0601`). Unsigned to signed (and the reverse) is an error (`E0601`). Narrowing always needs `as`.
+- An `unsafe { ... }` block allows implicit integer conversions that change signedness when the target is the same width or wider, and unsigned to float (still `W0601`); narrowing always needs `as`.
+- Arithmetic on fixed-width integers wraps (`u + 10` with `u: ui8 = 250` gives 4). Division by zero and out-of-range array indexes call the registered `panic` under `--safety=checked`.
 
 ---
 
 ## Functions
 
-### Definition
-
-```xlang
-fn add(a: int32, b: int32) {
-    return a + b
-}
-
-fn greet(name: string) {
-    print("hello, %s", name)
-    return 0
-}
+```
+fn name(a: i32, b: *ui8) -> i64 { ... }
+fn log(msg: *ui8) { ... }            // no `->` means void
+fn apply(f: fn(i32) -> i32, v: i32) -> i32 { return f(v) }
 ```
 
-If no return type is specified, the default is `int32`:
-
-```xlang
-fn foo(): int32 { return 0 }
-```
-
-### Overload
-
-Same name, different parameter types:
-
-```xlang
-export fn process(x: int32) { print(x) }
-export fn process(s: string) { print(s) }
-```
-
-The compiler selects the correct overload at call site based on argument types.
-
-### Interface
-
-Port/adapter style contracts (Go/TypeScript inspired):
-
-```xlang
-interface Greeter {
-    Greet(name: string): int32
-}
-
-struct ConsoleGreeter {
-    prefix: string
-}
-
-fn Greet(g: ConsoleGreeter, name: string): int32 {
-    print("%s %s", g.prefix, name)
-    return 0
-}
-
-fn main() {
-    local c: ConsoleGreeter = new ConsoleGreeter { prefix = "hello" }
-    local g = c as Greeter
-    return 0
-}
-```
-
-Use `as InterfaceName` to cast a struct to an interface handle.
-
-### Variadic
-
-```xlang
-export fn print(...) {
-    return 0
-}
-```
-
-`...` at the end; fixed parameters + unlimited extra arguments. Runtime `print` is defined this way.
-
-### Export / External
-
-| Modifier | Meaning |
-|----------|---------|
-| `export` | Importable from other modules |
-| `external` | Implementation in another `.o` file; declaration only |
-| `declare` | No definition — bridge/C ABI prototype (raw symbol) |
-| `declare syscall` | CPU-native trap wrapper (`declare syscall <number> name(...)`) |
-
-```xlang
-export fn add(a, b) { return a + b }
-
-declare external fn zamazokka(x)
-
-declare xl_thread_start(entry: int64, arg: int32): int64
-declare syscall 1 write(fd: int64, buf: int64, n: int64): int64
-```
+- Functions are not overloaded: defining a name twice is an error (`E0401`).
+- There are no variadic functions and no default arguments. (`syscall` is the one builtin with a variable argument count.)
+- A function with a return type must end every path in `return`, otherwise `W0701`.
+- `export fn` makes a function visible to importers; `export(c) fn` additionally keeps the C symbol name unmangled. Names are mangled by default (`--mangle=none` disables it).
+- Methods belong to classes and `impl` blocks (see below); `self` is the first parameter.
+- Naming convention: types `PascalCase`, functions, variables and fields `camelCase`.
 
 ---
 
 ## Control flow
 
-### if / else
+```
+if cond { ... } else if other { ... } else { ... }
 
-```xlang
-if x > 0 {
-    print("positive")
-} else {
-    print("non-positive")
+while cond { ... }
+do { ... } while cond
+for local i: i64 = 0; i < 10; i++ { ... }
+for i in 0..10 { ... }                    // upper bound exclusive, evaluated once
+
+outer: for i in 0..5 {
+    for j in 0..5 {
+        if j == 3 { continue outer }
+        if i == 3 { break outer }
+    }
 }
+
+switch v {
+    case 1, 2 { return 10 }
+    case Color.Red { return 1 }
+    default { return -1 }
+}
+
+defer cleanup(p)
 ```
 
-### while
-
-```xlang
-while i < 10 {
-    print(i)
-    i = i + 1
-}
-
-while true {
-    // infinite loop (worker loop, etc.)
-}
-```
+- Conditions need no parentheses; bodies always use braces.
+- `switch` works on integers, bools and enums, has no fallthrough, and a `break` inside it leaves the enclosing loop.
+- `defer stmt` runs when the enclosing block is left; see [defer.md](defer.md).
+- `cond ? a : b` is the conditional expression.
 
 ---
 
 ## Expressions and operators
 
-### Arithmetic
-
-`+` `-` `*` `/` — for int and float; mixed types promote to float.
-
-### Comparison
-
-`==` `!=` `<` `>` `<=` `>=`
-
-### Logical
-
-`&&` `||` — no short-circuit (simple codegen)
-
-### Strings
-
-```xlang
-local s = "hello" + " world"
-local t = "count: " + 42          // int → string conversion
-print("User: %s", name)
-print("score: %d", 100)
-print("x=%d y=%d", p.x, p.y)
-```
-
-String literal: `"..."`  
-Escapes: `\"`, `\\`, `\n` (lexer support)
-
-### Literals
-
-```xlang
-42          // int
-3.14        // float
-true false  // bool
-null        // for pointer / string / struct
-```
-
-### Function call
-
-```xlang
-add(1, 2)
-p.x
-obj.field
-```
+- Arithmetic: `+ - * / %`. Bitwise: `& | ^ ~ << >>`, with Go-style precedence (`& << >>` bind like `*`, `| ^` like `+`). A shift count of at least the bit width gives 0 (`>>` of a negative signed value gives -1).
+- Comparison: `== != < <= > >=`. Logical: `&& || !` (short-circuit).
+- Struct literal: `Point { x: 1, y: 2 }`. Array literal: `[1, 2, 3]`.
+- Calls: `f(a, b)`, method calls `obj.method(a)`, macro calls `name!(...)`.
+- `sizeOf(T)`, `alignOf(T)` and `offsetOf(T, field)` are compile-time constants.
 
 ---
 
-## Struct and memory
+## Structs, classes, interfaces and enums
 
-### Definition
+```
+struct Rect { w: i32, h: i32 }
 
-```xlang
-struct Point {
-    x: int32
-    y: int32
+interface Shape { fn area(self) -> i32 }
+impl Shape for Rect {
+    fn area(self) -> i32 { return self.w * self.h }
 }
+
+class Animal {
+    legs: i32
+    virtual fn sound(self) -> i32 { return 1 }
+}
+class Dog : Animal {
+    tail: i32
+    override fn sound(self) -> i32 { return 2 }
+}
+
+enum Color: i32 { Red, Green = 5, Blue }     // underlying type defaults to i32
 ```
 
-### Creation and field access
+- A `struct` holds data only (no methods). The default layout is xlang's own; `@repr(c)` selects C layout.
+- A `class` has fields, methods, single inheritance (`class Dog : Animal`) and a vptr; `virtual` methods are overridden with `override`. A `*Dog` converts to `*Animal` with `as`.
+- An `interface` is a set of method signatures. A value of interface type is a fat pointer (data pointer plus table); `impl Interface for Type` provides the methods, and a value of that type passes where the interface is expected. Interfaces are nominal: without the `impl` the use is error `E0504`.
+- Enum members are accessed as `Color.Green` and converted to integers with `as`.
 
-```xlang
-local p: Point = new Point { x = 10, y = 20 }
-print(p.x)
-p.y = 30
-delete p
-```
+---
 
-`new StructName { field = expr, ... }` allocates on the heap.  
-`delete expr` frees heap memory (struct pointer).
+## Memory and `new`
+
+`new T { ... }` allocates through the registered allocator and returns `*T`; `new(a) T { ... }` allocates through an explicit allocator `a` (a pointer to a type with `impl Allocator`, or an `Allocator` value). `Allocator` is the builtin interface `alloc(self, size: usize, align: usize) -> *void` / `free(self, p: *void)`. Without a registered allocator `new` without `(a)` is error `E0501`.
+
+The stdlib registers a default heap allocator when the `default-allocator` feature is on (the default); `free(p)` and `setAllocator(a)` come from `std/mem`. `malloc`/`free`/`memcpy` are not builtins: they are stdlib code (`std/mem`, `std/memory`).
+
+`register(role) decl` makes a declaration global and exported under a role. The roles are `panic` (`fn(msg: *ui8)` with no return type; the compiler's failure paths call it) `allocator` and `start` (the boot hook described under entry points). Only one registration per role is allowed (`E0502`).
 
 ---
 
 ## Modules and import
 
-xlang resolves modules from:
-
-1. **`src/runtime/frontend/`** — standard library + runtime (`json`, `http`, `net`, `sync`, …)
-2. **Relative paths** — `import foo from ./foo`
-3. **`XLANG_MODULE_PATH`** — extra module search directories (OS path-list separator)
-
-Bridge ABIs live in `src/runtime/bridge/` (C/C++ only) and are never imported as xlang modules.
-
-### Directory packages
-
-A folder under the frontend root is a **package** — no barrel file required:
+A module path `"x"` resolves to `x.xl` or `x/index.xl`. `std` and `std/x` come from the stdlib root; other paths are searched from the importing file's directory, then the root file's directory.
 
 ```
-src/runtime/frontend/http/router.xlang
+import "std"                                // module as a namespace
+import "std/mem" as mem
+from "std" import print, println            // selective import
+import print, println from "std"            // same, other order
+from "std" import printInt as pi            // rename
+import * from "std"                         // bring every export in
+import * as sys from "std/sys"              // namespace alias
 ```
 
-```xlang
-import * as http from http          // merges http/*
-import Router from http             // submodule http/router
-import router from http/router      // single file
+Re-exports:
+
+```
+export * from "memory"
+export * from "memory" except strlen
+export * as sys from "sys"
+export { sysClockSeconds, sysRandom } from "sys"
 ```
 
-### Import syntax
-
-```xlang
-import * as json from json                    // namespace — json.parse(...)
-import expect from test                        // selective symbol import
-import router from http/router                 // submodule as namespace (path with /)
-import * as http, Router from http             // mixed clause import
-import json from json                          // same-name namespace alias
-from json import parse                         // legacy selective import
-```
-
-**Rules**
-
-- `import * as X from M` — exported symbols available as `X.Name`
-- `import Symbol from M` — import a single exported function or global (e.g. `expect` from `test`)
-- `import Name from M` — submodule (`http/router`) when `M/Name` exists, or exported symbol
-- `import alias from M/path` — prefix import when module path contains `/`
-- `from M import a, b` — legacy selective import (same as clause form)
-- Bare `import M` merges all symbols (including private) into the current file
-
-Selective imports pull only the named exported symbols (and supporting structs/globals) into the current module — private symbols cannot be imported.
-
-### libs layout
-
-| Module | Description |
-|--------|-------------|
-| `json` | `parse`, typed field accessors (`data.Int(key)`) |
-| `http` | Package merging `http/router` + `http/server` |
-| `http/router` | Gin-style `Context`, `r.Use`, `r.Get`, `ListenAndServe` |
-| `http/server` | TCP transport — `Conn`, `ServerInfo`, `Listen`, `AcceptOnce` |
-| `test` | Vitest-style `expect`, `expectFn`, `fail` |
-| `process` | fork, pipe, fd, env, `file_read` |
-| `filesystem` | `ReadAll`, `Write`, `OpenRead`, `Exists`, stream I/O |
-| `sync` (runtime) | `Lock`, `RWLock`, `AtomicInt` — method-style API |
-
-See [vscode/README.md](../vscode/README.md) for IDE completion of imported modules.
+- Only `export`ed declarations are visible to importers.
+- Two exports or imports of the same name are an error; the same entity reaching a module by two paths is warning `W0401`.
+- `import "std"` gives the whole standard library; the compiler itself loads the default stdlib unless `--no-std` or `--std=<dir>` is given.
 
 ---
 
-## Print
+## Attributes, `declare` and external linking
 
-Single variadic function; no separate `print_int` / `print_str`.
+`declare` prefixes any declaration that is defined somewhere else. `@library("name")` names a native OS library for a declared function:
 
-```xlang
-print("hello world")              // single string → with newline
-print(42)                         // single int
-print("fmt: %d", x)               // format + arguments
-print("a=%s b=%d", name, id)      // multiple arguments
-print("count: " + 42)             // string concat
+```
+@library("ntdll") declare fn NtTerminateProcess(handle: i64, status: i32) -> i32
+declare fn helper(x: i32) -> i32          // resolved at link time from another object
 ```
 
-Implementation lowers to `printf` in the compiler; runtime `export fn print(...)` is a stub for signature/link compatibility.
+- A `declare`d function not defined in the compilation produces `W0301`.
+- Native libraries are used only where the OS requires them (the Windows `std/sys/windows.xl` imports from ntdll, ws2_32, bcrypt and crypt32). On Windows the linker driver generates import libraries from the `@library` declarations; Linux and macOS programs are linked with no libraries at all (`@library` has no effect there).
+- Prefer the raw `syscall(nr, args...)` builtin to a library call. Imports of OS libraries stay in `std/sys/<os>.xl` behind `#if os == "..."`.
+- Other attributes: `@repr(c)` (C layout), `@allow(CODE)` (silence a warning for the item).
+- `--emit=header` writes a C header for exported items; `--emit=static|shared|obj` produce a static archive, shared library or object.
+
+See [LINKING.md](LINKING.md) for how objects are linked.
 
 ---
 
-## Scheduler and spawn
+## Conditional compilation, constants and macros
 
-Go-routine-like concurrency. **All scheduling logic** lives in `src/runtime/frontend/scheduler/scheduler.xlang`.
+```
+#if os == "linux" && arch == "x86_64"
+define SYS_WRITE = 1
+#elif os == "macos"
+define SYS_WRITE = 0x2000004
+#else
+#error "unsupported target"
+#endif
 
-### API (runtime export)
-
-| Function | Description |
-|----------|-------------|
-| `spawn(bound_call)` | Enqueues a call with bound arguments |
-| `wait_all()` | Waits until queue and in-flight work finish |
-| `cpu()` | CPU core count |
-| `add_worker()` | Starts an additional worker thread |
-
-### Using spawn
-
-```xlang
-fn worker(id: int32, tag: string) {
-    print("job %d: %s", id, tag)
-    return 0
-}
-
-fn main() {
-    go worker(1, "alpha")
-    go worker(2, "beta")
-    wait_all()
-    return 0
-}
+#ifdef featureDefaultAllocator
+...
+#endif
 ```
 
-**Important:** `spawn` / `go` only accept a **bound call** — arguments are given inside the call:
-
-```xlang
-go job_worker(1, "ok")       // ✓ shorthand
-spawn(job_worker(1, "ok"))   // ✓ explicit
-spawn(job_worker, 1, "ok")   // ✗ (old API, not supported)
-```
-
-`go expr` is syntactic sugar for `spawn(expr)`.
-
-The compiler automatically generates a **thunk** (parameterless `i32()` wrapper) for each `spawn(...)`; worker threads run this thunk.
-
-## Concurrency and sync
-
-Mutex, reader-writer lock, and atomic types live in `src/runtime/frontend/sync/sync.xlang`. Logic is pure xlang; OS helpers are plain `declare` bridges (`mutex_*`, `cond_*`, `atomic_*`, `sleep_ms`, `xl_now_ms`).
-
-```xlang
-import sync from sync
-
-struct SharedState {
-    count: AtomicInt
-    guard: Lock
-}
-
-fn main() {
-    local st: SharedState = new SharedState {
-        count = sync.NewAtomicInt(0),
-        guard = sync.NewLock()
-    }
-    st.guard.Lock()
-    st.count.FetchAdd(1)
-    st.guard.Unlock()
-    return 0
-}
-```
-
-### Lock (mutex)
-
-| Method | Description |
-|--------|-------------|
-| `NewLock()` | Create embeddable `Lock` |
-| `l.Lock()` | Block until acquired |
-| `l.Unlock()` | Release; clears timeout |
-| `l.SetTimeout(ms)` | Auto-release after `ms` **while held** (returns 0 if not held) |
-| `l.TryLock()` | Non-blocking acquire |
-| `l.IsHeld()` | Returns `1` while held |
-
-### RWLock
-
-| Method | Description |
-|--------|-------------|
-| `NewRWLock()` | Reader-writer lock |
-| `rw.ReadLock()` / `rw.ReadUnlock()` | Shared read access |
-| `rw.WriteLock()` / `rw.WriteUnlock()` | Exclusive write access |
-| `rw.SetWriteTimeout(ms)` | Auto-release write lock while held |
-| `rw.WriteIsHeld()` | Returns `1` while write held |
-
-### AtomicInt / AtomicBool
-
-| Method | Description |
-|--------|-------------|
-| `NewAtomicInt(n)` / `NewAtomicBool(v)` | Heap atomic cell |
-| `a.Load()` / `a.Store(v)` | Atomic load/store |
-| `a.FetchAdd(delta)` | Fetch-and-add (`AtomicInt`) |
-| `a.CompareExchange(exp, des)` | CAS (`AtomicInt`) |
-
-Internal bridge declares: `atomic_*`, `mutex_*`, `cond_*`, `sleep_ms`, `xl_now_ms`.
-
-See `examples/sync_lock.xlang` for `go` + mutex + atomic counter.
-
----
-
-## HTTP server (frontend/http)
-
-Gin-inspired minimal router split into two modules:
-
-- **`http/router`** — routing, middleware, `Context`, HTTP parsing, `ListenAndServe` (`src/runtime/frontend/http/`)
-- **`http/server`** — raw TCP I/O (`Conn`, `ServerInfo`, `Listen`, `AcceptOnce`)
-
-Import the package namespace or submodules directly:
-
-```xlang
-import * as http from http          // merged package
-import router from http/router      // router-only (tests)
-```
-
-Handlers receive **`Context`** (request + response + per-request stash). No module globals.
-
-```xlang
-import * as http from http
-
-fn auth(ctx: Context) {
-    local user = new User { name = "admin" }
-    ctx.Bind("auth.user", ref(user))
-    return 0
-}
-
-fn handle_me(ctx: Context) {
-    local user = ctx.Ref("auth.user") as User
-    ctx.JSON(200, "{\"name\":\"" + user.name + "\"}")
-    return 0
-}
-
-fn main() {
-    local r = http.NewRouter()
-    r.Use(auth)
-    r.Get("/me", handle_me)
-    r.ListenAndServe("127.0.0.1", 8080, on_listen)
-    return 0
-}
-```
-
-### Router
-
-| Method | Description |
-|--------|-------------|
-| `NewRouter()` | New router |
-| `r.Use(mw)` | Middleware `fn(ctx: Context)` — runs before each handler |
-| `r.Get/Post/...` | Register routes |
-| `r.Group(prefix)` | Shared prefix + middleware chain |
-| `r.DispatchRequest(method, path) → Context` | Test/dispatch |
-| `r.ListenAndServe(host, port, on_listen)` | TCP server |
-
-### Context (handler)
-
-| Method | Description |
-|--------|-------------|
-| `ctx.Param(name)` | Path param |
-| `ctx.Method()` / `ctx.Path()` | Request info |
-| `ctx.String(status, body)` | Plain text response |
-| `ctx.JSON(status, body)` | JSON response |
-| `ctx.HTML(status, body)` | HTML response |
-| `ctx.Put(key, val)` | Stash string (middleware → handler) |
-| `ctx.Get(key)` | Read stashed string |
-| `ctx.Bind(key, ref(obj))` | Attach struct handle |
-| `ctx.Ref(key) as Type` | Load struct from stash |
-
-Compiler: `ref(obj)` → int64, `handle as User` loads struct from handle.
-
----
-
-## Networking and fetch
-
-HTTP/HTTPS client logic lives in `src/runtime/frontend/net/`, built on the bridge socket/TLS ABI (not an HTTP bridge).
-
-| API | Description |
-|-----|-------------|
-| `fetch(url: string)` | HTTP GET; returns `FetchResponse` |
-
-```xlang
-import * as json from json
-
-struct FetchResponse {
-    status: int32   // HTTP status code (e.g. 200)
-    ok: int32       // 1 if 2xx, else 0
-    body: string    // response body
-}
-
-fn main() {
-    local resp = fetch("https://jsonplaceholder.typicode.com/todos/1")
-    print("status: %d", resp.status)
-    local data = json.parse(resp.body)
-    print("title: %s", data.String("title"))
-    return 0
-}
-```
-
-Supported URLs:
-
-| Scheme | Default port |
-|--------|----------------|
-| `http://host/path` | 80 |
-| `https://host/path` | 443 |
-| `http://host:8080/path` | custom |
-
-Net bridge declares (used internally by runtime frontend; prefer high-level `net` / `http` APIs):
-
-```xlang
-declare xl_net_tcp_connect(host: string, port: int32): int64
-declare xl_tls_connect(host: string, port: int32): int64
-declare xl_net_send(fd: int64, data: string): int32
-declare xl_tls_send(fd: int64, data: string): int32
-declare xl_net_recv(fd: int64, max: int32): string
-declare xl_tls_recv(fd: int64, max: int32): string
-declare xl_net_close(fd: int64): int32
-declare xl_tls_close(fd: int64): int32
-```
-
-See [BRIDGE_ABI.md](BRIDGE_ABI.md).
-
----
-
-## JSON parsing
-
-JSON helpers live in `src/runtime/frontend/json.xlang` (pure xlang, no syscall). Parse once, then read fields via method-style accessors on the `Json` object.
-
-| API | Description |
-|-----|-------------|
-| `json.parse(text)` | Parse JSON string → `Json` object |
-| `data.Int(key)` | Object integer field |
-| `data.String(key)` | Object string field (unquoted) |
-| `data.Bool(key)` | Object bool field (`true` → 1) |
-| `data.Has(key)` | 1 if key exists |
-| `data.Null(key)` | 1 if field is `null` |
-| `data.Get(key)` | Raw `JsonValue` wrapper |
-| `value.AsInt()` / `AsString()` / `AsBool()` / `IsNull()` | Coerce `JsonValue` |
-
-```xlang
-import * as json from json
-
-fn main() {
-    local resp = fetch("https://api.example.com/data")
-    local data = json.parse(resp.body)
-    local name = data.String("name")
-    local age = data.Int("age")
-    local nested = data.Get("meta").AsString()
-    return 0
-}
-```
-
----
-
-## File I/O
-
-Optional file API lives in `src/runtime/frontend/filesystem/` (import when you want it). Backed by OS bridge `xl_filesystem_*` helpers — prefer the high-level API over calling bridges directly.
-
-```xlang
-import * as file from filesystem
-
-fn main() {
-    file.Write("out.txt", "hello")
-    local body = file.ReadAll("out.txt")
-    print("%s", body)
-
-    local f = file.OpenRead("out.txt")
-    local chunk = file.Read(f)
-    file.Close(f)
-
-    if file.Exists("out.txt") != 0 {
-        print("size: %d", file.Size("out.txt"))
-    }
-    return 0
-}
-```
-
-### API (frontend/filesystem)
-
-| Function | Description |
-|----------|-------------|
-| `ReadAll(path)` | Read entire file into string |
-| `Write(path, data)` | Overwrite file |
-| `Append(path, data)` | Append to file |
-| `Exists(path)` | 1 if file exists |
-| `Size(path)` | File size in bytes |
-| `Open(path, mode)` | Open handle (`File` struct) |
-| `OpenRead(path)` / `OpenWrite(path)` / `OpenAppend(path)` | Convenience openers |
-| `Read(f)` / `WriteStream(f, data)` | Stream read/write on open handle |
-| `Close(f)` | Close handle |
-| `IsOpen(f)` | 1 if handle is valid |
-
-Internal bridge declares (filesystem): `xl_filesystem_open`, `xl_filesystem_close`, `xl_filesystem_read_all`, … — see `src/runtime/frontend/filesystem/`.
-
----
-
-## Declares: bridge vs CPU-native syscall
-
-Two different mechanisms (do not mix them up):
-
-| Form | Meaning |
-|------|---------|
-| `declare xl_name(...)` / `declare fn name(...)` | Blind LLVM `declare` + `call`. Symbol resolved at link (OS bridge `.a`, user `.o`, …). |
-| `declare syscall <number> name(...)` | Compiler emits a wrapper that executes the **CPU trap** (`syscall` / `svc`). Not a bridge symbol. |
-| `@syscall(number, args...)` | Inline CPU-native trap expression. |
-
-```xlang
-declare xl_thread_start(entry: int64, arg: int32): int64   // bridge
-declare syscall 1 write(fd: int64, buf: int64, n: int64): int64  // native
-// local rc = @syscall(1, fd, buf, n)
-```
-
-Return type is optional on plain `declare` (default `int32`):
-
-```xlang
-declare foo()
-declare bar(): int64
-```
-
-Scheduler logic (`spawn` queue, worker loop) lives in xlang frontend runtime — not in the compiler. Bridge ABI naming: [BRIDGE_ABI.md](BRIDGE_ABI.md).
-
----
-
-## External linking
-
-Compile another xlang module as an object and link it. `build` and `compile` are the same command; either produces an object or a direct executable.
-
-```bash
-xlang build lib.xlang --build=object -o lib.o
-xlang build main.xlang lib.o -o app
-xlang run main.xlang lib.o
-```
-
-```xlang
-// lib.xlang
-export fn zamazokka(arg) {
-    print(arg)
-}
-
-// main.xlang
-declare external fn zamazokka(str)
-
-fn main() {
-    zamazokka(1978)
-}
-```
-
-`declare external fn` — implementation in `lib.o`; must match the `export` symbol name. Build kinds: `executable` | `static` | `shared` | `object` (see [LINKING.md](LINKING.md)).
+- Directives are `#if`, `#elif`, `#else`, `#endif`, `#ifdef`, `#ifndef` and `#error`; the condition is a normal expression. Inactive regions are only lexed.
+- Predefined names: `os`, `arch`, `pointerWidth`, `endian`, `debug`, `optLevel`, and `featureXxx` for each stdlib feature. `-D NAME[=VALUE]` and `-U NAME` set or remove user definitions.
+- `define NAME = expr` is a compile-time constant.
+- `define f(x: expr) { ... }` defines a hygienic macro; parameter kinds are `expr`, `type`, `ident`, `block` and `items`. A macro is invoked as `f!(...)`. There is no stringification.
+- `staticAssert(cond)` fails the build when `cond` is false.
 
 ---
 
 ## Compiler builtins
 
-Not bridges and not CPU traps; codegen special cases:
+The global namespace holds only a closed list of builtins plus `register`ed names:
 
-| Name | Description |
-|------|-------------|
-| `print(...)` | Variadic printf (see above) |
-| `invoke0(entry)` | `int64` fn ptr → call with no args |
-| `ref(obj)` | Struct pointer as `int64` (context stash) |
-| `invoke1(entry, ctx)` | `int64` fn ptr → call with one arg (`Context`, `ServerInfo`, …) |
-| `str_len(s)` | String length |
-| `str_eq(a, b)` | 1 if equal, else 0 |
-| `str_byte(s, i)` | Byte at index (0–255), or -1 |
-| `str_find(haystack, needle)` | Index of substring, or -1 |
-| `str_sub(s, start, len)` | Substring copy |
-| `str_from_int(n)` | Format int32 as decimal string |
+- `syscall(nr, args...)`: raw system call; arguments are integers or pointers; returns `i64` (negative `errno` style). The maximum argument count is checked against the target.
+- `__builtin_atomicLoad`, `__builtin_atomicStore`, `__builtin_atomicXchg`, `__builtin_atomicCas`, `__builtin_atomicAdd` and `__builtin_fence`. The memory order is a compile-time `MemoryOrder` value (`MemoryOrder.acquire`, `MemoryOrder.release`, ...).
+- `__builtin_asm("...", out(reg) x, ...)`: inline assembly.
+- `sizeOf`, `alignOf`, `offsetOf`, `staticAssert`, `nil`.
+- Registered `panic` and `allocator` (and `start`).
 
-`invoke0` — scheduler worker loop. `invoke1` — HTTP handlers (`fn(ctx: Context)`) and listen callbacks (`fn(info: ServerInfo)`). `ref(obj)` + `handle as Type` for context struct stash.
+`print`, `alloc`-style helpers, `memcpy`, `assert` and the rest are stdlib functions that must be imported.
+
+---
+
+## Standard library
+
+All of it is in `std/`; `import "std"` or `from "std" import name` brings it in, and `from "std/<module>" import name` imports one module. Modules (see each file for its API):
+
+| Module | Contents |
+|--------|----------|
+| `std/io` | `print`, `println`, `eprint`, `printInt`, `printUInt` |
+| `std/assert` | `assert!(cond)` macro (panics on failure) |
+| `std/memory` | `memcpy`, `memmove`, `memset`, `memcmp`, `strlen`, mapping helpers |
+| `std/mem` | default heap allocator, `free`, `setAllocator` |
+| `std/math` | `abs`, `min`, `max`, `minInt`, `maxInt`, `sqrt` |
+| `std/thread`, `std/sync`, `std/sched` | threads, `Mutex`/`Cond`/`RwLock`/`Once`, cooperative scheduler (`spawn`, `waitAll`, `yield`) |
+| `std/fs`, `std/json` | whole-file helpers; read-only flat JSON lookups |
+| `std/dns`, `std/tls`, `std/http` | name resolution, TLS 1.3 client/server, HTTP server and client (see [http.md](http.md)) |
+| `std/sha256`, `std/sha512`, `std/hmac`, `std/aesgcm`, `std/chacha20poly1305`, `std/x25519`, `std/rsa`, `std/ecdsa`, `std/bignum`, `std/x509`, `std/pem` | crypto and certificate code used by TLS |
+| `std/cpu`, `std/gpu`, `std/sys` | CPU helpers; GPU access; the per-OS raw system layer |
+| `std/runtime` | the registered `panic` and `start` |
+| `std/testing` | test framework |
+
+Memory-related defaults can be changed with `--std-features` (for example `-default-allocator`); each feature becomes a `featureXxx` constant for `#if`.
 
 ---
 
 ## Testing
 
-Builtin test runner (Vitest-like). Test files must end with **`.test.xlang`** (like `filename.test.ts`). Do **not** define `main` — use `Test*` functions instead; the runner injects a synthetic harness.
-
-```bash
-xlang test
-xlang test test/xlang
-xlang test test/xlang/json.test.xlang
-```
-
-Each file is compiled and run individually. The C++ runner discovers all exported `Test*` functions and calls them via `test_run_one`. Output example:
+`xlang test` finds `*.test.xl` files, builds and runs each one, and fails a file when its exit status is not 0. A test file uses `std/testing`:
 
 ```
- RUN  test/xlang/json.test.xlang
+from "std/testing" import Suite, T, suiteInit, test, suiteRun, expectEq
 
- ✓ TestJsonParseInt
- ✓ TestJsonParseString
+fn addWorks(t: *T) { expectEq(t, 1 + 2, 3) }
 
- Test Files  1 passed (1)
-      Tests  2 passed (2)
-```
-
-### Import
-
-```xlang
-import expect from test
-import * as json from json
-```
-
-Selective `import expect from test` pulls only the assertion API — not the whole test module.
-
-### Assertion API (`frontend/test.xlang`)
-
-| Function | Description |
-|----------|-------------|
-| `expect(actual)` | Start assertion chain (int32, int64, or string) |
-| `expectFn(entry)` | Assert on function pointer |
-| `expect(actual).toEqual(expected)` | Equality (int or string) |
-| `expect(v).toBeTrue()` / `.toBeFalse()` | Truthiness |
-| `expectFn(fn).toThrow()` | Function must panic |
-| `expectFn(fn).toError()` | Function must return error |
-| `expect(actual).not().toEqual(...)` | Negated assertion |
-| `fail(msg)` | Fail current test |
-
-```xlang
-import expect from test
-import * as json from json
-
-fn TestJsonParseInt() {
-    local data = json.parse("{\"userId\": 7}")
-    expect(data.Int("userId")).toEqual(7)
-    return 0
+fn main() -> i32 {
+    local s: Suite
+    suiteInit(&s)
+    test(&s, "add works", addWorks)
+    return suiteRun(&s)
 }
 ```
 
-Function names must start with `Test` (Go-style). Each test function returns `0` on success; failed assertions set an internal flag read by the harness.
+Matchers are typed functions (`expect`, `expectTrue`, `expectEq`, `expectEqUInt`, `expectEqStr`, `expectNear`, `expectGt`, `expectNil`, ...). There is no discovery and no chained matcher syntax. The repository's own end-to-end programs live in `test/e2e/`.
+
+---
+
+## Command line
+
+```
+xlang build file.xl [-o out] [--emit=exe|obj|ir|bc|header|static|shared]
+xlang run file.xl
+xlang check file.xl
+xlang parse file.xl
+xlang layout file.xl [Type]
+xlang test [patterns...]
+xlang --explain E0501
+```
+
+Common flags: `-D`/`-U`, `--target <triple>`, `-O0..3`, `-g`, `--cpu`, `--mangle=xl|none`, `--safety=checked|unchecked`, `--no-std`, `--std <dir>`, `--std-features`, `--allow`/`--deny`/`--warn-all`/`--allow-all`, `--incremental`, `--diag-format=text|json`.
+
+Diagnostics have codes: `E` for errors, `W` for warnings (for example `E0501`, `W0402`); `--explain CODE` prints the long explanation, and warnings are controlled with `--allow`, `--deny` and `@allow`.
 
 ---
 
 ## Limitations
 
-Early version; known constraints:
-
-- No lambda / closure (`spawn` bound call + compiler thunk instead)
-- No generics / templates
-- No `for` loop (only `while`)
-- `spawn` thunk with struct arguments still limited
-- Type inference is limited (from assignment in `local`, otherwise default `int32`)
-- Error messages still evolving
-- No debugger / GC; manual `delete`
-
----
-
-## Example files
-
-| File | Topic |
-|------|-------|
-| `examples/strings.xlang` | print, format, concat |
-| `examples/hello.xlang` | import, global, local |
-| `examples/types.xlang` | struct, new, delete |
-| `examples/math.xlang` | export module |
-| `examples/scheduler.xlang` | spawn, wait_all |
-| `examples/fetch.xlang` | fetch HTTP GET + json.parse |
-| `examples/http_server.xlang` | HTTP router + ListenAndServe |
-| `examples/sync_lock.xlang` | Lock + AtomicInt + go spawn |
-| `examples/filesystem.xlang` | filesystem ReadAll / Write / stream |
-| `examples/interfaces.xlang` | interface + struct + as cast |
-| `examples/pointers.xlang` | `*T`, `&` / `*`, `as` / `reinterpret` |
-| `test/main.xlang` + `test/lib.xlang` | external link |
-| `test/xlang/*.test.xlang` | runtime tests (`xlang test`) |
-
----
-
-## Compilation pipeline (summary)
-
-```
-.xlang → tokenize → parse → AST
-       → module merge (import)
-       → CommonIrBuilder → llvm::Module
-       → TargetMachine → object (.o)
-       → link (+ runtime + bridges + OS baseline syslibs) → executable
-```
-
-Frontend runtime under `src/runtime/frontend/` is compiled by `xlang` (not xmake). OS bridges under `src/runtime/bridge/{linux,macosx,windows}/` are C static libs. Defaults and embed: [RUNTIME.md](RUNTIME.md). Declares: [BRIDGE_ABI.md](BRIDGE_ABI.md).
+Open decisions and intentional incompleteness are recorded in `KNOWN-LIMITATIONS.md` (no generics or tuples, flat read-only JSON, TLS 1.3 only, and so on).

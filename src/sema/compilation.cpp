@@ -526,7 +526,8 @@ void Compilation::collectRegistered() {
                 d.labels.push_back(
                     {declBase(*it->second.sym->item).name_span, "first registration"});
                 d.labels.push_back({base.name_span, "second registration"});
-                d.fix = "register it once; turn off the std feature that registers it if needed";
+                d.fix = "register the name once: remove one registration, or, if the stdlib already "
+                        "registers it, disable that stdlib feature or build with --no-std";
                 diag_.report(std::move(d));
             }
         }

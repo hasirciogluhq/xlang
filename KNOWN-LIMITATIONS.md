@@ -18,7 +18,7 @@ Everything in the original plan is implemented; this file lists what is intentio
   `sched`/`threads`/`panics` e2e programs are not run there. The entry stub (`mainCRTStartup`) exits through
   `NtTerminateProcess` and provides `__chkstk`/`_fltused` itself. Not done: threads (`NtCreateThreadEx` +
   `WaitOnAddress`), readiness polling (IOCP/AFD), pipes; UTF-8 paths are widened as Latin-1; the fd is the
-  handle's low 32 bits (socket fds carry bit 30); `-D ssn...` no longer exists. Only x86_64 has an entry stub.
+  handle's low 32 bits (socket fds carry bit 30); `-D ssn...` no longer exists. Entry stubs exist for linux and macos on x86_64 and aarch64 and for windows on x86_64 only; the Windows stub is x86_64 assembly with no aarch64 variant. Every stub calls the registered `start` (std/runtime.xl) before `main`.
 - **Linux/macOS sockets ignore SIGPIPE** (`std/sys`: process-wide on Linux, `SO_NOSIGPIPE` on macOS), so a
   write to a vanished peer is an error return, never a crash.
 

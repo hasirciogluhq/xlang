@@ -8,3 +8,4 @@ main is the user program's entry and may be defined or overridden freely.
 A void main makes the process exit with status 0.
 Without the stdlib no start is registered, so only main runs.
 Without a main no entry stub is emitted.
+Entry stubs exist for linux and macos on x86_64 and aarch64 and for windows on x86_64 only.

@@ -1,6 +1,8 @@
 # xlang Package Manager Reference
 
-This document is the **source of truth** for the xlang package manager CLI. Other documents (publishing, installing, linking, static libraries, project config) specialize behavior for their domain; when those documents conflict with this one on command names, flags, or defaults, this document wins. These docs describe how the system works — not a future plan.
+This document is the **source of truth** for the xlang package manager CLI. Other documents (publishing, installing, linking, static libraries, project config) specialize behavior for their domain; when those documents conflict with this one on command names, flags, or defaults, this document wins.
+
+> **Implementation status:** the package manager, registries, `xlang.conf` project files, checksums and publishing described in this document and in INSTALLING, PROJECT_CONFIG, PUBLISHING and STATIC_LIBRARY are a design and are **not implemented**. The CLI today has only `build`, `run`, `check`, `parse`, `layout` and `test` (see the sections below, which describe the real behavior), and takes a single `.xl` source file. There is no `compile`, `add`, `remove`, `install`, `uninstall`, `info`, `search` or `publish` command.
 
 ---
 
@@ -18,9 +20,9 @@ This document is the **source of truth** for the xlang package manager CLI. Othe
   - [info](#info)
   - [search](#search)
   - [publish](#publish)
-  - [build / compile](#build--compile)
+  - [build](#build)
   - [run](#run)
-  - [parse](#parse)
+  - [parse and check](#parse-and-check)
   - [test](#test)
 - [Responsibility split](#responsibility-split)
 - [Related documents](#related-documents)
@@ -185,64 +187,56 @@ xlang publish <package-name>
 
 Publishing rules, versioning, immutability (version + git hash permanent), and artifact layout are defined in [Publishing](PUBLISHING.md). The command surface here is the source of truth for invocation.
 
-## build / compile
+## build
 
-`build` and `compile` are the same command. Either name runs the compiler (and, when producing an executable or library archive, the linker).
-
-Like a normal compiler, the output is either an **object file** or a direct **executable** (or a static library when that mode is selected):
+`build` runs the compiler (and, when producing an executable, shared library or archive, the linker). It takes one source file; there is no `compile` alias.
 
 ```sh
-xlang build
-xlang compile
-xlang build <package-or-path>
-xlang compile <package-or-path>
-xlang build <path> -o app                    # executable (default)
-xlang build <path> --build=object -o lib.o   # object
-xlang build <path> --build=static -o lib.a   # static library
+xlang build main.xl                          # executable (default, --emit=exe)
+xlang build main.xl -o app
+xlang build lib.xl --emit=obj -o lib.o       # object
+xlang build lib.xl --emit=static -o lib.a    # static library
 ```
 
-| Mode | Typical flags | Result |
-|------|---------------|--------|
-| Executable | default (`--build=executable`), or `-o <name>` | Linked program |
-| Object | `--build=object` (legacy alias: `lib`) with `.o` output | Object file for later link / `run` |
-| Static library | `--build=static` into `.a` (or platform equivalent) | Archive for install / link |
-| Shared | `--build=shared` | Experimental shared library |
-Before compile and before link, dependency artifacts are checksum-checked; failure aborts ([Installing](INSTALLING.md#integrity-hash--checksum)). Defaults for entry selection come from [Project Config](PROJECT_CONFIG.md). Linking details live in [Linking](LINKING.md).
+| Mode | Flags | Result |
+|------|-------|--------|
+| Executable | default or `--emit=exe` | Linked program |
+| Object | `--emit=obj` | Object file |
+| LLVM IR / bitcode | `--emit=ir`, `--emit=bc` | Text IR / bitcode |
+| C header | `--emit=header` | Header for exported items |
+| Static library | `--emit=static` | Archive |
+| Shared | `--emit=shared` | Shared library |
+
+Linking details live in [Linking](LINKING.md).
 
 ## run
 
-Build/compile (if needed) and execute a package entry.
+Build a source file into a temporary executable, run it and exit with its status.
 
 ```sh
-xlang run
-xlang run <package-or-path>
-xlang run <path> [extra objects...]
+xlang run main.xl
 ```
 
-`run` uses the compiler to produce an executable, the linker to finalize it, then executes the result.
+## parse and check
 
-## parse
-
-Parse sources and report syntax / structure diagnostics without full code generation.
+`parse` preprocesses, expands macros and parses a file, printing a summary (`--ast` prints the full tree). `check` additionally runs the semantic checks (`--hir` prints the typed HIR). Neither links.
 
 ```sh
-xlang parse
-xlang parse <package-or-path>
+xlang parse main.xl
+xlang check main.xl
 ```
-
-`parse` is a **compiler** command. It does not install packages and does not link.
 
 ## test
 
-Discover and run tests for the project or a selected path.
+Build and run test files. Patterns are a file, a directory, a glob (`**`, `*`, `?`), `re:<regex>` or a path substring; the default is `**/*.test.xl`.
 
 ```sh
 xlang test
 xlang test <path>
-xlang test <file.test.xlang>
+xlang test --list
 ```
 
-`test` is a **compiler** workflow (compile harness + execute). Test file conventions follow the language reference (files ending in `.test.xlang`).
+Test files are ordinary programs ending in `.test.xl` that return a non-zero status on failure (see `std/testing`).
 
 ---
 
@@ -253,8 +247,8 @@ The CLI is one surface; ownership of behavior is split so implementations stay c
 | Area | Owns | Commands (primary) |
 |------|------|--------------------|
 | **Package manager** | Registries, scopes, dependency records, search/publish metadata | `add`, `remove`, `install`, `uninstall`, `info`, `search`, `publish` |
-| **Compiler** | Parse, type/check pipeline, IR/object generation, tests | `parse`, `build` / `compile`, `test` |
-| **Linker** | Resolving `.a` / `.o` / external symbols, final executable | Final stage of executable `build` / `compile` and `run` |
+| **Compiler** | Parse, type/check pipeline, IR/object generation, tests | `parse`, `check`, `build`, `test` |
+| **Linker** | Final executable or shared library | Final stage of `build` and `run` |
 
 Source of truth:
 

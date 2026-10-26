@@ -1,196 +1,76 @@
 # xlang Linking Reference
 
-This document is the source of truth for how the **linker** attaches objects, static libraries, and external symbols when producing an executable or library. Compile stages are owned by the compiler; dependency acquisition is owned by the package manager. CLI entry points are those in the [Package Manager](PACKAGE_MANAGER.md) reference (`build` / `compile`, `run`, and related flags).
+This document describes how the compiler turns a program into an executable, shared library or static archive today. xlang uses no libc and no C runtime: the compiler links only its own output.
 
 ---
 
-## Table of Contents
-
-- [Overview](#overview)
-- [Pipeline](#pipeline)
-- [Integrity before compile and link](#integrity-before-compile-and-link)
-- [What gets linked](#what-gets-linked)
-- [External symbols](#external-symbols)
-- [Static libraries](#static-libraries)
-- [Search paths](#search-paths)
-- [Source vs prebuilt](#source-vs-prebuilt)
-- [Examples](#examples)
-- [Related documents](#related-documents)
-
----
-
-# Overview
-
-Linking runs whenever `xlang build` / `xlang compile` produces an **executable** or **shared** library, and for `xlang run`. `--build=object` stops after codegen. `--build=static` archives members with `ar` (no dynamic link).
-
-Build kinds (`--build=`): `executable` (default; aliases `binary`, `exe`) | `static` | `shared` (experimental) | `object` (legacy alias `lib` → object).
-
-Default link stack for an executable:
-
-1. User object(s)
-2. Runtime (unless `--no-runtime`) — override / embedded extract / in-tree
-3. OS bridges (unless `--no-bridge`) — same resolve order
-4. Target OS **baseline syslibs** (e.g. `-pthread`; never derived from `declare` / syscall use)
-
-Prefer **static** embed of runtime + bridges into the user program. Non-OS shared libs are not default.
-
-The linker resolves:
-
-- Project objects for the selected entry
-- Runtime (linked by default for runnable programs)
-- Declared dependencies (source-built objects or static libraries)
-- Explicit extra objects / archives on the command line
-
-Cross-compilation selects platform-appropriate static libraries when those artifacts exist. See also [RUNTIME.md](RUNTIME.md) and [BRIDGE_ABI.md](BRIDGE_ABI.md).
-
----
-
-# Pipeline
+## Pipeline
 
 ```text
-sources → parse/check → codegen → object (.o) / .a
-                              ↘ link → executable   (when not object-only)
+.xl sources -> parse/check -> codegen (LLVM) -> object (.o / .obj) -> link -> executable / shared library
+                                                              \-> in-process archiver -> static library
 ```
 
-| Stage | Owner |
-|-------|--------|
-| Parse / check / codegen | Compiler (`parse`, `build` / `compile`, `test`) |
-| Registry / dependency materialization | Package manager (`add`, `install`, …) |
-| Symbol resolution and final image | Linker (executable `build` / `compile` and `run`) |
+`xlang build file.xl` runs the whole pipeline. `--emit` selects where it stops or what it produces: `exe` (default), `obj`, `ir`, `bc`, `header`, `static` (archive), `shared`. `xlang run file.xl` builds into a temporary executable and runs it.
 
 ---
 
-# Integrity before compile and link
+## What gets linked
 
-Dependency inputs are verified by content hash before they enter the pipeline ([Installing](INSTALLING.md#integrity-hash--checksum)):
+- The program's object code, including the stdlib modules it imports (the stdlib is embedded in the compiler; `--no-std` and `--std=<dir>` change that).
+- For an executable, the compiler-generated entry stub (see below).
+- Nothing else: there is no C runtime, no implicit `-lc`, no `-pthread`. Memory routines such as `memcpy` are stdlib code exported with C names.
+- `--incremental` writes one object per module into a cache directory (`--cache-dir`, default `.xlang-cache` next to the output) and reuses unchanged ones.
 
-```text
-check → compile
-check → link
-```
-
-A failed checksum aborts the build. The compiler does not codegen from a bad artifact; the linker does not attach a bad `.o` / `.a`.
+There is no way to pass extra objects or archives on the command line.
 
 ---
 
-# What gets linked
+## Linkers per OS
 
-| Input | How it appears |
-|-------|----------------|
-| Selected package entry | Object(s) from that entry’s sources |
-| Shared project sources | Objects pulled in via imports |
-| Runtime | Linked by default for programs |
-| Dependencies from project config | Auto-linked when required by imports or static declarations |
-| Explicit `.o` / `.a` on the CLI | Passed through to the linker |
-| `declare external fn` | Must be satisfied by some linked object or archive |
+The compiler runs an external linker found on `PATH`; it is not bundled:
 
-You do not manually copy libraries into the project tree for normal dependency use. Installed registries and project cache supply paths; see [Installing](INSTALLING.md).
+| Target OS | Tool | Notes |
+|-----------|------|-------|
+| Linux | `ld.lld` or `ld` | `-nostdlib -static`, entry `_start`, `--gc-sections`; `-shared` for shared libraries |
+| macOS | `ld64.lld` | entry `_start`, `-dead_strip`, `-dylib` for shared libraries |
+| Windows | `lld-link` | `/nodefaultlib`, entry `mainCRTStartup`, `/subsystem:console`, `/dll` for shared libraries |
 
----
-
-# External symbols
-
-Language form (see also the language reference):
-
-```xlang
-declare external fn helper(x)
-```
-
-The implementation must exist in another translation unit that is part of the link line (another `.xlang` module built as an object, a static library, or an explicit `.o`).
-
-Manual object workflow:
-
-```sh
-xlang build lib.xlang --build=object -o lib.o
-xlang build main.xlang lib.o -o app
-xlang run main.xlang lib.o
-```
-
-`build` and `compile` are interchangeable here. Package-managed dependencies do not need this manual step after `add` / `install` have registered them.
+If the tool is missing, the build fails with a message naming it; `--emit=obj` needs no linker. Cross-compilation uses `--target <triple>` and needs a linker for that target.
 
 ---
 
-# Static libraries
+## Entry stub
 
-When a dependency is added or installed with static delivery (`--static` where applicable):
-
-1. The static archive is stored in the project cache and/or registry.
-2. At link time the linker selects the archive matching the **target platform**.
-3. Naming conflicts between publishers are avoided by qualified package names; the linker uses the resolved identity from the package manager.
-
-Full static-library rules: [Static Library](STATIC_LIBRARY.md).
+For an executable, the compiler emits a small assembly stub as the OS entry symbol when the program defines `main`. The stub calls the registered `start` function (when one is registered, as `std/runtime` does) and then `main`, and exits with `main`'s integer result (0 for a void `main`). Stubs exist for Linux and macOS on x86_64 and aarch64 and for Windows on x86_64; the Windows stub exits through ntdll's `NtTerminateProcess` and also defines `__chkstk` and `_fltused`. Without a `main` no stub is emitted.
 
 ---
 
-# Search paths
+## External symbols and native libraries
 
-The linker and library resolver consult, in order consistent with install scopes:
+```
+declare fn helper(x: i32) -> i32
+@library("ntdll") declare fn NtTerminateProcess(handle: i64, status: i32) -> i32
+```
 
-1. Paths supplied on the command line
-2. Project cache / build outputs
-3. User registry (`~/.xlang/…`)
-4. Root / `XLANG_HOME` layouts
-5. Environment overrides such as `XLANG_LIB_PATH` / `XLANG_MODULE_PATH` when set
-
-User-installed packages are preferred over root when both exist, matching [Installing](INSTALLING.md).
+- A `declare`d function that no module of the compilation defines produces warning `W0301`; the final link then fails with an undefined symbol unless something else supplies it.
+- `@library("name")` is used only on Windows: the compiler generates an import library for each named DLL from the declared symbols (with `llvm-dlltool`, so no Windows SDK is needed) and passes it to `lld-link`. On Linux and macOS no library is ever linked.
+- OS libraries are used only where raw system calls are not an option (Windows `ntdll`, `ws2_32`, `bcrypt`, `crypt32`). Their declarations stay in `std/sys/windows.xl`.
 
 ---
 
-# Source vs prebuilt
+## Static and shared output
 
-If a dependency is available both as source and as a static library:
-
-- **Default:** compile from source and link the resulting objects.
-- **Override:** project configuration prefers the prebuilt static library when `prefer_static` is set.
-
-This is how the toolchain resolves the choice unless project config says otherwise.
+- `--emit=static` archives the program's objects in-process (no `ar`).
+- `--emit=shared` links a shared library (`-shared`, `-dylib` or `/dll`); no entry stub is added.
+- `--emit=header` writes a C header for `export`ed items.
+- `export(c)` keeps a symbol name unmangled so C code can link to it; aggregates are passed through pointers, not the target C ABI (see `KNOWN-LIMITATIONS.md`).
 
 ---
 
-# Examples
-
-Build the default package entry and link dependencies automatically:
-
-```sh
-xlang build
-xlang compile              # same as build
-```
-
-Build a named package from the project:
-
-```sh
-xlang build server
-xlang compile server
-```
-
-Object-only, then link into an executable:
-
-```sh
-xlang build lib.xlang --build=object -o lib.o
-xlang build main.xlang lib.o -o app
-```
-
-Run with automatic link of project dependencies:
-
-```sh
-xlang run cli
-```
-
-Add a static dependency, then build (install happens as needed):
-
-```sh
-xlang add john/network@1.0.0 --static
-xlang build
-```
-
----
-
-# Related documents
+## Related documents
 
 | Document | Role |
 |----------|------|
-| [Package Manager](PACKAGE_MANAGER.md) | `build` / `compile` / `run` command surface |
-| [Static Library](STATIC_LIBRARY.md) | Static artifact placement and flags |
-| [Installing](INSTALLING.md) | Where registries live |
-| [Project Config](PROJECT_CONFIG.md) | Entries, dependencies, source-vs-lib overrides |
-| [Language Reference](LANGUAGE.md) | `declare external`, imports |
+| [Language Reference](LANGUAGE.md) | `declare`, `@library`, `export(c)`, entry points |
+| [Package Manager](PACKAGE_MANAGER.md) | Planned package tooling (not implemented) |

@@ -2,6 +2,8 @@
 
 This document is the source of truth for **registry scopes**, install locations, and uninstall behavior. CLI names and flags are defined in the [Package Manager](PACKAGE_MANAGER.md) reference; this document specializes how those commands touch disk.
 
+> **Implementation status:** not implemented. The registries, `install`/`uninstall` and checksums described here are a design; see the status note in [Package Manager](PACKAGE_MANAGER.md).
+
 ---
 
 ## Table of Contents

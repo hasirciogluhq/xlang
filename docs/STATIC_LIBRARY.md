@@ -2,6 +2,8 @@
 
 This document provides a professional overview of the static library system in the xlang programming language. It explains how static library artifacts are produced, registered, and linked. Command names and install defaults are defined in the [Package Manager](PACKAGE_MANAGER.md) and [Installing](INSTALLING.md) documents; this document is the source of truth for **static-specific** rules.
 
+> **Implementation status:** only producing an archive is implemented (`xlang build file.xl --emit=static`). Registering, installing (`--static`) and linking archives from a registry are a design and are not implemented; see the status note in [Package Manager](PACKAGE_MANAGER.md).
+
 ---
 
 ## Table of Contents

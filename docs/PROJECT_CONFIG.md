@@ -2,6 +2,8 @@
 
 This document is the source of truth for **project-level** configuration: identity, packages, entries, dependencies, and overrides. The package manager, compiler, and linker read this file; they do not invent project shape on their own.
 
+> **Implementation status:** not implemented. The compiler reads no `xlang.conf`; it builds a single `.xl` file given on the command line. See the status note in [Package Manager](PACKAGE_MANAGER.md).
+
 ---
 
 ## Table of Contents
@@ -29,7 +31,7 @@ The configuration answers:
 - Which dependencies does the project need?
 - Should builds prefer source or prebuilt static libraries?
 
-CLI defaults such as `xlang build` / `xlang compile` and `xlang run` with no path select the project’s default package.
+CLI defaults such as `xlang build` and `xlang run` with no path select the project’s default package.
 
 ---
 
@@ -64,7 +66,7 @@ Each package block defines one buildable/runnable (or library) unit:
 | `name` | Yes | Package name unique within the project |
 | `version` | No | Overrides project `version` for publish |
 | `publisher` | For publish | Publisher segment of `publisher/name` |
-| `entry` | For runnable packages | Path to the main source (for example `cmd/cli/main.xlang`) |
+| `entry` | For runnable packages | Path to the main source (for example `cmd/cli/main.xl`) |
 | `kind` | No | `bin` (default for entries with `entry`) or `lib` |
 | `description` | No | Package-level summary |
 
@@ -76,8 +78,8 @@ Layout:
 project/
   xlang.conf
   cmd/
-    cli/main.xlang
-    server/main.xlang
+    cli/main.xl
+    server/main.xl
   libs/
     shared/...
 ```
@@ -139,7 +141,7 @@ default_package = "cli"
 
 [[package]]
 name = "cli"
-entry = "cmd/cli/main.xlang"
+entry = "cmd/cli/main.xl"
 publisher = "zona"
 
 [[dependencies]]
@@ -157,12 +159,12 @@ prefer_source = true
 
 [[package]]
 name = "cli"
-entry = "cmd/cli/main.xlang"
+entry = "cmd/cli/main.xl"
 publisher = "zona"
 
 [[package]]
 name = "server"
-entry = "cmd/server/main.xlang"
+entry = "cmd/server/main.xl"
 publisher = "zona"
 
 [[dependencies]]
@@ -175,7 +177,7 @@ Commands against this project:
 
 ```sh
 xlang build              # builds default_package (cli)
-xlang compile server     # same job as build; server package
+xlang build server       # server package
 xlang run cli
 xlang test
 xlang publish server

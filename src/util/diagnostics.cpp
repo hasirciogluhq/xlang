@@ -60,7 +60,8 @@ constexpr std::size_t kLeadWidth = 40;
          "Write `new(a) T { }` or register an allocator."},
         {"E0502", Severity::Error, "duplicate `register`",
          "A role (or a global name) was registered twice. At most one registration per role is "
-         "allowed in the whole program; turn off the stdlib feature that registers it if needed."},
+         "allowed in the whole program; remove the extra registration, or, if the stdlib "
+         "already registers it, disable that stdlib feature or build with --no-std."},
         {"E0503", Severity::Error, "`register` role contract not met",
          "The registered symbol does not fit its role (for example an `allocator` global whose "
          "type is not `Allocator` and has no `impl Allocator for T`, or a `panic` with a wrong "
