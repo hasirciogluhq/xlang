@@ -1,6 +1,6 @@
 // ChaCha20-Poly1305 known-answer test (RFC 8439 section 2.8.2) plus tamper / round-trip checks.
 from "std/chacha20poly1305" import aeadSeal, aeadOpen
-from "std" import println, print, strlen
+from "std" import print, strlen
 
 fn hexDigit(v: ui8) -> ui8 {
     if v < 10 { return 48 + v }
@@ -32,7 +32,8 @@ fn expect(ok: bool, name: *ui8) {
     if !ok {
         failures = failures + 1
         print("FAIL ")
-        println(name)
+        print(name)
+        print("\n")
     }
 }
 
@@ -81,7 +82,7 @@ fn main() -> i32 {
     ct[5] = ct[5] ^ 1
     expect(!aeadOpen(&key[0], &nonce[0], &aad[0], 12, &ct[0], n, &tag[0], &pt[0]), "tamper rejected")
     if failures == 0 {
-        println("chacha20poly1305 ok")
+        print("chacha20poly1305 ok\n")
         return 0
     }
     return 1

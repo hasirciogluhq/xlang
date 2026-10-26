@@ -1,5 +1,5 @@
 // std/fs + std/json: write a JSON file, read it back, parse members, remove it.
-from "std" import println, printInt, assert, fsWrite, fsAppend, fsReadAll, fsExists, fsSize, fsRemove
+from "std" import print, assert, fsWrite, fsAppend, fsReadAll, fsExists, fsSize, fsRemove
 from "std" import jsonInt, jsonString, jsonBool, jsonHas
 
 global text: [ui8; 512]
@@ -28,7 +28,7 @@ fn main() -> i32 {
 
     assert!(fsRemove(path))
     assert!(!fsExists(path))
-    printInt(n as i64)
-    println("")
+    print(n as i64)
+    print("\n")
     return 0
 }

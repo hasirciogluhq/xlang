@@ -1,11 +1,11 @@
 // Division by zero goes through the registered `panic` and exits with code 134.
-from "std" import println
+from "std" import print
 
 fn divide(a: i32, b: i32) -> i32 { return a / b }
 
 fn main() -> i32 {
-    println("before")
+    print("before\n")
     local r: i32 = divide(10, 0)
-    println("not reached")
+    print("not reached\n")
     return r
 }

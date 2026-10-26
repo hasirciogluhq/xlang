@@ -1357,11 +1357,14 @@ std::vector<Lowerer::OverloadCandidate> Lowerer::genericCandidates(const ScopeEn
             continue;
         }
         const std::string local = declBase(*item).name;
-        const Sema::Symbol* sym = owner.find(local);
-        if (sym == nullptr) {
+        if (owner.find(local) == nullptr) {
             continue;
         }
-        const Sema::EntityRef gref{&owner, sym, local};
+        // The symbol of this overload (the name's own symbol shows its first declaration only).
+        Sema::Symbol this_overload;
+        this_overload.kind = Sema::Symbol::Kind::Fn;
+        this_overload.item = item;
+        const Sema::EntityRef gref{&owner, &this_overload, local};
         const auto& decl = std::get<FnDecl>(item->decl);
         std::size_t arity = 0;
         for (const Param& p : decl.params) {

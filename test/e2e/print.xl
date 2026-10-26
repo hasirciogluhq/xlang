@@ -1,0 +1,23 @@
+// print: every plain overload, a format with three arguments (including a str), and brace escaping.
+from "std" import print, String
+
+fn main() -> i32 {
+    print("str\n")
+    local p: *ui8 = "ptr\n"
+    print(p)
+    print(42)
+    print("\n")
+    print(-7)
+    print("\n")
+    print(3 as ui64)
+    print("\n")
+    print(2.5)
+    print("\n")
+    print(true)
+    print("\n")
+    local s: String = String("owned")
+    print(&s)
+    print("\n")
+    print("{} and {}, {{}} {}\n", "x", 7, false)
+    return 0
+}

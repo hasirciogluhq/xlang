@@ -1,5 +1,5 @@
 // Strings: the built-in `str` view, the three types a literal can take, and the std/str helpers.
-from "std" import println, print, strEq, strSlice, strFromC, strlen
+from "std" import print, strEq, strSlice, strFromC, strlen
 
 global failures: i32 = 0
 global g: str = "xlang"
@@ -12,7 +12,8 @@ fn check(name: *ui8, ok: bool) {
     if !ok {
         failures = failures + 1
         print("FAIL ")
-        println(name)
+        print(name)
+        print("\n")
     }
 }
 
@@ -42,7 +43,7 @@ fn main() -> i32 {
     check("local const str", SUFFIX.len == 1)
     check("local const array", ITEMS[0] + ITEMS[2] == 4)
     if failures == 0 {
-        println("strings ok")
+        print("strings ok\n")
     }
     return failures
 }

@@ -1,6 +1,6 @@
 // SHA-512 / SHA-384 known-answer tests.
 from "std/sha512" import sha512, sha384
-from "std" import println, print, strlen
+from "std" import print, strlen
 
 fn hexDigit(v: ui8) -> ui8 {
     if v < 10 { return 48 + v }
@@ -31,8 +31,10 @@ global failures: i32 = 0
 fn fail(name: *ui8, got: *ui8) {
     failures = failures + 1
     print("FAIL ")
-    println(name)
-    println(got)
+    print(name)
+    print("\n")
+    print(got)
+    print("\n")
 }
 
 fn main() -> i32 {
@@ -52,7 +54,7 @@ fn main() -> i32 {
     toHex(&d[0], 64, &hex[0])
     if !same(&hex[0], "8e959b75dae313da8cf4f72814fc143f8f7779c6eb9f7fa17299aeadb6889018501d289e4900f7e4331b99dec4b5433ac7d329eeb6dd26545e96e55b874be909") { fail("sha512 two-block", &hex[0]) }
     if failures == 0 {
-        println("sha512 ok")
+        print("sha512 ok\n")
         return 0
     }
     return 1

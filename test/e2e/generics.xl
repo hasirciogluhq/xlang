@@ -1,5 +1,5 @@
 // Generics: generic fn, struct and class declarations are instantiated per use (like C++ templates).
-from "std" import println, print
+from "std" import print
 
 global failures: i32 = 0
 
@@ -7,7 +7,8 @@ fn check(name: *ui8, ok: bool) {
     if !ok {
         failures = failures + 1
         print("FAIL ")
-        println(name)
+        print(name)
+        print("\n")
     }
 }
 
@@ -54,7 +55,7 @@ fn main() -> i32 {
     check("needsDrop on a class", __builtin_needsDrop<Counter>())
     check("needsDrop on i32", !__builtin_needsDrop<i32>())
     if failures == 0 {
-        println("generics ok")
+        print("generics ok\n")
     }
     return failures
 }

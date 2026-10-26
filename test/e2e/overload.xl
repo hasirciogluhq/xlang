@@ -1,6 +1,6 @@
 // Overloading: free functions and non-virtual methods may share a name when their parameter types
 // differ. A call picks the overload with the lowest argument cost (literals prefer i64 and f64).
-from "std" import println, print
+from "std" import print
 
 global failures: i32 = 0
 
@@ -8,7 +8,8 @@ fn check(name: *ui8, ok: bool) {
     if !ok {
         failures = failures + 1
         print("FAIL ")
-        println(name)
+        print(name)
+        print("\n")
     }
 }
 
@@ -56,7 +57,7 @@ fn main() -> i32 {
     a.add("abc")
     check("class overloads", a.total == 8)
     if failures == 0 {
-        println("overload ok")
+        print("overload ok\n")
     }
     return failures
 }

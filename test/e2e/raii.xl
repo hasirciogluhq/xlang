@@ -1,6 +1,6 @@
 // RAII: `init` constructors, `drop` destructors and moves for classes. Every drop appends the
 // object's id to `order`, so the digits of `order` show the order of the drops.
-from "std" import println, print
+from "std" import print
 
 global failures: i32 = 0
 global drops: i32 = 0
@@ -36,7 +36,8 @@ fn check(name: *ui8, ok: bool) {
     if !ok {
         failures = failures + 1
         print("FAIL ")
-        println(name)
+        print(name)
+        print("\n")
     }
 }
 
@@ -148,7 +149,7 @@ fn main() -> i32 {
     check("delete drops then frees", drops == 1 && order == 9)
 
     if failures == 0 {
-        println("raii ok")
+        print("raii ok\n")
     }
     return failures
 }

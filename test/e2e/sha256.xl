@@ -1,6 +1,6 @@
 // SHA-256 known-answer tests (FIPS 180-4 / NIST vectors).
 from "std/sha256" import sha256
-from "std" import println, print, printUInt, strlen
+from "std" import print, strlen
 
 fn hexDigit(v: ui8) -> ui8 {
     if v < 10 { return 48 + v }
@@ -36,8 +36,10 @@ fn check(name: *ui8, msg: *ui8, n: usize, want: *ui8) {
     if !same(&hex[0], want) {
         failures = failures + 1
         print("FAIL ")
-        println(name)
-        println(&hex[0])
+        print(name)
+        print("\n")
+        print(&hex[0])
+        print("\n")
     }
 }
 
@@ -57,7 +59,7 @@ fn main() -> i32 {
     check("56a", &z[0], 56, "b35439a4ac6f0948b6d6f9e3c6af0f5f590ce20f1bde7090ef7970686ec6738a")
     check("64a", &z[0], 64, "ffe054fe7ae0cb6dc65c3af9b61d5209f439851db43d0ba5997337df154668eb")
     if failures == 0 {
-        println("sha256 ok")
+        print("sha256 ok\n")
         return 0
     }
     return 1

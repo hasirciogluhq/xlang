@@ -45,7 +45,7 @@ Design points:
 A `.xl` file contains top-level declarations only: `fn`, `global`, `struct`, `class`, `interface`, `impl`, `enum`, `type`, `define`, `import`/`from`, `export ... from` re-exports, macro invocations and calls such as `staticAssert(...)`. Declarations end at a line break; a semicolon is not used. Comments are `// line`, `/* block */` and `/// doc`.
 
 ```
-from "std" import print, println, printInt
+from "std" import print
 
 struct Point { x: i32, y: i32 }
 
@@ -57,9 +57,9 @@ export fn add(a: i32, b: i32) -> i32 {
 
 fn main() -> i32 {
     local p: Point = Point { x: 1, y: 2 }
-    println("hello")
-    printInt(add(p.x, p.y) as i64)
-    println("")
+    print("hello\n")
+    print(add(p.x, p.y) as i64)
+    print("\n")
     return 0
 }
 ```
@@ -269,9 +269,9 @@ A module path `"x"` resolves to `x.xl` or `x/index.xl`. `std` and `std/x` come f
 ```
 import "std"                                // module as a namespace
 import "std/mem" as mem
-from "std" import print, println            // selective import
-import print, println from "std"            // same, other order
-from "std" import printInt as pi            // rename
+from "std" import print, String            // selective import
+import print, String from "std"            // same, other order
+from "std" import print as say             // rename
 import * from "std"                         // bring every export in
 import * as sys from "std/sys"              // namespace alias
 ```
@@ -356,7 +356,7 @@ All of it is in `std/`; `import "std"` or `from "std" import name` brings it in,
 
 | Module | Contents |
 |--------|----------|
-| `std/io` | `print`, `println`, `eprint`, `printInt`, `printUInt` |
+| `std/io` | `print` (overloads: `str`, `*ui8`, `i64`, `ui64`, `f64`, `bool`, `*String`), `print(fmt, args...)` with `{}` placeholders (up to six arguments; `{{` and `}}` print braces; a count mismatch panics), `eprint(str)`. `print` adds no newline. `println`, `printInt` and `printUInt` do not exist. `f64` prints with six decimals |
 | `std/assert` | `assert!(cond)` macro (panics on failure) |
 | `std/str` | `str` helpers: `strEq`, `strFromC`, `strFromParts`, `strSlice` |
 | `std/string` | `String`: an owned, growable byte string on the registered allocator (`init()`, `init(str)`, `length`, `asStr`, `cstr`, `at`, `push`, `append(str)`, `append(*String)`, `equals`, `clone`, `clear`, `reserve`). It frees itself when dropped. Appending a view of its own buffer is not supported. Empty strings do not allocate; there is no small-string optimization |

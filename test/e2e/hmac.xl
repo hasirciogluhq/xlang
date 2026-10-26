@@ -1,6 +1,6 @@
 // HMAC-SHA256 (RFC 4231 case 1) and HKDF-SHA256 (RFC 5869 test 1).
 from "std/hmac" import hmacSha256, hkdfExtract, hkdfExpand
-from "std" import println, print
+from "std" import print
 
 fn hexDigit(v: ui8) -> ui8 {
     if v < 10 { return 48 + v }
@@ -34,8 +34,10 @@ fn expect(name: *ui8, d: *ui8, n: usize, want: *ui8) {
     if !same(&hex[0], want) {
         failures = failures + 1
         print("FAIL ")
-        println(name)
-        println(&hex[0])
+        print(name)
+        print("\n")
+        print(&hex[0])
+        print("\n")
     }
 }
 
@@ -69,7 +71,7 @@ fn main() -> i32 {
     hkdfExpand(&prk[0], &info[0], 10, &okm[0], 42)
     expect("hkdf okm", &okm[0], 42, "3cb25f25faacd57a90434f64d0362f2a2d2d0a90cf1a5a4c5db02d56ecc4c5bf34007208d5b887185865")
     if failures == 0 {
-        println("hmac ok")
+        print("hmac ok\n")
         return 0
     }
     return 1
