@@ -387,8 +387,13 @@ class Parser {
                 return false;
             }
             if (depth == 0) {
+                // A `>` that ends a comparison needs a right operand, so after it these tokens
+                // can only close type arguments of a generic function value or call.
+                const bool ends_here = i + 1 >= tokens_.size() || tokens_[i + 1].newline_before;
                 const TokenKind next = i + 1 < tokens_.size() ? tokens_[i + 1].kind : TokenKind::End;
-                return next == TokenKind::LParen || next == TokenKind::LBrace;
+                return ends_here || next == TokenKind::LParen || next == TokenKind::LBrace ||
+                       next == TokenKind::RParen || next == TokenKind::RBracket ||
+                       next == TokenKind::Comma || next == TokenKind::Semicolon;
             }
         }
         return false;
@@ -818,6 +823,9 @@ class Parser {
                 }
                 ExprPtr field = makeExpr(Expr::Kind::Field, expr->span);
                 field->text = advance().text;
+                if (at(TokenKind::Lt) && genericArgsAhead()) {
+                    field->generic_args = parseTypeArgs();  // `obj.m<T>(...)`
+                }
                 field->span = spanFrom(expr->span);
                 field->lhs = std::move(expr);
                 expr = std::move(field);
@@ -1820,7 +1828,9 @@ class Parser {
         advance(); // 'interface'
         const Token& name_tok = cur();
         const std::string name = expectIdent("an interface name");
-        rejectTypeParams();
+        if (at(TokenKind::Lt)) {
+            decl.generic_params = parseGenericParams();
+        }
         if (at(TokenKind::LBrace)) {
             advance();
             const int saved_depth = nl_depth_;
@@ -1848,11 +1858,17 @@ class Parser {
     ImplDecl parseImpl(const DeclStart& s) {
         ImplDecl decl;
         advance(); // 'impl'
+        if (at(TokenKind::Lt)) {
+            decl.generic_params = parseGenericParams();
+        }
         const Token& name_tok = cur();
         decl.interface_path.push_back(expectIdent("an interface name"));
         while (at(TokenKind::Dot) && peekKind(1) == TokenKind::Ident) {
             advance();
             decl.interface_path.push_back(advance().text);
+        }
+        if (at(TokenKind::Lt)) {
+            decl.interface_args = parseTypeArgs();
         }
         expect(TokenKind::For, "`for` and the implementing type");
         decl.target = parseType();
@@ -1915,6 +1931,9 @@ class Parser {
         advance(); // 'type'
         const Token& name_tok = cur();
         const std::string name = expectIdent("a type alias name");
+        if (at(TokenKind::Lt)) {
+            decl.generic_params = parseGenericParams();
+        }
         expect(TokenKind::Assign, "`=` and the aliased type");
         decl.target = parseType();
         endOfItemLine();

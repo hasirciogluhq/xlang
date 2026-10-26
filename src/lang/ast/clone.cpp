@@ -154,6 +154,10 @@ Type substituteType(const Type& type, const TypeEnv& env) {
     return out;
 }
 
+FnDecl instantiateFn(const FnDecl& generic, const TypeEnv& env) {
+    return cloneFn(generic, env);  // cloneFn does not copy the type parameters
+}
+
 Item instantiateItem(const Item& generic, const TypeEnv& env, const std::string& name) {
     Item out;
     out.modifiers = generic.modifiers;
@@ -188,8 +192,30 @@ Item instantiateItem(const Item& generic, const TypeEnv& env, const std::string&
         }
         c.opaque = cl->opaque;
         out.decl = std::move(c);
+    } else if (const auto* in = std::get_if<InterfaceDecl>(&generic.decl)) {
+        InterfaceDecl c;
+        static_cast<DeclBase&>(c) = *in;
+        c.name = name;
+        for (const FnDecl& m : in->methods) {
+            c.methods.push_back(cloneFn(m, env));
+        }
+        c.opaque = in->opaque;
+        out.decl = std::move(c);
+    } else if (const auto* impl = std::get_if<ImplDecl>(&generic.decl)) {
+        ImplDecl c;
+        static_cast<DeclBase&>(c) = *impl;
+        c.name = name;
+        c.interface_path = impl->interface_path;
+        for (const Type& a : impl->interface_args) {
+            c.interface_args.push_back(substituteType(a, env));
+        }
+        c.target = substituteType(impl->target, env);
+        for (const FnDecl& m : impl->methods) {
+            c.methods.push_back(cloneFn(m, env));
+        }
+        out.decl = std::move(c);
     } else {
-        throw XlangError("internal: only fn, struct and class declarations are instantiated");
+        throw XlangError("internal: only fn, struct, class, interface and impl declarations are instantiated");
     }
     return out;
 }

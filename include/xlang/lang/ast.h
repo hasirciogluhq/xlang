@@ -219,12 +219,15 @@ struct ClassDecl : DeclBase {
 };
 
 struct InterfaceDecl : DeclBase {
+    std::vector<std::string> generic_params;  ///< `interface Iter<T>`
     std::vector<FnDecl> methods;  ///< signatures (no body)
     bool opaque{false};
 };
 
 struct ImplDecl : DeclBase {
+    std::vector<std::string> generic_params;  ///< `impl<T> Iter<T> for Box<T>`
     std::vector<std::string> interface_path;
+    std::vector<Type> interface_args;  ///< the `<...>` after the interface name
     Type target;
     std::vector<FnDecl> methods;
 };
@@ -243,6 +246,7 @@ struct EnumDecl : DeclBase {
 };
 
 struct TypeAliasDecl : DeclBase {
+    std::vector<std::string> generic_params;  ///< `type Pair2<T> = Pair<T, T>`
     Type target;
 };
 
@@ -327,9 +331,13 @@ using TypeEnv = std::map<std::string, Type>;
 /// types and generic arguments).
 [[nodiscard]] Type substituteType(const Type& type, const TypeEnv& env);
 
-/// A deep copy of a generic `fn`, `struct` or `class` with its type parameters replaced by `env`,
-/// named `name`. The copy has no type parameters of its own.
+/// A deep copy of a generic `fn`, `struct`, `class` or `interface` with its type parameters replaced
+/// by `env`, named `name`. The copy has no type parameters of its own.
 [[nodiscard]] Item instantiateItem(const Item& generic, const TypeEnv& env, const std::string& name);
+
+/// A deep copy of a generic method (or `fn`) with its type parameters replaced by `env`. The copy
+/// keeps its name and has no type parameters of its own.
+[[nodiscard]] FnDecl instantiateFn(const FnDecl& generic, const TypeEnv& env);
 
 struct Program {
     FileId file{kNoFile};

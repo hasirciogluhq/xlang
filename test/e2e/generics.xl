@@ -38,12 +38,55 @@ class Counter {
     fn drop(self) { }
 }
 
+type Pair2<T> = Pair<T, T>
+
+interface Iter<T> {
+    fn next(self) -> T
+}
+
+struct Cell<T> {
+    v: T
+}
+
+impl<T> Iter<T> for Cell<T> {
+    fn next(self) -> T { return self.v }
+}
+
+struct Ticker {
+    n: i32
+}
+
+impl Iter<i32> for Ticker {
+    fn next(self) -> i32 { return self.n + 1 }
+}
+
+fn firstOf(it: Iter<i32>) -> i32 { return it.next() }
+
+class Mapper {
+    k: i32
+
+    fn apply<U>(self, f: fn(i32) -> U) -> U {
+        return f(self.k)
+    }
+
+    fn pick<U>(self, a: U) -> U {
+        return a
+    }
+}
+
+fn twice(x: i32) -> i32 { return x * 2 }
+
+fn identity<T>(x: T) -> T { return x }
+
+fn firstOfPair<A>(p: *Pair<A, str>) -> A { return p.a }
+
 fn main() -> i32 {
     check("inferred i32", max(3, 9) == 9)
     check("explicit i64", max<i64>(4, 2) == 4)
     check("inferred from a typed value", max(7, 5) == 7)
     local p: Pair<i32, str> = Pair<i32, str> { a: 1, b: "x" }
     check("pair fields", p.a == 1 && p.b.len == 1)
+    check("pointer to a generic instance, inferred", firstOfPair(&p) == 1)
     local bx = Box<i32>(41)
     check("generic class method", bx.get() == 41)
     local nested: Box<Box<i32>> = Box<Box<i32>>(Box<i32>(5))
@@ -54,6 +97,21 @@ fn main() -> i32 {
     check("comparison is not a generic call", i < j && j > 0)
     check("needsDrop on a class", __builtin_needsDrop<Counter>())
     check("needsDrop on i32", !__builtin_needsDrop<i32>())
+    local pp: Pair2<i32> = Pair2<i32> { a: 3, b: 4 }
+    check("generic alias", pp.a + pp.b == 7)
+    local cell = Cell<i32> { v: 40 }
+    check("generic impl through an interface", firstOf(&cell) == 40)
+    local tk = Ticker { n: 1 }
+    check("concrete impl with interface arguments", firstOf(&tk) == 2)
+    local mp = Mapper { k: 4 }
+    check("generic method, inferred", mp.apply(twice) == 8)
+    check("generic method, explicit", mp.apply<i32>(twice) == 8)
+    local flag: bool = mp.pick(true)
+    check("generic method on bool", flag && mp.pick<i32>(5) == 5)
+    local f: fn(i32) -> i32 = identity<i32>
+    check("generic function value, explicit", f(5) == 5)
+    local g: fn(i32) -> i32 = identity
+    check("generic function value, from the expected type", g(6) == 6)
     if failures == 0 {
         print("generics ok\n")
     }

@@ -631,7 +631,7 @@ void testGenerics() {
         CHECK(b.failedWith("E0724"));
     }
     {
-        Lowered b("interface I<T> { fn m(self) }\n");
+        Lowered b("interface I<T> { fn m(self) }\nfn f(x: I) { }\nfn main() -> i32 { return 0 }\n");
         CHECK(b.failedWith("E0724"));
     }
     {

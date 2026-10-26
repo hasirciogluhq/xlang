@@ -384,6 +384,12 @@ std::vector<std::string> Sema::genericParamsOf(const Item& item) {
     if (const auto* c = std::get_if<ClassDecl>(&item.decl)) {
         return c->generic_params;
     }
+    if (const auto* a = std::get_if<TypeAliasDecl>(&item.decl)) {
+        return a->generic_params;
+    }
+    if (const auto* i = std::get_if<InterfaceDecl>(&item.decl)) {
+        return i->generic_params;
+    }
     return {};
 }
 
@@ -462,6 +468,8 @@ std::optional<Sema::EntityRef> Sema::instantiate(const EntityRef& generic,
         } else if (std::holds_alternative<StructDecl>(item->decl)) {
             sym.kind = Symbol::Kind::Struct;
             owner.aggregate_order_.push_back(local);
+        } else if (std::holds_alternative<InterfaceDecl>(item->decl)) {
+            sym.kind = Symbol::Kind::Interface;
         } else {
             sym.kind = Symbol::Kind::Fn;
             sym.overloads = {item};
@@ -483,6 +491,42 @@ std::vector<const Item*> Sema::takePendingInstances() {
 const Sema::InstanceInfo* Sema::instanceInfo(const std::string& local) const {
     const auto it = instance_info_.find(local);
     return it == instance_info_.end() ? nullptr : &it->second;
+}
+
+const Item* Sema::addImplInstance(Item item) {
+    instances_.push_back(std::move(item));
+    const Item* out = &instances_.back();
+    pending_instances_.push_back(out);
+    return out;
+}
+
+const Sema::MethodInstance* Sema::instantiateMethod(const FnDecl& generic,
+                                                    const std::string& cls,
+                                                    const std::string& cls_q,
+                                                    const std::vector<Type>& args) {
+    std::string key = cls_q + "." + generic.name + "<";
+    for (std::size_t i = 0; i < args.size(); ++i) {
+        key += (i == 0 ? "" : ", ") + typeToString(args[i]);
+    }
+    key += ">";
+    if (const auto it = method_index_.find(key); it != method_index_.end()) {
+        return it->second;
+    }
+    TypeEnv env;
+    for (std::size_t i = 0; i < generic.generic_params.size() && i < args.size(); ++i) {
+        env[generic.generic_params[i]] = args[i];
+    }
+    method_instances_.push_back(MethodInstance{instantiateFn(generic, env), key, cls, cls_q});
+    const MethodInstance* out = &method_instances_.back();
+    method_index_.emplace(key, out);
+    pending_methods_.push_back(out);
+    return out;
+}
+
+std::vector<const Sema::MethodInstance*> Sema::takePendingMethods() {
+    std::vector<const MethodInstance*> out;
+    out.swap(pending_methods_);
+    return out;
 }
 
 const Sema::Symbol* Sema::find(const std::string& name) const {
@@ -561,6 +605,45 @@ std::optional<Type> Sema::resolve(const Type& type) {
               "not declared in this module");
         return std::nullopt;
     }
+    if (!type.args.empty() && ref->sym->kind == Symbol::Kind::Alias && ref->sym->item != nullptr &&
+        !genericParamsOf(*ref->sym->item).empty()) {
+        // `Alias<A, B>`: the target with its parameters replaced, resolved in the alias's module.
+        const std::vector<std::string> params = genericParamsOf(*ref->sym->item);
+        if (params.size() != type.args.size()) {
+            error("E0724",
+                  type.span,
+                  std::format("`{}` takes {} type argument(s), {} given",
+                              shown,
+                              params.size(),
+                              type.args.size()),
+                  "write one type per type parameter");
+            return std::nullopt;
+        }
+        TypeEnv env;
+        for (std::size_t i = 0; i < params.size(); ++i) {
+            auto r = resolve(type.args[i]);
+            if (!r) {
+                return std::nullopt;
+            }
+            env[params[i]] = std::move(*r);
+        }
+        Sema& owner = *ref->owner;
+        if (!owner.alias_in_progress_.insert(ref->local).second) {
+            error("E0704",
+                  type.span,
+                  std::format("type alias `{}` refers to itself", shown),
+                  "cyclic alias");
+            return std::nullopt;
+        }
+        auto target = owner.resolve(
+            substituteType(std::get<TypeAliasDecl>(ref->sym->item->decl).target, env));
+        owner.alias_in_progress_.erase(ref->local);
+        if (!target) {
+            return std::nullopt;
+        }
+        target->span = type.span;
+        return target;
+    }
     if (!type.args.empty()) {
         // `Name<A, B>`: an instance of a generic struct or class.
         if (ref->sym->item == nullptr || genericParamsOf(*ref->sym->item).empty()) {
@@ -585,8 +668,28 @@ std::optional<Type> Sema::resolve(const Type& type) {
         Type out = type;
         out.path = {inst->qname()};
         out.args = std::move(args);
-        out.kind = inst->sym->kind == Symbol::Kind::Class ? TypeKind::Class : TypeKind::Struct;
+        switch (inst->sym->kind) {
+        case Symbol::Kind::Class:
+            out.kind = TypeKind::Class;
+            break;
+        case Symbol::Kind::Interface:
+            out.kind = TypeKind::Interface;
+            break;
+        default:
+            out.kind = TypeKind::Struct;
+            break;
+        }
         return out;
+    }
+    if (ref->sym->item != nullptr && !genericParamsOf(*ref->sym->item).empty()) {
+        // A generic struct, class or interface names no type until its arguments are written.
+        error("E0724",
+              type.span,
+              std::format("`{}` is generic and takes {} type argument(s), none given",
+                          shown,
+                          genericParamsOf(*ref->sym->item).size()),
+              std::format("write the arguments: `{}<...>`", shown));
+        return std::nullopt;
     }
     Sema& owner = *ref->owner;
     Type out = type;
@@ -612,6 +715,13 @@ std::optional<Type> Sema::resolve(const Type& type) {
         return out;
     }
     case Symbol::Kind::Alias: {
+        if (const auto params = genericParamsOf(*ref->sym->item); !params.empty()) {
+            error("E0724",
+                  type.span,
+                  std::format("`{}` takes {} type argument(s), none given", shown, params.size()),
+                  "write `<...>` with one type per type parameter");
+            return std::nullopt;
+        }
         if (!owner.alias_in_progress_.insert(ref->local).second) {
             error("E0704",
                   type.span,
@@ -1730,11 +1840,14 @@ void Sema::analyze() {
         if (const auto* e = std::get_if<EnumDecl>(&item.decl)) {
             checkEnum(*e);
         } else if (const auto* a = std::get_if<TypeAliasDecl>(&item.decl)) {
-            (void)resolve(a->target);
-            checkType(a->target, base.span);
-            Type self = Type::makeNamed({base.name});
-            self.span = base.name_span;
-            (void)resolve(self); // cyclic aliases
+            // A generic alias has no concrete target until it is used; each use resolves it.
+            if (a->generic_params.empty()) {
+                (void)resolve(a->target);
+                checkType(a->target, base.span);
+                Type self = Type::makeNamed({base.name});
+                self.span = base.name_span;
+                (void)resolve(self); // cyclic aliases
+            }
         } else if (std::holds_alternative<DefineConstDecl>(item.decl)) {
             Expr name;
             name.kind = Expr::Kind::Name;
@@ -1773,7 +1886,8 @@ void Sema::analyze() {
             }
             if (const auto* c = std::get_if<ClassDecl>(&item.decl)) {
                 for (const FnDecl& m : c->methods) {
-                    if (m.has_body) {
+                    // A generic method has no body to check until an instance is made.
+                    if (m.has_body && m.generic_params.empty()) {
                         checkStatements(m.body);
                     }
                 }

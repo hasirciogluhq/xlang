@@ -177,6 +177,19 @@ constexpr std::size_t kLeadWidth = 40;
         {"E0725", Severity::Error, "generic instantiation too deep",
          "The type arguments of a generic instance nest more than 64 levels. Use a simpler type "
          "argument."},
+        {"E0730", Severity::Error, "generic method cannot be virtual",
+         "A method with its own type parameters cannot be `virtual` or `override`: a vtable slot "
+         "has one fixed signature. Remove the `virtual`/`override` or the type parameters."},
+        {"E0731", Severity::Error, "conflicting impls",
+         "Two `impl` blocks give the same interface for the same type, after generic arguments are "
+         "filled in. Keep one of them."},
+        {"E0732", Severity::Error, "impl type parameter not in the target",
+         "Every type parameter of a generic `impl` must be a direct type argument of its target, so "
+         "that the target type fixes it. Write `impl<T> Iface for Target<T>`."},
+        {"E0733", Severity::Error, "generic method outside a class",
+         "Generic methods are monomorphized per class, so only methods of a `class` (not of an "
+         "`impl` or an `interface`) can have their own type parameters. Move the method into the "
+         "class, or make it a generic free function."},
         {"W0701", Severity::Warning, "missing return",
          "Control can fall off the end of a function that returns a value: some path has no "
          "`return` (a loop that ends with `break`, an `if` without `else`, ...). Add a `return`, "

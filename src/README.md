@@ -16,7 +16,7 @@ src/
     config.cpp         # BuildConfig, target triples, -D values
     frontend.cpp       # lex -> preprocess -> macros -> parse
   sema/
-    sema.cpp           # names, aliases, enums, const eval, layouts, staticAssert
+    sema.cpp           # names, aliases, enums, const eval, layouts, staticAssert, generic instances and method instances
     layout.cpp         # layout record / xl.layout history
     conversion.cpp     # implicit conversion rules (E0601 / W0601)
     scope.cpp          # ScopeStack: module -> function -> block scopes (plan 4.1)

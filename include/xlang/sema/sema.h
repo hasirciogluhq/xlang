@@ -136,6 +136,29 @@ public:
     [[nodiscard]] std::vector<const Item*> takePendingInstances();
     /// Origin of an instance by its local name (nullptr when `local` is not an instance).
     [[nodiscard]] const InstanceInfo* instanceInfo(const std::string& local) const;
+    /// Every instance of this module by local name.
+    [[nodiscard]] const std::map<std::string, InstanceInfo>& instances() const {
+        return instance_info_;
+    }
+    /// Adds a generic `impl` instance (its target and interface are concrete) and queues it for
+    /// lowering. The returned item lives as long as the module.
+    [[nodiscard]] const Item* addImplInstance(Item item);
+
+    /// A method with its own type parameters, instantiated for one set of type arguments.
+    struct MethodInstance {
+        FnDecl decl;        ///< the method with its type parameters substituted
+        std::string key;    ///< link name: `Class.method<args>`
+        std::string cls;    ///< local name of the class
+        std::string cls_q;  ///< qualified name of the class
+    };
+    /// The instance of the generic method `generic` of class `cls` for `args` (created on first
+    /// use, cached, queued for lowering by this module).
+    [[nodiscard]] const MethodInstance* instantiateMethod(const FnDecl& generic,
+                                                          const std::string& cls,
+                                                          const std::string& cls_q,
+                                                          const std::vector<Type>& args);
+    /// Method instances created since the last call, for lowering.
+    [[nodiscard]] std::vector<const MethodInstance*> takePendingMethods();
     /// Marks which instance's body is being lowered (empty for other code), so that diagnostics
     /// can name the instantiation chain.
     void setCurrentInstance(const Item* item);
@@ -199,6 +222,9 @@ private:
     std::map<const Item*, std::string> item_instance_;   ///< instance item -> its local name
     std::string current_instance_;  ///< local name of the instance whose body is lowered
     std::vector<const Item*> pending_instances_;
+    std::deque<MethodInstance> method_instances_;  ///< stable addresses for the lowering queue
+    std::map<std::string, const MethodInstance*> method_index_;  ///< link name -> instance
+    std::vector<const MethodInstance*> pending_methods_;
     std::map<std::string, std::optional<ConstValue>> define_cache_;
     std::set<std::string> define_in_progress_;
     std::set<std::string> alias_in_progress_;

@@ -10,6 +10,7 @@
 #include "xlang/sema/sema.h"
 
 #include <algorithm>
+#include <deque>
 #include <format>
 #include <set>
 
@@ -127,6 +128,12 @@ struct LowerShared {
         std::string iface_q;
         std::string prefix; ///< `Type.Iface.`
         Span span;
+        bool instance{false}; ///< made from a generic `impl` for concrete types
+    };
+    /// A generic `impl<T> Iface<T> for Target<T>`: instantiated for each instance of its target.
+    struct ImplTemplate {
+        const Item* item{nullptr};
+        Sema* owner{nullptr};
     };
     struct SlotInfo {
         hir::VtableSlot slot;
@@ -135,7 +142,11 @@ struct LowerShared {
     };
 
     hir::Module module;
-    std::vector<ImplInfo> impls;
+    /// A deque: lowering can add impls while a caller holds a reference to one.
+    std::deque<ImplInfo> impls;
+    std::vector<ImplTemplate> impl_templates;
+    std::set<std::pair<const Item*, std::string>> impl_done; ///< template x instance already tried
+    std::vector<Sema*> modules;
     std::map<std::string, std::vector<SlotInfo>> vtables;
     std::set<std::string> vtables_in_progress;
     /// The registration of a role: the global or function that holds it, and the module it is in.
@@ -356,6 +367,9 @@ class Lowerer {
     EP expr(const Expr& e, const Type* expected);
     EP nameExpr(const Expr& e, const Type* expected);
     EP fromEntry(const ScopeEntry& entry, const Expr& at, const Type* expected);
+    /// A generic `fn` named as a value: its type arguments are written (`f<i32>`) or taken from
+    /// the expected `fn(...)` type.
+    EP genericFnValue(const ScopeEntry& entry, const Expr& at, const Type* expected);
     EP fieldExpr(const Expr& e);
     EP unaryExpr(const Expr& e, const Type* expected);
     EP binaryExpr(const Expr& e, const Type* expected);
@@ -394,8 +408,20 @@ class Lowerer {
     [[nodiscard]] Type normalized(Sema& sema, const Type& t);
     [[nodiscard]] Type fnTypeOf(Sema& owner, const FnDecl& f);
     [[nodiscard]] std::optional<MethodRef> findMethod(const Type& agg, const std::string& name);
-    [[nodiscard]] const ImplInfo* findImpl(const std::string& type_q,
-                                           const std::string& iface_q) const;
+    [[nodiscard]] const ImplInfo* findImplExact(const std::string& type_q,
+                                                const std::string& iface_q) const;
+    /// The impl of `iface_q` for `type_q`; instantiates generic impls that apply first.
+    [[nodiscard]] const ImplInfo* findImpl(const std::string& type_q, const std::string& iface_q);
+    /// Instantiates every generic impl for every instance it applies to (E0731, E0732 reported).
+    /// True when at least one impl was added.
+    bool instantiateImpls();
+    void instantiateImpl(const LowerShared::ImplTemplate& t,
+                         Sema& m,
+                         const std::string& local,
+                         const Sema::InstanceInfo& info);
+    /// Lowers the module's impls (concrete ones; generic instances are lowered as pending items).
+    void lowerImpls();
+    void lowerImplInfo(const ImplInfo& info);
     [[nodiscard]] bool hasAllocMethod(const Type& t);
     [[nodiscard]] std::optional<Sema::EntityRef> entityOfType(const Type& t);
     void collectFields(const std::string& qname, std::vector<FieldInfo>& out);
@@ -784,14 +810,113 @@ void Lowerer::collectFields(const std::string& qname, std::vector<FieldInfo>& ou
     }
 }
 
-const Lowerer::ImplInfo* Lowerer::findImpl(const std::string& type_q,
-                                           const std::string& iface_q) const {
+const Lowerer::ImplInfo* Lowerer::findImplExact(const std::string& type_q,
+                                                const std::string& iface_q) const {
     for (const ImplInfo& i : sh_.impls) {
         if (i.type_q == type_q && i.iface_q == iface_q) {
             return &i;
         }
     }
     return nullptr;
+}
+
+const Lowerer::ImplInfo* Lowerer::findImpl(const std::string& type_q,
+                                           const std::string& iface_q) {
+    if (const ImplInfo* found = findImplExact(type_q, iface_q)) {
+        return found;
+    }
+    if (instantiateImpls()) {
+        return findImplExact(type_q, iface_q);
+    }
+    return nullptr;
+}
+
+bool Lowerer::instantiateImpls() {
+    bool any = false;
+    for (bool created = true; created;) {
+        created = false;
+        for (const LowerShared::ImplTemplate& t : sh_.impl_templates) {
+            const auto& decl = std::get<ImplDecl>(t.item->decl);
+            // The generic aggregate the template's target names (E0706 was reported in collect).
+            const auto ref = decl.target.path.size() == 1 ? t.owner->lookupEntity(decl.target.path.front())
+                                                          : t.owner->lookupQualified(decl.target.path);
+            if (!ref || ref->sym->item == nullptr || Sema::genericParamsOf(*ref->sym->item).empty()) {
+                continue;
+            }
+            const std::string generic = ref->qname();
+            for (Sema* m : sh_.modules) {
+                for (const auto& [local, info] : m->instances()) {
+                    if (info.generic != generic || info.args.size() != decl.target.args.size()) {
+                        continue;
+                    }
+                    if (!sh_.impl_done.insert({t.item, m->qualify(local)}).second) {
+                        continue;
+                    }
+                    created = true;
+                    instantiateImpl(t, *m, local, info);
+                }
+            }
+        }
+        any = any || created;
+    }
+    return any;
+}
+
+void Lowerer::instantiateImpl(const LowerShared::ImplTemplate& t,
+                              Sema& m,
+                              const std::string& local,
+                              const Sema::InstanceInfo& info) {
+    const auto& decl = std::get<ImplDecl>(t.item->decl);
+    std::map<std::string, Type> bound;
+    for (std::size_t i = 0; i < info.args.size(); ++i) {
+        if (!unifyParam(decl.target.args[i], info.args[i], decl.generic_params, bound, *t.owner)) {
+            return;  // this impl does not apply to the instance
+        }
+    }
+    Type target;
+    target.kind = m.findLocal(local)->kind == Sema::Symbol::Kind::Class ? TypeKind::Class
+                                                                         : TypeKind::Struct;
+    target.path = {m.qualify(local)};
+    target.args = info.args;
+    target.span = decl.span;
+    Type iface = Type::makeNamed(decl.interface_path);
+    iface.span = decl.span;
+    for (const Type& a : decl.interface_args) {
+        iface.args.push_back(substituteType(a, bound));
+    }
+    const auto ir = t.owner->resolve(iface);
+    if (!ir) {
+        return;
+    }
+    if (ir->kind != TypeKind::Interface) {
+        err("E0706",
+            decl.span,
+            std::format("`{}` is not an interface", joinPath(decl.interface_path)),
+            "not declared as an interface");
+        return;
+    }
+    const std::string type_q = target.path.front();
+    const std::string iface_q = ir->path.front();
+    if (findImplExact(type_q, iface_q) != nullptr) {
+        err("E0731",
+            decl.span,
+            std::format("`{}` implements `{}` twice", type_q, iface_q),
+            "keep one `impl` for this type and interface");
+        return;
+    }
+    Item inst = instantiateItem(*t.item, bound, type_q + "." + iface_q);
+    std::get<ImplDecl>(inst.decl).target = target;
+    const Item* item = t.owner->addImplInstance(std::move(inst));
+    ImplInfo out;
+    out.decl = &std::get<ImplDecl>(item->decl);
+    out.owner = t.owner;
+    out.item = item;
+    out.type_q = type_q;
+    out.iface_q = iface_q;
+    out.prefix = type_q + "." + iface_q + ".";
+    out.span = decl.span;
+    out.instance = true;
+    sh_.impls.push_back(std::move(out));
 }
 
 bool Lowerer::isRegisteredName(const std::string& name) const {
@@ -1123,6 +1248,27 @@ void Lowerer::collectImpls() {
         if (impl == nullptr) {
             continue;
         }
+        if (!impl->generic_params.empty()) {
+            // Every type parameter must be a direct argument of the target, so that matching the
+            // target against an instance fixes it.
+            for (const std::string& p : impl->generic_params) {
+                const bool direct =
+                    std::ranges::any_of(impl->target.args, [&p](const Type& a) {
+                        return a.kind == TypeKind::Named && a.path.size() == 1 &&
+                               a.path.front() == p && a.args.empty();
+                    });
+                if (!direct) {
+                    err("E0732",
+                        impl->span,
+                        std::format("type parameter `{}` is not a direct argument of the target", p),
+                        std::format("write it as an argument of the target, such as `{}<{}>`",
+                                    joinPath(impl->target.path),
+                                    p));
+                }
+            }
+            sh_.impl_templates.push_back(LowerShared::ImplTemplate{&item, &s_});
+            continue;
+        }
         const Type target = resolved(impl->target);
         if (!isAggregate(target)) {
             if (!isUnknown(target)) {
@@ -1134,6 +1280,7 @@ void Lowerer::collectImpls() {
             continue;
         }
         Type iface = Type::makeNamed(impl->interface_path);
+        iface.args = impl->interface_args;
         iface.span = impl->span;
         const auto ir = s_.resolve(iface);
         if (!ir) {
@@ -1154,6 +1301,13 @@ void Lowerer::collectImpls() {
         info.iface_q = ir->path.front();
         info.prefix = info.type_q + "." + info.iface_q + ".";
         info.span = impl->span;
+        if (findImplExact(info.type_q, info.iface_q) != nullptr) {
+            err("E0731",
+                impl->span,
+                std::format("`{}` implements `{}` twice", info.type_q, info.iface_q),
+                "keep one `impl` for this type and interface");
+            continue;
+        }
         sh_.impls.push_back(std::move(info));
     }
 }
@@ -1402,16 +1556,36 @@ bool Lowerer::unifyParam(const Type& pattern,
         return actual.kind == pattern.kind && pattern.elem && actual.elem &&
                unifyParam(*pattern.elem, *actual.elem, names, bound, owner);
     }
+    if (pattern.kind == TypeKind::FnPtr) {
+        if (actual.kind != TypeKind::FnPtr || pattern.params.size() != actual.params.size() ||
+            !pattern.ret || !actual.ret) {
+            return false;
+        }
+        for (std::size_t i = 0; i < pattern.params.size(); ++i) {
+            if (!unifyParam(pattern.params[i], actual.params[i], names, bound, owner)) {
+                return false;
+            }
+        }
+        return unifyParam(*pattern.ret, *actual.ret, names, bound, owner);
+    }
     if (pattern.kind == TypeKind::Named && !pattern.args.empty()) {
-        // `Vec<T>` against an instance of a generic class: the instance must come from `Vec`.
-        const auto base = owner.resolve(Type::makeNamed(pattern.path));
+        // `Vec<T>` against an instance of a generic class: the instance must come from `Vec`. The
+        // generic name is looked up rather than resolved, because a bare generic name is E0724.
+        std::optional<Sema::EntityRef> base;
+        if (pattern.path.size() == 1) {
+            base = pattern.path.front().find("::") != std::string::npos
+                       ? owner.entityByQName(pattern.path.front())
+                       : owner.lookupEntity(pattern.path.front());
+        } else if (pattern.path.size() == 2) {
+            base = owner.lookupQualified(pattern.path);
+        }
         if (!base || (actual.kind != TypeKind::Class && actual.kind != TypeKind::Struct) ||
             actual.path.empty()) {
             return false;
         }
         const auto ref = s_.entityByQName(actual.path.front());
         const Sema::InstanceInfo* info = ref ? ref->owner->instanceInfo(ref->local) : nullptr;
-        if (info == nullptr || base->path.empty() || info->generic != base->path.front() ||
+        if (info == nullptr || info->generic != base->qname() ||
             info->args.size() != pattern.args.size()) {
             return false;
         }
@@ -2209,6 +2383,7 @@ void Lowerer::lowerItems() {
         items.push_back(&item);
     }
     lowerBatch(items);
+    lowerImpls();
     lowerPendingInstances();
 }
 
@@ -2218,6 +2393,21 @@ bool Lowerer::lowerPendingInstances() {
          batch = s_.takePendingInstances()) {
         any = true;
         lowerBatch(batch);
+    }
+    for (std::vector<const Sema::MethodInstance*> methods = s_.takePendingMethods();
+         !methods.empty(); methods = s_.takePendingMethods()) {
+        any = true;
+        for (const Sema::MethodInstance* m : methods) {
+            const Type self = Type::makePointer(resolved(Type::makeNamed({m->cls})));
+            lowerFunction(m->decl,
+                          Modifiers{},
+                          m->key,
+                          m->cls + "." + m->decl.name,
+                          m->decl.attributes,
+                          m->cls_q,
+                          &self,
+                          false);
+        }
     }
     s_.setCurrentInstance(nullptr);
     return any;
@@ -2229,6 +2419,19 @@ void Lowerer::lowerBatch(const std::vector<const Item*>& items) {
         s_.setCurrentInstance(ip);
         if (!Sema::genericParamsOf(item).empty()) {
             continue;  // a generic declaration is lowered per instance
+        }
+        if (std::holds_alternative<ImplDecl>(item.decl)) {
+            // Only a generic impl instance is lowered here; the module's impls are in lowerImpls.
+            const ImplInfo* found = nullptr;
+            for (const ImplInfo& info : sh_.impls) {
+                if (info.item == ip && info.instance) {
+                    found = &info;
+                }
+            }
+            if (found != nullptr) {
+                lowerImplInfo(*found);
+            }
+            continue;
         }
         if (const auto* e = std::get_if<EnumDecl>(&item.decl)) {
             lowerEnum(*e);
@@ -2291,6 +2494,21 @@ void Lowerer::lowerBatch(const std::vector<const Item*>& items) {
                     std::ranges::count_if(cl->methods, [&](const FnDecl& o) {
                         return o.name == m.name;
                     }) > 1;
+                if (!m.generic_params.empty()) {
+                    // A generic method is lowered per instance, when a call names it (methodCall).
+                    if (m.is_virtual || m.is_override) {
+                        err("E0730",
+                            m.name_span,
+                            std::format("generic method `{}` cannot be virtual", m.name),
+                            "remove `virtual`/`override`: a vtable slot has one fixed signature");
+                    } else if (overloaded) {
+                        err("E0405",
+                            m.name_span,
+                            std::format("generic method `{}` cannot be overloaded", m.name),
+                            "keep one declaration with this name");
+                    }
+                    continue;
+                }
                 std::string key = cq + "." + m.name;
                 if (overloaded) {
                     if (m.is_virtual || m.is_override) {
@@ -2329,39 +2547,55 @@ void Lowerer::lowerBatch(const std::vector<const Item*>& items) {
             }
         }
     }
-    for (const ImplInfo& info : sh_.impls) {
-        if (info.owner != &s_) {
+}
+
+void Lowerer::lowerImpls() {
+    // Indexed: lowering an impl can add impl instances to `sh_.impls`.
+    for (std::size_t i = 0; i < sh_.impls.size(); ++i) {
+        const ImplInfo& info = sh_.impls[i];
+        if (info.owner != &s_ || info.instance) {
             continue;
         }
-        checkImpl(info);
-        Type target_type;
-        if (const auto tref = s_.entityByQName(info.type_q)) {
-            target_type.kind =
-                tref->sym->kind == Sema::Symbol::Kind::Class ? TypeKind::Class : TypeKind::Struct;
-            target_type.path = {info.type_q};
-        }
-        const Type self = Type::makePointer(target_type);
-        const auto iref = s_.entityByQName(info.iface_q);
-        hir::Impl out;
-        out.interface = info.iface_q;
-        out.type = info.type_q;
-        out.span = info.span;
-        for (const FnDecl& m : info.decl->methods) {
-            lowerFunction(m,
-                          Modifiers{},
-                          info.prefix + m.name,
-                          info.prefix + m.name,
-                          m.attributes,
-                          info.type_q,
-                          &self);
-        }
-        if (iref) {
-            for (const FnDecl& im : std::get<InterfaceDecl>(iref->sym->item->decl).methods) {
-                out.methods.push_back(info.prefix + im.name);
-            }
-        }
-        mod_.impls.push_back(std::move(out));
+        lowerImplInfo(info);
     }
+}
+
+void Lowerer::lowerImplInfo(const ImplInfo& info) {
+    checkImpl(info);
+    Type target_type;
+    if (const auto tref = s_.entityByQName(info.type_q)) {
+        target_type.kind =
+            tref->sym->kind == Sema::Symbol::Kind::Class ? TypeKind::Class : TypeKind::Struct;
+        target_type.path = {info.type_q};
+    }
+    const Type self = Type::makePointer(target_type);
+    const auto iref = s_.entityByQName(info.iface_q);
+    hir::Impl out;
+    out.interface = info.iface_q;
+    out.type = info.type_q;
+    out.span = info.span;
+    for (const FnDecl& m : info.decl->methods) {
+        if (!m.generic_params.empty()) {
+            err("E0733",
+                m.name_span,
+                std::format("generic method `{}` is only supported in a class", m.name),
+                "move the method into the class");
+            continue;
+        }
+        lowerFunction(m,
+                      Modifiers{},
+                      info.prefix + m.name,
+                      info.prefix + m.name,
+                      m.attributes,
+                      info.type_q,
+                      &self);
+    }
+    if (iref) {
+        for (const FnDecl& im : std::get<InterfaceDecl>(iref->sym->item->decl).methods) {
+            out.methods.push_back(info.prefix + im.name);
+        }
+    }
+    mod_.impls.push_back(std::move(out));
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -3891,6 +4125,61 @@ Lowerer::EP Lowerer::nameExpr(const Expr& e, const Type* expected) {
     return fromEntry(*entry, e, expected);
 }
 
+Lowerer::EP Lowerer::genericFnValue(const ScopeEntry& entry, const Expr& at, const Type* expected) {
+    Sema& owner = entry.owner != nullptr ? *entry.owner : s_;
+    const Item* item = entry.overloads.empty() ? entry.item : entry.overloads.front();
+    const std::vector<std::string> names = Sema::genericParamsOf(*item);
+    if (entry.overloads.size() > 1 || names.empty()) {
+        err("E0724",
+            at.span,
+            std::format("`{}` is generic; a function value needs its type arguments", entry.name),
+            "call it, or write the instance name explicitly");
+        return nullptr;
+    }
+    const std::string local = declBase(*item).name;
+    const Sema::Symbol* sym = owner.find(local);
+    if (sym == nullptr) {
+        return nullptr;
+    }
+    const auto& decl = std::get<FnDecl>(item->decl);
+    std::vector<Type> targs;
+    if (!at.generic_args.empty()) {
+        for (const Type& a : at.generic_args) {
+            targs.push_back(resolved(a));
+        }
+    } else {
+        // Infer from the expected `fn(...)` type, matching each parameter and the return type.
+        const Type want = expected != nullptr ? resolved(*expected) : unknownType();
+        std::map<std::string, Type> bound;
+        bool ok = want.kind == TypeKind::FnPtr && want.params.size() == decl.params.size();
+        for (std::size_t i = 0; ok && i < decl.params.size(); ++i) {
+            ok = unifyParam(decl.params[i].type, want.params[i], names, bound, owner);
+        }
+        if (ok && want.ret) {
+            ok = unifyParam(decl.return_type, *want.ret, names, bound, owner);
+        }
+        for (const std::string& n : names) {
+            const auto it = bound.find(n);
+            if (!ok || it == bound.end()) {
+                err("E0724",
+                    at.span,
+                    std::format("cannot infer the type arguments of `{}`", entry.name),
+                    std::format("write them: `{}<...>` as a value", entry.name));
+                return nullptr;
+            }
+            targs.push_back(it->second);
+        }
+    }
+    const auto inst = owner.instantiate(Sema::EntityRef{&owner, sym, local}, targs, at.span);
+    if (!inst) {
+        return nullptr;
+    }
+    const auto& idecl = std::get<FnDecl>(inst->sym->item->decl);
+    EP f = mk(hir::ExprKind::FuncRef, fnTypeOf(owner, idecl), at.span);
+    f->text = inst->qname();
+    return f;
+}
+
 Lowerer::EP Lowerer::fromEntry(const ScopeEntry& entry, const Expr& at, const Type* expected) {
     switch (entry.kind) {
     case ScopeEntry::Kind::Local: {
@@ -3911,11 +4200,7 @@ Lowerer::EP Lowerer::fromEntry(const ScopeEntry& entry, const Expr& at, const Ty
         Sema& owner = entry.owner != nullptr ? *entry.owner : s_;
         const auto cands = candidatesOf(entry);
         if (cands.empty()) {
-            err("E0724",
-                at.span,
-                std::format("`{}` is generic; a function value needs its type arguments", entry.name),
-                "call it, or write the instance name explicitly");
-            return nullptr;
+            return genericFnValue(entry, at, expected);
         }
         std::size_t pick = 0;
         if (cands.size() > 1) {
@@ -4795,6 +5080,7 @@ std::optional<Lowerer::MethodRef> Lowerer::findMethod(const Type& agg, const std
                 }
             }
         }
+        instantiateImpls();
         for (const ImplInfo& i : sh_.impls) {
             if (i.type_q != cur) {
                 continue;
@@ -4895,7 +5181,74 @@ Lowerer::EP Lowerer::methodCall(const Expr& e, const Expr& recv_ast) {
     }
     std::vector<EP> args;
     bool overloaded_args = false;
-    if (m->kind == MethodRef::Kind::Direct && m->cls != nullptr) {
+    if (!m->decl->generic_params.empty()) {
+        // A generic method: its instance is chosen by the written or inferred type arguments.
+        if (m->kind != MethodRef::Kind::Direct || m->cls == nullptr) {
+            err("E0733",
+                callee.span,
+                std::format("generic method `{}` is only supported in a class", callee.text),
+                "move the method into the class");
+            return nullptr;
+        }
+        const std::vector<std::string>& names = m->decl->generic_params;
+        std::vector<PreArg> pre = preLowerArgs(e);
+        std::vector<Type> targs;
+        if (!callee.generic_args.empty()) {
+            if (callee.generic_args.size() != names.size()) {
+                err("E0724",
+                    callee.span,
+                    std::format("`{}` takes {} type argument(s), {} given",
+                                callee.text,
+                                names.size(),
+                                callee.generic_args.size()),
+                    "write one type per type parameter");
+                return nullptr;
+            }
+            for (const Type& a : callee.generic_args) {
+                targs.push_back(resolved(a));
+            }
+        } else {
+            std::map<std::string, Type> bound;
+            bool ok = true;
+            std::size_t i = 0;
+            for (const Param& p : m->decl->params) {
+                if (p.is_self) {
+                    continue;
+                }
+                if (i >= pre.size() || isUnknown(pre[i].type) ||
+                    !unifyParam(p.type, pre[i].type, names, bound, *m->owner)) {
+                    ok = false;
+                    break;
+                }
+                ++i;
+            }
+            for (const std::string& n : names) {
+                if (!ok || !bound.contains(n)) {
+                    err("E0724",
+                        callee.span,
+                        std::format("cannot infer `{}` of `{}`", n, callee.text),
+                        std::format("write the type arguments: `.{}<...>(...)`", callee.text));
+                    return nullptr;
+                }
+                targs.push_back(bound.at(n));
+            }
+        }
+        const Sema::MethodInstance* inst =
+            m->owner->instantiateMethod(*m->decl, m->cls->name, m->cls_q, targs);
+        std::vector<Type> params;
+        for (const Param& p : inst->decl.params) {
+            if (!p.is_self) {
+                params.push_back(resolvedIn(*m->owner, p.type));
+            }
+        }
+        m->decl = &inst->decl;
+        m->fn_name = inst->key;
+        if (!lowerArgsPre(e, params, pre, args, callee.text)) {
+            return nullptr;
+        }
+        overloaded_args = true;
+    }
+    if (m->kind == MethodRef::Kind::Direct && m->cls != nullptr && !overloaded_args) {
         // Non-virtual methods of one class may overload each other.
         const auto cands = methodCandidates(*m, callee.text);
         if (cands.size() > 1) {
@@ -5488,6 +5841,7 @@ hir::Module lowerProgram(const std::vector<Sema*>& modules,
                          const std::vector<Sema*>& init_order,
                          const std::set<const Sema*>& std_modules) {
     LowerShared shared;
+    shared.modules = modules;
     std::vector<std::unique_ptr<Lowerer>> lowerers;
     std::map<const Sema*, Lowerer*> by_sema;
     for (Sema* s : modules) {

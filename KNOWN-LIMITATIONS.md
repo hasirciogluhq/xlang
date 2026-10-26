@@ -39,10 +39,12 @@ The original plan is implemented except the items below, which are intentionally
   <<= >>=`) and statement-level `x++` / `x--`. `a op= b` is `a = a op b`; a target containing a call is
   evaluated once through a hidden pointer. `++`/`--` are lexed as tokens, so `a--b` no longer parses as `a - -b`:
   write `a - -b`. Break/continue across a `switch` or `for` header are not otherwise restricted.
-- Generics (core-language phase 6) are instantiated per use (monomorphized). Not done: generic interfaces, generic `impl`
-  blocks, constraints on type parameters, explicit type arguments on class methods, and generic function values without
-  a call (`E0724`). Generic instances are not `linkonce_odr` (the whole program is one module). Expression-level
-  `f<T>(x)` is recognized when the `>` is followed by `(` or `{`, so `i < j > (k)` is a generic call. `__builtin_needsDrop`
+- Generics are instantiated per use (monomorphized). Not done: constraints on type parameters, generic methods outside
+  a class (`E0733`), overloaded generic methods (`E0405`), and generic methods of an interface declaration (checked only
+  when implemented or called). An overlap between two generic impl templates (`E0731`) is found only when an instance
+  that matches both is used. Generic instances are not `linkonce_odr` (the whole program is one module). Expression-level
+  `f<T>(x)` is recognized when the closing `>` is followed by `(`, `{`, `)`, `]`, `,`, `;` or the end of the line, so
+  `i < j > (k)` is a generic call. `__builtin_needsDrop`
   and `__builtin_drop` take their type with `<...>`, not as an argument, because a type is not an expression. An error
   inside an instance is followed by one "in instantiation of" note per level, at most 8.
 - **Boot and registrations (core-language phase 10).** The generated init entry is `_xl_initAll`, not `$xl$initAll`
@@ -130,8 +132,7 @@ The original plan is implemented except the items below, which are intentionally
 ## Testing
 - **`std/testing` has no discovery:** a test file registers its tests explicitly (`test(&s, "name", fn)`) and
   returns `suiteRun`. Auto-discovery of `fn test*` would need reflection or a compiler-side convention.
-- **No chained matchers** (`expect(x).toEqual(y)`): there are no generics, so the matchers are typed
-  functions (`expectEq` for `i64`, `expectEqUInt`, `expectEqStr`, `expectNear`, ...).
+- **No chained matchers** (`expect(x).toEqual(y)`): the matchers are typed functions (`expectEq` for `i64`, `expectEqUInt`, `expectEqStr`, `expectNear`, ...).
 - **A failed expectation does not stop the test** (no unwinding); a `panic` ends the whole file's run, which
   `xlang test` reports as that file failing.
 - **`xlang test` runs files sequentially** (no `--jobs`) and has no per-test name filter; granularity is the
