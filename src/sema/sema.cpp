@@ -720,6 +720,12 @@ std::optional<Sema::EntityRef> Sema::entityOfExpr(const Expr& expr) {
 std::optional<Type> Sema::exprToType(const Expr& expr) {
     switch (expr.kind) {
     case Expr::Kind::Name: {
+        if (expr.type.kind != TypeKind::Void) {
+            // A type parameter substituted by an instance: already resolved (see cloneExpr).
+            Type t = expr.type;
+            t.span = expr.span;
+            return t;
+        }
         if (auto prim = primitiveFromName(expr.text)) {
             prim->span = expr.span;
             return prim;

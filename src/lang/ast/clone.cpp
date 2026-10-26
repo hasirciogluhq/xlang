@@ -4,8 +4,6 @@
 
 #include "xlang/util/error.h"
 
-#include <format>
-
 namespace xlang {
 
 namespace {
@@ -80,10 +78,12 @@ ExprPtr cloneExpr(const Expr& e, const TypeEnv& env) {
     c->text = e.text;
     c->unary_op = e.unary_op;
     c->binary_op = e.binary_op;
+    c->type = substituteType(e.type, env);
     // A type parameter used as a value (`T(args)`, `T.f`) names the type it stands for.
     if (e.kind == Expr::Kind::Name) {
         if (const auto it = env.find(e.text); it != env.end()) {
             c->text = typeToString(it->second);
+            c->type = it->second;  // the resolved type, so it is not looked up again by name
         }
     }
     if (e.lhs) {
@@ -104,7 +104,6 @@ ExprPtr cloneExpr(const Expr& e, const TypeEnv& env) {
         }
         c->fields.push_back(std::move(n));
     }
-    c->type = substituteType(e.type, env);
     c->has_call_args = e.has_call_args;
     for (const Type& t : e.generic_args) {
         c->generic_args.push_back(substituteType(t, env));
