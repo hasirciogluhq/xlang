@@ -10,3 +10,4 @@ Moving a droppable local by value cancels its drop, and moving a field, an eleme
 A class that needs drop cannot be a struct field or a global, and an array whose elements need drop is rejected as a local, parameter, field or global.
 new T allocates through the registered allocator, and delete runs the drop of the pointee before it frees the memory.
 Drops are statically dispatched, so deleting a derived object through a base pointer runs only the base drop.
+A class may take type parameters, each instance is a separate class with its own layout and vptr, and a generic method cannot be virtual.
