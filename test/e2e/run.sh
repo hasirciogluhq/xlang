@@ -20,6 +20,7 @@ tests=(
   "stdlib|0|499500|0|1"
   "fsjson|0||0|1"
   "panics|134|before|0|0"
+  "vecpanic|134|before|0|0"
   "threads|0|40000|1|0"
   "sched|0|20100|0|0"
   "sched_io|0|5|0|0"

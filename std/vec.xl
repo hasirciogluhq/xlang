@@ -1,0 +1,182 @@
+// std/vec: a growable array of T on the registered allocator. Elements are stored bitwise in
+// slots; a slot is written with __builtin_write and read with __builtin_read, so the Vec owns a
+// slot's element exactly while its index is below `len`. Element accessors return pointers, so
+// no element is ever duplicated by a call to get, first or last.
+from "mem" import currentAllocator
+from "memory" import memcpy
+
+export class Vec<T> {
+    data: *T      // nil when cap == 0
+    len: usize    // initialized elements
+    cap: usize    // slots allocated
+
+    fn init(self) {
+        self.data = nil
+        self.len = 0
+        self.cap = 0
+    }
+
+    fn drop(self) {
+        self.truncate(0)
+        if self.cap > 0 {
+            currentAllocator.free(self.data as *void)
+        }
+    }
+
+    fn length(self) -> usize {
+        return self.len
+    }
+
+    fn capacity(self) -> usize {
+        return self.cap
+    }
+
+    fn isEmpty(self) -> bool {
+        return self.len == 0
+    }
+
+    /// The address of slot `i`; no bounds check.
+    fn slot(self, i: usize) -> *T {
+        return (self.data as usize + i * sizeOf(T)) as *T
+    }
+
+    /// Makes room for `n` elements. Growth: max(n, 2 * cap, 4). Existing elements are moved.
+    fn reserve(self, n: usize) {
+        if n <= self.cap {
+            return
+        }
+        local want: usize = n
+        if self.cap * 2 > want {
+            want = self.cap * 2
+        }
+        if want < 4 {
+            want = 4
+        }
+        local fresh: *T = currentAllocator.alloc(want * sizeOf(T), alignOf(T)) as *T
+        if self.cap > 0 {
+            memcpy(fresh as *void, self.data as *void, self.len * sizeOf(T))
+            currentAllocator.free(self.data as *void)
+        }
+        self.data = fresh
+        self.cap = want
+    }
+
+    /// A pointer to element `i`; panics when `i` is outside the elements.
+    fn get(self, i: usize) -> *T {
+        if i >= self.len {
+            panic("Vec: index out of range")
+        }
+        return self.slot(i)
+    }
+
+    /// A pointer to the first element; panics when the Vec is empty.
+    fn first(self) -> *T {
+        if self.len == 0 {
+            panic("Vec: first of empty vec")
+        }
+        return self.slot(0)
+    }
+
+    /// A pointer to the last element; panics when the Vec is empty.
+    fn last(self) -> *T {
+        if self.len == 0 {
+            panic("Vec: last of empty vec")
+        }
+        return self.slot(self.len - 1)
+    }
+
+    /// Replaces element `i`, dropping the old element; panics when `i` is outside the elements.
+    fn set(self, i: usize, v: T) {
+        if i >= self.len {
+            panic("Vec: index out of range")
+        }
+        *self.slot(i) = v
+    }
+
+    fn push(self, v: T) {
+        self.reserve(self.len + 1)
+        __builtin_write(self.slot(self.len), v)
+        self.len = self.len + 1
+    }
+
+    /// Removes and returns the last element; panics when the Vec is empty.
+    fn pop(self) -> T {
+        if self.len == 0 {
+            panic("Vec: pop from empty vec")
+        }
+        self.len = self.len - 1
+        return __builtin_read(self.slot(self.len))
+    }
+
+    /// Inserts `v` at `i`, moving the elements from `i` on up by one; `i` may equal the length.
+    fn insert(self, i: usize, v: T) {
+        if i > self.len {
+            panic("Vec: insert index out of range")
+        }
+        self.reserve(self.len + 1)
+        local j: usize = self.len
+        while j > i {
+            __builtin_write(self.slot(j), __builtin_read(self.slot(j - 1)))
+            j = j - 1
+        }
+        __builtin_write(self.slot(i), v)
+        self.len = self.len + 1
+    }
+
+    /// Removes and returns element `i`, moving the later elements down by one.
+    fn remove(self, i: usize) -> T {
+        if i >= self.len {
+            panic("Vec: index out of range")
+        }
+        local out: T = __builtin_read(self.slot(i))
+        local j: usize = i
+        while j + 1 < self.len {
+            __builtin_write(self.slot(j), __builtin_read(self.slot(j + 1)))
+            j = j + 1
+        }
+        self.len = self.len - 1
+        return out
+    }
+
+    /// Removes and returns element `i` by moving the last element into its place.
+    fn swapRemove(self, i: usize) -> T {
+        if i >= self.len {
+            panic("Vec: index out of range")
+        }
+        local out: T = __builtin_read(self.slot(i))
+        self.len = self.len - 1
+        if i != self.len {
+            __builtin_write(self.slot(i), __builtin_read(self.slot(self.len)))
+        }
+        return out
+    }
+
+    /// Drops every element from `n` on and keeps the first `n`; does nothing when `n >= length`.
+    fn truncate(self, n: usize) {
+        while self.len > n {
+            self.len = self.len - 1
+            local dropped: T = __builtin_read(self.slot(self.len))
+        }
+    }
+
+    fn clear(self) {
+        self.truncate(0)
+    }
+}
+
+/// A copy of `v` with the same elements in the same order. Only element types that need no drop
+/// can be copied; the bitwise copy of an element that needs drop would drop it twice.
+export fn vecClone<T>(v: *Vec<T>) -> Vec<T> {
+    if __builtin_needsDrop<T>() {
+        panic("vecClone: element type needs drop")
+    }
+    local out: Vec<T> = Vec<T>()
+    out.reserve(v.len)
+    local i: usize = 0
+    while i < v.len {
+        __builtin_write(out.slot(i), __builtin_read(v.slot(i)))
+        i = i + 1
+    }
+    out.len = v.len
+    return out
+}

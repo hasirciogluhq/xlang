@@ -1,0 +1,11 @@
+// An index past the end of a Vec goes through the registered `panic` and exits with code 134.
+from "std" import print, Vec
+
+fn main() -> i32 {
+    local v: Vec<i32> = Vec<i32>()
+    v.push(1)
+    print("before\n")
+    local x: i32 = *v.get(5)
+    print("not reached\n")
+    return x
+}

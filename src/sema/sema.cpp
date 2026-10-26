@@ -542,7 +542,9 @@ std::optional<Type> Sema::resolve(const Type& type) {
 
     std::optional<EntityRef> ref;
     if (type.path.size() == 1) {
-        ref = lookupEntity(type.path.front());
+        // A name already qualified by `qualify` (a substituted generic argument) names its module.
+        ref = type.path.front().find("::") != std::string::npos ? entityByQName(type.path.front())
+                                                                : lookupEntity(type.path.front());
     } else if (type.path.size() == 2) {
         ref = lookupQualified(type.path);
         if (!ref && comp_ == nullptr) {

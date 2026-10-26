@@ -1,5 +1,6 @@
-// Collections: the owned, growable String (std/string) and the file round trip through it.
-from "std" import print, String, fsWrite, fsReadAllString, fsRemove
+// Collections: the owned, growable String (std/string), the growable Vec<T> (std/vec) and the file
+// round trip through String.
+from "std" import print, String, Vec, vecClone, fsWrite, fsReadAllString, fsRemove
 
 global failures: i32 = 0
 
@@ -46,6 +47,37 @@ fn main() -> i32 {
     local read: String = fsReadAllString(path)
     check("read back", read.length() == 18 && read.at(17) == 115 && read.at(11) == 0)
     fsRemove(path)
+
+    local nums: Vec<i32> = Vec<i32>()
+    check("vec starts empty", nums.isEmpty() && nums.length() == 0 && nums.capacity() == 0)
+    nums.push(10)
+    check("first push allocates 4", nums.capacity() == 4 && *nums.get(0) == 10)
+    nums.push(20)
+    nums.push(30)
+    nums.insert(1, 15)
+    check("insert shifts", *nums.get(1) == 15 && *nums.get(2) == 20 && nums.length() == 4)
+    nums.push(40)
+    check("growth doubles", nums.capacity() == 8 && *nums.last() == 40 && *nums.first() == 10)
+    check("remove returns and shifts", nums.remove(0) == 10 && *nums.get(0) == 15)
+    check("swapRemove moves last", nums.swapRemove(0) == 15 && *nums.get(0) == 40 && nums.length() == 3)
+    nums.set(2, 99)
+    check("set replaces", *nums.last() == 99)
+    check("pop returns last", nums.pop() == 99 && nums.length() == 2)
+    nums.reserve(20)
+    check("reserve grows once", nums.capacity() == 20 && nums.length() == 2)
+    nums.truncate(1)
+    check("truncate keeps prefix", nums.length() == 1 && *nums.get(0) == 40)
+    local copyNums: Vec<i32> = vecClone(&nums)
+    nums.clear()
+    check("vecClone is independent", copyNums.length() == 1 && *copyNums.get(0) == 40 && nums.isEmpty())
+
+    local strs: Vec<String> = Vec<String>()
+    strs.push(String("one"))
+    strs.push(String("two"))
+    local taken: String = strs.pop()
+    check("Vec of String moves out", taken.equals("two") && strs.length() == 1)
+    strs.push(String("three"))
+    check("Vec of String keeps elements", strs.get(0).equals("one") && strs.get(1).equals("three"))
 
     if failures == 0 {
         print("collections ok\n")
