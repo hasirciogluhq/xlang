@@ -770,6 +770,17 @@ const std::vector<LowerShared::SlotInfo>& Lowerer::vtableOf(const std::string& q
 // Module scope, registrations, impls
 
 ScopeEntry Lowerer::entryOf(Sema::EntityRef ref, const std::string& local, const Span& span) {
+    if (ref.sym->kind == Sema::Symbol::Kind::FnAlias) {
+        // An alias stands for its target: the same function, overloads and link name.
+        const auto& alias = std::get<FnAliasDecl>(ref.sym->item->decl);
+        if (const auto target = ref.owner->resolveFnAlias(alias.target, alias.target_span)) {
+            return entryOf(*target, local, span);
+        }
+        ScopeEntry failed;
+        failed.name = local;
+        failed.span = span;
+        return failed;
+    }
     ScopeEntry e;
     e.name = local;
     e.span = span;
@@ -856,6 +867,12 @@ void Lowerer::buildModuleScope() {
                     bind(std::move(ext));
                 }
                 break;
+            }
+            continue;
+        }
+        if (const auto* alias = std::get_if<FnAliasDecl>(&item.decl)) {
+            if (const auto target = s_.resolveFnAlias(alias->target, alias->target_span)) {
+                (void)scopes_.declare(entryOf(*target, base.name, base.name_span));
             }
             continue;
         }

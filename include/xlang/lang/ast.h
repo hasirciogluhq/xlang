@@ -293,9 +293,15 @@ struct TopLevelCallDecl : DeclBase {
     ExprPtr call;
 };
 
+/// `fn short = target`: a module-level name for a function (or a qualified `module.name` path).
+struct FnAliasDecl : DeclBase {
+    std::vector<std::string> target;  ///< `name` or `module.name`
+    Span target_span;
+};
+
 using Decl = std::variant<FnDecl, GlobalDecl, StructDecl, ClassDecl, InterfaceDecl, ImplDecl,
                           EnumDecl, TypeAliasDecl, DefineConstDecl, DefineMacroDecl, ImportDecl,
-                          ExportFromDecl, MacroCallDecl, TopLevelCallDecl>;
+                          ExportFromDecl, MacroCallDecl, TopLevelCallDecl, FnAliasDecl>;
 
 struct Item {
     Modifiers modifiers;

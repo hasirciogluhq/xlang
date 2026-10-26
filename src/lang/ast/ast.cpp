@@ -62,6 +62,7 @@ const char* declKindName(const Decl& decl) {
         const char* operator()(const ExportFromDecl&) const { return "re-export"; }
         const char* operator()(const MacroCallDecl&) const { return "macro call"; }
         const char* operator()(const TopLevelCallDecl&) const { return "call"; }
+        const char* operator()(const FnAliasDecl&) const { return "function alias"; }
     };
     return std::visit(Visitor{}, decl);
 }
@@ -450,6 +451,13 @@ public:
             }
             void operator()(const TypeAliasDecl& t) const {
                 d.line(std::format("{}type {} = {}", head, t.name, typeToString(t.target)));
+            }
+            void operator()(const FnAliasDecl& a) const {
+                std::string target;
+                for (std::size_t i = 0; i < a.target.size(); ++i) {
+                    target += (i != 0 ? "." : "") + a.target[i];
+                }
+                d.line(std::format("{}fn {} = {}", head, a.name, target));
             }
             void operator()(const DefineConstDecl& c) const {
                 d.line(std::format("{}define {} = {}", head, c.name, d.expr(*c.value)));

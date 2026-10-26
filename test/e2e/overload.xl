@@ -29,6 +29,9 @@ fn twice(x: f64) -> f64 { return x * 2.0 }
 
 fn apply(g: fn(i32) -> i32, x: i32) -> i32 { return g(x) }
 
+type Byte = ui8
+fn twoFoo = foo
+
 class Acc {
     total: i64
 
@@ -45,6 +48,9 @@ fn main() -> i32 {
     local k: i32 = 3
     check("typed picks i32", f(k) == 2)
     check("function value", apply(twice, 2) == 4)
+    check("alias to overloads", twoFoo("a", 1) == 1 && twoFoo(1, "b") == 101)
+    local byte: Byte = 7
+    check("type alias", byte == 7)
     local a: Acc = Acc { total: 0 }
     a.add(5)
     a.add("abc")

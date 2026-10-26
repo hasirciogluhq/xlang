@@ -556,6 +556,10 @@ void testOverloads() {
         Lowered b("fn q(x: i32) { }\nfn q(x: str) { }\nfn main() -> i32 {\n q(\"a\")\n return 0 }\n");
         CHECK(!b.diag->hasErrors());
     }
+    {
+        Lowered b("fn a = b\nfn b = a\nfn main() -> i32 {\n a(1)\n return 0 }\n");
+        CHECK(b.failedWith("E0704"));
+    }
 }
 
 }  // namespace

@@ -76,7 +76,9 @@ public:
     // --- as external names.
 
     struct Symbol {
-        enum class Kind { Struct, Class, Interface, Enum, Alias, Define, Global, Fn, Macro } kind;
+        enum class Kind {
+            Struct, Class, Interface, Enum, Alias, Define, Global, Fn, FnAlias, Macro
+        } kind;
         const Item* item{nullptr};
         /// Fn: every declaration of the name in declaration order (more than one = overloads).
         std::vector<const Item*> overloads;
@@ -111,6 +113,10 @@ public:
     [[nodiscard]] std::optional<EntityRef> lookupEntity(const std::string& name);
     /// `ns.Name`
     [[nodiscard]] std::optional<EntityRef> lookupQualified(const std::vector<std::string>& path);
+    /// The function a `fn alias = path` names, following alias chains (E0704 on a cycle, E0706
+    /// when the target is missing or not a function).
+    [[nodiscard]] std::optional<EntityRef> resolveFnAlias(const std::vector<std::string>& path,
+                                                          const Span& at);
     /// By qualified name (as stored in resolved types).
     [[nodiscard]] std::optional<EntityRef> entityByQName(const std::string& qname);
     [[nodiscard]] const Symbol* findLocal(const std::string& name) const { return find(name); }

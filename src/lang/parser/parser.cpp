@@ -1308,7 +1308,11 @@ class Parser {
         const Token& kw = cur();
         switch (kw.kind) {
         case TokenKind::Fn:
-            addItem(program, s, parseFn(s, /*member=*/false));
+            if (peek(1).kind == TokenKind::Ident && peek(2).kind == TokenKind::Assign) {
+                addItem(program, s, parseFnAlias(s));
+            } else {
+                addItem(program, s, parseFn(s, /*member=*/false));
+            }
             return;
         case TokenKind::Global:
             addItem(program, s, parseGlobal(s));
@@ -1509,6 +1513,24 @@ class Parser {
     }
 
     // --- global ------------------------------------------------------------------------------
+
+    /// `fn name = target` or `fn name = module.target` at module level.
+    FnAliasDecl parseFnAlias(const DeclStart& s) {
+        FnAliasDecl a;
+        advance(); // 'fn'
+        const Token& name_tok = cur();
+        const std::string name = expectIdent("a function alias name");
+        expect(TokenKind::Assign, "`=` and the function the alias names");
+        a.target_span = cur().span;
+        a.target.push_back(expectIdent("a function name"));
+        while (match(TokenKind::Dot)) {
+            a.target.push_back(expectIdent("a function name"));
+        }
+        a.target_span = spanFrom(a.target_span);
+        endOfItemLine();
+        finishDecl(a, s, name, name_tok.span);
+        return a;
+    }
 
     GlobalDecl parseGlobal(const DeclStart& s) {
         GlobalDecl g;

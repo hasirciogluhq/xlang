@@ -190,6 +190,8 @@ void Sema::collect() {
             sym.kind = Symbol::Kind::Global;
         } else if (std::holds_alternative<FnDecl>(item.decl)) {
             sym.kind = Symbol::Kind::Fn;
+        } else if (std::holds_alternative<FnAliasDecl>(item.decl)) {
+            sym.kind = Symbol::Kind::FnAlias;
         } else if (std::holds_alternative<DefineMacroDecl>(item.decl)) {
             sym.kind = Symbol::Kind::Macro;
         } else {
@@ -287,6 +289,41 @@ std::string Sema::linkName(const std::vector<Attribute>& attrs,
     }
     std::replace(module.begin(), module.end(), '/', '.');
     return "_xl$" + module + "$" + local_name + sig;
+}
+
+std::optional<Sema::EntityRef> Sema::resolveFnAlias(const std::vector<std::string>& path,
+                                                     const Span& at) {
+    std::set<std::string> seen;
+    Sema* where = this;
+    std::vector<std::string> cur = path;
+    Span span = at;
+    while (true) {
+        std::string shown;
+        for (std::size_t i = 0; i < cur.size(); ++i) {
+            shown += (i != 0 ? "." : "") + cur[i];
+        }
+        const auto ref = cur.size() == 1 ? where->lookupEntity(cur.front())
+                                         : where->lookupQualified(cur);
+        if (!ref) {
+            error("E0706", span, std::format("unknown function `{}`", shown), "not declared here");
+            return std::nullopt;
+        }
+        if (ref->sym->kind == Symbol::Kind::Fn) {
+            return ref;
+        }
+        if (ref->sym->kind != Symbol::Kind::FnAlias) {
+            error("E0706", span, std::format("`{}` is not a function", shown), "a function is expected");
+            return std::nullopt;
+        }
+        if (!seen.insert(ref->qname()).second) {
+            error("E0704", span, std::format("function alias `{}` refers to itself", shown), "cyclic alias");
+            return std::nullopt;
+        }
+        const auto& alias = std::get<FnAliasDecl>(ref->sym->item->decl);
+        where = ref->owner;
+        cur = alias.target;
+        span = alias.target_span;
+    }
 }
 
 const Sema::Symbol* Sema::find(const std::string& name) const {
