@@ -70,6 +70,7 @@ struct Expr {
         New,           ///< new T { fields } / new(lhs) T { fields }; lhs null = registered allocator
         Ternary,       ///< lhs ? rhs : args[0]
         MacroCall,     ///< text!( macro_args... ), arguments kept as raw token lists
+        Spread,        ///< `..name` as a call argument: expands a parameter pack (text = pack name)
         AsmOperand,    ///< `in(reg) x` / `out("rax") y` / `inout(reg) z` inside `__builtin_asm(...)`:
                        ///< text = in|out|inout, lhs = register spec, rhs = operand
     } kind{Kind::IntLiteral};
@@ -119,6 +120,7 @@ struct Stmt {
         DoWhile, ///< [label:] do { body } while expr
         For,     ///< [label:] for [init]; [cond]; [step] { body }
         ForRange,///< [label:] for name in expr .. rhs { body }   (rhs exclusive)
+        ForPack, ///< [label:] for name in pack { body }   (expr = the pack's name; unrolled per element)
         Switch,  ///< switch expr { case a, b { } ... default { } }
         Defer,   ///< defer stmt (runs when the enclosing block is left)
         Continue,  ///< continue [label] (jumps to the loop's next iteration)
@@ -173,8 +175,9 @@ struct Modifiers {
 
 struct Param {
     std::string name;
-    Type type;  ///< unused for `self`
+    Type type;  ///< unused for `self` and for a pack
     bool is_self{false};
+    bool is_pack{false};  ///< `..args`: the untyped trailing parameter pack (see docs-ai/variadic.md)
     Span span;
 };
 
@@ -338,6 +341,9 @@ using TypeEnv = std::map<std::string, Type>;
 /// A deep copy of a generic method (or `fn`) with its type parameters replaced by `env`. The copy
 /// keeps its name and has no type parameters of its own.
 [[nodiscard]] FnDecl instantiateFn(const FnDecl& generic, const TypeEnv& env);
+
+/// A deep copy of a block with no type parameters replaced (used to unroll a pack loop per element).
+[[nodiscard]] Block copyBlock(const Block& block);
 
 struct Program {
     FileId file{kNoFile};

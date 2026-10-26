@@ -8,6 +8,7 @@
 
 #include <deque>
 #include <map>
+#include <memory>
 #include <optional>
 #include <set>
 #include <string>
@@ -164,6 +165,20 @@ public:
     void setCurrentInstance(const Item* item);
     /// Names of the type parameters of a `fn`, `struct` or `class` (empty when not generic).
     [[nodiscard]] static std::vector<std::string> genericParamsOf(const Item& item);
+    /// `fn f(a: T, ..args)`: a function with an untyped trailing parameter pack. It has no code of
+    /// its own; each call instantiates a copy for the pack's argument types (see variadic.cpp).
+    [[nodiscard]] static bool isPackFn(const Item& item);
+    /// Reports E0734 to E0736 for a pack function's declaration and E0735, E0737 and E0738 for
+    /// the uses of its pack in the body. The body itself is checked per instance.
+    void checkPackFn(const Item& item);
+    /// E0736 when a method (of a class, impl or interface) takes a parameter pack.
+    void checkNoPackMethod(const FnDecl& method);
+    /// The instance of pack function `generic` (named `local`) for pack elements of types
+    /// `elements`; cached like `instantiate`.
+    [[nodiscard]] std::optional<EntityRef> instantiatePack(const Item& generic,
+                                                           const std::string& local,
+                                                           const std::vector<Type>& elements,
+                                                           const Span& at);
     /// By qualified name (as stored in resolved types).
     [[nodiscard]] std::optional<EntityRef> entityByQName(const std::string& qname);
     [[nodiscard]] const Symbol* findLocal(const std::string& name) const { return find(name); }
@@ -218,6 +233,14 @@ private:
     // Generic instances (core-language phase 6). Instances of this module's generic declarations
     // are stored here; `pending_instances_` are the ones not lowered yet.
     std::deque<Item> instances_;
+    /// Per pack function and element count: the copy of the function that `instantiatePack` makes
+    /// instances from. The item and symbol keep their addresses while the map lives.
+    struct PackTemplate {
+        Item item;
+        Symbol sym;
+    };
+    std::map<std::pair<const Item*, std::size_t>, std::unique_ptr<PackTemplate>> pack_templates_;
+    [[nodiscard]] const PackTemplate& packTemplate(const Item& generic, std::size_t count);
     std::map<std::string, InstanceInfo> instance_info_;  ///< instance local name -> origin
     std::map<const Item*, std::string> item_instance_;   ///< instance item -> its local name
     std::string current_instance_;  ///< local name of the instance whose body is lowered

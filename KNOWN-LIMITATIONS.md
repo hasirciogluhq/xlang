@@ -39,6 +39,11 @@ The original plan is implemented except the items below, which are intentionally
   <<= >>=`) and statement-level `x++` / `x--`. `a op= b` is `a = a op b`; a target containing a call is
   evaluated once through a hidden pointer. `++`/`--` are lexed as tokens, so `a--b` no longer parses as `a - -b`:
   write `a - -b`. Break/continue across a `switch` or `for` header are not otherwise restricted.
+- Variadic packs (`..args`, core-language phase 12.1): a pack is a compile-time list, so each distinct argument count and
+  type list is a separate instance and code size grows with the number of such calls. A pack cannot be indexed, cannot
+  be used as a value, and a pack function cannot be `export(c)`, `declare`, virtual, generic or a method (`E0736`);
+  there is no C-ABI form of a variadic function. Each argument of a `print`-family call needs a `fmtWrite` overload for
+  its type, so an unsupported type fails at the call, not at the format string.
 - Generics are instantiated per use (monomorphized). Not done: constraints on type parameters, generic methods outside
   a class (`E0733`), overloaded generic methods (`E0405`), and generic methods of an interface declaration (checked only
   when implemented or called). An overlap between two generic impl templates (`E0731`) is found only when an instance

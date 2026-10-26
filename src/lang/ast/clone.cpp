@@ -158,6 +158,10 @@ FnDecl instantiateFn(const FnDecl& generic, const TypeEnv& env) {
     return cloneFn(generic, env);  // cloneFn does not copy the type parameters
 }
 
+Block copyBlock(const Block& block) {
+    return cloneBlock(block, TypeEnv{});
+}
+
 Item instantiateItem(const Item& generic, const TypeEnv& env, const std::string& name) {
     Item out;
     out.modifiers = generic.modifiers;

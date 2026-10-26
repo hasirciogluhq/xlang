@@ -73,6 +73,7 @@ target("xlang-frontend")
         "$(projectdir)/src/sema/scope.cpp",
         "$(projectdir)/src/sema/compilation.cpp",
         "$(projectdir)/src/sema/lower.cpp",
+        "$(projectdir)/src/sema/variadic.cpp",
         "$(projectdir)/src/hir/hir.cpp",
         "$(projectdir)/src/util/source.cpp",
         "$(projectdir)/src/util/diagnostics.cpp"

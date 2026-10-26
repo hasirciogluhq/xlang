@@ -46,6 +46,14 @@ struct Lowered {
     }
 };
 
+std::size_t countOf(const std::string& text, const std::string& needle) {
+    std::size_t n = 0;
+    for (std::size_t at = text.find(needle); at != std::string::npos; at = text.find(needle, at + 1)) {
+        ++n;
+    }
+    return n;
+}
+
 void testScopeStack() {
     ScopeStack s;
     s.push(ScopeKind::Module);
@@ -777,6 +785,75 @@ void testOwnership() {
     }
 }
 
+void testVariadicPacks() {
+    {
+        // Each argument count gets its own instance, and `args.len` folds to a constant.
+        Lowered r("fn count(..args) -> usize { return args.len as usize }\n"
+                  "fn main() -> i32 {\n local a: usize = count()\n local b: usize = count(1)\n"
+                  " local c: usize = count(1, 2, 3)\n return (a + b + c) as i32 }\n");
+        CHECK(!r.diag->hasErrors());
+        CHECK(r.has("count<>"));
+        CHECK(r.has("count<i32>"));
+        CHECK(r.has("count<i32, i32, i32>"));
+        CHECK(r.has("(cast 3:i32):usize"));  // args.len folded to the element count
+        CHECK(!r.has("args.len"));
+    }
+    {
+        // A `for` over the pack is unrolled: one call per argument, each with its own type.
+        Lowered r("fn tap(x: i32) -> i32 { return x }\nfn tap(x: str) -> i32 { return 0 }\n"
+                  "fn unroll(..args) -> i32 {\n local s: i32 = 0\n for a in args {\n  s = s + tap(a)\n }\n"
+                  " return s }\n"
+                  "fn main() -> i32 {\n return unroll(1, 2, 3) }\n");
+        CHECK(!r.diag->hasErrors());
+        CHECK(countOf(r.hir_text, "(call tap$i32 ") == 3);
+        CHECK(r.has("local a#5: i32 = args#1#1"));
+    }
+    {
+        // A pack forwarded through another pack: the inner call receives the same elements.
+        Lowered r("fn inner(..args) -> i32 { return args.len as i32 }\n"
+                  "fn outer(..args) -> i32 { return inner(..args) }\n"
+                  "fn main() -> i32 { return outer(1, 2) }\n");
+        CHECK(!r.diag->hasErrors());
+        CHECK(r.has("(call inner<i32, i32> args#0#0 args#1#1):i32"));
+    }
+    {
+        // A fixed-arity overload with the same call shape wins over a pack instance.
+        Lowered r("fn pick(a: i32) -> i32 { return a }\nfn pick(..args) -> i32 { return 0 }\n"
+                  "fn main() -> i32 { return pick(1) }\n");
+        CHECK(!r.diag->hasErrors());
+        CHECK(r.has("(call pick$i32 1:i32):i32"));
+        CHECK(!r.has("pick<"));
+    }
+    {
+        Lowered r("fn bad(..a, x: i32) { }\n");
+        CHECK(r.failedWith("E0734"));
+    }
+    {
+        Lowered r("fn bad(..a, ..b) { }\n");
+        CHECK(r.failedWith("E0734"));
+    }
+    {
+        Lowered r("fn bad(..a) -> i32 {\n return a\n}\n");
+        CHECK(r.failedWith("E0735"));
+    }
+    {
+        Lowered r("export(c) fn bad(..a) { }\n");
+        CHECK(r.failedWith("E0736"));
+    }
+    {
+        Lowered r("class C { fn m(self, ..a) { } }\n");
+        CHECK(r.failedWith("E0736"));
+    }
+    {
+        Lowered r("fn bad(v: i32) { g(..v) }\nfn g(x: i32) { }\n");
+        CHECK(r.failedWith("E0737"));
+    }
+    {
+        Lowered r("fn bad(..a) -> i32 {\n return a[0]\n}\n");
+        CHECK(r.failedWith("E0738"));
+    }
+}
+
 }  // namespace
 
 void runLowerTests() {
@@ -808,4 +885,5 @@ void runLowerTests() {
     testDroppableArraysAndNotes();
     testRawMoves();
     testGenerics();
+    testVariadicPacks();
 }

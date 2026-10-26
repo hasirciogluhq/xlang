@@ -303,6 +303,11 @@ class Lowerer {
     [[nodiscard]] std::vector<OverloadCandidate> genericCandidates(const ScopeEntry& entry,
                                                                    const Expr& call,
                                                                    const std::vector<PreArg>& pre);
+    /// Instances of the pack overloads of `entry` for the call: the pack takes the types of the
+    /// arguments after the fixed parameters, one instance per element count (variadic.cpp).
+    [[nodiscard]] std::vector<OverloadCandidate> packCandidates(const ScopeEntry& entry,
+                                                                const Expr& call,
+                                                                const std::vector<PreArg>& pre);
     /// Binds the type parameters `names` so that `pattern` matches `actual`.
     [[nodiscard]] bool unifyParam(const Type& pattern,
                                   const Type& actual,
@@ -1723,6 +1728,56 @@ std::vector<Lowerer::OverloadCandidate> Lowerer::genericCandidates(const ScopeEn
     return out;
 }
 
+std::vector<Lowerer::OverloadCandidate> Lowerer::packCandidates(const ScopeEntry& entry,
+                                                                const Expr& call,
+                                                                const std::vector<PreArg>& pre) {
+    Sema& owner = entry.owner != nullptr ? *entry.owner : s_;
+    std::vector<const Item*> items = entry.overloads;
+    if (items.empty()) {
+        items.push_back(entry.item);
+    }
+    std::vector<OverloadCandidate> out;
+    for (const Item* item : items) {
+        if (!Sema::isPackFn(*item)) {
+            continue;
+        }
+        const auto& decl = std::get<FnDecl>(item->decl);
+        std::size_t fixed = 0;
+        for (const Param& p : decl.params) {
+            fixed += (p.is_self || p.is_pack) ? 0 : 1;
+        }
+        if (call.args.size() < fixed) {
+            continue;
+        }
+        std::vector<Type> elements;
+        bool known = true;
+        for (std::size_t i = fixed; i < pre.size(); ++i) {
+            known = known && !isUnknown(pre[i].type);
+            elements.push_back(pre[i].type);
+        }
+        if (!known) {
+            continue;  // an argument of unknown type (`nil`): no instance can be made for it
+        }
+        const std::string local = declBase(*item).name;
+        const auto inst = owner.instantiatePack(*item, local, elements, call.span);
+        if (!inst) {
+            continue;
+        }
+        const auto& idecl = std::get<FnDecl>(inst->sym->item->decl);
+        OverloadCandidate c;
+        c.decl = &idecl;
+        for (const Param& p : idecl.params) {
+            if (!p.is_self) {
+                c.params.push_back(resolvedIn(owner, p.type));
+            }
+        }
+        c.ret = resolvedIn(owner, idecl.return_type);
+        c.key = inst->qname();
+        out.push_back(std::move(c));
+    }
+    return out;
+}
+
 std::vector<Lowerer::OverloadCandidate> Lowerer::candidatesOf(const ScopeEntry& entry) {
     Sema& owner = entry.owner != nullptr ? *entry.owner : s_;
     std::vector<const Item*> items = entry.overloads;
@@ -1733,8 +1788,8 @@ std::vector<Lowerer::OverloadCandidate> Lowerer::candidatesOf(const ScopeEntry& 
     const std::string qname = entry.qname.empty() ? entry.name : entry.qname;
     std::vector<OverloadCandidate> out;
     for (const Item* item : items) {
-        if (!Sema::genericParamsOf(*item).empty()) {
-            continue;  // generic overloads are instantiated per call (genericCandidates)
+        if (!Sema::genericParamsOf(*item).empty() || Sema::isPackFn(*item)) {
+            continue;  // generic and pack overloads are instantiated per call (genericCandidates, packCandidates)
         }
         OverloadCandidate c;
         c.decl = &std::get<FnDecl>(item->decl);
@@ -2417,8 +2472,8 @@ void Lowerer::lowerBatch(const std::vector<const Item*>& items) {
     for (const Item* ip : items) {
         const Item& item = *ip;
         s_.setCurrentInstance(ip);
-        if (!Sema::genericParamsOf(item).empty()) {
-            continue;  // a generic declaration is lowered per instance
+        if (!Sema::genericParamsOf(item).empty() || Sema::isPackFn(item)) {
+            continue;  // a generic or pack declaration is lowered per instance
         }
         if (std::holds_alternative<ImplDecl>(item.decl)) {
             // Only a generic impl instance is lowered here; the module's impls are in lowerImpls.
@@ -3696,6 +3751,14 @@ void Lowerer::lowerStmt(const Stmt& s, std::vector<hir::Stmt>& out) {
     case Stmt::Kind::ForRange:
         lowerForRange(s, out);
         return;
+    case Stmt::Kind::ForPack:
+        // A pack loop is unrolled when its pack function is instantiated; reaching it here means
+        // it is outside such a function (the checker reports the same uses in pack functions).
+        err("E0735",
+            s.expr->span,
+            "`for ... in` needs a parameter pack",
+            "only the parameter pack of a function can be iterated");
+        return;
     case Stmt::Kind::Switch:
         lowerSwitch(s, out);
         return;
@@ -4096,6 +4159,13 @@ Lowerer::EP Lowerer::expr(const Expr& e, const Type* expected) {
             e.span,
             "inline asm operands are only valid inside `__builtin_asm`",
             "misplaced operand");
+        return nullptr;
+    case Expr::Kind::Spread:
+        // Expanded in the call of a pack function's instance; anywhere else it has no meaning.
+        err("E0737",
+            e.span,
+            std::format("`..{}` is not a spread of a parameter pack here", e.text),
+            "`..name` is valid only as a call argument, where `name` is the pack");
         return nullptr;
     }
     return nullptr;
@@ -5329,10 +5399,12 @@ Lowerer::EP Lowerer::callEntry(const Expr& e, const ScopeEntry& entry, const std
             items.push_back(entry.item);
         }
         bool generic = false;
+        bool pack = false;
         for (const Item* item : items) {
             generic = generic || !Sema::genericParamsOf(*item).empty();
+            pack = pack || Sema::isPackFn(*item);
         }
-        const bool many = items.size() > 1 || generic;
+        const bool many = items.size() > 1 || generic || pack;
         std::vector<PreArg> pre;
         if (many) {
             pre = preLowerArgs(e);
@@ -5340,6 +5412,15 @@ Lowerer::EP Lowerer::callEntry(const Expr& e, const ScopeEntry& entry, const std
         auto cands = candidatesOf(entry);
         for (OverloadCandidate& g : genericCandidates(entry, e, pre)) {
             cands.push_back(std::move(g));
+        }
+        // A pack instance is made only when no fixed-arity overload has the call's argument count,
+        // so an exact overload is always preferred over the pack.
+        const bool fixed_arity = std::ranges::any_of(
+            cands, [&e](const OverloadCandidate& c) { return c.params.size() == e.args.size(); });
+        if (pack && !fixed_arity) {
+            for (OverloadCandidate& p : packCandidates(entry, e, pre)) {
+                cands.push_back(std::move(p));
+            }
         }
         if (cands.empty()) {
             err("E0404",

@@ -59,10 +59,12 @@ fn main() -> i32 {
     local beforeSprintf: i32 = allocs
     local s: String = sprintf("{}", 1)
     check("sprintf makes an allocator call", allocs > beforeSprintf)
+    check("sprintf text", s.len == 1)
 
     local beforeToString: i32 = allocs
     local t: String = toString(5)
     check("toString makes an allocator call", allocs > beforeToString)
+    check("toString text", t.len == 1)
 
     if failures == 0 {
         print("printalloc ok\n")

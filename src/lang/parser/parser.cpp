@@ -767,6 +767,13 @@ class Parser {
     /// A call argument. Inline-asm operands are written `in(reg) x`, `out("rax") y`,
     /// `inout(reg) z`: a register spec in parentheses followed by the operand expression.
     ExprPtr parseCallArg() {
+        if (at(TokenKind::DotDot)) {  // `..args`: spreads a parameter pack into the call
+            ExprPtr spread = makeExpr(Expr::Kind::Spread, cur().span);
+            advance();
+            spread->text = expectIdent("a parameter pack name after `..`");
+            spread->span = spanFrom(spread->span);
+            return spread;
+        }
         ExprPtr arg = parseExpr();
         const bool operand_head =
             arg->kind == Expr::Kind::Call && arg->lhs->kind == Expr::Kind::Name &&
@@ -1262,10 +1269,16 @@ class Parser {
         const bool saved_header = for_header_;
         no_struct_ = true;
         if (at(TokenKind::Ident) && peekKind(1) == TokenKind::Ident && peek(1).text == "in") {
-            stmt.kind = Stmt::Kind::ForRange;
             stmt.name = advance().text;
             advance();  // 'in'
             stmt.expr = parseExpr();
+            if (at(TokenKind::LBrace)) {  // `for a in args { }` iterates a parameter pack
+                stmt.kind = Stmt::Kind::ForPack;
+                no_struct_ = saved_no_struct;
+                stmt.body = parseBlockPtr();
+                return stmt;
+            }
+            stmt.kind = Stmt::Kind::ForRange;
             expect(TokenKind::DotDot, "`..` between the bounds of the range");
             stmt.expr2 = parseExpr();
             no_struct_ = saved_no_struct;
@@ -1601,6 +1614,10 @@ class Parser {
                 advance();
                 param.name = "self";
                 param.is_self = true;
+            } else if (at(TokenKind::DotDot)) {  // `..args`: the untyped trailing pack
+                advance();
+                param.name = expectIdent("a parameter pack name after `..`");
+                param.is_pack = true;
             } else {
                 param.name = expectIdent("a parameter name");
                 expect(TokenKind::Colon, "`:` and the parameter type");

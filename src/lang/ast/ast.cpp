@@ -187,6 +187,7 @@ public:
         case Expr::Kind::New:
             return std::format("new{} {}{}", e.lhs ? "(" + expr(*e.lhs) + ")" : std::string(),
                                typeToString(e.type), fieldInits(e));
+        case Expr::Kind::Spread: return ".." + e.text;
         case Expr::Kind::AsmOperand:
             return std::format("{}({}) {}", e.text, expr(*e.lhs), expr(*e.rhs));
         case Expr::Kind::MacroCall: {
@@ -330,6 +331,12 @@ public:
         case Stmt::Kind::ForRange: {
             line(std::format("{}{}for {} in {} .. {}", attrs, labelPrefix(s), s.name, expr(*s.expr),
                              expr(*s.expr2)));
+            Scope scope(*this);
+            block(*s.body);
+            break;
+        }
+        case Stmt::Kind::ForPack: {
+            line(std::format("{}{}for {} in {}", attrs, labelPrefix(s), s.name, expr(*s.expr)));
             Scope scope(*this);
             block(*s.body);
             break;

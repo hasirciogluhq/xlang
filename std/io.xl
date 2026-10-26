@@ -1,7 +1,7 @@
 // std/io: the print family. Every function writes straight to its fd through an FmtSink and makes
 // no allocator calls. `print` writes without a newline, `println` adds one "\n" after the text, and
 // `printEndl()` writes only "\n". The text rules (`{}`, `{{`, `}}`) live in std/fmt.
-from "fmt" import FmtSink, FmtFd, fmtWrite, fmtEmit1, fmtEmit2, fmtEmit3, fmtEmit4, fmtEmit5, fmtEmit6
+from "fmt" import FmtSink, FmtFd, fmtWrite, fmtEmit
 from "string" import String
 
 // ---- stdout ---------------------------------------------------------------------------------
@@ -42,34 +42,9 @@ export fn print(s: *String) {
 }
 
 /// `print("x = {}, y = {}", x, y)`: `{}` takes the next argument, `{{` and `}}` are braces.
-export fn print<A>(fmt: str, a: A) {
+export fn print(fmt: str, ..args) {
     local sink: FmtSink = FmtSink(FmtFd, 1, nil, 0, nil)
-    fmtEmit1(&sink, fmt, a)
-}
-
-export fn print<A, B>(fmt: str, a: A, b: B) {
-    local sink: FmtSink = FmtSink(FmtFd, 1, nil, 0, nil)
-    fmtEmit2(&sink, fmt, a, b)
-}
-
-export fn print<A, B, C>(fmt: str, a: A, b: B, c: C) {
-    local sink: FmtSink = FmtSink(FmtFd, 1, nil, 0, nil)
-    fmtEmit3(&sink, fmt, a, b, c)
-}
-
-export fn print<A, B, C, D>(fmt: str, a: A, b: B, c: C, d: D) {
-    local sink: FmtSink = FmtSink(FmtFd, 1, nil, 0, nil)
-    fmtEmit4(&sink, fmt, a, b, c, d)
-}
-
-export fn print<A, B, C, D, E>(fmt: str, a: A, b: B, c: C, d: D, e: E) {
-    local sink: FmtSink = FmtSink(FmtFd, 1, nil, 0, nil)
-    fmtEmit5(&sink, fmt, a, b, c, d, e)
-}
-
-export fn print<A, B, C, D, E, F>(fmt: str, a: A, b: B, c: C, d: D, e: E, f: F) {
-    local sink: FmtSink = FmtSink(FmtFd, 1, nil, 0, nil)
-    fmtEmit6(&sink, fmt, a, b, c, d, e, f)
+    fmtEmit(&sink, fmt, ..args)
 }
 
 export fn println(s: str) {
@@ -114,39 +89,10 @@ export fn println(s: *String) {
     sink.write("\n")
 }
 
-export fn println<A>(fmt: str, a: A) {
+/// `println("x = {}", x)`: the same as `print` followed by one "\n".
+export fn println(fmt: str, ..args) {
     local sink: FmtSink = FmtSink(FmtFd, 1, nil, 0, nil)
-    fmtEmit1(&sink, fmt, a)
-    sink.write("\n")
-}
-
-export fn println<A, B>(fmt: str, a: A, b: B) {
-    local sink: FmtSink = FmtSink(FmtFd, 1, nil, 0, nil)
-    fmtEmit2(&sink, fmt, a, b)
-    sink.write("\n")
-}
-
-export fn println<A, B, C>(fmt: str, a: A, b: B, c: C) {
-    local sink: FmtSink = FmtSink(FmtFd, 1, nil, 0, nil)
-    fmtEmit3(&sink, fmt, a, b, c)
-    sink.write("\n")
-}
-
-export fn println<A, B, C, D>(fmt: str, a: A, b: B, c: C, d: D) {
-    local sink: FmtSink = FmtSink(FmtFd, 1, nil, 0, nil)
-    fmtEmit4(&sink, fmt, a, b, c, d)
-    sink.write("\n")
-}
-
-export fn println<A, B, C, D, E>(fmt: str, a: A, b: B, c: C, d: D, e: E) {
-    local sink: FmtSink = FmtSink(FmtFd, 1, nil, 0, nil)
-    fmtEmit5(&sink, fmt, a, b, c, d, e)
-    sink.write("\n")
-}
-
-export fn println<A, B, C, D, E, F>(fmt: str, a: A, b: B, c: C, d: D, e: E, f: F) {
-    local sink: FmtSink = FmtSink(FmtFd, 1, nil, 0, nil)
-    fmtEmit6(&sink, fmt, a, b, c, d, e, f)
+    fmtEmit(&sink, fmt, ..args)
     sink.write("\n")
 }
 
@@ -193,34 +139,9 @@ export fn eprint(s: *String) {
     fmtWrite(&sink, s)
 }
 
-export fn eprint<A>(fmt: str, a: A) {
+export fn eprint(fmt: str, ..args) {
     local sink: FmtSink = FmtSink(FmtFd, 2, nil, 0, nil)
-    fmtEmit1(&sink, fmt, a)
-}
-
-export fn eprint<A, B>(fmt: str, a: A, b: B) {
-    local sink: FmtSink = FmtSink(FmtFd, 2, nil, 0, nil)
-    fmtEmit2(&sink, fmt, a, b)
-}
-
-export fn eprint<A, B, C>(fmt: str, a: A, b: B, c: C) {
-    local sink: FmtSink = FmtSink(FmtFd, 2, nil, 0, nil)
-    fmtEmit3(&sink, fmt, a, b, c)
-}
-
-export fn eprint<A, B, C, D>(fmt: str, a: A, b: B, c: C, d: D) {
-    local sink: FmtSink = FmtSink(FmtFd, 2, nil, 0, nil)
-    fmtEmit4(&sink, fmt, a, b, c, d)
-}
-
-export fn eprint<A, B, C, D, E>(fmt: str, a: A, b: B, c: C, d: D, e: E) {
-    local sink: FmtSink = FmtSink(FmtFd, 2, nil, 0, nil)
-    fmtEmit5(&sink, fmt, a, b, c, d, e)
-}
-
-export fn eprint<A, B, C, D, E, F>(fmt: str, a: A, b: B, c: C, d: D, e: E, f: F) {
-    local sink: FmtSink = FmtSink(FmtFd, 2, nil, 0, nil)
-    fmtEmit6(&sink, fmt, a, b, c, d, e, f)
+    fmtEmit(&sink, fmt, ..args)
 }
 
 export fn eprintln(s: str) {
@@ -265,39 +186,9 @@ export fn eprintln(s: *String) {
     sink.write("\n")
 }
 
-export fn eprintln<A>(fmt: str, a: A) {
+export fn eprintln(fmt: str, ..args) {
     local sink: FmtSink = FmtSink(FmtFd, 2, nil, 0, nil)
-    fmtEmit1(&sink, fmt, a)
-    sink.write("\n")
-}
-
-export fn eprintln<A, B>(fmt: str, a: A, b: B) {
-    local sink: FmtSink = FmtSink(FmtFd, 2, nil, 0, nil)
-    fmtEmit2(&sink, fmt, a, b)
-    sink.write("\n")
-}
-
-export fn eprintln<A, B, C>(fmt: str, a: A, b: B, c: C) {
-    local sink: FmtSink = FmtSink(FmtFd, 2, nil, 0, nil)
-    fmtEmit3(&sink, fmt, a, b, c)
-    sink.write("\n")
-}
-
-export fn eprintln<A, B, C, D>(fmt: str, a: A, b: B, c: C, d: D) {
-    local sink: FmtSink = FmtSink(FmtFd, 2, nil, 0, nil)
-    fmtEmit4(&sink, fmt, a, b, c, d)
-    sink.write("\n")
-}
-
-export fn eprintln<A, B, C, D, E>(fmt: str, a: A, b: B, c: C, d: D, e: E) {
-    local sink: FmtSink = FmtSink(FmtFd, 2, nil, 0, nil)
-    fmtEmit5(&sink, fmt, a, b, c, d, e)
-    sink.write("\n")
-}
-
-export fn eprintln<A, B, C, D, E, F>(fmt: str, a: A, b: B, c: C, d: D, e: E, f: F) {
-    local sink: FmtSink = FmtSink(FmtFd, 2, nil, 0, nil)
-    fmtEmit6(&sink, fmt, a, b, c, d, e, f)
+    fmtEmit(&sink, fmt, ..args)
     sink.write("\n")
 }
 
@@ -338,34 +229,9 @@ export fn fprint(fd: i32, s: *String) {
     fmtWrite(&sink, s)
 }
 
-export fn fprint<A>(fd: i32, fmt: str, a: A) {
+export fn fprint(fd: i32, fmt: str, ..args) {
     local sink: FmtSink = FmtSink(FmtFd, fd, nil, 0, nil)
-    fmtEmit1(&sink, fmt, a)
-}
-
-export fn fprint<A, B>(fd: i32, fmt: str, a: A, b: B) {
-    local sink: FmtSink = FmtSink(FmtFd, fd, nil, 0, nil)
-    fmtEmit2(&sink, fmt, a, b)
-}
-
-export fn fprint<A, B, C>(fd: i32, fmt: str, a: A, b: B, c: C) {
-    local sink: FmtSink = FmtSink(FmtFd, fd, nil, 0, nil)
-    fmtEmit3(&sink, fmt, a, b, c)
-}
-
-export fn fprint<A, B, C, D>(fd: i32, fmt: str, a: A, b: B, c: C, d: D) {
-    local sink: FmtSink = FmtSink(FmtFd, fd, nil, 0, nil)
-    fmtEmit4(&sink, fmt, a, b, c, d)
-}
-
-export fn fprint<A, B, C, D, E>(fd: i32, fmt: str, a: A, b: B, c: C, d: D, e: E) {
-    local sink: FmtSink = FmtSink(FmtFd, fd, nil, 0, nil)
-    fmtEmit5(&sink, fmt, a, b, c, d, e)
-}
-
-export fn fprint<A, B, C, D, E, F>(fd: i32, fmt: str, a: A, b: B, c: C, d: D, e: E, f: F) {
-    local sink: FmtSink = FmtSink(FmtFd, fd, nil, 0, nil)
-    fmtEmit6(&sink, fmt, a, b, c, d, e, f)
+    fmtEmit(&sink, fmt, ..args)
 }
 
 export fn fprintln(fd: i32, s: str) {
@@ -410,38 +276,8 @@ export fn fprintln(fd: i32, s: *String) {
     sink.write("\n")
 }
 
-export fn fprintln<A>(fd: i32, fmt: str, a: A) {
+export fn fprintln(fd: i32, fmt: str, ..args) {
     local sink: FmtSink = FmtSink(FmtFd, fd, nil, 0, nil)
-    fmtEmit1(&sink, fmt, a)
-    sink.write("\n")
-}
-
-export fn fprintln<A, B>(fd: i32, fmt: str, a: A, b: B) {
-    local sink: FmtSink = FmtSink(FmtFd, fd, nil, 0, nil)
-    fmtEmit2(&sink, fmt, a, b)
-    sink.write("\n")
-}
-
-export fn fprintln<A, B, C>(fd: i32, fmt: str, a: A, b: B, c: C) {
-    local sink: FmtSink = FmtSink(FmtFd, fd, nil, 0, nil)
-    fmtEmit3(&sink, fmt, a, b, c)
-    sink.write("\n")
-}
-
-export fn fprintln<A, B, C, D>(fd: i32, fmt: str, a: A, b: B, c: C, d: D) {
-    local sink: FmtSink = FmtSink(FmtFd, fd, nil, 0, nil)
-    fmtEmit4(&sink, fmt, a, b, c, d)
-    sink.write("\n")
-}
-
-export fn fprintln<A, B, C, D, E>(fd: i32, fmt: str, a: A, b: B, c: C, d: D, e: E) {
-    local sink: FmtSink = FmtSink(FmtFd, fd, nil, 0, nil)
-    fmtEmit5(&sink, fmt, a, b, c, d, e)
-    sink.write("\n")
-}
-
-export fn fprintln<A, B, C, D, E, F>(fd: i32, fmt: str, a: A, b: B, c: C, d: D, e: E, f: F) {
-    local sink: FmtSink = FmtSink(FmtFd, fd, nil, 0, nil)
-    fmtEmit6(&sink, fmt, a, b, c, d, e, f)
+    fmtEmit(&sink, fmt, ..args)
     sink.write("\n")
 }

@@ -191,6 +191,24 @@ constexpr std::size_t kLeadWidth = 40;
          "Generic methods are monomorphized per class, so only methods of a `class` (not of an "
          "`impl` or an `interface`) can have their own type parameters. Move the method into the "
          "class, or make it a generic free function."},
+        {"E0734", Severity::Error, "invalid parameter pack",
+         "A `..name` parameter takes the arguments after the fixed parameters, so it must be the "
+         "last parameter, and a function can have only one. Remove the extra pack or move it to "
+         "the end of the parameter list."},
+        {"E0735", Severity::Error, "parameter pack used as a value",
+         "A parameter pack is not a value. Read its count with `name.len`, iterate it with "
+         "`for x in name { }`, or pass it on with `..name` in a call. Nothing else may use it."},
+        {"E0736", Severity::Error, "parameter pack not allowed here",
+         "Only a free function with a body can take a parameter pack. It cannot be `declare`d, "
+         "`export(c)`, `virtual` or `override`, have type parameters, or be a method of a class, "
+         "impl or interface."},
+        {"E0737", Severity::Error, "spread outside a pack call",
+         "`..name` is valid only as an argument of a call, and only when `name` is the parameter "
+         "pack of the enclosing function. Pass the pack's elements to a function that takes them, "
+         "or write the arguments out."},
+        {"E0738", Severity::Error, "parameter pack indexed",
+         "A parameter pack has no index operator, because its elements have different types. "
+         "Iterate it with `for x in name { }`, or pass it on with `..name`."},
         {"W0701", Severity::Warning, "missing return",
          "Control can fall off the end of a function that returns a value: some path has no "
          "`return` (a loop that ends with `break`, an `if` without `else`, ...). Add a `return`, "

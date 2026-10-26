@@ -1863,6 +1863,10 @@ void Sema::analyze() {
             if (g->init) {
                 checkExpr(*g->init);
             }
+        } else if (isPackFn(item)) {
+            // A pack function is checked here for its declaration and its uses of the pack; its
+            // body is checked per element count, when a call instantiates it.
+            checkPackFn(item);
         } else if (const auto* f = std::get_if<FnDecl>(&item.decl);
                    f != nullptr && f->generic_params.empty()) {
             // Generic declarations are checked per instance, when they are instantiated.
@@ -1886,6 +1890,7 @@ void Sema::analyze() {
             }
             if (const auto* c = std::get_if<ClassDecl>(&item.decl)) {
                 for (const FnDecl& m : c->methods) {
+                    checkNoPackMethod(m);
                     // A generic method has no body to check until an instance is made.
                     if (m.has_body && m.generic_params.empty()) {
                         checkStatements(m.body);
@@ -1900,9 +1905,14 @@ void Sema::analyze() {
             }
         } else if (const auto* impl = std::get_if<ImplDecl>(&item.decl)) {
             for (const FnDecl& m : impl->methods) {
+                checkNoPackMethod(m);
                 if (m.has_body) {
                     checkStatements(m.body);
                 }
+            }
+        } else if (const auto* iface = std::get_if<InterfaceDecl>(&item.decl)) {
+            for (const FnDecl& m : iface->methods) {
+                checkNoPackMethod(m);
             }
         } else if (const auto* call = std::get_if<TopLevelCallDecl>(&item.decl)) {
             checkStaticAssert(*call);
