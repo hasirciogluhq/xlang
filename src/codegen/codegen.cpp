@@ -69,6 +69,7 @@ private:
     void buildTables();
     void defineGlobal(const hir::Global& g);
     void defineFunction(const hir::Function& f);
+    void emitInitAll();
     void emitEntry();
     llvm::GlobalVariable* stringGlobal(const std::string& text);
     llvm::Constant* vtablePointer(const std::string& class_name);
@@ -417,8 +418,7 @@ void Gen::declareFunction(const hir::Function& f) {
     llvm::FunctionType* fty = fnTypeFor(params, f.ret);
     llvm::GlobalValue::LinkageTypes link = llvm::GlobalValue::InternalLinkage;
     const bool root_main = f.module.empty() && f.name == "main";
-    const bool start_fn = !hm_.start_function.empty() && f.name == hm_.start_function;
-    if (f.exported || f.declared || root_main || start_fn || !f.has_body || in_.only_module) {
+    if (f.exported || f.declared || root_main || !f.has_body || in_.only_module) {
         link = llvm::GlobalValue::ExternalLinkage;  // per-module objects reference each other
     }
     llvm::Function* fn = llvm::Function::Create(fty, link, f.symbol.empty() ? f.name : f.symbol, mod_);
@@ -1858,16 +1858,31 @@ llvm::Value* Gen::genScalar(const hir::Expr& e) {
 // ---------------------------------------------------------------------------------------------
 // Entry point and driver
 
+void Gen::emitInitAll() {
+    // `_xl_initAll` runs the `@init` functions in order. It is named without `$` so that the raw
+    // AT&T entry stubs can call it: a `$` starting an operand is an immediate there.
+    llvm::Function* init_all = llvm::Function::Create(
+        llvm::FunctionType::get(llvm::Type::getVoidTy(ctx_), false),
+        llvm::GlobalValue::ExternalLinkage,
+        "_xl_initAll",
+        mod_);
+    init_all->addFnAttr(llvm::Attribute::NoUnwind);
+    llvm::BasicBlock* entry = llvm::BasicBlock::Create(ctx_, "entry", init_all);
+    B_.SetInsertPoint(entry);
+    for (const std::string& name : hm_.init_functions) {
+        if (llvm::Function* f = functionNamed(name)) {
+            B_.CreateCall(f);
+        }
+    }
+    B_.CreateRetVoid();
+}
+
 void Gen::emitEntry() {
     const TargetInfo& t = in_.config.target;
     const hir::Function* main_fn = nullptr;
-    const hir::Function* start_fn = nullptr;
     for (const hir::Function& f : hm_.functions) {
         if (f.module.empty() && f.name == "main" && f.has_body) {
             main_fn = &f;
-        }
-        if (!hm_.start_function.empty() && f.name == hm_.start_function && f.has_body) {
-            start_fn = &f;
         }
     }
     if (main_fn == nullptr) {
@@ -1877,35 +1892,31 @@ void Gen::emitEntry() {
     const auto symOf = [mach_o](const hir::Function& f) {
         return (mach_o ? "_" : "") + (f.symbol.empty() ? f.name : f.symbol);
     };
-    // `register(start)` runs first; the stub never returns, so the clobbered return registers and
-    // link register are harmless. Both calls keep the stack 16-byte aligned at the call site.
-    const std::string call_start = start_fn == nullptr ? "" : "\tcall " + symOf(*start_fn) + "\n";
+    // `_xl_initAll` runs first and returns normally. Every call keeps the stack 16-byte aligned at
+    // the call site.
+    const std::string init_sym = std::string(mach_o ? "_" : "") + "_xl_initAll";
+    const std::string x86_init = "\tcall " + init_sym + "\n";
+    const std::string arm_init = "\tbl " + init_sym + "\n";
     const std::string sym = symOf(*main_fn);
     const bool returns_int = main_fn->ret.kind == TypeKind::Int;
     std::string text;
     if (t.os == "linux" && t.arch == "x86_64") {
-        text = ".text\n.globl _start\n_start:\n\txorl %ebp, %ebp\n\tandq $-16, %rsp\n" + call_start + "\tcall " + sym + "\n";
+        text = ".text\n.globl _start\n_start:\n\txorl %ebp, %ebp\n\tandq $-16, %rsp\n" + x86_init + "\tcall " + sym + "\n";
         text += returns_int ? "\tmovl %eax, %edi\n" : "\txorl %edi, %edi\n";
         text += "\tmovl $231, %eax\n\tsyscall\n";   // exit_group: ends the worker threads too
     } else if (t.os == "linux") {
-        text = ".text\n.globl _start\n_start:\n";
-        if (start_fn != nullptr) {
-            text += "\tbl " + symOf(*start_fn) + "\n";
-        }
+        text = ".text\n.globl _start\n_start:\n" + arm_init;
         text += "\tbl " + sym + "\n";
         if (!returns_int) {
             text += "\tmov x0, #0\n";
         }
         text += "\tmov x8, #94\n\tsvc #0\n";   // exit_group
     } else if (t.os == "macos" && t.arch == "x86_64") {
-        text = ".text\n.globl _start\n_start:\n\txorl %ebp, %ebp\n\tandq $-16, %rsp\n" + call_start + "\tcall " + sym + "\n";
+        text = ".text\n.globl _start\n_start:\n\txorl %ebp, %ebp\n\tandq $-16, %rsp\n" + x86_init + "\tcall " + sym + "\n";
         text += returns_int ? "\tmovl %eax, %edi\n" : "\txorl %edi, %edi\n";
         text += "\tmovl $0x2000001, %eax\n\tsyscall\n";
     } else if (t.os == "macos") {
-        text = ".text\n.globl _start\n.p2align 2\n_start:\n";
-        if (start_fn != nullptr) {
-            text += "\tbl " + symOf(*start_fn) + "\n";
-        }
+        text = ".text\n.globl _start\n.p2align 2\n_start:\n" + arm_init;
         text += "\tbl " + sym + "\n";
         if (!returns_int) {
             text += "\tmov x0, #0\n";
@@ -1914,7 +1925,7 @@ void Gen::emitEntry() {
     } else if (t.os == "windows") {
         // The process ends through ntdll's `NtTerminateProcess` (the linker driver always imports
         // it for Windows executables): its exit status is `main`'s result, or 0 for a void `main`.
-        text = ".text\n.globl mainCRTStartup\nmainCRTStartup:\n\tsubq $40, %rsp\n" + call_start + "\tcall " + sym + "\n";
+        text = ".text\n.globl mainCRTStartup\nmainCRTStartup:\n\tsubq $40, %rsp\n" + x86_init + "\tcall " + sym + "\n";
         text += returns_int ? "\tmovl %eax, %edx\n" : "\txorl %edx, %edx\n";
         text += "\tmovq $-1, %rcx\n\tcall NtTerminateProcess\n\tint3\n";
         // Without a C runtime nothing else defines the stack probe LLVM calls for frames over 4 KiB
@@ -1959,6 +1970,7 @@ bool Gen::run() {
         }
     }
     if (in_.emit_entry && (!in_.only_module || in_.only_module->empty())) {
+        emitInitAll();
         emitEntry();
     }
     if (di_) {

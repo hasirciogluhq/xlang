@@ -27,6 +27,10 @@ struct ModuleInfo {
     };
 
     std::string key;
+    /// Part of the standard library (under the std root). Stdlib registrations are defaults that a
+    /// user registration of the same role or name replaces; stdlib modules run their `@init`
+    /// functions before the others.
+    bool is_std{false};
     std::vector<ModuleInfo*> deps;  ///< modules this one imports / re-exports from
     std::string mangle_name;  ///< readable module name for symbol mangling (`std.mem`, root: file stem)
     std::filesystem::path path;

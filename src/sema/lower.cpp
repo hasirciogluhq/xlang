@@ -15,7 +15,9 @@
 
 namespace xlang {
 
-hir::Module lowerProgram(const std::vector<Sema*>& modules);
+hir::Module lowerProgram(const std::vector<Sema*>& modules,
+                         const std::vector<Sema*>& init_order,
+                         const std::set<const Sema*>& std_modules);
 
 namespace {
 
@@ -152,17 +154,24 @@ struct LowerShared {
     std::vector<ImplInfo> impls;
     std::map<std::string, std::vector<SlotInfo>> vtables;
     std::set<std::string> vtables_in_progress;
+    /// The registration of a role: the global or function that holds it, and the module it is in.
     struct Role {
         Span span;
         std::string name;
+        std::string qname;
+        bool from_std{false};
+        Sema* owner{nullptr};
+        const Sema::Symbol* sym{nullptr};
     };
     std::map<std::string, Role> roles;
     std::map<std::string, Span> link_names;
+    std::set<std::string> init_fns;  ///< qualified names of the `@init` functions
 };
 
 class Lowerer {
   public:
-    Lowerer(Sema& sema, LowerShared& shared) : s_(sema), sh_(shared), mod_(shared.module) {}
+    Lowerer(Sema& sema, LowerShared& shared, bool is_std)
+        : s_(sema), sh_(shared), mod_(shared.module), is_std_(is_std) {}
 
     void collectImpls();
     /// Lowers the generic instances created since the last call; true when there were any.
@@ -170,7 +179,11 @@ class Lowerer {
     /// Ends the module scope (after every instance is lowered).
     void finish();
     void checkRegistrations();
+    /// Finds the `@init` functions of this module (E0729 when one does not fit).
+    void checkInitFunctions();
     void run();
+    /// The `@init` functions of this module, in source order.
+    [[nodiscard]] const std::vector<std::string>& initFunctions() const { return init_order_; }
 
   private:
     using EP = hir::ExprPtr;
@@ -303,6 +316,10 @@ class Lowerer {
                      const Expr& value,
                      const Span& span,
                      std::vector<hir::Stmt>& out);
+    /// Stores the value of `value_ast` into `target` (already checked as a place).
+    void assignTo(EP target, const Expr& value_ast, const Span& span, std::vector<hir::Stmt>& out);
+    /// `__builtin_setRegistered("allocator", value)` in an `@init` function.
+    void lowerSetRegistered(const Expr& call, const Span& span, std::vector<hir::Stmt>& out);
     void lowerCompound(const Stmt& s, std::vector<hir::Stmt>& out);
     void lowerFor(const Stmt& s, std::vector<hir::Stmt>& out);
     void lowerForRange(const Stmt& s, std::vector<hir::Stmt>& out);
@@ -383,6 +400,8 @@ class Lowerer {
     Sema& s_;
     LowerShared& sh_;
     hir::Module& mod_;
+    bool is_std_;                       ///< module is part of the standard library
+    std::vector<std::string> init_order_;  ///< this module's `@init` functions (qualified names)
     ScopeStack scopes_;
     hir::Function* fn_{nullptr};
     Type ret_;
@@ -1162,11 +1181,8 @@ void Lowerer::checkRegistrations() {
             }
             why = "`register(allocator)` needs a global whose type is an interface or has an "
                   "`impl` with `alloc`";
-        } else if (role == "start") {
-            ok = fn != nullptr && fn->has_body && fn->params.empty() && fn->return_type.isVoid();
-            why = "`register(start)` needs `fn()` with no parameters and no return type";
         } else {
-            why = std::format("unknown role `{}`; known roles: panic, allocator, start", role);
+            why = std::format("unknown role `{}`; known roles: panic, allocator", role);
         }
         if (!ok) {
             err("E0503",
@@ -1175,27 +1191,72 @@ void Lowerer::checkRegistrations() {
                 why);
             continue;
         }
-        const auto [it, inserted] =
-            sh_.roles.emplace(role, LowerShared::Role{base.name_span, base.name});
+        const std::string qname = s_.qualify(base.name);
+        const LowerShared::Role info{base.name_span,
+                                     base.name,
+                                     qname,
+                                     is_std_,
+                                     &s_,
+                                     s_.findLocal(base.name)};
+        const auto [it, inserted] = sh_.roles.emplace(role, info);
         if (!inserted) {
-            Diagnostic d;
-            d.code = "E0502";
-            d.severity = Severity::Error;
-            d.message = std::format("role `{}` is registered twice", role);
-            d.labels.push_back({it->second.span, "first registration"});
-            d.labels.push_back({base.name_span, "second registration"});
-            d.fix = "keep one registration per role";
-            s_.diag_.report(std::move(d));
+            if (it->second.from_std == is_std_) {
+                Diagnostic d;
+                d.code = "E0502";
+                d.severity = Severity::Error;
+                d.message = std::format("role `{}` is registered twice", role);
+                d.labels.push_back({it->second.span, "first registration"});
+                d.labels.push_back({base.name_span, "second registration"});
+                d.fix = "keep one registration per role in your program; the stdlib default is "
+                        "replaced by registering the role in your own code";
+                s_.diag_.report(std::move(d));
+                continue;
+            }
+            // The stdlib default yields to the program; a stdlib registration never replaces one.
+            if (is_std_) {
+                continue;
+            }
+            it->second = info;
+        }
+        if (role == "panic") {
+            mod_.panic_function = qname;
+        } else {
+            mod_.allocator_global = qname;
+        }
+    }
+}
+
+void Lowerer::checkInitFunctions() {
+    for (const Item& item : s_.program_.items) {
+        const DeclBase& base = declBase(item);
+        const auto* cls = std::get_if<ClassDecl>(&item.decl);
+        if (cls != nullptr) {
+            for (const FnDecl& m : cls->methods) {
+                if (const Attribute* at = findAttribute(m.attributes, "init")) {
+                    err("E0729",
+                        at->span,
+                        std::format("`@init` on method `{}.{}` is not allowed", base.name, m.name),
+                        "`@init` is for module-level functions");
+                }
+            }
+        }
+        const Attribute* init = findAttribute(base.attributes, "init");
+        if (init == nullptr) {
+            continue;
+        }
+        const auto* fn = std::get_if<FnDecl>(&item.decl);
+        if (fn == nullptr || !fn->generic_params.empty() || !fn->params.empty() ||
+            !fn->return_type.isVoid() || !fn->has_body) {
+            err("E0729",
+                init->span,
+                std::format("`@init` on `{}` needs a plain function", base.name),
+                "write `@init fn name() { ... }`: no generics, parameters, return type or "
+                "declaration without a body");
             continue;
         }
         const std::string qname = s_.qualify(base.name);
-        if (role == "panic") {
-            mod_.panic_function = qname;
-        } else if (role == "allocator") {
-            mod_.allocator_global = qname;
-        } else {
-            mod_.start_function = qname;
-        }
+        sh_.init_fns.insert(qname);
+        init_order_.push_back(qname);
     }
 }
 
@@ -1243,6 +1304,12 @@ void Lowerer::assignSymbol(const std::vector<Attribute>& attrs,
         }
     }
     symbol = s_.linkName(attrs, export_c, declared, local_name, params, overloaded);
+    if (symbol == "_start" || symbol == "mainCRTStartup" || symbol == "_xl_initAll") {
+        err("E0726",
+            at,
+            std::format("symbol `{}` is reserved for the compiler's entry point", symbol),
+            "rename it: the compiler generates this symbol to start the program");
+    }
     const auto [it, inserted] = sh_.link_names.emplace(symbol, at);
     // Plain names must be unique; mangled names are unique by their parameter types.
     if (!inserted && !declared && symbol.find("_xl$") != 0) {
@@ -1750,6 +1817,7 @@ void Lowerer::lowerFunction(const FnDecl& f,
     out.name = qname;
     out.module = s_.key_;
     out.owner = owner;
+    out.is_init = sh_.init_fns.contains(qname);
     out.exported = mods.exported || mods.export_c || mods.registered;
     out.export_c = mods.export_c;
     out.declared = mods.declared;
@@ -2622,6 +2690,10 @@ void Lowerer::lowerAssign(const Expr& target_ast,
             "not a place (variable, `*p`, field or element)");
         target.reset();
     }
+    assignTo(std::move(target), value_ast, span, out);
+}
+
+void Lowerer::assignTo(EP target, const Expr& value_ast, const Span& span, std::vector<hir::Stmt>& out) {
     const Type want = target ? target->type : unknownType();
     EP value = expr(value_ast, target ? &want : nullptr);
     if (target && value) {
@@ -2641,6 +2713,38 @@ void Lowerer::lowerAssign(const Expr& target_ast,
     h.target = std::move(target);
     h.value = std::move(value);
     out.push_back(std::move(h));
+}
+
+void Lowerer::lowerSetRegistered(const Expr& call, const Span& span, std::vector<hir::Stmt>& out) {
+    if (fn_ == nullptr || !fn_->is_init) {
+        err("E0728",
+            call.span,
+            "`__builtin_setRegistered` only works inside an `@init` function",
+            "move the call into an `@init` function");
+        return;
+    }
+    if (call.args.size() != 2 || call.args[0]->kind != Expr::Kind::StringLiteral) {
+        err("E0710",
+            call.span,
+            "`__builtin_setRegistered` takes a role string and a value: "
+            "`__builtin_setRegistered(\"allocator\", value)`",
+            "wrong arguments");
+        return;
+    }
+    const std::string& role = call.args[0]->text;
+    const auto it = sh_.roles.find(role);
+    if (role != "allocator" || it == sh_.roles.end()) {
+        err("E0503",
+            call.args[0]->span,
+            std::format("no registered global of role `{}` to set", role),
+            "only a `register(allocator)` global can be set, and only when the program registers one");
+        return;
+    }
+    const ScopeEntry entry = entryOf(Sema::EntityRef{it->second.owner, it->second.sym, it->second.name},
+                                     it->second.name,
+                                     span);
+    EP target = fromEntry(entry, call, nullptr);
+    assignTo(std::move(target), *call.args[1], span, out);
 }
 
 /// `t op= v`  =>  `t = t op v`; a target with side effects is evaluated once through a pointer.
@@ -3195,6 +3299,11 @@ void Lowerer::lowerStmt(const Stmt& s, std::vector<hir::Stmt>& out) {
         if (s.expr->kind == Expr::Kind::Call && s.expr->lhs->kind == Expr::Kind::Name &&
             s.expr->lhs->text == "staticAssert" && lookupName("staticAssert") == nullptr) {
             s_.checkStaticAssertCall(*s.expr);
+            return;
+        }
+        if (s.expr->kind == Expr::Kind::Call && s.expr->lhs->kind == Expr::Kind::Name &&
+            s.expr->lhs->text == "__builtin_setRegistered") {
+            lowerSetRegistered(*s.expr, s.span, out);
             return;
         }
         EP v = expr(*s.expr, nullptr);
@@ -4139,6 +4248,13 @@ Lowerer::EP Lowerer::builtinCall(const Expr& e, const std::string& name) {
     if (name == "__builtin_asm") {
         return asmCall(e);
     }
+    if (name == "__builtin_setRegistered") {
+        err("E0728",
+            e.span,
+            "`__builtin_setRegistered` is a statement, not a value",
+            "call it as a statement inside an `@init` function");
+        return nullptr;
+    }
     if (name == "__builtin_needsDrop") {
         // `__builtin_needsDrop<T>()`: a compile-time bool.
         static const std::vector<Type> none;
@@ -4628,6 +4744,14 @@ Lowerer::EP Lowerer::callEntry(const Expr& e, const ScopeEntry& entry, const std
             pick = *chosen;
         }
         const OverloadCandidate& cand = cands[pick];
+        if (sh_.init_fns.contains(cand.key)) {
+            err("E0727",
+                e.span,
+                std::format("`{}` is an `@init` function and cannot be called", name),
+                "`@init` functions run once before `main`; move the shared code into a normal "
+                "function and call that");
+            return nullptr;
+        }
         std::vector<EP> args;
         if (!lowerArgs(e, cand.params, args, name)) {
             return nullptr;
@@ -5098,17 +5222,24 @@ void Lowerer::finish() {
     scopes_.pop();
 }
 
-hir::Module lowerProgram(const std::vector<Sema*>& modules) {
+hir::Module lowerProgram(const std::vector<Sema*>& modules,
+                         const std::vector<Sema*>& init_order,
+                         const std::set<const Sema*>& std_modules) {
     LowerShared shared;
     std::vector<std::unique_ptr<Lowerer>> lowerers;
+    std::map<const Sema*, Lowerer*> by_sema;
     for (Sema* s : modules) {
-        lowerers.push_back(std::make_unique<Lowerer>(*s, shared));
+        lowerers.push_back(std::make_unique<Lowerer>(*s, shared, std_modules.contains(s)));
+        by_sema[s] = lowerers.back().get();
     }
     for (auto& l : lowerers) {
         l->collectImpls();
     }
     for (auto& l : lowerers) {
         l->checkRegistrations();
+    }
+    for (auto& l : lowerers) {
+        l->checkInitFunctions();
     }
     for (auto& l : lowerers) {
         l->run();
@@ -5124,11 +5255,16 @@ hir::Module lowerProgram(const std::vector<Sema*>& modules) {
     for (auto& l : lowerers) {
         l->finish();
     }
+    for (Sema* s : init_order) {
+        for (const std::string& name : by_sema.at(s)->initFunctions()) {
+            shared.module.init_functions.push_back(name);
+        }
+    }
     return std::move(shared.module);
 }
 
 hir::Module Sema::lower() {
-    return lowerProgram({this});
+    return lowerProgram({this}, {this}, {});
 }
 
 } // namespace xlang

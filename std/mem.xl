@@ -1,5 +1,6 @@
 // std/mem: the `Allocator` interface, the default `Heap`, the registered allocator
-// (std feature `default-allocator`), `free` and `setAllocator` (plan 7.2).
+// (std feature `default-allocator`) and `free` (plan 7.2). A program replaces the registered
+// allocator from an `@init` function with `__builtin_setRegistered("allocator", value)`.
 from "sys" import sysMap, sysUnmap, sysYield
 from "runtime" import panic
 
@@ -133,19 +134,9 @@ global heapObject: Heap
 
 #if featureDefaultAllocator
 register(allocator) global currentAllocator: Allocator = heapObject
-global allocatorSet: bool = false
 
 /// Frees through the current allocator (the one `new T` allocated with).
 export fn free(p: *void) {
     currentAllocator.free(p)
-}
-
-/// Replaces the allocator once, at the start of `main`, before the first `new`.
-export fn setAllocator(a: Allocator) {
-    if allocatorSet {
-        panic("allocator already set")
-    }
-    allocatorSet = true
-    currentAllocator = a
 }
 #endif

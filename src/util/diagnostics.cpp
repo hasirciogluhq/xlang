@@ -143,6 +143,19 @@ constexpr std::size_t kLeadWidth = 40;
         {"E0717", Severity::Error, "string literal does not fit the array",
          "A string literal initializes a `[ui8; N]` but has more than N bytes. Make the array "
          "longer, or use a `str` value instead."},
+        {"E0726", Severity::Error, "reserved entry symbol",
+         "A symbol named `_start`, `mainCRTStartup` or `_xl_initAll` was requested through `export(c)`, "
+         "`@mangle` or `declare`. The compiler generates these symbols to start the program. Rename the "
+         "function or global."},
+        {"E0727", Severity::Error, "call to an `@init` function",
+         "An `@init` function runs once before `main` and cannot be called from code. Move the shared "
+         "code into a normal function and call that."},
+        {"E0728", Severity::Error, "`__builtin_setRegistered` outside an `@init` function",
+         "`__builtin_setRegistered(role, value)` is a statement that only works inside an `@init` "
+         "function. It cannot be used as a value."},
+        {"E0729", Severity::Error, "invalid `@init` function",
+         "`@init` marks a module-level function with no generics, no parameters, no return type and a "
+         "body. It is not allowed on methods or on other kinds of declarations."},
         {"W0701", Severity::Warning, "missing return",
          "Control can fall off the end of a function that returns a value: some path has no "
          "`return` (a loop that ends with `break`, an `if` without `else`, ...). Add a `return`, "

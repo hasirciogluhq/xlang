@@ -1,0 +1,31 @@
+// init: `@init` functions run before `main`, and a module's imports are initialized before the module.
+from "std" import print
+from "initdep" import depReady
+
+global booted: bool = false
+global sawDep: bool = false
+global failures: i32 = 0
+
+fn check(name: *ui8, ok: bool) {
+    if !ok {
+        failures = failures + 1
+        print("FAIL ")
+        print(name)
+        print("\n")
+    }
+}
+
+@init fn boot() {
+    sawDep = depReady()
+    booted = true
+}
+
+fn main() -> i32 {
+    check("boot ran before main", booted)
+    check("dependency init ran before the importing module's init", sawDep)
+    check("dependency state visible in main", depReady())
+    if failures == 0 {
+        print("init ok\n")
+    }
+    return failures
+}

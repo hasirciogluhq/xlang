@@ -212,7 +212,8 @@ void testJsonFormat() {
 
 void testRegistry() {
     for (const char* code : {"W0201", "W0202", "W0203", "W0301", "E0302", "W0401", "E0401", "E0501",
-                             "E0502", "E0503", "E0504", "W0402", "E0601", "E0701", "W0601"}) {
+                             "E0502", "E0503", "E0504", "W0402", "E0601", "E0701", "W0601",
+                             "E0726", "E0727", "E0728", "E0729"}) {
         CHECK(findDiagnosticInfo(code) != nullptr);
     }
     CHECK(findDiagnosticInfo("E0601")->severity == Severity::Error);

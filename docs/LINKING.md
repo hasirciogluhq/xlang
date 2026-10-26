@@ -42,7 +42,7 @@ If the tool is missing, the build fails with a message naming it; `--emit=obj` n
 
 ## Entry stub
 
-For an executable, the compiler emits a small assembly stub as the OS entry symbol when the program defines `main`. The stub calls the registered `start` function (when one is registered, as `std/runtime` does) and then `main`, and exits with `main`'s integer result (0 for a void `main`). Stubs exist for Linux and macOS on x86_64 and aarch64 and for Windows on x86_64; the Windows stub exits through ntdll's `NtTerminateProcess` and also defines `__chkstk` and `_fltused`. Without a `main` no stub is emitted.
+For an executable, the compiler emits a small assembly stub as the OS entry symbol when the program defines `main`. The stub calls the compiler-generated `_xl_initAll` (which runs the `@init` functions in order) and then `main`, and exits with `main`'s integer result (0 for a void `main`). Stubs exist for Linux and macOS on x86_64 and aarch64 and for Windows on x86_64; the Windows stub exits through ntdll's `NtTerminateProcess` and also defines `__chkstk` and `_fltused`. Without a `main` no stub is emitted.
 
 ---
 

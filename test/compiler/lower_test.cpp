@@ -277,6 +277,69 @@ void testRegisterRoles() {
         Lowered r("register(panic) fn panic(msg: *ui8) { }\nfn f() { local panic: i32 = 1 }\n");
         CHECK(r.out.str().find("W0402") != std::string::npos);
     }
+    {
+        // `start` is no longer a role: `@init` replaces it.
+        Lowered r("register(start) fn start() { }\n");
+        CHECK(r.failedWith("E0503"));
+    }
+}
+
+void testInitFunctions() {
+    {
+        Lowered r("@init fn boot() { }\nfn main() -> i32 { return 0 }\n");
+        CHECK(!r.diag->hasErrors());
+        CHECK(r.module.init_functions == std::vector<std::string>{"boot"});
+        CHECK(r.has("init boot"));
+    }
+    {
+        Lowered r("@init fn first() { }\n@init fn second() { }\n");
+        CHECK(!r.diag->hasErrors());
+        CHECK(r.module.init_functions == (std::vector<std::string>{"first", "second"}));
+    }
+    {
+        Lowered r("@init fn boot(x: i32) { }\n");
+        CHECK(r.failedWith("E0729"));
+    }
+    {
+        Lowered r("@init fn boot() -> i32 { return 0 }\n");
+        CHECK(r.failedWith("E0729"));
+    }
+    {
+        Lowered r("@init fn boot<T>() { }\n");
+        CHECK(r.failedWith("E0729"));
+    }
+    {
+        Lowered r("@init fn boot();\n");
+        CHECK(r.failedWith("E0002"));
+    }
+    {
+        Lowered r("@init global x: i32 = 1\n");
+        CHECK(r.failedWith("E0729"));
+    }
+    {
+        Lowered r("@init fn boot() { }\nfn f() { boot() }\n");
+        CHECK(r.failedWith("E0727"));
+    }
+    {
+        Lowered r("fn f() { __builtin_setRegistered(\"allocator\", nil) }\n");
+        CHECK(r.failedWith("E0728"));
+    }
+    {
+        Lowered r("@init fn boot() { }\nfn f() -> i32 { return __builtin_setRegistered(\"allocator\", nil) }\n");
+        CHECK(r.failedWith("E0728"));
+    }
+    {
+        Lowered r("@init fn boot() { __builtin_setRegistered(\"allocator\", nil) }\n");
+        CHECK(r.failedWith("E0503"));
+    }
+    {
+        Lowered r("export(c) fn _start() { }\n");
+        CHECK(r.failedWith("E0726"));
+    }
+    {
+        Lowered r("export(c) fn mainCRTStartup() { }\n");
+        CHECK(r.failedWith("E0726"));
+    }
 }
 
 void testGlobalInitializersAreConstant() {
@@ -626,6 +689,7 @@ void runLowerTests() {
     testMethodsAreFunctionsWithSelf();
     testNewAndRegisteredAllocator();
     testRegisterRoles();
+    testInitFunctions();
     testGlobalInitializersAreConstant();
     testImportsAreExternal();
     testEnumsAndStaticAssertInBodies();

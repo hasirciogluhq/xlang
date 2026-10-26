@@ -1,0 +1,57 @@
+// initset: an `@init` function replaces the registered allocator with `__builtin_setRegistered`,
+// and `new` and `free` then go through the replacement.
+from "std" import print, Allocator, Heap, free
+
+class Cell {
+    value: i64
+}
+
+class Counting {
+}
+
+global delegate: Heap
+global counting: Counting
+global allocs: i32 = 0
+global frees: i32 = 0
+global failures: i32 = 0
+
+impl Allocator for Counting {
+    fn alloc(self, size: usize, align: usize) -> *void {
+        allocs = allocs + 1
+        return delegate.alloc(size, align)
+    }
+
+    fn free(self, p: *void) {
+        frees = frees + 1
+        delegate.free(p)
+    }
+}
+
+@init fn useCounting() {
+    __builtin_setRegistered("allocator", counting)
+}
+
+fn check(name: *ui8, ok: bool) {
+    if !ok {
+        failures = failures + 1
+        print("FAIL ")
+        print(name)
+        print("\n")
+    }
+}
+
+fn main() -> i32 {
+    local allocsBefore: i32 = allocs
+    local p: *Cell = new Cell { value: 5 }
+    check("new goes through the registered allocator", allocs == allocsBefore + 1)
+    check("new result is usable", p.value == 5)
+
+    local freesBefore: i32 = frees
+    free(p as *void)
+    check("free goes through the registered allocator", frees == freesBefore + 1)
+
+    if failures == 0 {
+        print("initset ok\n")
+    }
+    return failures
+}

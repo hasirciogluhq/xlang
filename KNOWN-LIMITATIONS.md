@@ -18,7 +18,7 @@ Everything in the original plan is implemented; this file lists what is intentio
   `sched`/`threads`/`panics` e2e programs are not run there. The entry stub (`mainCRTStartup`) exits through
   `NtTerminateProcess` and provides `__chkstk`/`_fltused` itself. Not done: threads (`NtCreateThreadEx` +
   `WaitOnAddress`), readiness polling (IOCP/AFD), pipes; UTF-8 paths are widened as Latin-1; the fd is the
-  handle's low 32 bits (socket fds carry bit 30); `-D ssn...` no longer exists. Entry stubs exist for linux and macos on x86_64 and aarch64 and for windows on x86_64 only; the Windows stub is x86_64 assembly with no aarch64 variant. Every stub calls the registered `start` (std/runtime.xl) before `main`.
+  handle's low 32 bits (socket fds carry bit 30); `-D ssn...` no longer exists. Entry stubs exist for linux and macos on x86_64 and aarch64 and for windows on x86_64 only; the Windows stub is x86_64 assembly with no aarch64 variant. Every stub calls `_xl_initAll` (the `@init` functions) before `main`.
 - **Linux/macOS sockets ignore SIGPIPE** (`std/sys`: process-wide on Linux, `SO_NOSIGPIPE` on macOS), so a
   write to a vanished peer is an error return, never a crash.
 
@@ -45,6 +45,14 @@ Everything in the original plan is implemented; this file lists what is intentio
   `f<T>(x)` is recognized when the `>` is followed by `(` or `{`, so `i < j > (k)` is a generic call. `__builtin_needsDrop`
   and `__builtin_drop` take their type with `<...>`, not as an argument, because a type is not an expression. Instances
   report errors at the generic declaration without a "in instantiation of" note.
+- **Boot and registrations (core-language phase 10).** The generated init entry is `_xl_initAll`, not `$xl$initAll`
+  as the plan said: in the raw AT&T entry stub a `$` that starts an operand is an immediate prefix, so
+  `call $xl$initAll` would not assemble. The Linux and macOS paths are verified only through the Docker e2e runs.
+  **Allocator replacement is not tracked per block:** after `__builtin_setRegistered("allocator", v)`, `new`, `delete`,
+  `free` and `String` all use `v`, so a block allocated before the replacement and freed afterwards goes to `v.free`. The
+  compiler does not check the pairing. `std/sched` keeps using `Heap` and `sysMap` directly and is not redirected. An
+  `@init` function can still be taken as a function pointer value with no `E0727` check. A bodyless `@init fn boot();` is
+  the parser's `E0002`; the sema check for a missing body in `E0729` is therefore only a guard.
 - No tuples/multiple return values (not defined by the plan).
 - **`Vec<T>` (core-language phase 7) is not implemented.** Its `push(v: T)` and `set(i, v)` cannot be written for a droppable
   `T` with the rules of phase 5: storing the value into a slot needs a raw move that does not drop the old slot content

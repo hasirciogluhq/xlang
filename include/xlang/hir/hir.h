@@ -155,6 +155,7 @@ struct Function {
     std::string import_library;  ///< `@library("name")` on a `declare fn`: the OS library it is imported from
     bool registered{false};
     std::string register_role;
+    bool is_init{false};  ///< `@init`: called by `_xl_initAll` before `main`
     bool is_virtual{false};
     bool is_override{false};
     Span span;
@@ -237,7 +238,7 @@ struct Module {
     std::vector<Enum> enums;
     std::string panic_function;     ///< `register(panic)` function, empty = plain trap
     std::string allocator_global;   ///< `register(allocator)` global, empty = none
-    std::string start_function;     ///< `register(start)` function, empty = none
+    std::vector<std::string> init_functions;  ///< `@init` functions in run order (stdlib group first)
 };
 
 void dumpModule(std::ostream& out, const Module& module);

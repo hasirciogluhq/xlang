@@ -38,6 +38,8 @@ tests=(
   "collections|0|collections ok|0|1"
   "print|0|x and 7, {} false|0|1"
   "printpanic|134|print: format has 2 placeholders, got 1 arguments|0|0"
+  "init|0|init ok|0|1"
+  "initset|0|initset ok|0|1"
 )
 [ "${XLANG_E2E_NET:-}" = 1 ] && tests+=("https|0|https ok|0|1")
 
