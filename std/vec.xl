@@ -3,7 +3,8 @@
 // slot's element exactly while its index is below `len`. Element accessors return pointers, so
 // no element is ever duplicated by a call to get, first or last.
 from "mem" import currentAllocator
-from "memory" import memcpy, strlen
+from "memory" import memcpy
+from "fmt" import fmtIndexPanic
 
 export class Vec<T> {
     data: *T      // nil when cap == 0
@@ -64,7 +65,7 @@ export class Vec<T> {
     /// A pointer to element `i`; panics when `i` is outside the elements.
     fn get(self, i: usize) -> *T {
         if i >= self.len {
-            indexPanic(i, self.len)
+            fmtIndexPanic(i, self.len)
         }
         return self.slot(i)
     }
@@ -88,7 +89,7 @@ export class Vec<T> {
     /// Replaces element `i`, dropping the old element; panics when `i` is outside the elements.
     fn set(self, i: usize, v: T) {
         if i >= self.len {
-            indexPanic(i, self.len)
+            fmtIndexPanic(i, self.len)
         }
         *self.slot(i) = v
     }
@@ -126,7 +127,7 @@ export class Vec<T> {
     /// Removes and returns element `i`, moving the later elements down by one.
     fn remove(self, i: usize) -> T {
         if i >= self.len {
-            indexPanic(i, self.len)
+            fmtIndexPanic(i, self.len)
         }
         local out: T = __builtin_read(self.slot(i))
         local j: usize = i
@@ -141,7 +142,7 @@ export class Vec<T> {
     /// Removes and returns element `i` by moving the last element into its place.
     fn swapRemove(self, i: usize) -> T {
         if i >= self.len {
-            indexPanic(i, self.len)
+            fmtIndexPanic(i, self.len)
         }
         local out: T = __builtin_read(self.slot(i))
         self.len = self.len - 1
@@ -162,43 +163,6 @@ export class Vec<T> {
     fn clear(self) {
         self.truncate(0)
     }
-}
-
-/// Writes the decimal digits of `v` at `buf[at]`; returns the position after them.
-fn putDecimal(buf: *ui8, at: usize, v: usize) -> usize {
-    local digits: usize = 1
-    local t: usize = v
-    while t >= 10 {
-        t = t / 10
-        digits = digits + 1
-    }
-    local k: usize = at + digits
-    local n: usize = v
-    while k > at {
-        k = k - 1
-        buf[k] = ((n % 10) as ui8) + 48
-        n = n / 10
-    }
-    return at + digits
-}
-
-/// Copies the NUL-terminated text `s` to `buf[at]`; returns the position after it.
-fn putText(buf: *ui8, at: usize, s: *ui8) -> usize {
-    local n: usize = strlen(s)
-    memcpy(&buf[at] as *void, s as *void, n)
-    return at + n
-}
-
-/// Panics with "Vec: index I out of range for length L". The text is built by hand, so this module
-/// does not depend on std/io.
-fn indexPanic(i: usize, n: usize) {
-    local buf: [ui8; 96]
-    local at: usize = putText(&buf[0], 0, "Vec: index ")
-    at = putDecimal(&buf[0], at, i)
-    at = putText(&buf[0], at, " out of range for length ")
-    at = putDecimal(&buf[0], at, n)
-    buf[at] = 0
-    panic(&buf[0])
 }
 
 /// A copy of `v` with the same elements in the same order. Only element types that need no drop
