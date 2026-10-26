@@ -3,7 +3,7 @@
 // kept. No small-string optimization: a non-empty String always allocates.
 from "mem" import currentAllocator
 from "memory" import memcpy
-from "str" import strFromParts, strEq
+from "str" import strFromParts, strEq, strSlice, strFind, strStartsWith, strEndsWith
 
 export class String {
     ptr: *ui8     // nil when cap == 0
@@ -21,6 +21,23 @@ export class String {
         self.len = 0
         self.cap = 0
         self.append(s)
+    }
+
+    /// `n` copies of the byte `b`.
+    fn init(self, n: usize, b: ui8) {
+        self.ptr = nil
+        self.len = 0
+        self.cap = 0
+        self.reserve(n)
+        local i: usize = 0
+        while i < n {
+            self.ptr[i] = b
+            i = i + 1
+        }
+        self.len = n
+        if self.cap > 0 {
+            self.ptr[n] = 0
+        }
     }
 
     fn drop(self) {
@@ -122,5 +139,53 @@ export class String {
         if self.cap > 0 {
             self.ptr[0] = 0
         }
+    }
+
+    /// A view of `n` bytes starting at `first`; panics when the range is outside the content.
+    fn slice(self, first: usize, n: usize) -> str {
+        return strSlice(self.asStr(), first, n)
+    }
+
+    /// The byte offset of the first `needle` in the content, or -1 when there is none.
+    fn find(self, needle: str) -> i64 {
+        return strFind(self.asStr(), needle)
+    }
+
+    fn startsWith(self, prefix: str) -> bool {
+        return strStartsWith(self.asStr(), prefix)
+    }
+
+    fn endsWith(self, suffix: str) -> bool {
+        return strEndsWith(self.asStr(), suffix)
+    }
+
+    /// A new String with the ASCII letters A to Z made lowercase; other bytes are unchanged.
+    fn toLowerAscii(self) -> String {
+        local out: String = String()
+        local i: usize = 0
+        while i < self.len {
+            local c: ui8 = self.ptr[i]
+            if c >= 65 && c <= 90 {
+                c = c + 32
+            }
+            out.push(c)
+            i = i + 1
+        }
+        return out
+    }
+
+    /// A new String with the ASCII letters a to z made uppercase; other bytes are unchanged.
+    fn toUpperAscii(self) -> String {
+        local out: String = String()
+        local i: usize = 0
+        while i < self.len {
+            local c: ui8 = self.ptr[i]
+            if c >= 97 && c <= 122 {
+                c = c - 32
+            }
+            out.push(c)
+            i = i + 1
+        }
+        return out
     }
 }

@@ -1,10 +1,11 @@
 // std/io: output on top of the raw write syscall; none of it is built into the compiler.
-// `print` writes without a newline: a program writes "\n" itself.
+// `print` writes without a newline: a program writes "\n" itself. `format` and `fmtAppend` build
+// the text in a String; `print` builds it and writes it to stdout.
 from "sys" import sysWrite
 from "str" import strFromC, strFromParts
 from "string" import String
 
-// ---- writing (not exported) -----------------------------------------------------------------
+// ---- text of values (not exported) ----------------------------------------------------------
 
 fn writeBytes(fd: i32, s: str) {
     if s.len > 0 {
@@ -12,12 +13,12 @@ fn writeBytes(fd: i32, s: str) {
     }
 }
 
-fn writeUInt(fd: i32, v: ui64) {
+fn appendUInt(s: *String, v: ui64) {
     local buf: [ui8; 24]
     local i: usize = 24
     local n: ui64 = v
     if n == 0 {
-        writeBytes(fd, "0")
+        s.push(48)
         return
     }
     while n > 0 {
@@ -25,23 +26,23 @@ fn writeUInt(fd: i32, v: ui64) {
         buf[i] = ((n % 10) as ui8) + 48
         n = n / 10
     }
-    writeBytes(fd, strFromParts(&buf[i], 24 - i))
+    s.append(strFromParts(&buf[i], 24 - i))
 }
 
-fn writeInt(fd: i32, v: i64) {
+fn appendInt(s: *String, v: i64) {
     if v < 0 {
-        writeBytes(fd, "-")
-        writeUInt(fd, (0 - v) as ui64)
+        s.push(45)
+        appendUInt(s, (0 - v) as ui64)
         return
     }
-    writeUInt(fd, v as ui64)
+    appendUInt(s, v as ui64)
 }
 
 /// Six decimals, rounded half up.
-fn writeFloat(fd: i32, v: f64) {
+fn appendFloat(s: *String, v: f64) {
     local x: f64 = v
     if x < 0.0 {
-        writeBytes(fd, "-")
+        s.push(45)
         x = 0.0 - x
     }
     local whole: ui64 = x as ui64
@@ -50,8 +51,8 @@ fn writeFloat(fd: i32, v: f64) {
         whole = whole + 1
         scaled = scaled - 1000000
     }
-    writeUInt(fd, whole)
-    writeBytes(fd, ".")
+    appendUInt(s, whole)
+    s.push(46)
     local digits: [ui8; 6]
     local k: usize = 6
     while k > 0 {
@@ -59,40 +60,40 @@ fn writeFloat(fd: i32, v: f64) {
         digits[k] = ((scaled % 10) as ui8) + 48
         scaled = scaled / 10
     }
-    writeBytes(fd, strFromParts(&digits[0], 6))
+    s.append(strFromParts(&digits[0], 6))
 }
 
-/// The value written for one `{}`: the same types as the plain `print` overloads.
-fn fmtWrite(fd: i32, s: str) {
-    writeBytes(fd, s)
+/// The text for one `{}`: the same types as the plain `print` overloads.
+fn fmtWrite(out: *String, s: str) {
+    out.append(s)
 }
 
-fn fmtWrite(fd: i32, p: *ui8) {
-    writeBytes(fd, strFromC(p))
+fn fmtWrite(out: *String, p: *ui8) {
+    out.append(strFromC(p))
 }
 
-fn fmtWrite(fd: i32, v: i64) {
-    writeInt(fd, v)
+fn fmtWrite(out: *String, v: i64) {
+    appendInt(out, v)
 }
 
-fn fmtWrite(fd: i32, v: ui64) {
-    writeUInt(fd, v)
+fn fmtWrite(out: *String, v: ui64) {
+    appendUInt(out, v)
 }
 
-fn fmtWrite(fd: i32, v: f64) {
-    writeFloat(fd, v)
+fn fmtWrite(out: *String, v: f64) {
+    appendFloat(out, v)
 }
 
-fn fmtWrite(fd: i32, b: bool) {
+fn fmtWrite(out: *String, b: bool) {
     if b {
-        writeBytes(fd, "true")
+        out.append("true")
     } else {
-        writeBytes(fd, "false")
+        out.append("false")
     }
 }
 
-fn fmtWrite(fd: i32, s: *String) {
-    writeBytes(fd, s.asStr())
+fn fmtWrite(out: *String, s: *String) {
+    out.append(s.asStr())
 }
 
 /// Number of `{}` placeholders (`{{` and `}}` are escapes and do not count).
@@ -112,14 +113,14 @@ fn placeholders(text: str) -> usize {
     return n
 }
 
-/// A format being written: `at` is the next byte of `text` not yet written.
+/// A format being appended: `at` is the next byte of `text` not yet written.
 class Format {
-    fd: i32
+    out: *String
     text: str
     at: usize
 
-    fn init(self, fd: i32, text: str) {
-        self.fd = fd
+    fn init(self, out: *String, text: str) {
+        self.out = out
         self.text = text
         self.at = 0
     }
@@ -128,16 +129,16 @@ class Format {
     fn check(self, arity: usize) {
         local n: usize = placeholders(self.text)
         if n != arity {
-            local msg: String = String("print: format has ")
-            appendUInt(&msg, n)
+            local msg: String = String("format: ")
+            appendUInt(&msg, n as ui64)
             msg.append(" placeholders, got ")
-            appendUInt(&msg, arity)
+            appendUInt(&msg, arity as ui64)
             msg.append(" arguments")
             panic(msg.cstr())
         }
     }
 
-    /// Writes the text up to the next placeholder (or the end); `{{` and `}}` print one brace.
+    /// Appends the text up to the next placeholder (or the end); `{{` and `}}` append one brace.
     fn literal(self) {
         while self.at < self.text.len {
             local c: ui8 = self.text[self.at]
@@ -149,10 +150,10 @@ class Format {
                 return
             }
             if (c == 123 || c == 125) && next == c {
-                writeBytes(self.fd, strFromParts(&self.text.ptr[self.at], 1))
+                self.out.push(c)
                 self.at = self.at + 2
             } else {
-                writeBytes(self.fd, strFromParts(&self.text.ptr[self.at], 1))
+                self.out.push(c)
                 self.at = self.at + 1
             }
         }
@@ -163,27 +164,108 @@ class Format {
     }
 }
 
-fn appendUInt(s: *String, v: usize) {
-    local buf: [ui8; 24]
-    local i: usize = 24
-    local n: usize = v
-    if n == 0 {
-        s.push(48)
-        return
-    }
-    while n > 0 {
-        i = i - 1
-        buf[i] = ((n % 10) as ui8) + 48
-        n = n / 10
-    }
-    s.append(strFromParts(&buf[i], 24 - i))
-}
-
-/// Writes the literal text, then the argument for the placeholder that follows it.
+/// Appends the literal text, then the argument for the placeholder that follows it.
 fn formatArg<A>(f: *Format, v: A) {
     f.literal()
     f.at = f.at + 2
-    fmtWrite(f.fd, v)
+    fmtWrite(f.out, v)
+}
+
+// ---- formatting -----------------------------------------------------------------------------
+
+/// Appends `fmt` to `out`; each `{}` takes the next argument and `{{` and `}}` are braces.
+export fn fmtAppend<A>(out: *String, fmt: str, a: A) {
+    local f: Format = Format(out, fmt)
+    f.check(1)
+    formatArg(&f, a)
+    f.finish()
+}
+
+export fn fmtAppend<A, B>(out: *String, fmt: str, a: A, b: B) {
+    local f: Format = Format(out, fmt)
+    f.check(2)
+    formatArg(&f, a)
+    formatArg(&f, b)
+    f.finish()
+}
+
+export fn fmtAppend<A, B, C>(out: *String, fmt: str, a: A, b: B, c: C) {
+    local f: Format = Format(out, fmt)
+    f.check(3)
+    formatArg(&f, a)
+    formatArg(&f, b)
+    formatArg(&f, c)
+    f.finish()
+}
+
+export fn fmtAppend<A, B, C, D>(out: *String, fmt: str, a: A, b: B, c: C, d: D) {
+    local f: Format = Format(out, fmt)
+    f.check(4)
+    formatArg(&f, a)
+    formatArg(&f, b)
+    formatArg(&f, c)
+    formatArg(&f, d)
+    f.finish()
+}
+
+export fn fmtAppend<A, B, C, D, E>(out: *String, fmt: str, a: A, b: B, c: C, d: D, e: E) {
+    local f: Format = Format(out, fmt)
+    f.check(5)
+    formatArg(&f, a)
+    formatArg(&f, b)
+    formatArg(&f, c)
+    formatArg(&f, d)
+    formatArg(&f, e)
+    f.finish()
+}
+
+export fn fmtAppend<A, B, C, D, E, F>(out: *String, fmt: str, a: A, b: B, c: C, d: D, e: E, f: F) {
+    local w: Format = Format(out, fmt)
+    w.check(6)
+    formatArg(&w, a)
+    formatArg(&w, b)
+    formatArg(&w, c)
+    formatArg(&w, d)
+    formatArg(&w, e)
+    formatArg(&w, f)
+    w.finish()
+}
+
+/// A new String holding `fmt` with its placeholders replaced, as `fmtAppend` does.
+export fn format<A>(fmt: str, a: A) -> String {
+    local out: String = String()
+    fmtAppend(&out, fmt, a)
+    return out
+}
+
+export fn format<A, B>(fmt: str, a: A, b: B) -> String {
+    local out: String = String()
+    fmtAppend(&out, fmt, a, b)
+    return out
+}
+
+export fn format<A, B, C>(fmt: str, a: A, b: B, c: C) -> String {
+    local out: String = String()
+    fmtAppend(&out, fmt, a, b, c)
+    return out
+}
+
+export fn format<A, B, C, D>(fmt: str, a: A, b: B, c: C, d: D) -> String {
+    local out: String = String()
+    fmtAppend(&out, fmt, a, b, c, d)
+    return out
+}
+
+export fn format<A, B, C, D, E>(fmt: str, a: A, b: B, c: C, d: D, e: E) -> String {
+    local out: String = String()
+    fmtAppend(&out, fmt, a, b, c, d, e)
+    return out
+}
+
+export fn format<A, B, C, D, E, F>(fmt: str, a: A, b: B, c: C, d: D, e: E, f: F) -> String {
+    local out: String = String()
+    fmtAppend(&out, fmt, a, b, c, d, e, f)
+    return out
 }
 
 // ---- output ---------------------------------------------------------------------------------
@@ -197,19 +279,27 @@ export fn print(p: *ui8) {
 }
 
 export fn print(v: i64) {
-    writeInt(1, v)
+    local out: String = String()
+    fmtWrite(&out, v)
+    writeBytes(1, out.asStr())
 }
 
 export fn print(v: ui64) {
-    writeUInt(1, v)
+    local out: String = String()
+    fmtWrite(&out, v)
+    writeBytes(1, out.asStr())
 }
 
 export fn print(v: f64) {
-    writeFloat(1, v)
+    local out: String = String()
+    fmtWrite(&out, v)
+    writeBytes(1, out.asStr())
 }
 
 export fn print(b: bool) {
-    fmtWrite(1, b)
+    local out: String = String()
+    fmtWrite(&out, b)
+    writeBytes(1, out.asStr())
 }
 
 export fn print(s: *String) {
@@ -218,60 +308,33 @@ export fn print(s: *String) {
 
 /// `print("x = {}, y = {}", x, y)`: `{}` takes the next argument, `{{` and `}}` are braces.
 export fn print<A>(fmt: str, a: A) {
-    local f: Format = Format(1, fmt)
-    f.check(1)
-    formatArg(&f, a)
-    f.finish()
+    local out: String = format(fmt, a)
+    writeBytes(1, out.asStr())
 }
 
 export fn print<A, B>(fmt: str, a: A, b: B) {
-    local f: Format = Format(1, fmt)
-    f.check(2)
-    formatArg(&f, a)
-    formatArg(&f, b)
-    f.finish()
+    local out: String = format(fmt, a, b)
+    writeBytes(1, out.asStr())
 }
 
 export fn print<A, B, C>(fmt: str, a: A, b: B, c: C) {
-    local f: Format = Format(1, fmt)
-    f.check(3)
-    formatArg(&f, a)
-    formatArg(&f, b)
-    formatArg(&f, c)
-    f.finish()
+    local out: String = format(fmt, a, b, c)
+    writeBytes(1, out.asStr())
 }
 
 export fn print<A, B, C, D>(fmt: str, a: A, b: B, c: C, d: D) {
-    local f: Format = Format(1, fmt)
-    f.check(4)
-    formatArg(&f, a)
-    formatArg(&f, b)
-    formatArg(&f, c)
-    formatArg(&f, d)
-    f.finish()
+    local out: String = format(fmt, a, b, c, d)
+    writeBytes(1, out.asStr())
 }
 
 export fn print<A, B, C, D, E>(fmt: str, a: A, b: B, c: C, d: D, e: E) {
-    local f: Format = Format(1, fmt)
-    f.check(5)
-    formatArg(&f, a)
-    formatArg(&f, b)
-    formatArg(&f, c)
-    formatArg(&f, d)
-    formatArg(&f, e)
-    f.finish()
+    local out: String = format(fmt, a, b, c, d, e)
+    writeBytes(1, out.asStr())
 }
 
 export fn print<A, B, C, D, E, F>(fmt: str, a: A, b: B, c: C, d: D, e: E, f: F) {
-    local w: Format = Format(1, fmt)
-    w.check(6)
-    formatArg(&w, a)
-    formatArg(&w, b)
-    formatArg(&w, c)
-    formatArg(&w, d)
-    formatArg(&w, e)
-    formatArg(&w, f)
-    w.finish()
+    local out: String = format(fmt, a, b, c, d, e, f)
+    writeBytes(1, out.asStr())
 }
 
 export fn eprint(s: str) {

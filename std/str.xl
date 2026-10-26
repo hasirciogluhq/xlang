@@ -1,6 +1,7 @@
 // std/str: helpers for the built-in `str` view (`{ ptr, len }`). A `str` is read-only and never
-// owns its bytes; `strFromParts` builds one from a pointer and a length.
+// owns its bytes; `strFromParts` builds one from a pointer and a length. Positions are byte offsets.
 from "memory" import strlen
+from "vec" import Vec
 
 /// Same two words as `str` (`@repr(c)` keeps `ptr` at offset 0 and `len` at offset 8).
 @repr(c) struct StrParts {
@@ -37,4 +38,112 @@ export fn strSlice(s: str, first: usize, n: usize) -> str {
         panic("strSlice: range is outside the string")
     }
     return strFromParts(&s.ptr[first], n)
+}
+
+/// Byte offset of the first occurrence of `needle` in `s`, or -1 when there is none.
+/// An empty `needle` is found at 0.
+export fn strFind(s: str, needle: str) -> i64 {
+    if needle.len > s.len { return -1 }
+    local i: usize = 0
+    while i + needle.len <= s.len {
+        if strEq(strSlice(s, i, needle.len), needle) { return i as i64 }
+        i = i + 1
+    }
+    return -1
+}
+
+export fn strContains(s: str, needle: str) -> bool {
+    return strFind(s, needle) >= 0
+}
+
+export fn strStartsWith(s: str, prefix: str) -> bool {
+    if prefix.len > s.len { return false }
+    return strEq(strSlice(s, 0, prefix.len), prefix)
+}
+
+export fn strEndsWith(s: str, suffix: str) -> bool {
+    if suffix.len > s.len { return false }
+    return strEq(strSlice(s, s.len - suffix.len, suffix.len), suffix)
+}
+
+/// ASCII space, tab, newline, vertical tab, form feed and carriage return.
+fn isSpace(c: ui8) -> bool {
+    return c == 32 || (c >= 9 && c <= 13)
+}
+
+/// `s` without leading and trailing ASCII whitespace; the result is a view of `s`.
+export fn strTrim(s: str) -> str {
+    local first: usize = 0
+    local last: usize = s.len
+    while first < last && isSpace(s[first]) {
+        first = first + 1
+    }
+    while last > first && isSpace(s[last - 1]) {
+        last = last - 1
+    }
+    return strSlice(s, first, last - first)
+}
+
+/// The pieces of `s` between occurrences of `sep`; empty pieces are kept, so "a,,b" gives 3 pieces.
+/// The pieces are views of `s`. Panics when `sep` is empty.
+export fn strSplit(s: str, sep: str) -> Vec<str> {
+    if sep.len == 0 {
+        panic("strSplit: empty separator")
+    }
+    local parts: Vec<str> = Vec<str>()
+    local start: usize = 0
+    local i: usize = 0
+    while i + sep.len <= s.len {
+        if strEq(strSlice(s, i, sep.len), sep) {
+            parts.push(strSlice(s, start, i - start))
+            i = i + sep.len
+            start = i
+        } else {
+            i = i + 1
+        }
+    }
+    parts.push(strSlice(s, start, s.len - start))
+    return parts
+}
+
+/// Parses decimal digits only (no sign, no spaces). Returns false, and leaves `out` alone, when `s`
+/// is empty, has another byte, or does not fit in a ui64.
+export fn strToU64(s: str, out: *ui64) -> bool {
+    if s.len == 0 { return false }
+    local v: ui64 = 0
+    local i: usize = 0
+    while i < s.len {
+        local c: ui8 = s[i]
+        if c < 48 || c > 57 { return false }
+        local d: ui64 = (c - 48) as ui64
+        if v > 1844674407370955161 || (v == 1844674407370955161 && d > 5) { return false }
+        v = v * 10 + d
+        i = i + 1
+    }
+    *out = v
+    return true
+}
+
+/// Parses an optional leading '-' and decimal digits. Returns false, and leaves `out` alone, when
+/// the value does not fit in an i64.
+export fn strToI64(s: str, out: *i64) -> bool {
+    local negative: bool = s.len > 0 && s[0] == 45
+    local digits: str = s
+    if negative {
+        digits = strSlice(s, 1, s.len - 1)
+    }
+    local m: ui64 = 0
+    if !strToU64(digits, &m) { return false }
+    if !negative {
+        if m > 9223372036854775807 { return false }
+        *out = m as i64
+        return true
+    }
+    if m > 9223372036854775808 { return false }
+    if m == 0 {
+        *out = 0
+    } else {
+        *out = 0 - ((m - 1) as i64) - 1
+    }
+    return true
 }
