@@ -1,28 +1,55 @@
-İkinci isteğim de şu. İkinci isteğim de kanka print çok fazla print var. Print bir tane olsun. Tamam mı? Ve şöyle olsun. Hani C++'da
-  bir den fazla aynı fonksiyon farklı argüman prototipiyle bulunabiliyor ya. Örnek veriyorum string ilk parametre string, ikinci
-  parametre int veyahut da ilk parametre int, ikinci parametre string ile aynı isimdeki fonksiyon oluşabiliyor ya. Ya bunun tam
-  kuralını ben bilmiyorum. C++'daki ama sen neyi kastettim anladın kanka. Yani ben tam olarak bunu istemiyorum ama şöyle düşün. Aynı
-  farklı sembollerde iki aynı fonksiyon olabilir. Bunu artık aşağıda LLVM ayara IRE'ye nasıl indirgersin bilmiyorum. Ama bu bu şekilde
-  olmalı. Ve print de buna göre beslenmeli. Örnek veriyorum print'in ilk argümanı format string olabilir. Anladın mı eksilimi?
-  Anladın mı demek istediğimi? İkinci olarak standart library'nin içinde string olmalı. Yani std string gibi düşünebilirsin. Bu bir
-  tip. UI8 gibi. Üçüncü isteğim ise type definition vardı ya C++'da. Örnek veriyorum, type definition ile custom tipler oluşturup
-  onların arkasında bir tip verebiliyorduk. Neydi? Bu type definition mu? Emin değilim ama örnek veriyorum işte int'i u size gibi
-  gösterebiliyorduk. Anlatabildim mi? Ya da ne bileyim u8'i uintptrt8 gibi gösterebiliyorduk. Ya da herhangi bir fonksiyonu farklı
-  isimle tanımlayabiliyorduk. Anladın mı? Kısaltma olsun, kolay olsun gibi. Ya anladın demek istediğimi? Şey yap. Yıldız u8'i arkada
-  string olarak göster ve işlemleri string olarak yap. Ve string'in kendi fonksiyonları olsun. Anladın mı? String bir class olsun. O
-  class içinde u i8 Ya da emin değilim kanka ya. Kafam çok karıştı. Sen dediğim şu üç şeyi ekle. O type definition mantığını
-  benim dilime göre ekle. İkincisi string tipi ekle ama bu string compiler level olmasın. Standart library içinde olsun. Ve type
-  templating ekle. Örnek veriyorum, standart library içinde vektör olsun. Vektör iki tane açılan kapanan üçgen içinde tip belirsin.
-  Örnek veriyorum, bir obje, string, int vesaire. Vektörün içinde de işte klasik C++ vektörüyle aynı olacak mantık ama daha basit
-  olacak, tamam mı? Bunu yap. Yani eklemen, şu deliklerin hepsini ekle kanka, organize et. Aklında bir soru varsa yaz. En ufak bir
-  ayrıntı varsa yaz bana. Örnek veriyorum. Mesela ben şunu bilmiyorum kanka. İlk önce şimdi soracağım soruyu bana cevap ver. Sonra
-  tamam dedikten sonra işte bu dediklerimi yapmaya başla, tamam mı? Sorum şu. Yıldız UI8, yıldız UI8 nasıl string olduğunu anlıyor
-  yazılım. Yani oraya string nasıl koyabiliyoruz? Ben onu anlamadım. Hani o mesela string'in nerede bittiğini nasıl anlıyor? Bu bir
-  pointer mı? Bu ne bu? Hani string'in sonunda ne var? Null termination mu var? String içinde birden fazla null termination olunca ne
-  olacak? Anladın mı? Bu nasıl string tutabiliyor? Onu ben anlamadım. Kanka ikinci olarak da Kanka neden char tuttuğunu anladım. Okey.
-  Char 1 byte olduğu için Jones char yıldızdaki C++'ı karşılığı olarak tutmuşsun. Eyvallah. Aynı şekilde setete string eklemeni
-  istiyorum. Ve ek olarak da deconstruction ve construction eklemeni istiyorum. Yani ray. R-A-I-I. C++'daki ray mantığını eklemek
-  istiyorum. İşte ownership ve deallocation mantığını eklemeni istiyorum. Struct'larda ya da class'larda bu deobstruct, deconstruction
-  olmak zorunda. Veya C++'da nasıl çalışıyorsa aynı mantık bu programlama dilinde de geçerli. Bunları mümkün oldukça farklı
-  subagent'lara bölerek yaptırdık. Yaptırdık değil. Bu arada dictation hataları var, onlara takılma. Zamanında defer eklemiştik. Defer
-  aynen kalsın kanka. Defer ekstra. Ekstra doldur doldur diye bir şarkı var ya, aynı onun gibi ekstra.
+# Görev: Programlama Diline Yeni Özellikler Eklemek
+
+Geliştirdiğimiz programlama diline aşağıdaki özellikleri ekle. Dil LLVM IR'a derleniyor ve bir standart kütüphanesi var.
+
+## Önce: Sorularımı Cevapla
+
+Kod yazmaya başlamadan önce şu soruları açıkla ve onayımı bekle:
+
+1. `*u8` tipi bir string'i nasıl tutuyor? Bu bir pointer mı?
+2. Program string'in nerede bittiğini nasıl anlıyor? Sonunda null terminator (`\0`) mı var?
+3. String'in içinde birden fazla null karakter olursa ne oluyor?
+
+Ben "tamam" dedikten sonra aşağıdaki maddelere geç.
+
+## Eklenecek Özellikler
+
+Maddeler birbirine bağlı olduğu için bu sırayla uygula:
+
+### 1. Fonksiyon Overloading
+- Aynı isimde ama farklı parametre tiplerine sahip birden fazla fonksiyon tanımlanabilsin (C++'taki gibi).
+  - Örnek: `foo(string, int)` ve `foo(int, string)` birlikte var olabilsin.
+- LLVM IR'a nasıl indirgeneceğine (ör. name mangling) sen karar ver ve yaklaşımını açıkla.
+
+### 2. Tip Takma Adları (typedef / using)
+- Var olan bir tipe yeni bir isim verilebilsin. Örnek: `int` → `usize`, `u8` → `uint8`.
+- Fonksiyonlara da kısa veya farklı isimler verilebilsin.
+- Söz dizimini dilin mevcut yapısına uygun şekilde tasarla.
+
+### 3. RAII (Constructor / Destructor)
+- Struct ve class'lara constructor ve destructor ekle.
+- Ownership ve otomatik bellek serbest bırakma (deallocation), C++'taki RAII mantığıyla aynı şekilde çalışsın.
+- Mevcut `defer` özelliği aynen kalsın, RAII'ye ek olarak kullanılabilsin.
+
+### 4. Generic Tipler (Template)
+- Tipler parametre olarak alınabilsin. Örnek: `vector<int>`, `vector<string>`.
+
+### 5. Standart Kütüphanede `string` Tipi
+- `string` derleyiciye gömülü olmasın, standart kütüphanede bir class olarak tanımlansın (`std::string` gibi).
+- İçeride `*u8` tabanlı bir buffer kullanabilir.
+- Kendi metotları olsun (uzunluk, birleştirme, karşılaştırma vb.).
+- `char` 1 byte olarak kalsın, mevcut haliyle uyumlu çalışsın.
+
+### 6. Standart Kütüphanede `vector<T>`
+- C++'taki `std::vector` ile aynı mantıkta ama daha basit bir versiyon olsun.
+- Herhangi bir tipi tutabilsin: `int`, `string`, nesneler vb.
+- Belleğini RAII ile yönetsin.
+
+### 7. Tek Bir `print` Fonksiyonu
+- Şu an birden fazla print fonksiyonu var. Bunları kaldır, yerine tek bir `print` olsun.
+- `print`, overloading ile farklı tipleri desteklesin.
+- İlk argüman bir format string olabilsin.
+
+## Çalışma Şekli
+- İşleri mümkün olduğunca farklı subagent'lara bölerek paralel yürüt.
+- Aklına takılan bir soru veya belirsiz bir ayrıntı varsa, kodlamaya başlamadan önce bana sor.
