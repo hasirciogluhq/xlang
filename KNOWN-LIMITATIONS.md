@@ -41,6 +41,10 @@ Everything in the original plan is implemented; this file lists what is intentio
   write `a - -b`. Break/continue across a `switch` or `for` header are not otherwise restricted.
 - No generics, no tuples/multiple return values (design decisions are open: syntax, constraints, monomorphization
   versus erasure). Not added because the plan does not define them.
+- `const` (core-language phase 2): a `const` is not a `define` constant, so it cannot be an array length, a `staticAssert`
+  operand or a `define` argument. Its initializer cannot read another variable or `const` (a `GlobalRef` is not a compile-time
+  value), and an untyped module-level `const` takes only the default type of a literal (an enum member or an array needs
+  `: T`). Block-level `const` names are not `define` names: they are read-only globals with a unique symbol.
 - `str` (phase 1 of the core-language work): no `==`/`!=` in the compiler (`strEq` in std), no implicit or `as`
   conversion to `*ui8` (only `.ptr`), no way to make a `str` from a pointer except `std/str` (`strFromParts` reinterprets a
   `@repr(c)` two-word struct). A `str` view does not keep its bytes alive: the caller must. Writing through the `*ui8` of a

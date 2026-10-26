@@ -28,6 +28,7 @@ struct ScopeEntry {
     Sema* owner{nullptr};            ///< module that owns the declaration (item)
     std::string qname;               ///< qualified name of the entity
     std::string member;              ///< External: name inside `module` (empty for a whole module)
+    bool readonly{false};            ///< Global: a `const` (its places cannot be written)
 };
 
 /// Lexical scopes: module -> function -> nested blocks. Lookup walks from the innermost scope

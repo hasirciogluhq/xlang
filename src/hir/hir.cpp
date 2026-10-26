@@ -219,7 +219,7 @@ void dumpModule(std::ostream& out, const Module& m) {
         out << "impl " << i.interface << " for " << i.type << '\n';
     }
     for (const Global& g : m.globals) {
-        out << "global " << g.name << ": " << typeName(g.type);
+        out << (g.constant ? "const " : "global ") << g.name << ": " << typeName(g.type);
         if (g.init) {
             out << " = ";
             dumpExpr(out, nullptr, *g.init);

@@ -47,6 +47,35 @@ namespace {
     return t.kind == TypeKind::Struct || t.kind == TypeKind::Class;
 }
 
+/// Default type of an untyped `const` from its value: integers i32 (i64 when they do not fit),
+/// floats f64, bools, strings str. nullopt when the value is not a literal constant.
+[[nodiscard]] std::optional<Type> literalConstType(Sema& sema, const Expr& init) {
+    const auto v = sema.evalConst(init);
+    if (!v) {
+        return std::nullopt;
+    }
+    switch (v->kind) {
+    case ConstValue::Kind::Int:
+        return (v->int_value > 2147483647 || v->int_value < -2147483648LL)
+                   ? Type::makeInt(64, true)
+                   : Type::makeInt(32, true);
+    case ConstValue::Kind::Float: return Type::makeFloat(64);
+    case ConstValue::Kind::Bool: return Type::makeBool();
+    case ConstValue::Kind::String: return Type::makeStr();
+    }
+    return std::nullopt;
+}
+
+/// Name of the variable at the root of a place (`c` for `c.x[1]`), without its module prefix.
+[[nodiscard]] std::string placeRootName(const hir::Expr& e) {
+    const hir::Expr* cur = &e;
+    while ((cur->kind == hir::ExprKind::Field || cur->kind == hir::ExprKind::Index) && cur->lhs) {
+        cur = cur->lhs.get();
+    }
+    const auto dot = cur->text.rfind('.');
+    return dot == std::string::npos ? cur->text : cur->text.substr(dot + 1);
+}
+
 /// `s[i]`, `s.ptr` or `s.len` where `s` is a `str` (or a pointer to one): never assignable.
 [[nodiscard]] bool isStrPlace(const hir::Expr& e) {
     if (e.kind == hir::ExprKind::Index) {
@@ -157,6 +186,7 @@ class Lowerer {
                        const std::string& owner,
                        const Type* self_type);
     void lowerGlobal(const GlobalDecl& g, const Modifiers& mods);
+    void lowerLocalConst(const Stmt& s);
     void lowerEnum(const EnumDecl& e);
     void lowerAggregate(const Item& item);
     void checkImpl(const ImplInfo& info);
@@ -227,6 +257,8 @@ class Lowerer {
     // --- queries
     [[nodiscard]] Type resolvedIn(Sema& sema, const Type& t);
     [[nodiscard]] Type resolved(const Type& t) { return resolvedIn(s_, t); }
+    /// Declared type of a global; for an untyped `const`, the default type of its literal value.
+    [[nodiscard]] Type globalType(Sema& sema, const GlobalDecl& g);
     [[nodiscard]] Type normalized(Sema& sema, const Type& t);
     [[nodiscard]] Type fnTypeOf(Sema& owner, const FnDecl& f);
     [[nodiscard]] std::optional<MethodRef> findMethod(const Type& agg, const std::string& name);
@@ -522,6 +554,18 @@ Type Lowerer::resolvedIn(Sema& sema, const Type& t) {
     return normalized(sema, *r);
 }
 
+Type Lowerer::globalType(Sema& sema, const GlobalDecl& g) {
+    if (g.has_type) {
+        return resolvedIn(sema, g.type);
+    }
+    if (g.init) {
+        if (const auto t = literalConstType(sema, *g.init)) {
+            return *t;
+        }
+    }
+    return unknownType();
+}
+
 /// HIR array types carry a literal length, never a `define` name.
 Type Lowerer::normalized(Sema& sema, const Type& t) {
     Type out = t;
@@ -710,10 +754,13 @@ ScopeEntry Lowerer::entryOf(Sema::EntityRef ref, const std::string& local, const
     case Sema::Symbol::Kind::Fn:
         e.kind = ScopeEntry::Kind::Function;
         break;
-    case Sema::Symbol::Kind::Global:
+    case Sema::Symbol::Kind::Global: {
+        const auto& decl = std::get<GlobalDecl>(ref.sym->item->decl);
         e.kind = ScopeEntry::Kind::Global;
-        e.type = resolvedIn(*ref.owner, std::get<GlobalDecl>(ref.sym->item->decl).type);
+        e.type = globalType(*ref.owner, decl);
+        e.readonly = decl.is_const;
         break;
+    }
     case Sema::Symbol::Kind::Define:
         e.kind = ScopeEntry::Kind::Constant;
         break;
@@ -795,7 +842,8 @@ void Lowerer::buildModuleScope() {
             e.kind = ScopeEntry::Kind::Function;
         } else if (const auto* g = std::get_if<GlobalDecl>(&item.decl)) {
             e.kind = ScopeEntry::Kind::Global;
-            e.type = resolved(g->type);
+            e.type = globalType(s_, *g);
+            e.readonly = g->is_const;
         } else if (std::holds_alternative<DefineConstDecl>(item.decl)) {
             e.kind = ScopeEntry::Kind::Constant;
         } else if (std::holds_alternative<StructDecl>(item.decl) ||
@@ -1147,7 +1195,14 @@ void Lowerer::lowerGlobal(const GlobalDecl& g, const Modifiers& mods) {
     hir::Global out;
     out.name = s_.qualify(g.name);
     out.module = s_.key_;
-    out.type = resolved(g.type);
+    out.constant = g.is_const;
+    out.type = globalType(s_, g);
+    if (!g.has_type && g.init && !literalConstType(s_, *g.init)) {
+        err("E0715",
+            g.init->span,
+            "untyped `const` needs a literal value",
+            "write its type: `const NAME: T = ...`");
+    }
     out.exported = mods.exported || mods.export_c || mods.registered;
     out.export_c = mods.export_c;
     out.declared = mods.declared;
@@ -1163,20 +1218,84 @@ void Lowerer::lowerGlobal(const GlobalDecl& g, const Modifiers& mods) {
     }
     assignSymbol(g.attributes, mods.export_c, mods.declared, g.name, {}, out.symbol, g.name_span);
     if (g.init) {
-        EP init = coerce(expr(*g.init, &out.type), out.type, g.init->span);
+        EP init = g.has_type ? coerce(expr(*g.init, &out.type), out.type, g.init->span)
+                             : expr(*g.init, nullptr);
+        if (init && !g.has_type) {
+            out.type = init->type;
+        }
         if (init) {
             const hir::Expr* offender = nullptr;
             if (!isConstValue(*init, &offender)) {
                 const hir::Expr& at = offender != nullptr ? *offender : *init;
-                err("E0707",
-                    at.span,
-                    "global initializer is not a compile-time constant",
-                    "globals are statically initialized: no calls, no reads of other globals");
+                if (g.is_const) {
+                    err("E0715",
+                        at.span,
+                        "`const` initializer is not a compile-time constant",
+                        "a `const` holds literals, arithmetic on them, arrays and struct literals; "
+                        "it cannot call functions or read other names");
+                } else {
+                    err("E0707",
+                        at.span,
+                        "global initializer is not a compile-time constant",
+                        "globals are statically initialized: no calls, no reads of other globals");
+                }
             }
             out.init = std::move(init);
         }
     }
     mod_.globals.push_back(std::move(out));
+}
+
+void Lowerer::lowerLocalConst(const Stmt& s) {
+    EP init;
+    Type t;
+    if (s.has_type) {
+        t = resolved(s.type);
+        init = coerce(expr(*s.expr, &t), t, s.expr->span);
+    } else {
+        init = expr(*s.expr, nullptr);
+        t = init ? init->type : unknownType();
+    }
+    if (init) {
+        const hir::Expr* offender = nullptr;
+        if (!isConstValue(*init, &offender)) {
+            const hir::Expr& at = offender != nullptr ? *offender : *init;
+            err("E0715",
+                at.span,
+                "`const` initializer is not a compile-time constant",
+                "a `const` holds literals, arithmetic on them, arrays and struct literals; "
+                "it cannot call functions or read other names");
+            init.reset();
+        }
+    }
+    // A `const` is a private read-only global with a unique name; only the block sees the name.
+    hir::Global g;
+    g.name = std::format("{}${}${}", fn_->name, s.name, hidden_counter_++);
+    g.module = s_.key_;
+    g.symbol = g.name;
+    g.type = t;
+    g.constant = true;
+    g.init = std::move(init);
+    g.span = s.span;
+    ScopeEntry e;
+    e.kind = ScopeEntry::Kind::Global;
+    e.name = s.name;
+    e.type = t;
+    e.span = s.span;
+    e.owner = &s_;
+    e.qname = g.name;
+    e.readonly = true;
+    mod_.globals.push_back(std::move(g));
+    if (const ScopeEntry* prev = scopes_.declare(std::move(e))) {
+        Diagnostic d;
+        d.code = "E0401";
+        d.severity = Severity::Error;
+        d.message = std::format("`{}` is defined twice in this scope", s.name);
+        d.labels.push_back({prev->span, "first definition"});
+        d.labels.push_back({s.span, "second definition"});
+        d.fix = "rename one of them";
+        s_.diag_.report(std::move(d));
+    }
 }
 
 void Lowerer::lowerFunction(const FnDecl& f,
@@ -1522,6 +1641,13 @@ void Lowerer::lowerAssign(const Expr& target_ast,
             "copy the bytes into a `[ui8; N]` or a `String`");
         target.reset();
     }
+    if (target && target->readonly) {
+        err("E0716",
+            target_ast.span,
+            std::format("cannot assign to `const` `{}`", placeRootName(*target)),
+            "a `const` is read-only; copy it into a `local` to change it");
+        target.reset();
+    }
     if (target && !target->lvalue && !isUnknown(target->type)) {
         err("E0709",
             target_ast.span,
@@ -1555,6 +1681,13 @@ void Lowerer::lowerCompound(const Stmt& s, std::vector<hir::Stmt>& out) {
     }
     EP target = expr(*s.target, nullptr);
     if (!target) {
+        return;
+    }
+    if (target->readonly) {
+        err("E0716",
+            s.target->span,
+            std::format("cannot assign to `const` `{}`", placeRootName(*target)),
+            "a `const` is read-only; copy it into a `local` to change it");
         return;
     }
     if (!target->lvalue && !isUnknown(target->type)) {
@@ -1914,6 +2047,9 @@ void Lowerer::lowerStmt(const Stmt& s, std::vector<hir::Stmt>& out) {
             s.name, h.local, t, s.span); // after the initializer: `local x = x` sees the outer `x`
         break;
     }
+    case Stmt::Kind::Const:
+        lowerLocalConst(s);
+        return;
     case Stmt::Kind::Assign:
         if (s.has_compound_op) {
             lowerCompound(s, out);
@@ -1992,6 +2128,7 @@ void Lowerer::lowerStmt(const Stmt& s, std::vector<hir::Stmt>& out) {
         case Stmt::Kind::Continue:
         case Stmt::Kind::Defer:
         case Stmt::Kind::Local:
+        case Stmt::Kind::Const:
             err("E0709",
                 inner.span,
                 "this statement cannot be deferred",
@@ -2398,6 +2535,7 @@ Lowerer::EP Lowerer::fromEntry(const ScopeEntry& entry, const Expr& at, const Ty
         EP g = mk(hir::ExprKind::GlobalRef, entry.type, at.span);
         g->text = entry.qname.empty() ? entry.name : entry.qname;
         g->lvalue = true;
+        g->readonly = entry.readonly;
         return g;
     }
     case ScopeEntry::Kind::Function: {
@@ -2520,6 +2658,7 @@ Lowerer::EP Lowerer::fieldExpr(const Expr& e) {
             f->index = static_cast<std::uint32_t>(i);
             f->through_pointer = through;
             f->lvalue = through || base->lvalue;
+            f->readonly = !through && base->readonly;
             f->lhs = std::move(base);
             return f;
         }
@@ -3502,6 +3641,7 @@ Lowerer::EP Lowerer::indexExpr(const Expr& e) {
     EP i = mk(hir::ExprKind::Index, *base->type.elem, e.span);
     i->checked = is_array && s_.config_.safety == "checked";
     i->lvalue = is_array ? base->lvalue : true;
+    i->readonly = is_array && base->readonly;
     i->lhs = std::move(base);
     i->rhs = std::move(idx);
     return i;

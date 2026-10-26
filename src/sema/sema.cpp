@@ -1437,7 +1437,9 @@ void Sema::analyze() {
                 (void)evalConst(name);
             }
         } else if (const auto* g = std::get_if<GlobalDecl>(&item.decl)) {
-            checkType(g->type, base.span);
+            if (g->has_type) {
+                checkType(g->type, base.span);
+            }
             if (g->init) {
                 checkExpr(*g->init);
             }

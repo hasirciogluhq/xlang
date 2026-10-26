@@ -104,6 +104,7 @@ struct SwitchCase {
 struct Stmt {
     enum class Kind {
         Local,   ///< local name [: type] [= expr]
+        Const,   ///< const name [: type] = expr (read-only; the value is a compile-time constant)
         Assign,  ///< target = expr; compound (`+=` ...) when `has_compound_op`
         Return,  ///< return [expr]
         Expr,    ///< expr
@@ -190,6 +191,8 @@ struct FnDecl : DeclBase {
 
 struct GlobalDecl : DeclBase {
     Type type;
+    bool has_type{true};  ///< false for `const NAME = expr` (the type comes from the value)
+    bool is_const{false}; ///< `const`: read-only, compile-time initializer, no storage to write
     ExprPtr init;  ///< null = zero-initialized / external
 };
 

@@ -152,6 +152,7 @@ class Parser {
         case TokenKind::Register:
         case TokenKind::Fn:
         case TokenKind::Global:
+        case TokenKind::Const:
         case TokenKind::Struct:
         case TokenKind::Class:
         case TokenKind::Interface:
@@ -975,6 +976,19 @@ class Parser {
             endOfStatement();
             return stmt;
         }
+        case TokenKind::Const: {
+            advance();
+            stmt.kind = Stmt::Kind::Const;
+            stmt.name = expectIdent("a constant name");
+            if (match(TokenKind::Colon)) {
+                stmt.has_type = true;
+                stmt.type = parseType();
+            }
+            expect(TokenKind::Assign, "`=` and the value of the `const`");
+            stmt.expr = parseExpr();
+            endOfStatement();
+            return stmt;
+        }
         case TokenKind::Return: {
             advance();
             stmt.kind = Stmt::Kind::Return;
@@ -1299,6 +1313,9 @@ class Parser {
         case TokenKind::Global:
             addItem(program, s, parseGlobal(s));
             return;
+        case TokenKind::Const:
+            addItem(program, s, parseConstItem(s));
+            return;
         case TokenKind::Struct:
             addItem(program, s, parseStruct(s));
             return;
@@ -1503,6 +1520,24 @@ class Parser {
         if (match(TokenKind::Assign)) {
             g.init = parseExpr();
         }
+        endOfItemLine();
+        finishDecl(g, s, name, name_tok.span);
+        return g;
+    }
+
+    /// `const NAME [: T] = expr` at module level. The type is optional.
+    GlobalDecl parseConstItem(const DeclStart& s) {
+        GlobalDecl g;
+        g.is_const = true;
+        advance(); // 'const'
+        const Token& name_tok = cur();
+        const std::string name = expectIdent("a constant name");
+        g.has_type = match(TokenKind::Colon);
+        if (g.has_type) {
+            g.type = parseType();
+        }
+        expect(TokenKind::Assign, "`=` and the value of the `const`");
+        g.init = parseExpr();
         endOfItemLine();
         finishDecl(g, s, name, name_tok.span);
         return g;

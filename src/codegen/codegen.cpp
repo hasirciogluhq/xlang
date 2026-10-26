@@ -443,7 +443,7 @@ void Gen::declareGlobal(const hir::Global& g) {
     const bool here = definedHere(in_, g.module);
     llvm::Constant* init = (g.declared || !here) ? nullptr : llvm::Constant::getNullValue(ty);
     const bool external = g.exported || g.declared || in_.only_module;
-    auto* gv = new llvm::GlobalVariable(mod_, ty, false,
+    auto* gv = new llvm::GlobalVariable(mod_, ty, g.constant,
                                         external ? llvm::GlobalValue::ExternalLinkage : llvm::GlobalValue::InternalLinkage,
                                         init, g.symbol.empty() ? g.name : g.symbol);
     gv->setAlignment(llvm::Align(std::max<std::uint64_t>(align, 1)));
@@ -704,7 +704,7 @@ void Gen::defineGlobal(const hir::Global& g) {
         return;
     }
     // The initializer has its own (packed struct) type: replace the placeholder variable.
-    auto* gv = new llvm::GlobalVariable(mod_, init->getType(), false, old->getLinkage(), init, "");
+    auto* gv = new llvm::GlobalVariable(mod_, init->getType(), old->isConstant(), old->getLinkage(), init, "");
     gv->setAlignment(old->getAlign().value_or(llvm::Align(1)));
     gv->takeName(old);
     old->replaceAllUsesWith(gv);

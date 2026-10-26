@@ -119,6 +119,12 @@ constexpr std::size_t kLeadWidth = 40;
          "The back end could not lower the program: an unresolved external reference, a syscall "
          "form the target does not support, or a generated module that failed LLVM verification "
          "(an internal error)."},
+        {"E0715", Severity::Error, "`const` initializer is not a compile-time constant",
+         "The value of a `const` (module level or in a block) must be known at compile time: "
+         "literals, arithmetic and casts on them, `define` constants, arrays and struct literals "
+         "of such values, and `&global`. Calls and reads of other variables or `const`s are not "
+         "allowed. A module-level `const` without a type must have a literal value; write "
+         "`const NAME: T = ...` otherwise."},
         {"E0716", Severity::Error, "write to a read-only place",
          "A value that cannot change is assigned to: an element or field of a `str` (`s[i] = x`, "
          "`s.len = n`), or the name of a `const`. Copy the bytes into a `[ui8; N]` local or a "

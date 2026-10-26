@@ -4,6 +4,10 @@ from "std" import println, print, strEq, strSlice, strFromC, strlen
 global failures: i32 = 0
 global g: str = "xlang"
 
+const GREETING = "hi"
+const LIMIT: i32 = 7
+const TABLE: [ui8; 4] = "abc"
+
 fn check(name: *ui8, ok: bool) {
     if !ok {
         failures = failures + 1
@@ -29,6 +33,14 @@ fn main() -> i32 {
     check("raw pointer literal", strlen(p) == 5)
     check("strFromC", strFromC(p).len == 5)
     check("str bytes", s.ptr[0] == 74)
+    check("module const str", GREETING.len == 2)
+    check("module const array", TABLE[1] == 98 && TABLE[3] == 0)
+    local lp: *i32 = &LIMIT
+    check("address of const", *lp == 7 && LIMIT == 7)
+    const SUFFIX = "!"
+    const ITEMS: [i32; 3] = [1, 2, 3]
+    check("local const str", SUFFIX.len == 1)
+    check("local const array", ITEMS[0] + ITEMS[2] == 4)
     if failures == 0 {
         println("strings ok")
     }

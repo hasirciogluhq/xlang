@@ -87,6 +87,9 @@ struct Expr {
     Type type;
     Span span;
     bool lvalue{false};
+    /// A place that must not be written: a `const`, or an element/field of one (`readonly` is
+    /// not set through a pointer, so `*p` of a `const` pointer stays writable).
+    bool readonly{false};
 
     std::uint64_t int_value{0};
     double float_value{0.0};
@@ -158,6 +161,7 @@ struct Global {
     std::string symbol;
     Type type;
     ExprPtr init;  ///< compile-time constant; null = zero-initialized / external
+    bool constant{false};  ///< `const`: emitted read-only (.rodata); written only by its initializer
     bool exported{false};
     bool export_c{false};
     bool declared{false};

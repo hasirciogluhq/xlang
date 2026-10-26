@@ -49,7 +49,7 @@ const DeclBase& declBase(const Item& item) {
 const char* declKindName(const Decl& decl) {
     struct Visitor {
         const char* operator()(const FnDecl&) const { return "function"; }
-        const char* operator()(const GlobalDecl&) const { return "global"; }
+        const char* operator()(const GlobalDecl& g) const { return g.is_const ? "const" : "global"; }
         const char* operator()(const StructDecl&) const { return "struct"; }
         const char* operator()(const ClassDecl&) const { return "class"; }
         const char* operator()(const InterfaceDecl&) const { return "interface"; }
@@ -257,6 +257,11 @@ public:
                              s.has_type ? ": " + typeToString(s.type) : std::string(),
                              s.expr ? " = " + expr(*s.expr) : std::string()));
             break;
+        case Stmt::Kind::Const:
+            line(std::format("{}const {}{}{}", attrs, s.name,
+                             s.has_type ? ": " + typeToString(s.type) : std::string(),
+                             s.expr ? " = " + expr(*s.expr) : std::string()));
+            break;
         case Stmt::Kind::Assign:
             line(std::format("{}{} {}= {}", attrs, expr(*s.target),
                              s.has_compound_op ? binaryOpName(s.compound_op) : "", expr(*s.expr)));
@@ -391,8 +396,9 @@ public:
                 d.fnBody(fn);
             }
             void operator()(const GlobalDecl& g) const {
-                d.line(std::format("{}global {}: {}{}", head, g.name, typeToString(g.type),
-                                   g.init ? " = " + d.expr(*g.init) : std::string()));
+                const std::string type = g.has_type ? ": " + typeToString(g.type) : std::string();
+                d.line(std::format("{}{} {}{}{}", head, g.is_const ? "const" : "global", g.name,
+                                   type, g.init ? " = " + d.expr(*g.init) : std::string()));
             }
             void operator()(const StructDecl& s) const {
                 d.line(std::format("{}struct {}{}", head, s.name, s.opaque ? "  [opaque]" : ""));

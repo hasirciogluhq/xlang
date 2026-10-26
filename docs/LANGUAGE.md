@@ -128,6 +128,16 @@ global table: [i32; 4]
 global banner: *ui8 = "xlang"
 ```
 
+A `const` is a named compile-time constant that cannot be written. It is allowed at module level (with `export`) and as a statement in any block. The type is optional; without it, the type is the default type of the literal value (integers `i32`, or `i64` when the value does not fit; floats `f64`; `bool`; strings `str`). A module-level `const` without a type must have a literal value. The initializer must be a compile-time constant: literals, arithmetic and casts on them, `define` constants, arrays and struct literals of such values, and `&global`. Reading another variable or `const` in an initializer is error `E0715`.
+
+```
+const LIMIT: i32 = 7
+const GREETING = "hi"              // str
+const TABLE: [ui8; 4] = "abc"       // copied bytes, zero-padded
+```
+
+Every `const` is emitted as read-only data. Assigning to a `const`, or to an element or field of one, is error `E0716`. `&LIMIT` is allowed and yields an ordinary pointer; writing through it is undefined behavior. A block-level `const` is visible only in its block; it cannot be deferred.
+
 Assignment is `target = value` and `target op= value` for `+ - * / % & | ^ << >>`. `x++` and `x--` are statements, not expressions.
 
 ---

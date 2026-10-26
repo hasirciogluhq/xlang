@@ -502,6 +502,34 @@ void testStrings() {
     }
 }
 
+void testConst() {
+    {
+        Lowered b("fn f(x: i32) {\n const y = x\n}\n");
+        CHECK(b.failedWith("E0715"));
+    }
+    {
+        Lowered b("global y: i32 = 1\nconst X = y\n");
+        CHECK(b.failedWith("E0715"));
+    }
+    {
+        Lowered b("const N = 1\nfn f() {\n N = 2\n}\n");
+        CHECK(b.failedWith("E0716"));
+    }
+    {
+        Lowered b("fn f() {\n const M = 2\n M = 3\n}\n");
+        CHECK(b.failedWith("E0716"));
+    }
+    {
+        Lowered b("const T: [i32; 2] = [1, 2]\nfn f() {\n T[0] = 3\n}\n");
+        CHECK(b.failedWith("E0716"));
+    }
+    {
+        Lowered b("const N = 1\nfn f() -> i32 {\n local p: *i32 = &N\n return N\n}\n");
+        CHECK(!b.diag->hasErrors());
+        CHECK(b.has("const "));
+    }
+}
+
 }  // namespace
 
 void runLowerTests() {
@@ -525,4 +553,5 @@ void runLowerTests() {
     testModuleRegistrationsAndMangling();
     testClassesAndInterfacesChecks();
     testStrings();
+    testConst();
 }
