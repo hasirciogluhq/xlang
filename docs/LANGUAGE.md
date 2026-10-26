@@ -86,11 +86,26 @@ fn main() -> i32 {
 | `*T` | Pointer to `T` (`*ui8`, `*Point`, `*void`) |
 | `fn(A, B) -> R` | Function pointer |
 | `[T; N]` | Fixed-size array; `N` is a compile-time constant |
+| `str` | Built-in read-only view `{ ptr: *ui8, len: usize }`; it never owns its bytes |
 | `Name` | A `struct`, `class`, `interface` or `enum` |
 
-There is no `string` type: a string literal has type `*ui8` and points to NUL-terminated bytes. There are no character literals; write the byte value (`97`). `type Name = T` declares a transparent alias.
+There is no owned string type in the language; `String` lives in the standard library. There are no character literals; write the byte value (`97`). `type Name = T` declares a transparent alias.
 
-Integer literals may be decimal or hexadecimal (`0xff`); float literals look like `1.5` or `1.5e3`. Escapes in string literals include `\n` and `\x1b`.
+Integer literals may be decimal or hexadecimal (`0xff`); float literals look like `1.5` or `1.5e3`. Escapes in string literals include `\n`, `\0` and `\x1b`.
+
+### Strings
+
+A string literal takes its type from the place it is written in:
+
+| Context | Type | Bytes live in | Mutable |
+|---|---|---|---|
+| expected `*ui8` (or an enum over `*ui8`) | `*ui8` | `.rodata`, NUL-terminated | no; writing through it is undefined behavior |
+| expected `[ui8; N]` | `[ui8; N]` copy, zero-padded | the array | yes |
+| anything else, including no expected type | `str` | `.rodata`, with a trailing NUL that is not in `len` | no |
+
+`local buf: [ui8; 8] = "Jones"` copies the bytes into the array; a literal longer than `N` is error `E0717`. A `str` literal's `len` is the number of decoded bytes, so `"Jo\0nes".len` is 6. The `str` fields are `ptr` (type `*ui8`) and `len` (type `usize`); both are read-only. `s[i]` reads one byte and, under `--safety=checked`, panics when `i >= len`. Assigning through a `str` (`s[i] = x`, `s.len = n`) is error `E0716`. `==` and `!=` are not defined on `str`; use `strEq` from the standard library. A `str` converts to `*ui8` only through `.ptr`; `as` cannot convert it either.
+
+The `std/str` module provides `strEq`, `strFromC` (view of a NUL-terminated C string), `strFromParts` (view of `n` bytes at a pointer) and `strSlice` (checked sub-range). A `str` view does not keep its bytes alive; the owner of the bytes must outlive it.
 
 ---
 

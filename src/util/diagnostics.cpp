@@ -119,6 +119,13 @@ constexpr std::size_t kLeadWidth = 40;
          "The back end could not lower the program: an unresolved external reference, a syscall "
          "form the target does not support, or a generated module that failed LLVM verification "
          "(an internal error)."},
+        {"E0716", Severity::Error, "write to a read-only place",
+         "A value that cannot change is assigned to: an element or field of a `str` (`s[i] = x`, "
+         "`s.len = n`), or the name of a `const`. Copy the bytes into a `[ui8; N]` local or a "
+         "`String` to get a writable buffer."},
+        {"E0717", Severity::Error, "string literal does not fit the array",
+         "A string literal initializes a `[ui8; N]` but has more than N bytes. Make the array "
+         "longer, or use a `str` value instead."},
         {"W0701", Severity::Warning, "missing return",
          "Control can fall off the end of a function that returns a value: some path has no "
          "`return` (a loop that ends with `break`, an `if` without `else`, ...). Add a `return`, "

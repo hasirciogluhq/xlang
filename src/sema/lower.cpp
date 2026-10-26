@@ -47,6 +47,24 @@ namespace {
     return t.kind == TypeKind::Struct || t.kind == TypeKind::Class;
 }
 
+/// `s[i]`, `s.ptr` or `s.len` where `s` is a `str` (or a pointer to one): never assignable.
+[[nodiscard]] bool isStrPlace(const hir::Expr& e) {
+    if (e.kind == hir::ExprKind::Index) {
+        return e.lhs && e.lhs->type.kind == TypeKind::Str;
+    }
+    if (e.kind == hir::ExprKind::Field && e.lhs) {
+        const Type* owner = &e.lhs->type;
+        if (e.through_pointer) {
+            if (!e.lhs->type.elem) {
+                return false;
+            }
+            owner = e.lhs->type.elem.get();
+        }
+        return owner->kind == TypeKind::Str;
+    }
+    return false;
+}
+
 /// Maximum number of syscall arguments (after the number) for the target; nullopt = no fixed
 /// limit in the target table (Windows NT: the compiler spills to the stack, plan 5.3).
 [[nodiscard]] std::optional<unsigned> syscallMaxArgs(const TargetInfo& t) {
@@ -193,6 +211,7 @@ class Lowerer {
     EP newExpr(const Expr& e);
     EP constExpr(const Expr& e, const Type* expected);
     EP fromConst(const ConstValue& v, const Type* expected, const Span& span);
+    EP stringLiteral(const std::string& text, const Type* expected, const Span& span);
 
     bool lowerArgs(const Expr& call,
                    const std::vector<Type>& params,
@@ -1496,6 +1515,13 @@ void Lowerer::lowerAssign(const Expr& target_ast,
                           const Span& span,
                           std::vector<hir::Stmt>& out) {
     EP target = expr(target_ast, nullptr);
+    if (target && isStrPlace(*target)) {
+        err("E0716",
+            target_ast.span,
+            "cannot assign through a `str`; it is read-only",
+            "copy the bytes into a `[ui8; N]` or a `String`");
+        target.reset();
+    }
     if (target && !target->lvalue && !isUnknown(target->type)) {
         err("E0709",
             target_ast.span,
@@ -1770,7 +1796,9 @@ void Lowerer::lowerSwitch(const Stmt& s, std::vector<hir::Stmt>& out) {
             cond_ast = cond_ast
                            ? astBinary(BinaryOp::Or, std::move(cond_ast), std::move(eq), v->span)
                            : std::move(eq);
-            if (v->kind == Expr::Kind::IntLiteral && !seen.insert(v->int_value).second) {
+            const auto cv = s_.evalConst(*v);
+            if (cv && cv->kind == ConstValue::Kind::Int &&
+                !seen.insert(static_cast<std::uint64_t>(cv->int_value)).second) {
                 err("E0709",
                     v->span,
                     "duplicate `case` value",
@@ -2219,11 +2247,7 @@ Lowerer::EP Lowerer::fromConst(const ConstValue& v, const Type* expected, const 
         e->bool_value = v.bool_value;
         return e;
     }
-    case ConstValue::Kind::String: {
-        EP e = mk(hir::ExprKind::StrConst, Type::makePointer(Type::makeInt(8, false)), span);
-        e->text = v.string_value;
-        return e;
-    }
+    case ConstValue::Kind::String: return stringLiteral(v.string_value, expected, span);
     }
     return nullptr;
 }
@@ -2231,6 +2255,43 @@ Lowerer::EP Lowerer::fromConst(const ConstValue& v, const Type* expected, const 
 Lowerer::EP Lowerer::constExpr(const Expr& e, const Type* expected) {
     const auto v = s_.evalConst(e);
     return v ? fromConst(*v, expected, e.span) : nullptr;
+}
+
+/// A string literal takes its type from the context (see docs/LANGUAGE.md, "Strings"):
+/// `*ui8` (raw NUL-terminated bytes), `[ui8; N]` (a mutable zero-padded copy) or `str`.
+Lowerer::EP Lowerer::stringLiteral(const std::string& text, const Type* expected, const Span& span) {
+    const Type want = expected != nullptr ? resolved(*expected) : unknownType();
+    const Type byte = Type::makeInt(8, false);
+    const bool raw = want.kind == TypeKind::Pointer ||
+                     (want.kind == TypeKind::Enum && want.elem && want.elem->kind == TypeKind::Pointer);
+    if (raw) {
+        EP p = mk(hir::ExprKind::StrConst, Type::makePointer(byte), span);
+        p->text = text;
+        return p;
+    }
+    if (want.kind == TypeKind::Array && want.elem && want.elem->kind == TypeKind::Int &&
+        want.elem->bits == 8 && !want.elem->is_signed) {
+        if (const auto n = arrayLength(s_, want)) {
+            if (text.size() > *n) {
+                err("E0717",
+                    span,
+                    std::format("string literal of {} bytes does not fit in `{}`",
+                                text.size(),
+                                typeToString(want)),
+                    "use a longer array or a `str`");
+                return nullptr;
+            }
+            EP list = mk(hir::ExprKind::ArrayList, want, span);
+            for (std::uint64_t i = 0; i < *n; ++i) {
+                const std::uint64_t b = i < text.size() ? static_cast<unsigned char>(text[i]) : 0;
+                list->args.push_back(intConst(b, byte, span));
+            }
+            return list;
+        }
+    }
+    EP s = mk(hir::ExprKind::StrConst, Type::makeStr(), span);
+    s->text = text;
+    return s;
 }
 
 Lowerer::EP Lowerer::expr(const Expr& e, const Type* expected) {
@@ -2260,11 +2321,7 @@ Lowerer::EP Lowerer::expr(const Expr& e, const Type* expected) {
         b->bool_value = e.bool_value;
         return b;
     }
-    case Expr::Kind::StringLiteral: {
-        EP str = mk(hir::ExprKind::StrConst, Type::makePointer(Type::makeInt(8, false)), e.span);
-        str->text = e.text;
-        return str;
-    }
+    case Expr::Kind::StringLiteral: return stringLiteral(e.text, expected, e.span);
     case Expr::Kind::Name:
         return nameExpr(e, expected);
     case Expr::Kind::Field:
@@ -2421,6 +2478,30 @@ Lowerer::EP Lowerer::fieldExpr(const Expr& e) {
     if (agg.kind == TypeKind::Pointer && agg.elem) {
         through = true;
         agg = *agg.elem;
+    }
+    if (agg.kind == TypeKind::Str) {
+        // `str` has two read-only fields: `ptr` (index 0) and `len` (index 1).
+        Type field_type;
+        std::uint32_t index = 0;
+        if (e.text == "ptr") {
+            field_type = Type::makePointer(Type::makeInt(8, false));
+        } else if (e.text == "len") {
+            field_type = Type::makeInt(0, false);
+            index = 1;
+        } else {
+            err("E0709",
+                e.span,
+                std::format("`str` has no field `{}`", e.text),
+                "the fields are `ptr` and `len`");
+            return nullptr;
+        }
+        EP f = mk(hir::ExprKind::Field, field_type, e.span);
+        f->text = e.text;
+        f->index = index;
+        f->through_pointer = through;
+        f->lvalue = false;
+        f->lhs = std::move(base);
+        return f;
     }
     if (!isAggregate(agg)) {
         err("E0709",
@@ -3381,6 +3462,15 @@ Lowerer::EP Lowerer::indexExpr(const Expr& e) {
             std::format("index must be an integer, found `{}`", typeToString(idx->type)),
             "integer expected");
         return nullptr;
+    }
+    if (base->type.kind == TypeKind::Str) {
+        // Reads one byte; checked against `len` at run time under --safety=checked. Never a place.
+        EP i = mk(hir::ExprKind::Index, Type::makeInt(8, false), e.span);
+        i->checked = s_.config_.safety == "checked";
+        i->lvalue = false;
+        i->lhs = std::move(base);
+        i->rhs = std::move(idx);
+        return i;
     }
     if (base->type.kind != TypeKind::Array && base->type.kind != TypeKind::Pointer) {
         err("E0709",

@@ -62,6 +62,12 @@ Type Type::makeNamed(std::vector<std::string> path) {
     return t;
 }
 
+Type Type::makeStr() {
+    Type t;
+    t.kind = TypeKind::Str;
+    return t;
+}
+
 std::optional<Type> primitiveFromName(std::string_view name) {
     struct Entry {
         std::string_view name;
@@ -77,6 +83,7 @@ std::optional<Type> primitiveFromName(std::string_view name) {
         {"ui64", TypeKind::Int, 64, false}, {"usize", TypeKind::Int, 0, false},
         {"f32", TypeKind::Float, 32, true}, {"f64", TypeKind::Float, 64, true},
         {"bool", TypeKind::Bool, 0, false}, {"void", TypeKind::Void, 0, false},
+        {"str", TypeKind::Str, 0, false},
     };
     for (const Entry& e : table) {
         if (e.name != name) {
@@ -86,6 +93,7 @@ std::optional<Type> primitiveFromName(std::string_view name) {
         case TypeKind::Int: return Type::makeInt(e.bits, e.is_signed);
         case TypeKind::Float: return Type::makeFloat(e.bits);
         case TypeKind::Bool: return Type::makeBool();
+        case TypeKind::Str: return Type::makeStr();
         default: return Type::makeVoid();
         }
     }
@@ -128,6 +136,7 @@ std::string typeToString(const Type& type) {
     switch (type.kind) {
     case TypeKind::Void: return "void";
     case TypeKind::Bool: return "bool";
+    case TypeKind::Str: return "str";
     case TypeKind::Int:
         if (type.bits == 0) {
             return type.is_signed ? "isize" : "usize";

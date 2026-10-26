@@ -41,6 +41,11 @@ Everything in the original plan is implemented; this file lists what is intentio
   write `a - -b`. Break/continue across a `switch` or `for` header are not otherwise restricted.
 - No generics, no tuples/multiple return values (design decisions are open: syntax, constraints, monomorphization
   versus erasure). Not added because the plan does not define them.
+- `str` (phase 1 of the core-language work): no `==`/`!=` in the compiler (`strEq` in std), no implicit or `as`
+  conversion to `*ui8` (only `.ptr`), no way to make a `str` from a pointer except `std/str` (`strFromParts` reinterprets a
+  `@repr(c)` two-word struct). A `str` view does not keep its bytes alive: the caller must. Writing through the `*ui8` of a
+  literal is undefined behavior (its bytes are in read-only data); `[ui8; N]` is the writable form. `std/http` and the TLS
+  modules still pass `*ui8` pointer and length pairs; their `strEq` is named `cstrEq` to avoid the name of `std/str`.
 - `W0701`: a function with a return type can reach its end without `return`. The analysis is syntactic: every
   path must end in `return`, an infinite `while true` without `break`, `__builtin_asm(..., options("noreturn"))` or
   a call to the registered `panic`. Other `noreturn` callees are not recognized (a warning, not an error).

@@ -1015,6 +1015,24 @@ std::optional<TypeLayout> Sema::layoutOf(const Type& type, const Span& at) {
         }
         return ref->owner->layoutOfName(ref->local, at);
     }
+    case TypeKind::Str: {
+        // `str` is `{ ptr, len }`; the fields are visible to `s.ptr` and `s.len`.
+        const std::uint64_t word = config_.target.pointer_width / 8;
+        out.align = word;
+        out.size = 2 * word;
+        out.data_size = out.size;
+        out.fields.push_back(FieldLayout{.name = "ptr",
+                                         .type = Type::makePointer(Type::makeInt(8, false)),
+                                         .offset = 0,
+                                         .size = word,
+                                         .align = word});
+        out.fields.push_back(FieldLayout{.name = "len",
+                                         .type = Type::makeInt(0, false),
+                                         .offset = word,
+                                         .size = word,
+                                         .align = word});
+        return out;
+    }
     case TypeKind::Named:
         error("E0703",
               at,

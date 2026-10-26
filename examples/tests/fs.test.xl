@@ -1,5 +1,5 @@
 // std/fs on a scratch file in the current directory.
-from "std" import fsWrite, fsAppend, fsReadAll, fsExists, fsSize, fsRemove
+from "std" import fsWrite, fsAppend, fsReadAll, fsExists, fsSize, fsRemove, strFromC
 from "std/testing" import Suite, T, suiteInit, test, suiteRun, expectEq, expectEqStr, expectTrue, expectFalse
 
 global path: *ui8 = "xlang_fs_test.tmp"
@@ -11,7 +11,7 @@ fn writeRead(t: *T) {
     expectTrue(t, fsExists(path))
     expectEq(t, fsSize(path), 11)
     expectEq(t, fsReadAll(path, &buf[0], 128) as i64, 11)
-    expectEqStr(t, &buf[0], "hello world")
+    expectEqStr(t, strFromC(&buf[0]), "hello world")
 }
 
 fn remove(t: *T) {

@@ -157,7 +157,7 @@ private:
 
 bool Gen::isMem(const Type& t) const {
     return t.kind == TypeKind::Struct || t.kind == TypeKind::Class || t.kind == TypeKind::Array ||
-           t.kind == TypeKind::Interface;
+           t.kind == TypeKind::Interface || t.kind == TypeKind::Str;
 }
 
 bool Gen::isSigned(const Type& t) const {
@@ -612,8 +612,15 @@ llvm::Constant* Gen::genConst(const hir::Expr& e) {
         auto* st = llvm::StructType::get(ctx_, {ptrTy(), ptrTy()}, true);
         return llvm::ConstantStruct::get(st, {data, itable});
     }
-    case hir::ExprKind::StrConst:
-        return stringGlobal(e.text);
+    case hir::ExprKind::StrConst: {
+        llvm::GlobalVariable* bytes = stringGlobal(e.text);
+        if (e.type.kind != TypeKind::Str) {
+            return bytes;
+        }
+        auto* st = llvm::StructType::get(ctx_, {ptrTy(), llvm::Type::getInt64Ty(ctx_)}, true);
+        return llvm::ConstantStruct::get(
+            st, {bytes, llvm::ConstantInt::get(llvm::Type::getInt64Ty(ctx_), e.text.size())});
+    }
     case hir::ExprKind::Nil:
         return llvm::Constant::getNullValue(ptrTy());
     case hir::ExprKind::FuncRef: {
@@ -924,12 +931,26 @@ llvm::Value* Gen::genAddr(const hir::Expr& e) {
     }
     case hir::ExprKind::Index: {
         const bool is_array = e.lhs->type.kind == TypeKind::Array;
-        llvm::Value* base = is_array ? genAddr(*e.lhs) : genScalar(*e.lhs);
+        const bool is_str = e.lhs->type.kind == TypeKind::Str;
+        llvm::Value* base = is_array || is_str ? genAddr(*e.lhs) : genScalar(*e.lhs);
         llvm::Value* idx = genScalar(*e.rhs);
         const bool idx_signed = isSigned(e.rhs->type);
         llvm::Type* i64 = llvm::Type::getInt64Ty(ctx_);
         if (idx->getType()->getIntegerBitWidth() != 64) {
             idx = idx_signed ? B_.CreateSExt(idx, i64) : B_.CreateZExt(idx, i64);
+        }
+        if (is_str) {
+            // `str` is { ptr, len }: check the index against len, then index the bytes at ptr.
+            llvm::Value* len = B_.CreateZExt(
+                B_.CreateAlignedLoad(sty(Type::makeInt(0, false)), byteOffset(base, ptrBits() / 8),
+                                     llvm::Align(ptrBits() / 8)),
+                i64);
+            if (e.checked) {
+                checkedBranch(B_.CreateICmpUGE(idx, len), "str index out of bounds");
+            }
+            llvm::Value* data =
+                B_.CreateAlignedLoad(ptrTy(), base, llvm::Align(ptrBits() / 8));
+            return B_.CreateInBoundsGEP(llvm::Type::getInt8Ty(ctx_), data, {idx});
         }
         if (is_array && e.checked) {
             const TypeLayout* l = layoutOf(e.lhs->type);
@@ -1028,6 +1049,16 @@ void Gen::genInto(const hir::Expr& e, llvm::Value* dest) {
         }
         B_.CreateAlignedStore(data, dest, llvm::Align(ptrBits() / 8));
         B_.CreateAlignedStore(itable, byteOffset(dest, ptrBits() / 8), llvm::Align(ptrBits() / 8));
+        return;
+    }
+    case hir::ExprKind::StrConst: {
+        if (e.type.kind != TypeKind::Str) {
+            storeScalar(e.type, genScalar(e), dest);
+            return;
+        }
+        B_.CreateAlignedStore(stringGlobal(e.text), dest, llvm::Align(ptrBits() / 8));
+        B_.CreateAlignedStore(B_.getInt64(e.text.size()), byteOffset(dest, ptrBits() / 8),
+                              llvm::Align(ptrBits() / 8));
         return;
     }
     default: {

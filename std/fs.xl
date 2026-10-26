@@ -1,7 +1,7 @@
 // std/fs: whole-file and streaming file access on top of the raw `std/sys` file calls.
-// Paths are NUL-terminated `*ui8`. Nothing allocates: the caller supplies the buffers.
+// Paths are NUL-terminated `*ui8`; written data is a `str`, so embedded NUL bytes are kept.
+// Nothing allocates: the caller supplies the buffers.
 from "sys" import sysOpenRead, sysOpenWrite, sysClose, sysUnlink, sysFileSize, sysRead, sysWrite
-from "memory" import strlen
 
 /// Writes all of `n` bytes to `fd`; false on error.
 fn writeAll(fd: i32, data: *ui8, n: usize) -> bool {
@@ -14,21 +14,21 @@ fn writeAll(fd: i32, data: *ui8, n: usize) -> bool {
     return true
 }
 
-fn store(path: *ui8, data: *ui8, append: bool) -> bool {
+fn store(path: *ui8, data: str, append: bool) -> bool {
     local fd: i32 = sysOpenWrite(path, append)
     if fd < 0 { return false }
-    local ok: bool = writeAll(fd, data, strlen(data))
+    local ok: bool = writeAll(fd, data.ptr, data.len)
     sysClose(fd)
     return ok
 }
 
-/// Creates or truncates `path` and writes the NUL-terminated `data`.
-export fn fsWrite(path: *ui8, data: *ui8) -> bool {
+/// Creates or truncates `path` and writes all bytes of `data`.
+export fn fsWrite(path: *ui8, data: str) -> bool {
     return store(path, data, false)
 }
 
-/// Appends the NUL-terminated `data` to `path`, creating it if needed.
-export fn fsAppend(path: *ui8, data: *ui8) -> bool {
+/// Appends all bytes of `data` to `path`, creating it if needed.
+export fn fsAppend(path: *ui8, data: str) -> bool {
     return store(path, data, true)
 }
 

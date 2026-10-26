@@ -5,7 +5,7 @@ from "../sys" import sysTcpSocket, sysTcpListen, sysTcpAccept, sysClose, sysRead
 from "../memory" import mapGrow
 from "../io" import eprint
 from "../tls" import TlsConn, TlsCredentials, tlsRead, tlsClose, tlsListen, tlsAccept
-from "util" import strEq, lower, headerEnd, terminateLines
+from "util" import cstrEq, lower, headerEnd, terminateLines
 from "context" import Context, ctxInit, ctxString
 from "router" import Router, routerDispatch
 
@@ -73,7 +73,7 @@ fn dispatch(r: *Router, fd: i32, tls: *TlsConn, buf: *ui8, n: usize) {
     buf[i] = 0
     c.body = &buf[he + 4]
     c.bodyLen = n - (he + 4)
-    c.isHead = strEq(c.method, "HEAD")
+    c.isHead = cstrEq(c.method, "HEAD")
     routerDispatch(r, &c)
 }
 

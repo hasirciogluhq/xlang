@@ -29,7 +29,7 @@ enum class ExprKind {
     IntConst,       ///< int_value (two's complement bits), type Int/Enum
     FloatConst,     ///< float_value
     BoolConst,      ///< bool_value
-    StrConst,       ///< text; type `*ui8` (or an enum with a `*ui8` underlying type)
+    StrConst,       ///< text; type `*ui8` (or an enum over `*ui8`), or `str` = { ptr, len }
     Nil,            ///< `nil`, typed as the pointer/function pointer it was converted to
     LocalRef,       ///< local
     GlobalRef,      ///< text = global name

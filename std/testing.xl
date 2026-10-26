@@ -16,6 +16,7 @@
 // that itself when stdout is not a terminal). The registry grows on demand: no fixed limits.
 from "sys" import sysWrite
 from "memory" import strlen, mapGrow
+from "str" import strEq
 from "io" import print, println, printInt, printUInt
 
 #ifdef xlTestNoColor
@@ -202,16 +203,14 @@ export fn expectNear(t: *T, actual: f64, expected: f64, eps: f64) {
     failEnd()
 }
 
-/// NUL-terminated string equality.
-export fn expectEqStr(t: *T, actual: *ui8, expected: *ui8) {
-    local i: usize = 0
-    while actual[i] != 0 && actual[i] == expected[i] { i = i + 1 }
-    if actual[i] == expected[i] { return }
+/// Byte-wise string equality. The report writes the bytes as they are (embedded NULs included).
+export fn expectEqStr(t: *T, actual: str, expected: str) {
+    if strEq(actual, expected) { return }
     failLine(t)
     print("expected \"")
-    print(expected)
+    sysWrite(1, expected.ptr, expected.len)
     print("\", got \"")
-    print(actual)
+    sysWrite(1, actual.ptr, actual.len)
     print("\"")
     failEnd()
 }

@@ -474,6 +474,34 @@ void testClassesAndInterfacesChecks() {
     }
 }
 
+void testStrings() {
+    {
+        Lowered b("fn f() {\n local s = \"abc\"\n s[0] = 1\n}\n");
+        CHECK(b.failedWith("E0716"));
+    }
+    {
+        Lowered b("fn f() {\n local s = \"abc\"\n s.len = 1\n}\n");
+        CHECK(b.failedWith("E0716"));
+    }
+    {
+        Lowered b("fn f() {\n local b: [ui8; 2] = \"abc\"\n}\n");
+        CHECK(b.failedWith("E0717"));
+    }
+    {
+        Lowered b("fn f() {\n local b: [ui8; 3] = \"abc\"\n local s = \"x\\0y\"\n"
+                  " local n: usize = s.len\n local c: ui8 = s[1]\n}\n");
+        CHECK(!b.diag->hasErrors());
+    }
+    {
+        Lowered b("fn f(x: i32) {\n switch x {\n case 1 { }\n case 1 { }\n }\n}\n");
+        CHECK(b.failedWith("E0709"));
+    }
+    {
+        Lowered b("enum C { A, B }\nfn f(c: C) {\n switch c {\n case C.A { }\n case C.A { }\n }\n}\n");
+        CHECK(b.failedWith("E0709"));
+    }
+}
+
 }  // namespace
 
 void runLowerTests() {
@@ -496,4 +524,5 @@ void runLowerTests() {
     testModulesShareTypes();
     testModuleRegistrationsAndMangling();
     testClassesAndInterfacesChecks();
+    testStrings();
 }

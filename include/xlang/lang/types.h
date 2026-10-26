@@ -24,10 +24,11 @@ enum class TypeKind {
     Struct,
     Class,
     Interface,
+    Str,      ///< built-in immutable view `{ ptr: *ui8, len: usize }`; never owns its bytes
     Named,    ///< unresolved reference to a user type or alias; sema resolves it to one of the above
 };
 
-/// A type tree. Parsing produces `Void/Bool/Int/Float/Pointer/FnPtr/Array/Named`; `Enum`,
+/// A type tree. Parsing produces `Void/Bool/Int/Float/Pointer/FnPtr/Array/Str/Named`; `Enum`,
 /// `Struct`, `Class` and `Interface` are filled in by sema when `Named` is resolved.
 struct Type {
     TypeKind kind{TypeKind::Void};
@@ -58,6 +59,7 @@ struct Type {
     [[nodiscard]] static Type makeFnPtr(std::vector<Type> params, Type ret);
     [[nodiscard]] static Type makeArray(Type element, std::shared_ptr<const Expr> length);
     [[nodiscard]] static Type makeNamed(std::vector<std::string> path);
+    [[nodiscard]] static Type makeStr();
 };
 
 /// `i32`, `ui8`, `usize`, `f64`, `bool`, `void` -> the type; nullopt for any other name.

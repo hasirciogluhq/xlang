@@ -2,7 +2,7 @@
 // buffer and follows redirects; `fetchGet`/`fetchPost`/`fetchPut`/`fetchPatch`/`fetchDelete`/
 // `fetchHead`/`fetchOptions` cover every common method, `fetchMethod` any token.
 from "../memory" import strlen
-from "util" import strEq, eqCI, startsCI, memMove, append, headerLookup
+from "util" import cstrEq, eqCI, startsCI, memMove, append, headerLookup
 from "url" import Url, FetchOptions, urlParse, urlParsePath, fetchInit, FETCH_OK, FETCH_ERR_URL, FETCH_ERR_TOO_LARGE, FETCH_ERR_REDIRECT, FETCH_ERR_BODY
 from "stream" import HttpStream, streamOpen, streamRead, streamClose
 
@@ -86,8 +86,8 @@ export fn fetch(url: *ui8, opts: *FetchOptions, buf: *ui8, cap: usize, out: *Res
                 }
                 local method: *ui8 = "GET"
                 if o.method != nil { method = o.method }
-                if st == 303 || ((st == 301 || st == 302) && strEq(method, "POST")) {
-                    if !strEq(method, "HEAD") { o.method = nil }
+                if st == 303 || ((st == 301 || st == 302) && cstrEq(method, "POST")) {
+                    if !cstrEq(method, "HEAD") { o.method = nil }
                     o.body = nil
                     o.bodyLen = 0
                     o.hasSource = false

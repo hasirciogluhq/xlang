@@ -1,0 +1,40 @@
+// std/str: helpers for the built-in `str` view (`{ ptr, len }`). A `str` is read-only and never
+// owns its bytes; `strFromParts` builds one from a pointer and a length.
+from "memory" import strlen
+
+/// Same two words as `str` (`@repr(c)` keeps `ptr` at offset 0 and `len` at offset 8).
+@repr(c) struct StrParts {
+    ptr: *ui8
+    len: usize
+}
+
+/// A view of `n` bytes at `p`. The bytes are not copied; the caller keeps them alive.
+export fn strFromParts(p: *ui8, n: usize) -> str {
+    local parts: StrParts = StrParts { ptr: p, len: n }
+    local view: *str = &parts as *str
+    return *view
+}
+
+/// A view of the NUL-terminated C string `p` (the NUL is not part of the view).
+export fn strFromC(p: *ui8) -> str {
+    return strFromParts(p, strlen(p))
+}
+
+/// Byte-wise equality: same length and same bytes.
+export fn strEq(a: str, b: str) -> bool {
+    if a.len != b.len { return false }
+    local i: usize = 0
+    while i < a.len {
+        if a[i] != b[i] { return false }
+        i = i + 1
+    }
+    return true
+}
+
+/// The `n` bytes of `s` starting at `first`. Panics when the range is outside `s`.
+export fn strSlice(s: str, first: usize, n: usize) -> str {
+    if first > s.len || n > s.len - first {
+        panic("strSlice: range is outside the string")
+    }
+    return strFromParts(&s.ptr[first], n)
+}
