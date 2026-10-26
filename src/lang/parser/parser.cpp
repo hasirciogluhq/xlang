@@ -876,10 +876,27 @@ class Parser {
             expect(TokenKind::RParen, "`)` closing the allocator argument");
         }
         e->type = parseType();
-        if (!at(TokenKind::LBrace)) {
-            expected("`{` with the field initializers after the type of `new`");
+        if (at(TokenKind::LParen)) {
+            // `new T(args)`: the class constructor (its `init`) runs on the new object.
+            advance();
+            ++nl_depth_;
+            const bool saved_no_struct = no_struct_;
+            no_struct_ = false;
+            while (!at(TokenKind::RParen)) {
+                e->args.push_back(parseCallArg());
+                if (!match(TokenKind::Comma)) {
+                    break;
+                }
+            }
+            no_struct_ = saved_no_struct;
+            --nl_depth_;
+            expect(TokenKind::RParen, "`)` closing the constructor arguments");
+            e->has_call_args = true;
+        } else if (at(TokenKind::LBrace)) {
+            e->fields = parseFieldInits();
+        } else {
+            expected("`(` with the constructor arguments or `{` with the field initializers after the type of `new`");
         }
-        e->fields = parseFieldInits();
         e->span = spanFrom(start);
         return e;
     }
@@ -973,6 +990,19 @@ class Parser {
             } else if (!stmt.has_type) {
                 expected("`:` with a type or `=` with an initializer");
             }
+            endOfStatement();
+            return stmt;
+        }
+        case TokenKind::Delete: {
+            advance();
+            stmt.kind = Stmt::Kind::Delete;
+            if (match(TokenKind::LParen)) {
+                ++nl_depth_;
+                stmt.target = parseExpr();
+                --nl_depth_;
+                expect(TokenKind::RParen, "`)` closing the allocator argument");
+            }
+            stmt.expr = parseExpr();
             endOfStatement();
             return stmt;
         }

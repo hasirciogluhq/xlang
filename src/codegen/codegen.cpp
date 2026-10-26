@@ -84,6 +84,8 @@ private:
     llvm::Value* genMem(const hir::Expr& e);
     void genInto(const hir::Expr& e, llvm::Value* dest);
     llvm::Value* genCall(const hir::Expr& e, llvm::Value** mem_result);
+    /// Calls the `init` function `key` on the object at `self` with the given arguments.
+    void callInit(const std::string& key, llvm::Value* self, const std::vector<hir::ExprPtr>& args, const Span& span);
     llvm::Value* genCallCommon(llvm::FunctionType* fty, llvm::Value* callee, const std::vector<const hir::Expr*>& args,
                                llvm::Value* self, const Type& ret, llvm::Value** mem_result, const Span& at);
     llvm::Value* genSyscall(const hir::Expr& e);
@@ -1051,6 +1053,22 @@ void Gen::genInto(const hir::Expr& e, llvm::Value* dest) {
         B_.CreateAlignedStore(itable, byteOffset(dest, ptrBits() / 8), llvm::Align(ptrBits() / 8));
         return;
     }
+    case hir::ExprKind::Construct: {
+        // A new object in `dest`: zeroed, vptr stored, then its `init` runs on it.
+        const TypeLayout* l = layoutOf(e.target);
+        if (l != nullptr) {
+            zeroMem(dest, l->size, l->align);
+        }
+        if (e.target.kind == TypeKind::Class) {
+            if (llvm::Constant* vp = vtablePointer(e.target.path.front())) {
+                B_.CreateAlignedStore(vp, dest, llvm::Align(ptrBits() / 8));
+            }
+        }
+        if (!e.text.empty()) {
+            callInit(e.text, dest, e.args, e.span);
+        }
+        return;
+    }
     case hir::ExprKind::StrConst: {
         if (e.type.kind != TypeKind::Str) {
             storeScalar(e.type, genScalar(e), dest);
@@ -1087,6 +1105,18 @@ llvm::Value* Gen::genMem(const hir::Expr& e) {
         llvm::Value* mem = nullptr;
         (void)genCall(e, &mem);
         return mem;
+    }
+    case hir::ExprKind::Move: {
+        // The value is read first; the drop flag is cleared, so the owner no longer drops it.
+        llvm::Value* src = genMem(*e.lhs);
+        storeScalar(Type::makeBool(), B_.getInt1(false), locals_[e.local]);
+        return src;
+    }
+    case hir::ExprKind::Materialize: {
+        llvm::Value* tmp = locals_[e.local];
+        genInto(*e.lhs, tmp);
+        storeScalar(Type::makeBool(), B_.getInt1(true), locals_[e.index]);
+        return tmp;
     }
     case hir::ExprKind::External:
     case hir::ExprKind::ExternalCall:
@@ -1342,6 +1372,21 @@ llvm::Value* Gen::genSyscall(const hir::Expr& e) {
     return result;
 }
 
+void Gen::callInit(const std::string& key, llvm::Value* self, const std::vector<hir::ExprPtr>& args, const Span& span) {
+    llvm::Function* f = functionNamed(key);
+    if (f == nullptr) {
+        error(span, std::format("unknown function `{}`", key));
+        return;
+    }
+    std::vector<Type> params{Type::makePointer(Type::makeVoid())};
+    std::vector<const hir::Expr*> av;
+    for (const hir::ExprPtr& a : args) {
+        params.push_back(a->type);
+        av.push_back(a.get());
+    }
+    genCallCommon(fnTypeFor(params, Type::makeVoid()), f, av, self, Type::makeVoid(), nullptr, span);
+}
+
 llvm::Value* Gen::genCallCommon(llvm::FunctionType* fty, llvm::Value* callee,
                                 const std::vector<const hir::Expr*>& args, llvm::Value* self, const Type& ret,
                                 llvm::Value** mem_result, const Span& at) {
@@ -1521,6 +1566,9 @@ llvm::Value* Gen::genNew(const hir::Expr& e) {
         if (llvm::Constant* vp = vtablePointer(t.path.front())) {
             B_.CreateAlignedStore(vp, mem, llvm::Align(ptrBits() / 8));
         }
+    }
+    if (!e.text.empty()) {
+        callInit(e.text, mem, e.args, e.span);
     }
     const TypeLayout* l = layoutOf(t);
     for (const hir::FieldInit& f : e.fields) {

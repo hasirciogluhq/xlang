@@ -562,6 +562,35 @@ void testOverloads() {
     }
 }
 
+void testOwnership() {
+    {
+        Lowered b("class C { fn drop(self) { } }\nclass H { c: C }\n"
+                  "fn f(h: H) {\n local x = h.c\n}\n");
+        CHECK(b.failedWith("E0720"));
+    }
+    {
+        Lowered b("class C { fn drop(self) { } }\nstruct S { c: C }\n");
+        CHECK(b.failedWith("E0721"));
+    }
+    {
+        Lowered b("class C { fn init(self) -> i32 { return 1 } }\n");
+        CHECK(b.failedWith("E0722"));
+    }
+    {
+        Lowered b("class C { fn drop(self, x: i32) { } }\n");
+        CHECK(b.failedWith("E0722"));
+    }
+    {
+        Lowered b("class C { fn init(self, x: i32) { } }\nfn f() {\n local c = C { }\n}\n");
+        CHECK(b.failedWith("E0723"));
+    }
+    {
+        Lowered b("class C { fn init(self, x: i32) { } fn drop(self) { } }\n"
+                  "fn f() {\n local c = C(1)\n}\n");
+        CHECK(!b.diag->hasErrors());
+    }
+}
+
 }  // namespace
 
 void runLowerTests() {
@@ -587,4 +616,5 @@ void runLowerTests() {
     testStrings();
     testConst();
     testOverloads();
+    testOwnership();
 }

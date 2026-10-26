@@ -258,6 +258,10 @@ public:
                              s.has_type ? ": " + typeToString(s.type) : std::string(),
                              s.expr ? " = " + expr(*s.expr) : std::string()));
             break;
+        case Stmt::Kind::Delete:
+            line(std::format("{}delete{} {}", attrs, s.target ? "(" + expr(*s.target) + ")" : std::string(),
+                             expr(*s.expr)));
+            break;
         case Stmt::Kind::Const:
             line(std::format("{}const {}{}{}", attrs, s.name,
                              s.has_type ? ": " + typeToString(s.type) : std::string(),

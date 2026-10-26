@@ -190,6 +190,44 @@ class Lowerer {
                        bool overloaded = false);
     void lowerGlobal(const GlobalDecl& g, const Modifiers& mods);
     void lowerLocalConst(const Stmt& s);
+
+    // --- ownership: drop glue, drop flags, moves (core-language phase 5)
+    /// A class needs drop when it has a `drop` method or a field or base class that needs drop.
+    [[nodiscard]] bool needsDrop(const Type& t);
+    [[nodiscard]] static std::string dropGlueName(const std::string& qname);
+    void emitDropGlue(const std::string& qname, const ClassDecl& c, const Span& span);
+    [[nodiscard]] EP localRef(hir::LocalId id, const Type& type, const Span& span);
+    [[nodiscard]] EP boolConst(bool value, const Span& span);
+    /// `glue(addr)`: runs the drop glue of `t` on the object at `addr`.
+    [[nodiscard]] EP dropCallOn(EP addr, const Type& t, const Span& span);
+    [[nodiscard]] hir::Stmt dropStmt(hir::LocalId var, hir::LocalId flag, const Type& t, const Span& span);
+    /// Gives `var` a drop flag (true when initialized) and a deferred drop; the flag is declared
+    /// through `decls`, which must be emitted before the variable.
+    void registerDrop(hir::LocalId var,
+                      const Type& t,
+                      bool initialized,
+                      const Span& span,
+                      std::vector<hir::Stmt>& decls);
+    /// A droppable value used by value: a local is moved (its flag cleared); a field, element or
+    /// pointer target is E0720; a temporary passes its ownership on.
+    [[nodiscard]] EP moveOut(EP value);
+    /// A droppable temporary used as a receiver: stored in a hidden local dropped at block end.
+    [[nodiscard]] EP materializeTemp(EP value, const Span& span);
+    void lowerDropAssign(EP target, EP value, const Span& span, std::vector<hir::Stmt>& out);
+    [[nodiscard]] EP constructCall(const Expr& e, const ScopeEntry& entry);
+    /// Resolves and lowers the `init` a `T(args)` / `new T(args)` of class `t` calls (key empty when
+    /// the class has none). False when diagnosed.
+    [[nodiscard]] bool lowerInitCall(const Expr& e, const Type& t, std::string& key, std::vector<EP>& args);
+    /// Whether the class declares an `init` method.
+    [[nodiscard]] bool hasInit(const std::string& qname);
+    /// `qname.init` when the class has a constructor taking no arguments, else empty.
+    [[nodiscard]] std::string zeroArgInitOf(const std::string& qname);
+    /// The base class constructor a derived `init` runs first (empty = none).
+    [[nodiscard]] std::string baseInitKey(const ClassDecl& cl, Sema& owner);
+    std::map<hir::LocalId, hir::LocalId> drop_flags_;  ///< droppable local -> its drop flag
+    std::map<std::string, bool> needs_drop_;           ///< class qname -> needsDrop
+    std::vector<std::pair<hir::LocalId, hir::LocalId>> entry_temps_;  ///< (temp, flag) per function
+    std::string base_init_call_;  ///< set for the next `init` lowered: the base constructor it runs
     void lowerEnum(const EnumDecl& e);
     void lowerAggregate(const Item& item);
     void checkImpl(const ImplInfo& info);
@@ -1427,6 +1465,12 @@ void Lowerer::lowerGlobal(const GlobalDecl& g, const Modifiers& mods) {
     out.module = s_.key_;
     out.constant = g.is_const;
     out.type = globalType(s_, g);
+    if (needsDrop(out.type)) {
+        err("E0721",
+            g.name_span,
+            std::format("`{}` needs drop and cannot be a global", typeToString(out.type)),
+            "use a local, or a class field or `Vec` for owned values");
+    }
     if (!g.has_type && g.init && !literalConstType(s_, *g.init)) {
         err("E0715",
             g.init->span,
@@ -1568,6 +1612,17 @@ void Lowerer::lowerFunction(const FnDecl& f,
     loops_.clear();
     defers_.clear();
     scopes_.push(ScopeKind::Function);
+    // Parameters that need drop are owned by the callee: their drops run on every exit path.
+    std::vector<hir::Stmt> prologue;
+    struct OwnedParam {
+        hir::LocalId id;
+        Type type;
+        Span span;
+    };
+    std::vector<OwnedParam> owned_params;
+    const std::string base_call = std::exchange(base_init_call_, {});
+    entry_temps_.clear();
+    defers_.emplace_back();
     std::vector<Type> param_types;
     for (const Param& p : f.params) {
         Type t;
@@ -1587,8 +1642,15 @@ void Lowerer::lowerFunction(const FnDecl& f,
         param_types.push_back(t);
         const hir::LocalId id = addLocal(p.is_self ? "self" : p.name, t, true, p.span);
         bindLocal(p.is_self ? "self" : p.name, id, t, p.span);
+        if (!p.is_self && needsDrop(t)) {
+            owned_params.push_back({id, t, p.span});
+        }
     }
     out.param_count = static_cast<std::uint32_t>(out.locals.size());
+    // The drop flags follow the parameters (the first `param_count` locals).
+    for (const OwnedParam& p : owned_params) {
+        registerDrop(p.id, p.type, true, p.span, prologue);
+    }
     if (mods.export_c) {
         bool ok = cCompatible(s_, out.ret);
         for (const Type& t : param_types) {
@@ -1611,6 +1673,18 @@ void Lowerer::lowerFunction(const FnDecl& f,
                  out.symbol,
                  f.name_span);
     if (f.has_body) {
+        if (!base_call.empty()) {
+            // A derived `init` first runs the base class constructor on `self`.
+            EP self = localRef(0, out.locals.front().type, f.span);
+            EP call = mk(hir::ExprKind::Call, Type::makeVoid(), f.span);
+            call->text = base_call;
+            call->args.push_back(std::move(self));
+            hir::Stmt s;
+            s.kind = hir::StmtKind::Expr;
+            s.span = f.span;
+            s.value = std::move(call);
+            prologue.push_back(std::move(s));
+        }
         lowerBlock(f.body, out.body, false);
         if (!out.ret.isVoid() && !isUnknown(out.ret) &&
             !terminates(out.body, mod_.panic_function)) {
@@ -1621,6 +1695,30 @@ void Lowerer::lowerFunction(const FnDecl& f,
                 "not every path returns");
         }
     }
+    // Falling off the end runs the parameter drops (a `return` already ran them); the temporaries
+    // and their flags are declared first, so every path sees them initialized.
+    const bool jumps = !out.body.empty() && out.body.back().kind == hir::StmtKind::Return;
+    if (f.has_body && !jumps) {
+        emitDefers(defers_.size() - 1, out.body);
+    }
+    defers_.pop_back();
+    std::vector<hir::Stmt> head = std::move(prologue);
+    for (const auto& [tmp, flag] : entry_temps_) {
+        hir::Stmt decl;
+        decl.kind = hir::StmtKind::Local;
+        decl.span = f.span;
+        decl.local = tmp;
+        head.push_back(std::move(decl));
+        hir::Stmt live;
+        live.kind = hir::StmtKind::Local;
+        live.span = f.span;
+        live.local = flag;
+        live.value = boolConst(false, f.span);
+        head.push_back(std::move(live));
+    }
+    entry_temps_.clear();
+    out.body.insert(out.body.begin(), std::make_move_iterator(head.begin()),
+                    std::make_move_iterator(head.end()));
     scopes_.pop();
     fn_ = nullptr;
     mod_.functions.push_back(std::move(out));
@@ -1637,13 +1735,43 @@ void Lowerer::lowerAggregate(const Item& item) {
                        return x.text == "c";
                    });
         for (const FieldDecl& f : st->fields) {
-            a.fields.push_back({f.name, resolved(f.type)});
+            const Type ft = resolved(f.type);
+            if (needsDrop(ft)) {
+                err("E0721",
+                    f.span,
+                    std::format("`{}` needs drop and cannot be a struct field", typeToString(ft)),
+                    "use a class field instead; structs are plain data");
+            }
+            a.fields.push_back({f.name, ft});
         }
         mod_.aggregates.push_back(std::move(a));
     } else if (const auto* cl = std::get_if<ClassDecl>(&item.decl)) {
         hir::Aggregate a;
         a.name = s_.qualify(cl->name);
         a.is_class = true;
+        for (const FnDecl& m : cl->methods) {
+            const bool only_self = std::ranges::all_of(m.params, [](const Param& p) { return p.is_self; });
+            if (m.name == "init" && m.has_return_type) {
+                err("E0722", m.name_span, "`init` takes no return type", "remove the `-> T`");
+            }
+            if (m.name == "drop" && (!only_self || m.has_return_type || m.is_virtual || m.is_override)) {
+                err("E0722",
+                    m.name_span,
+                    "`drop` takes only `self` and returns nothing, and cannot be virtual",
+                    "write `fn drop(self) { ... }`");
+            }
+        }
+        if (cl->has_base && hasInit(s_.qualify(cl->name)) && baseInitKey(*cl, s_).empty()) {
+            if (const auto base = s_.resolve(Type::makeNamed(cl->base));
+                base && base->kind == TypeKind::Class && hasInit(base->path.front())) {
+                err("E0722",
+                    cl->name_span,
+                    std::format("`{}` has an `init` but its base has none without arguments",
+                                cl->name),
+                    "give the base class an `init` that takes no arguments");
+            }
+        }
+        emitDropGlue(a.name, *cl, cl->span);
         a.opaque = cl->opaque;
         a.span = cl->span;
         const Attribute* repr = findAttribute(cl->attributes, "repr");
@@ -1796,6 +1924,9 @@ void Lowerer::lowerItems() {
                         "give the overloads different parameter types");
                     continue;
                 }
+                if (m.name == "init") {
+                    base_init_call_ = baseInitKey(*cl, s_);
+                }
                 lowerFunction(m,
                               item.modifiers,
                               key,
@@ -1879,6 +2010,343 @@ void Lowerer::bindLocal(const std::string& name,
     }
 }
 
+// ---------------------------------------------------------------------------------------------
+// Ownership (core-language phase 5). Droppable locals carry a drop flag; the drop of a local is
+// a deferred statement `if flag { glue(&x); flag = false }`, so the existing defer machinery runs
+// it on every exit path.
+
+bool Lowerer::needsDrop(const Type& t) {
+    if (t.kind != TypeKind::Class || t.path.empty()) {
+        return false;
+    }
+    const std::string& qname = t.path.front();
+    if (const auto it = needs_drop_.find(qname); it != needs_drop_.end()) {
+        return it->second;
+    }
+    needs_drop_[qname] = false;  // guards against a cycle
+    bool result = false;
+    if (const auto ref = s_.entityByQName(qname)) {
+        if (const auto* c = std::get_if<ClassDecl>(&ref->sym->item->decl)) {
+            for (const FnDecl& m : c->methods) {
+                result = result || m.name == "drop";
+            }
+            for (const FieldDecl& f : c->fields) {
+                result = result || needsDrop(resolvedIn(*ref->owner, f.type));
+            }
+            if (c->has_base) {
+                if (const auto base = ref->owner->resolve(Type::makeNamed(c->base))) {
+                    result = result || needsDrop(*base);
+                }
+            }
+        }
+    }
+    needs_drop_[qname] = result;
+    return result;
+}
+
+std::string Lowerer::dropGlueName(const std::string& qname) {
+    return qname + "$dropGlue";
+}
+
+bool Lowerer::hasInit(const std::string& qname) {
+    const auto ref = s_.entityByQName(qname);
+    const auto* c = ref ? std::get_if<ClassDecl>(&ref->sym->item->decl) : nullptr;
+    return c != nullptr && std::ranges::any_of(c->methods, [](const FnDecl& m) {
+               return m.name == "init";
+           });
+}
+
+std::string Lowerer::zeroArgInitOf(const std::string& qname) {
+    const auto ref = s_.entityByQName(qname);
+    const auto* c = ref ? std::get_if<ClassDecl>(&ref->sym->item->decl) : nullptr;
+    if (c == nullptr) {
+        return {};
+    }
+    for (const FnDecl& m : c->methods) {
+        if (m.name == "init" && std::ranges::all_of(m.params, [](const Param& p) { return p.is_self; })) {
+            return qname + ".init";
+        }
+    }
+    return {};
+}
+
+std::string Lowerer::baseInitKey(const ClassDecl& cl, Sema& owner) {
+    if (!cl.has_base) {
+        return {};
+    }
+    const auto base = owner.resolve(Type::makeNamed(cl.base));
+    if (!base || base->kind != TypeKind::Class) {
+        return {};
+    }
+    return zeroArgInitOf(base->path.front());
+}
+
+void Lowerer::emitDropGlue(const std::string& qname, const ClassDecl& c, const Span& span) {
+    Type cls = Type::makeNamed({qname});
+    cls.kind = TypeKind::Class;
+    if (!needsDrop(cls)) {
+        return;
+    }
+    const Type ptr = Type::makePointer(cls);
+    hir::Function g;
+    g.name = dropGlueName(qname);
+    g.symbol = g.name;
+    g.module = s_.key_;
+    g.exported = true;
+    g.has_body = true;
+    g.span = span;
+    g.ret = Type::makeVoid();
+    g.locals.push_back(hir::Local{"p", ptr, true, span});
+    g.param_count = 1;
+    const auto self = [&] { return localRef(0, ptr, span); };
+    const auto statement = [&](EP value) {
+        hir::Stmt s;
+        s.kind = hir::StmtKind::Expr;
+        s.span = span;
+        s.value = std::move(value);
+        return s;
+    };
+    // The user's `drop` body, then the fields that need drop in reverse order, then the base.
+    if (std::ranges::any_of(c.methods, [](const FnDecl& m) { return m.name == "drop"; })) {
+        EP call = mk(hir::ExprKind::Call, Type::makeVoid(), span);
+        call->text = qname + ".drop";
+        call->args.push_back(self());
+        g.body.push_back(statement(std::move(call)));
+    }
+    std::vector<FieldInfo> layout;
+    collectFields(qname, layout);
+    for (std::size_t i = c.fields.size(); i-- > 0;) {
+        const FieldDecl& f = c.fields[i];
+        const Type ft = resolved(f.type);
+        if (!needsDrop(ft)) {
+            continue;
+        }
+        std::uint32_t index = 0;
+        for (std::size_t k = 0; k < layout.size(); ++k) {
+            if (layout[k].decl == &f) {
+                index = static_cast<std::uint32_t>(k);
+            }
+        }
+        EP field = mk(hir::ExprKind::Field, ft, span);
+        field->text = f.name;
+        field->index = index;
+        field->through_pointer = true;
+        field->lvalue = true;
+        field->lhs = self();
+        EP addr = mk(hir::ExprKind::AddrOf, Type::makePointer(ft), span);
+        addr->lhs = std::move(field);
+        g.body.push_back(statement(dropCallOn(std::move(addr), ft, span)));
+    }
+    if (c.has_base) {
+        if (const auto base = s_.resolve(Type::makeNamed(c.base)); base && needsDrop(*base)) {
+            EP call = mk(hir::ExprKind::Call, Type::makeVoid(), span);
+            call->text = dropGlueName(base->path.front());
+            call->args.push_back(self());
+            g.body.push_back(statement(std::move(call)));
+        }
+    }
+    mod_.functions.push_back(std::move(g));
+}
+
+Lowerer::EP Lowerer::localRef(hir::LocalId id, const Type& type, const Span& span) {
+    EP r = mk(hir::ExprKind::LocalRef, type, span);
+    r->local = id;
+    r->text = fn_ != nullptr && id < fn_->locals.size() ? fn_->locals[id].name : std::string{};
+    r->lvalue = true;
+    return r;
+}
+
+Lowerer::EP Lowerer::boolConst(bool value, const Span& span) {
+    EP b = mk(hir::ExprKind::BoolConst, Type::makeBool(), span);
+    b->bool_value = value;
+    return b;
+}
+
+Lowerer::EP Lowerer::dropCallOn(EP addr, const Type& t, const Span& span) {
+    EP call = mk(hir::ExprKind::Call, Type::makeVoid(), span);
+    call->text = dropGlueName(t.path.front());
+    call->args.push_back(std::move(addr));
+    return call;
+}
+
+hir::Stmt Lowerer::dropStmt(hir::LocalId var, hir::LocalId flag, const Type& t, const Span& span) {
+    hir::Stmt s;
+    s.kind = hir::StmtKind::If;
+    s.span = span;
+    s.value = localRef(flag, Type::makeBool(), span);
+    hir::Stmt drop;
+    drop.kind = hir::StmtKind::Expr;
+    drop.span = span;
+    EP addr = mk(hir::ExprKind::AddrOf, Type::makePointer(t), span);
+    addr->lhs = localRef(var, t, span);
+    drop.value = dropCallOn(std::move(addr), t, span);
+    hir::Stmt clear;
+    clear.kind = hir::StmtKind::Assign;
+    clear.span = span;
+    clear.target = localRef(flag, Type::makeBool(), span);
+    clear.value = boolConst(false, span);
+    s.body.push_back(std::move(drop));
+    s.body.push_back(std::move(clear));
+    return s;
+}
+
+void Lowerer::registerDrop(hir::LocalId var,
+                           const Type& t,
+                           bool initialized,
+                           const Span& span,
+                           std::vector<hir::Stmt>& decls) {
+    const hir::LocalId flag = hiddenLocal("live", Type::makeBool(), span);
+    hir::Stmt decl;
+    decl.kind = hir::StmtKind::Local;
+    decl.span = span;
+    decl.local = flag;
+    decl.value = boolConst(initialized, span);
+    decls.push_back(std::move(decl));
+    drop_flags_[var] = flag;
+    if (!defers_.empty()) {
+        defers_.back().push_back(dropStmt(var, flag, t, span));
+    }
+}
+
+Lowerer::EP Lowerer::moveOut(EP value) {
+    if (!value || !needsDrop(value->type)) {
+        return value;
+    }
+    if (value->kind == hir::ExprKind::LocalRef) {
+        const auto it = drop_flags_.find(value->local);
+        if (it == drop_flags_.end()) {
+            return value;
+        }
+        EP m = mk(hir::ExprKind::Move, value->type, value->span);
+        m->local = it->second;
+        m->lhs = std::move(value);
+        return m;
+    }
+    if (value->kind == hir::ExprKind::Field || value->kind == hir::ExprKind::Index ||
+        value->kind == hir::ExprKind::Deref) {
+        err("E0720",
+            value->span,
+            "cannot move out of a field, element or pointer",
+            "take its address (`&x.f`) or copy it through a `clone()` method");
+        return nullptr;
+    }
+    return value;
+}
+
+Lowerer::EP Lowerer::materializeTemp(EP value, const Span& span) {
+    if (defers_.empty()) {
+        return value;
+    }
+    const Type t = value->type;
+    const hir::LocalId tmp = hiddenLocal("tmp", t, span);
+    const hir::LocalId flag = hiddenLocal("live", Type::makeBool(), span);
+    entry_temps_.emplace_back(tmp, flag);
+    defers_.back().push_back(dropStmt(tmp, flag, t, span));
+    EP m = mk(hir::ExprKind::Materialize, t, span);
+    m->local = tmp;
+    m->index = flag;
+    m->lhs = std::move(value);
+    m->lvalue = true;
+    return m;
+}
+
+void Lowerer::lowerDropAssign(EP target, EP value, const Span& span, std::vector<hir::Stmt>& out) {
+    const Type t = target->type;
+    const hir::LocalId tmp = hiddenLocal("asg", t, span);
+    hir::Stmt store;
+    store.kind = hir::StmtKind::Local;
+    store.span = span;
+    store.local = tmp;
+    store.value = std::move(value);
+    out.push_back(std::move(store));
+    // The new value is computed first (it may read the old one); then the old one is dropped.
+    const auto flag = target->kind == hir::ExprKind::LocalRef ? drop_flags_.find(target->local)
+                                                              : drop_flags_.end();
+    const bool tracked = flag != drop_flags_.end();
+    if (tracked) {
+        out.push_back(dropStmt(target->local, flag->second, t, span));
+    } else {
+        hir::Stmt old;
+        old.kind = hir::StmtKind::Expr;
+        old.span = span;
+        EP addr = mk(hir::ExprKind::AddrOf, Type::makePointer(t), span);
+        addr->lhs = cloneHirExpr(*target);
+        old.value = dropCallOn(std::move(addr), t, span);
+        out.push_back(std::move(old));
+    }
+    hir::Stmt assign;
+    assign.kind = hir::StmtKind::Assign;
+    assign.span = span;
+    assign.target = std::move(target);
+    assign.value = localRef(tmp, t, span);
+    out.push_back(std::move(assign));
+    if (tracked) {
+        hir::Stmt live;
+        live.kind = hir::StmtKind::Assign;
+        live.span = span;
+        live.target = localRef(flag->second, Type::makeBool(), span);
+        live.value = boolConst(true, span);
+        out.push_back(std::move(live));
+    }
+}
+
+bool Lowerer::lowerInitCall(const Expr& e, const Type& t, std::string& key, std::vector<EP>& args) {
+    const auto ref = s_.entityByQName(t.path.front());
+    const auto* cls = ref ? std::get_if<ClassDecl>(&ref->sym->item->decl) : nullptr;
+    key.clear();
+    args.clear();
+    if (cls == nullptr) {
+        return false;
+    }
+    MethodRef m;
+    m.kind = MethodRef::Kind::Direct;
+    m.cls = cls;
+    m.cls_q = t.path.front();
+    m.owner = ref->owner;
+    const auto cands = methodCandidates(m, "init");
+    if (cands.empty()) {
+        if (!e.args.empty()) {
+            err("E0710",
+                e.span,
+                std::format("`{}` has no `init`; it takes no arguments", cls->name),
+                "write an `init` method to take arguments");
+            return false;
+        }
+        return true;
+    }
+    std::size_t pick = 0;
+    if (cands.size() > 1) {
+        const auto chosen = resolveOverload(e, cls->name, cands);
+        if (!chosen) {
+            return false;
+        }
+        pick = *chosen;
+    }
+    if (!lowerArgs(e, cands[pick].params, args, cls->name)) {
+        return false;
+    }
+    key = cands[pick].key;
+    return true;
+}
+
+Lowerer::EP Lowerer::constructCall(const Expr& e, const ScopeEntry& entry) {
+    const auto& cls = std::get<ClassDecl>(entry.item->decl);
+    const std::string qname = entry.qname.empty() ? cls.name : entry.qname;
+    Type t = Type::makeNamed({qname});
+    t.kind = TypeKind::Class;
+    t.span = e.span;
+    std::string key;
+    std::vector<EP> args;
+    if (!lowerInitCall(e, t, key, args)) {
+        return nullptr;
+    }
+    EP out = mk(hir::ExprKind::Construct, t, e.span);
+    out->target = t;
+    out->text = key;
+    out->args = std::move(args);
+    return out;
+}
+
 void Lowerer::lowerBlock(const Block& block, std::vector<hir::Stmt>& out, bool new_scope) {
     if (new_scope) {
         scopes_.push(ScopeKind::Block);
@@ -1945,7 +2413,12 @@ void Lowerer::lowerAssign(const Expr& target_ast,
     if (target && value) {
         value = coerce(std::move(value), want, value_ast.span);
     }
+    value = moveOut(std::move(value));
     if (!target || !value) {
+        return;
+    }
+    if (needsDrop(target->type)) {
+        lowerDropAssign(std::move(target), std::move(value), span, out);
         return;
     }
     hir::Stmt h;
@@ -2325,8 +2798,12 @@ void Lowerer::lowerStmt(const Stmt& s, std::vector<hir::Stmt>& out) {
                 "write a type (`local x: T`) or an initial value");
             t = unknownType();
         }
+        init = moveOut(std::move(init));
         h.kind = hir::StmtKind::Local;
         h.local = addLocal(s.name, t, false, s.span);
+        if (needsDrop(t)) {
+            registerDrop(h.local, t, init != nullptr, s.span, out);
+        }
         h.value = std::move(init);
         bindLocal(
             s.name, h.local, t, s.span); // after the initializer: `local x = x` sees the outer `x`
@@ -2335,6 +2812,76 @@ void Lowerer::lowerStmt(const Stmt& s, std::vector<hir::Stmt>& out) {
     case Stmt::Kind::Const:
         lowerLocalConst(s);
         return;
+    case Stmt::Kind::Delete: {
+        // Drop the object (when its class needs drop), then free it through the allocator.
+        EP p = expr(*s.expr, nullptr);
+        if (!p) {
+            return;
+        }
+        if (p->type.kind != TypeKind::Pointer || !p->type.elem || !isAggregate(*p->type.elem)) {
+            err("E0709",
+                s.expr->span,
+                std::format("`delete` needs a pointer to a struct or class, found `{}`",
+                            typeToString(p->type)),
+                "only `new` objects can be deleted");
+            return;
+        }
+        const Type t = *p->type.elem;
+        const Type ptr = p->type;
+        const hir::LocalId tmp = hiddenLocal("del", ptr, s.span);
+        hir::Stmt store;
+        store.kind = hir::StmtKind::Local;
+        store.span = s.span;
+        store.local = tmp;
+        store.value = std::move(p);
+        out.push_back(std::move(store));
+        if (needsDrop(t)) {
+            hir::Stmt drop;
+            drop.kind = hir::StmtKind::Expr;
+            drop.span = s.span;
+            drop.value = dropCallOn(localRef(tmp, ptr, s.span), t, s.span);
+            out.push_back(std::move(drop));
+        }
+        EP alloc;
+        if (s.target) {
+            alloc = expr(*s.target, nullptr);
+        } else {
+            const auto ref = s_.entityByQName(mod_.allocator_global);
+            if (mod_.allocator_global.empty() || !ref) {
+                err("E0501",
+                    s.span,
+                    "`delete` has no registered allocator",
+                    "write `delete(a) p` or register an allocator global");
+                return;
+            }
+            alloc = mk(hir::ExprKind::GlobalRef, resolvedIn(*ref->owner, std::get<GlobalDecl>(ref->sym->item->decl).type), s.span);
+            alloc->text = mod_.allocator_global;
+            alloc->lvalue = true;
+        }
+        if (!alloc) {
+            return;
+        }
+        const auto m = alloc->type.kind == TypeKind::Interface ? findMethod(alloc->type, "free")
+                                                              : std::nullopt;
+        if (!m) {
+            err("E0709",
+                s.span,
+                std::format("`{}` is not an interface allocator with `free`", typeToString(alloc->type)),
+                "`delete` frees through an interface value");
+            return;
+        }
+        EP call = mk(hir::ExprKind::CallItable, Type::makeVoid(), s.span);
+        call->text = "free";
+        call->index = m->index;
+        call->lhs = std::move(alloc);
+        call->args.push_back(localRef(tmp, ptr, s.span));
+        hir::Stmt free_stmt;
+        free_stmt.kind = hir::StmtKind::Expr;
+        free_stmt.span = s.span;
+        free_stmt.value = std::move(call);
+        out.push_back(std::move(free_stmt));
+        return;
+    }
     case Stmt::Kind::Assign:
         if (s.has_compound_op) {
             lowerCompound(s, out);
@@ -2352,7 +2899,7 @@ void Lowerer::lowerStmt(const Stmt& s, std::vector<hir::Stmt>& out) {
                     "remove the value or add `-> T`");
                 (void)expr(*s.expr, nullptr);
             } else {
-                h.value = coerce(expr(*s.expr, &ret_), ret_, s.expr->span);
+                h.value = moveOut(coerce(expr(*s.expr, &ret_), ret_, s.expr->span));
                 if (!h.value) {
                     return;
                 }
@@ -2439,6 +2986,20 @@ void Lowerer::lowerStmt(const Stmt& s, std::vector<hir::Stmt>& out) {
         EP v = expr(*s.expr, nullptr);
         if (!v) {
             return;
+        }
+        if (needsDrop(v->type)) {
+            // A discarded droppable value is dropped right after the statement.
+            const Type t = v->type;
+            const hir::LocalId tmp = hiddenLocal("disc", t, s.span);
+            hir::Stmt store;
+            store.kind = hir::StmtKind::Local;
+            store.span = s.span;
+            store.local = tmp;
+            store.value = std::move(v);
+            out.push_back(std::move(store));
+            EP addr = mk(hir::ExprKind::AddrOf, Type::makePointer(t), s.span);
+            addr->lhs = localRef(tmp, t, s.span);
+            v = dropCallOn(std::move(addr), t, s.span);
         }
         h.kind = hir::StmtKind::Expr;
         h.value = std::move(v);
@@ -3281,7 +3842,7 @@ bool Lowerer::lowerArgs(const Expr& call,
     }
     bool ok = true;
     for (std::size_t i = 0; i < params.size(); ++i) {
-        EP a = coerce(expr(*call.args[i], &params[i]), params[i], call.args[i]->span);
+        EP a = moveOut(coerce(expr(*call.args[i], &params[i]), params[i], call.args[i]->span));
         ok = ok && a != nullptr;
         out.push_back(std::move(a));
     }
@@ -3664,6 +4225,9 @@ Lowerer::EP Lowerer::methodCall(const Expr& e, const Expr& recv_ast) {
         }
         return c;
     }
+    if (!recv->lvalue && needsDrop(recv->type)) {
+        recv = materializeTemp(std::move(recv), recv_ast.span);
+    }
     bool through = false;
     Type agg = recv->type;
     if (agg.kind == TypeKind::Pointer && agg.elem) {
@@ -3839,6 +4403,10 @@ Lowerer::EP Lowerer::callExpr(const Expr& e, const Type* expected) {
             if (name.starts_with("__builtin_")) {
                 return builtinCall(e, name);
             }
+        }
+        if (entry != nullptr && entry->kind == ScopeEntry::Kind::Type && entry->item != nullptr &&
+            std::holds_alternative<ClassDecl>(entry->item->decl)) {
+            return constructCall(e, *entry);  // `T(args)` builds a class
         }
         if (entry != nullptr) {
             if (EP c = callEntry(e, *entry, name)) {
@@ -4083,7 +4651,7 @@ void Lowerer::lowerFields(const Expr& e, const Type& agg, std::vector<hir::Field
             continue;
         }
         const Type ft = resolvedIn(*fields[index].owner, fields[index].decl->type);
-        EP v = init.value ? coerce(expr(*init.value, &ft), ft, init.value->span) : nullptr;
+        EP v = init.value ? moveOut(coerce(expr(*init.value, &ft), ft, init.value->span)) : nullptr;
         if (!v) {
             continue;
         }
@@ -4107,6 +4675,13 @@ Lowerer::EP Lowerer::structLiteral(const Expr& e) {
             "cannot build it with `{ ... }`");
         return nullptr;
     }
+    if (t.kind == TypeKind::Class && hasInit(t.path.front())) {
+        err("E0723",
+            e.span,
+            std::format("`{}` has an `init`; build it with `{}(...)`", typeToString(t), typeToString(t)),
+            "a class literal would skip the constructor");
+        return nullptr;
+    }
     EP out = mk(hir::ExprKind::StructLit, t, e.span);
     lowerFields(e, t, out->fields);
     return out;
@@ -4126,6 +4701,24 @@ Lowerer::EP Lowerer::newExpr(const Expr& e) {
     }
     EP out = mk(hir::ExprKind::New, Type::makePointer(t), e.span);
     out->target = t;
+    if (t.kind == TypeKind::Class && (e.has_call_args || hasInit(t.path.front()))) {
+        if (!e.has_call_args) {
+            err("E0723",
+                e.span,
+                std::format("`{}` has an `init`; allocate it with `new {}(...)`", typeToString(t), typeToString(t)),
+                "a field literal would skip the constructor");
+            return nullptr;
+        }
+        if (!lowerInitCall(e, t, out->text, out->args)) {
+            return nullptr;
+        }
+    } else if (e.has_call_args) {
+        err("E0709",
+            e.span,
+            std::format("`new {}(...)` needs a class with an `init`", typeToString(t)),
+            "use `new T { ... }` for structs");
+        return nullptr;
+    }
     lowerFields(e, t, out->fields);
     if (e.lhs) {
         EP a = expr(*e.lhs, nullptr);

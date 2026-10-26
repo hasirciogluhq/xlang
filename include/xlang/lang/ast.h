@@ -87,6 +87,8 @@ struct Expr {
     std::vector<FieldInit> fields;
     /// Cast: target type. StructLiteral/New: the constructed type.
     Type type;
+    /// New: written as `new T(args)` (constructor arguments in `args`, possibly none).
+    bool has_call_args{false};
     std::vector<std::vector<Token>> macro_args;
 };
 
@@ -104,6 +106,7 @@ struct SwitchCase {
 struct Stmt {
     enum class Kind {
         Local,   ///< local name [: type] [= expr]
+        Delete,  ///< delete [(allocator)] ptr: runs the drop glue, then frees (expr = pointer, target = allocator)
         Const,   ///< const name [: type] = expr (read-only; the value is a compile-time constant)
         Assign,  ///< target = expr; compound (`+=` ...) when `has_compound_op`
         Return,  ///< return [expr]

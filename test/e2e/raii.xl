@@ -1,0 +1,154 @@
+// RAII: `init` constructors, `drop` destructors and moves for classes. Every drop appends the
+// object's id to `order`, so the digits of `order` show the order of the drops.
+from "std" import println, print
+
+global failures: i32 = 0
+global drops: i32 = 0
+global order: i32 = 0
+
+class Counter {
+    id: i32
+
+    fn init(self, id: i32) { self.id = id }
+
+    fn tag(self) -> i32 { return self.id }
+
+    fn drop(self) {
+        drops = drops + 1
+        order = order * 10 + self.id
+    }
+}
+
+class Pair {
+    first: Counter
+    second: Counter
+}
+
+class Base {
+    fn drop(self) { order = order * 10 + 9 }
+}
+
+class Derived : Base {
+    fn drop(self) { order = order * 10 + 8 }
+}
+
+fn check(name: *ui8, ok: bool) {
+    if !ok {
+        failures = failures + 1
+        print("FAIL ")
+        println(name)
+    }
+}
+
+fn makeCounter(id: i32) -> Counter {
+    local c = Counter(id)
+    return c
+}
+
+fn consume(c: Counter) {
+}
+
+fn early(flag: bool) -> i32 {
+    local a = Counter(7)
+    if flag {
+        local b = Counter(8)
+        return 1
+    }
+    return 0
+}
+
+fn main() -> i32 {
+    order = 0
+    drops = 0
+    {
+        local x = Counter(1)
+        local y = Counter(2)
+    }
+    check("block end drops in reverse", drops == 2 && order == 21)
+
+    order = 0
+    drops = 0
+    {
+        local m = makeCounter(3)
+        check("return moves the value out", drops == 0)
+    }
+    check("returned value is dropped by its owner", drops == 1 && order == 3)
+
+    order = 0
+    drops = 0
+    consume(Counter(4))
+    check("by-value parameter is dropped by the callee", drops == 1 && order == 4)
+
+    order = 0
+    drops = 0
+    early(true)
+    check("early return drops inner then outer", drops == 2 && order == 87)
+    early(false)
+    check("early return of the outer local", drops == 3 && order == 877)
+
+    order = 0
+    drops = 0
+    local i: i32 = 0
+    while i < 3 {
+        local c = Counter(5)
+        i = i + 1
+        if i == 2 {
+            continue
+        }
+    }
+    check("continue and loop end drop each iteration", drops == 3 && order == 555)
+
+    order = 0
+    drops = 0
+    {
+        local p = Counter(6)
+        local q = p
+    }
+    check("a moved local is not dropped twice", drops == 1 && order == 6)
+
+    order = 0
+    drops = 0
+    {
+        local pr = Pair { first: Counter(1), second: Counter(2) }
+    }
+    check("fields drop in reverse declaration order", drops == 2 && order == 21)
+
+    order = 0
+    drops = 0
+    {
+        local d = Derived()
+    }
+    check("derived drop runs before the base glue", drops == 0 && order == 89)
+
+    order = 0
+    drops = 0
+    {
+        local c = Counter(1)
+        defer order = order * 10 + 5
+    }
+    check("defer runs before the drop it was declared after", order == 51)
+
+    order = 0
+    drops = 0
+    {
+        check("temporary receiver", Counter(5).tag() == 5)
+    }
+    check("temporary receiver is dropped at block end", drops == 1 && order == 5)
+
+    order = 0
+    drops = 0
+    Counter(6)
+    check("discarded temporary is dropped at once", drops == 1 && order == 6)
+
+    order = 0
+    drops = 0
+    local np = new Counter(9)
+    check("new runs init", np.id == 9)
+    delete np
+    check("delete drops then frees", drops == 1 && order == 9)
+
+    if failures == 0 {
+        println("raii ok")
+    }
+    return failures
+}

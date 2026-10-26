@@ -62,6 +62,11 @@ enum class ExprKind {
     AtomicAdd,      ///< lhs = pointer, rhs = value; returns the old value
     Fence,          ///< index = MemoryOrder; void
     Asm,            ///< text = template, asm_operands, clobbers, nomem/noreturn; void
+    Construct,      ///< `T(args)` of a class: a new object of type `target` (zeroed, vptr set); text =
+                    ///< its `init` function (empty = none), args = the init arguments (no `self`)
+    Move,           ///< lhs (a droppable local) read by value; clears the drop flag `local`
+    Materialize,    ///< lhs (a droppable temporary) stored in local `local`, drop flag `index` set; an
+                    ///< lvalue: the stored object
 };
 
 

@@ -45,6 +45,14 @@ Everything in the original plan is implemented; this file lists what is intentio
   operand or a `define` argument. Its initializer cannot read another variable or `const` (a `GlobalRef` is not a compile-time
   value), and an untyped module-level `const` takes only the default type of a literal (an enum member or an array needs
   `: T`). Block-level `const` names are not `define` names: they are read-only globals with a unique symbol.
+- Ownership (core-language phase 5): drops are statically dispatched (deleting a derived object through a base pointer runs
+  only the base drop). There is no explicit base constructor call: a derived `init` runs the base's argument-less `init`
+  automatically. **Assigning a droppable field (`self.f = T(...)`) drops the old value of that field first, and in a
+  constructor that old value is the zeroed object `T(...)` created**, so the user `drop` runs on zeroed data. This follows
+  the spec's assignment rule; a constructor cannot initialize a droppable field without it. Open decision. Arrays of
+  droppable elements are not rejected (`E0721` covers struct fields and globals only). `delete(a)` needs an interface
+  allocator value. Temporaries used as receivers are materialized with a drop flag; a droppable temporary inside `&&`/`||`
+  or a `?:` branch is dropped only if it was created.
 - Overloading (core-language phase 3): an overloaded function's HIR name is its qualified name plus its mangled parameter
   types (not the link symbol); this is the unique key codegen uses. Overload resolution lowers each argument once per
   candidate plus once more, so nested overloaded calls cost time exponential in their depth. Class-to-base pointer

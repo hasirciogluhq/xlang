@@ -46,6 +46,9 @@ void dumpExpr(std::ostream& out, const Function* fn, const Expr& e) {
     case ExprKind::GlobalRef: out << '@' << e.text; return;
     case ExprKind::FuncRef: out << "&fn " << e.text; return;
     case ExprKind::External: out << "external(" << e.text << '.' << e.member << ')'; return;
+    case ExprKind::Construct: out << "construct " << typeName(e.target) << ' ' << e.text; break;
+    case ExprKind::Move: out << "move#" << e.local; break;
+    case ExprKind::Materialize: out << "materialize#" << e.local << " live#" << e.index; break;
     case ExprKind::Unary: sub(unaryOpName(e.unary_op)); break;
     case ExprKind::Binary: sub(binaryOpName(e.binary_op)); break;
     case ExprKind::Cast: sub(e.implicit ? "cast.implicit" : "cast"); break;
