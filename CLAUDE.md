@@ -39,7 +39,7 @@ Object to bad ideas but leave decision to user. Cite real precedents. Do not re-
 
 ## Language summary
 - Functions: `fn name(a: i32) -> i32 { }` (no `->` = void).
-- Control: `while`, `do {} while`, `for`, `for i in lo..hi`, labeled `break`/`continue`, `switch` (no fallthrough), `defer`, ternary, compound assignment, `x++`/`x--`. No generics/tuples yet.
+- Control: `while`, `do {} while`, `for`, `for i in lo..hi`, labeled `break`/`continue`, `switch` (no fallthrough), `defer`, ternary, compound assignment, `x++`/`x--`. Generics on fn, struct and class (monomorphized, no constraints); no tuples yet.
 - Naming: types `PascalCase`, functions/vars/fields `camelCase`. `__builtin_` prefix stays. External names keep original spelling.
 - Types: `i8..i64`, `ui8..ui64`, `f32/f64`, `bool`, `void`, `*T`, `fn(A)->R`, `[T; N]` (fixed array). Bounds check under `--safety=checked` (default).
 - `enum Name: T { ... }` (default `i32`). Access `Name.A`. Explicit `as` for conversions. `MemoryOrder` is builtin enum.

@@ -1,6 +1,6 @@
 # Known limitations and open decisions
 
-Everything in the original plan is implemented; this file lists what is intentionally incomplete.
+The original plan is implemented except the items below, which are intentionally incomplete or blocked. The largest open item is `Vec<T>` (core-language phase 7), blocked on a raw-move operation the spec does not define.
 
 ## Platform support
 - **macOS raw threads:** `bsdthread_register` returns `EINVAL` in a process that did not come up through
