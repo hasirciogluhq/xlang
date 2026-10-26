@@ -174,10 +174,14 @@ void Sema::collect() {
         bool named = true;
         if (std::holds_alternative<StructDecl>(item.decl)) {
             sym.kind = Symbol::Kind::Struct;
-            aggregate_order_.push_back(base.name);
+            if (genericParamsOf(item).empty()) {
+                aggregate_order_.push_back(base.name);
+            }
         } else if (std::holds_alternative<ClassDecl>(item.decl)) {
             sym.kind = Symbol::Kind::Class;
-            aggregate_order_.push_back(base.name);
+            if (genericParamsOf(item).empty()) {
+                aggregate_order_.push_back(base.name);
+            }
         } else if (std::holds_alternative<InterfaceDecl>(item.decl)) {
             sym.kind = Symbol::Kind::Interface;
         } else if (std::holds_alternative<EnumDecl>(item.decl)) {
@@ -288,7 +292,26 @@ std::string Sema::linkName(const std::vector<Attribute>& attrs,
         module = "main";
     }
     std::replace(module.begin(), module.end(), '/', '.');
-    return "_xl$" + module + "$" + local_name + sig;
+    // A generic instance is named `f<i32, str>`: its link name spells the brackets `G`/`E`.
+    std::string name;
+    for (const char c : local_name) {
+        switch (c) {
+        case '<': name += 'G'; break;
+        case '>': name += 'E'; break;
+        case ',':
+        case ' ': break;
+        case '.':
+        case ':':
+        case '*':
+        case '[':
+        case ']':
+        case ';':
+        case '(':
+        case ')': name += '_'; break;
+        default: name += c; break;
+        }
+    }
+    return "_xl$" + module + "$" + name + sig;
 }
 
 std::optional<Sema::EntityRef> Sema::resolveFnAlias(const std::vector<std::string>& path,
@@ -324,6 +347,116 @@ std::optional<Sema::EntityRef> Sema::resolveFnAlias(const std::vector<std::strin
         cur = alias.target;
         span = alias.target_span;
     }
+}
+
+std::vector<std::string> Sema::genericParamsOf(const Item& item) {
+    if (const auto* f = std::get_if<FnDecl>(&item.decl)) {
+        return f->generic_params;
+    }
+    if (const auto* s = std::get_if<StructDecl>(&item.decl)) {
+        return s->generic_params;
+    }
+    if (const auto* c = std::get_if<ClassDecl>(&item.decl)) {
+        return c->generic_params;
+    }
+    return {};
+}
+
+namespace {
+
+/// Nesting depth of a type: `i32` is 0, `Vec<Vec<i32>>` and `*[*i32; 2]` are deeper.
+int typeNesting(const Type& t) {
+    int inner = 0;
+    if (t.elem) {
+        inner = std::max(inner, typeNesting(*t.elem));
+    }
+    if (t.ret) {
+        inner = std::max(inner, typeNesting(*t.ret));
+    }
+    for (const Type& p : t.params) {
+        inner = std::max(inner, typeNesting(p));
+    }
+    for (const Type& a : t.args) {
+        inner = std::max(inner, typeNesting(a));
+    }
+    const bool has_children = t.elem || t.ret || !t.params.empty() || !t.args.empty();
+    return has_children ? inner + 1 : 0;
+}
+
+}  // namespace
+
+std::optional<Sema::EntityRef> Sema::instantiate(const EntityRef& generic,
+                                                 const std::vector<Type>& args,
+                                                 const Span& at) {
+    const Item& gitem = *generic.sym->item;
+    const std::vector<std::string> params = genericParamsOf(gitem);
+    Sema& owner = *generic.owner;
+    if (params.size() != args.size()) {
+        error("E0724",
+              at,
+              std::format("`{}` takes {} type argument(s), {} given",
+                          generic.local,
+                          params.size(),
+                          args.size()),
+              "write one type per type parameter");
+        return std::nullopt;
+    }
+    int nesting = 0;
+    for (const Type& a : args) {
+        nesting = std::max(nesting, typeNesting(a));
+    }
+    if (nesting > 64) {
+        error("E0725",
+              at,
+              "generic instantiation too deep",
+              "the type arguments nest more than 64 levels");
+        return std::nullopt;
+    }
+    // Instance names use `.` for qualified type names: `::` separates the module (see qualify).
+    std::string shown;
+    for (std::size_t i = 0; i < args.size(); ++i) {
+        std::string spelled = typeToString(args[i]);
+        for (std::size_t p = spelled.find("::"); p != std::string::npos; p = spelled.find("::", p)) {
+            spelled.replace(p, 2, ".");
+        }
+        shown += (i != 0 ? ", " : "") + spelled;
+    }
+    const std::string local = generic.local + "<" + shown + ">";
+    if (owner.symbols_.find(local) == owner.symbols_.end()) {
+        TypeEnv env;
+        for (std::size_t i = 0; i < params.size(); ++i) {
+            env[params[i]] = args[i];
+        }
+        owner.instances_.push_back(instantiateItem(gitem, env, local));
+        const Item* item = &owner.instances_.back();
+        Symbol sym;
+        sym.item = item;
+        if (std::holds_alternative<ClassDecl>(item->decl)) {
+            sym.kind = Symbol::Kind::Class;
+            owner.aggregate_order_.push_back(local);
+        } else if (std::holds_alternative<StructDecl>(item->decl)) {
+            sym.kind = Symbol::Kind::Struct;
+            owner.aggregate_order_.push_back(local);
+        } else {
+            sym.kind = Symbol::Kind::Fn;
+            sym.overloads = {item};
+        }
+        owner.symbols_.emplace(local, std::move(sym));
+        owner.instance_info_[local] = InstanceInfo{generic.qname(), args};
+        owner.pending_instances_.push_back(item);
+    }
+    return EntityRef{&owner, &owner.symbols_.at(local), local};
+}
+
+std::vector<const Item*> Sema::takePendingInstances() {
+    std::vector<const Item*> out;
+    out.swap(pending_instances_);
+    return out;
+}
+
+const Sema::InstanceInfo* Sema::instanceInfo(const std::string& local) const {
+    const auto it = instance_info_.find(local);
+    return it == instance_info_.end() ? nullptr : &it->second;
 }
 
 const Sema::Symbol* Sema::find(const std::string& name) const {
@@ -399,6 +532,33 @@ std::optional<Type> Sema::resolve(const Type& type) {
               std::format("unknown type `{}`", shown),
               "not declared in this module");
         return std::nullopt;
+    }
+    if (!type.args.empty()) {
+        // `Name<A, B>`: an instance of a generic struct or class.
+        if (ref->sym->item == nullptr || genericParamsOf(*ref->sym->item).empty()) {
+            error("E0724",
+                  type.span,
+                  std::format("`{}` takes no type arguments", shown),
+                  "remove the `<...>`");
+            return std::nullopt;
+        }
+        std::vector<Type> args;
+        for (const Type& a : type.args) {
+            auto r = resolve(a);
+            if (!r) {
+                return std::nullopt;
+            }
+            args.push_back(std::move(*r));
+        }
+        const auto inst = ref->owner->instantiate(*ref, args, type.span);
+        if (!inst) {
+            return std::nullopt;
+        }
+        Type out = type;
+        out.path = {inst->qname()};
+        out.args = std::move(args);
+        out.kind = inst->sym->kind == Symbol::Kind::Class ? TypeKind::Class : TypeKind::Struct;
+        return out;
     }
     Sema& owner = *ref->owner;
     Type out = type;
@@ -1556,7 +1716,9 @@ void Sema::analyze() {
             if (g->init) {
                 checkExpr(*g->init);
             }
-        } else if (const auto* f = std::get_if<FnDecl>(&item.decl)) {
+        } else if (const auto* f = std::get_if<FnDecl>(&item.decl);
+                   f != nullptr && f->generic_params.empty()) {
+            // Generic declarations are checked per instance, when they are instantiated.
             for (const Param& p : f->params) {
                 if (!p.is_self) {
                     checkType(p.type, p.span);
@@ -1566,8 +1728,9 @@ void Sema::analyze() {
             if (f->has_body) {
                 checkStatements(f->body);
             }
-        } else if (std::holds_alternative<StructDecl>(item.decl) ||
-                   std::holds_alternative<ClassDecl>(item.decl)) {
+        } else if ((std::holds_alternative<StructDecl>(item.decl) ||
+                    std::holds_alternative<ClassDecl>(item.decl)) &&
+                   genericParamsOf(item).empty()) {
             const auto* fields = std::holds_alternative<StructDecl>(item.decl)
                                      ? &std::get<StructDecl>(item.decl).fields
                                      : &std::get<ClassDecl>(item.decl).fields;

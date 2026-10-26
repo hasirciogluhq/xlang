@@ -310,6 +310,90 @@ class Parser {
     // ------------------------------------------------------------------------------------
     // Types
 
+    /// `<T, U>` after a `fn`, `struct` or `class` name.
+    std::vector<std::string> parseGenericParams() {
+        std::vector<std::string> names;
+        expect(TokenKind::Lt, "`<` starting the type parameters");
+        while (!at(TokenKind::Gt) && !at(TokenKind::End)) {
+            names.push_back(expectIdent("a type parameter name"));
+            if (!match(TokenKind::Comma)) {
+                break;
+            }
+        }
+        closeAngle();
+        return names;
+    }
+
+    /// Type parameters on a declaration that cannot have them (E0724); they are consumed.
+    void rejectTypeParams() {
+        if (at(TokenKind::Lt)) {
+            diag_.error("E0724",
+                        cur().span,
+                        "type parameters are only allowed on `fn`, `struct` and `class`",
+                        "remove the `<...>`");
+            (void)parseGenericParams();
+        }
+    }
+
+    /// `<A, B>` after a type name or an identifier in an expression.
+    std::vector<Type> parseTypeArgs() {
+        std::vector<Type> args;
+        expect(TokenKind::Lt, "`<` starting the type arguments");
+        while (!at(TokenKind::Gt) && !at(TokenKind::Shr) && !at(TokenKind::End)) {
+            args.push_back(parseType());
+            if (!match(TokenKind::Comma)) {
+                break;
+            }
+        }
+        closeAngle();
+        return args;
+    }
+
+    /// Consumes one `>`. A `>>` (or `>=`, `>>=`) token gives up its first character, so nested
+    /// type arguments `Vec<Vec<i32>>` close one level at a time.
+    void closeAngle() {
+        Token& t = tokens_[pos_];
+        switch (t.kind) {
+        case TokenKind::Gt: advance(); return;
+        case TokenKind::Shr: t.kind = TokenKind::Gt; t.text = ">"; return;
+        case TokenKind::Ge: t.kind = TokenKind::Assign; t.text = "="; return;
+        case TokenKind::ShrAssign: t.kind = TokenKind::Ge; t.text = ">="; return;
+        default: expected("`>` closing the type arguments");
+        }
+    }
+
+    /// Whether the `<` at the cursor opens type arguments of an identifier in an expression: they
+    /// must close with `>` directly followed by `(` or `{`, and contain only type-like tokens.
+    /// Otherwise the `<` is a comparison.
+    [[nodiscard]] bool genericArgsAhead() const {
+        int depth = 0;
+        for (std::size_t i = pos_; i < tokens_.size(); ++i) {
+            switch (tokens_[i].kind) {
+            case TokenKind::Lt: ++depth; break;
+            case TokenKind::Gt: --depth; break;
+            case TokenKind::Shr: depth -= 2; break;
+            case TokenKind::Ident:
+            case TokenKind::PrimType:
+            case TokenKind::Star:
+            case TokenKind::Comma:
+            case TokenKind::Dot:
+            case TokenKind::LBracket:
+            case TokenKind::RBracket:
+            case TokenKind::Int:
+            case TokenKind::Semicolon: break;
+            default: return false;
+            }
+            if (depth < 0) {
+                return false;
+            }
+            if (depth == 0) {
+                const TokenKind next = i + 1 < tokens_.size() ? tokens_[i + 1].kind : TokenKind::End;
+                return next == TokenKind::LParen || next == TokenKind::LBrace;
+            }
+        }
+        return false;
+    }
+
     Type parseType() {
         const Span start = cur().span;
         Type type;
@@ -366,6 +450,9 @@ class Parser {
                 path.push_back(advance().text);
             }
             type = Type::makeNamed(std::move(path));
+            if (at(TokenKind::Lt)) {
+                type.args = parseTypeArgs();
+            }
             break;
         }
         default:
@@ -747,6 +834,7 @@ class Parser {
                        !pathOf(*expr).empty() && looksLikeStructLiteral()) {
                 ExprPtr lit = makeExpr(Expr::Kind::StructLiteral, expr->span);
                 Type type = Type::makeNamed(splitPath(pathOf(*expr)));
+                type.args = expr->generic_args;
                 type.span = expr->span;
                 lit->type = std::move(type);
                 lit->fields = parseFieldInits();
@@ -792,6 +880,9 @@ class Parser {
             ExprPtr e = makeExpr(Expr::Kind::Name, start);
             e->text = tok.text;
             advance();
+            if (at(TokenKind::Lt) && genericArgsAhead()) {
+                e->generic_args = parseTypeArgs();
+            }
             return e;
         }
         case TokenKind::SelfKw: {
@@ -1489,6 +1580,9 @@ class Parser {
         }
         const std::string name = advance().text;
         const Span name_span = name_tok.span;
+        if (at(TokenKind::Lt)) {
+            fn.generic_params = parseGenericParams();
+        }
 
         expect(TokenKind::LParen, "`(` starting the parameter list");
         ++nl_depth_;
@@ -1567,6 +1661,7 @@ class Parser {
         advance(); // 'global'
         const Token& name_tok = cur();
         const std::string name = expectIdent("a global name");
+        rejectTypeParams();
         expect(TokenKind::Colon, "`:` and the type of the global");
         g.type = parseType();
         if (match(TokenKind::Assign)) {
@@ -1584,6 +1679,7 @@ class Parser {
         advance(); // 'const'
         const Token& name_tok = cur();
         const std::string name = expectIdent("a constant name");
+        rejectTypeParams();
         g.has_type = match(TokenKind::Colon);
         if (g.has_type) {
             g.type = parseType();
@@ -1623,6 +1719,9 @@ class Parser {
         advance(); // 'struct'
         const Token& name_tok = cur();
         const std::string name = expectIdent("a struct name");
+        if (at(TokenKind::Lt)) {
+            decl.generic_params = parseGenericParams();
+        }
         if (at(TokenKind::LBrace)) {
             advance();
             const int saved_depth = nl_depth_;
@@ -1658,6 +1757,9 @@ class Parser {
         advance(); // 'class'
         const Token& name_tok = cur();
         const std::string name = expectIdent("a class name");
+        if (at(TokenKind::Lt)) {
+            decl.generic_params = parseGenericParams();
+        }
         if (match(TokenKind::Colon)) {
             decl.has_base = true;
             decl.base.push_back(expectIdent("a base class name"));
@@ -1718,6 +1820,7 @@ class Parser {
         advance(); // 'interface'
         const Token& name_tok = cur();
         const std::string name = expectIdent("an interface name");
+        rejectTypeParams();
         if (at(TokenKind::LBrace)) {
             advance();
             const int saved_depth = nl_depth_;
@@ -1778,6 +1881,7 @@ class Parser {
         advance(); // 'enum'
         const Token& name_tok = cur();
         const std::string name = expectIdent("an enum name");
+        rejectTypeParams();
         if (match(TokenKind::Colon)) {
             decl.has_underlying = true;
             decl.underlying = parseType();

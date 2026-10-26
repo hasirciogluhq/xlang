@@ -59,6 +59,7 @@ target("xlang-frontend")
     end)
     add_files(
         "$(projectdir)/src/lang/ast/ast.cpp",
+        "$(projectdir)/src/lang/ast/clone.cpp",
         "$(projectdir)/src/lang/lexer/lexer.cpp",
         "$(projectdir)/src/lang/preprocess/preprocess.cpp",
         "$(projectdir)/src/lang/macro/macro.cpp",

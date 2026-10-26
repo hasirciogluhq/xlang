@@ -47,6 +47,22 @@ namespace {
     return t.kind == TypeKind::Struct || t.kind == TypeKind::Class;
 }
 
+namespace {
+
+/// Quiet trial lowering for the lifetime of the scope.
+class QuietScope {
+public:
+    explicit QuietScope(DiagnosticEngine& diag) : diag_(diag) { diag_.beginQuiet(); }
+    ~QuietScope() { diag_.endQuiet(); }
+    QuietScope(const QuietScope&) = delete;
+    QuietScope& operator=(const QuietScope&) = delete;
+
+private:
+    DiagnosticEngine& diag_;
+};
+
+}  // namespace
+
 /// Default type of an untyped `const` from its value: integers i32 (i64 when they do not fit),
 /// floats f64, bools, strings str. nullopt when the value is not a literal constant.
 [[nodiscard]] std::optional<Type> literalConstType(Sema& sema, const Expr& init) {
@@ -149,6 +165,10 @@ class Lowerer {
     Lowerer(Sema& sema, LowerShared& shared) : s_(sema), sh_(shared), mod_(shared.module) {}
 
     void collectImpls();
+    /// Lowers the generic instances created since the last call; true when there were any.
+    bool lowerPendingInstances();
+    /// Ends the module scope (after every instance is lowered).
+    void finish();
     void checkRegistrations();
     void run();
 
@@ -180,6 +200,8 @@ class Lowerer {
 
     // --- module items
     void lowerItems();
+    /// Lowers the items of `items` (declarations of this module, or generic instances).
+    void lowerBatch(const std::vector<const Item*>& items);
     void lowerFunction(const FnDecl& f,
                        const Modifiers& mods,
                        const std::string& qname,
@@ -215,6 +237,8 @@ class Lowerer {
     [[nodiscard]] EP materializeTemp(EP value, const Span& span);
     void lowerDropAssign(EP target, EP value, const Span& span, std::vector<hir::Stmt>& out);
     [[nodiscard]] EP constructCall(const Expr& e, const ScopeEntry& entry);
+    /// `Vec<i32>(args)`: the constructor of the instance of a generic class.
+    [[nodiscard]] EP genericConstruct(const Expr& e, const Expr& callee, const ScopeEntry& entry);
     /// Resolves and lowers the `init` a `T(args)` / `new T(args)` of class `t` calls (key empty when
     /// the class has none). False when diagnosed.
     [[nodiscard]] bool lowerInitCall(const Expr& e, const Type& t, std::string& key, std::vector<EP>& args);
@@ -252,6 +276,16 @@ class Lowerer {
         std::string key;
     };
     [[nodiscard]] std::vector<OverloadCandidate> candidatesOf(const ScopeEntry& entry);
+    /// Instances of the generic overloads of `entry` that fit the call: type arguments come from
+    /// `f<...>(...)`, or are inferred from the argument types (E0724 when one stays unknown).
+    [[nodiscard]] std::vector<OverloadCandidate> genericCandidates(const ScopeEntry& entry,
+                                                                   const Expr& call);
+    /// Binds the type parameters `names` so that `pattern` matches `actual`.
+    [[nodiscard]] bool unifyParam(const Type& pattern,
+                                  const Type& actual,
+                                  const std::vector<std::string>& names,
+                                  std::map<std::string, Type>& bound,
+                                  Sema& owner);
     [[nodiscard]] std::vector<OverloadCandidate> methodCandidates(const MethodRef& m,
                                                                   const std::string& name);
     /// Index of the overload a call binds to (E0403 ambiguous, E0404 none); nullopt when diagnosed.
@@ -1264,6 +1298,143 @@ std::vector<Lowerer::OverloadCandidate> Lowerer::methodCandidates(const MethodRe
     return out;
 }
 
+bool Lowerer::unifyParam(const Type& pattern,
+                         const Type& actual,
+                         const std::vector<std::string>& names,
+                         std::map<std::string, Type>& bound,
+                         Sema& owner) {
+    if (pattern.kind == TypeKind::Named && pattern.path.size() == 1 && pattern.args.empty() &&
+        std::ranges::find(names, pattern.path.front()) != names.end()) {
+        const auto it = bound.find(pattern.path.front());
+        if (it != bound.end()) {
+            return sameType(it->second, actual);
+        }
+        bound.emplace(pattern.path.front(), actual);
+        return true;
+    }
+    if (pattern.kind == TypeKind::Pointer || pattern.kind == TypeKind::Array) {
+        return actual.kind == pattern.kind && pattern.elem && actual.elem &&
+               unifyParam(*pattern.elem, *actual.elem, names, bound, owner);
+    }
+    if (pattern.kind == TypeKind::Named && !pattern.args.empty()) {
+        // `Vec<T>` against an instance of a generic class: the instance must come from `Vec`.
+        const auto base = owner.resolve(Type::makeNamed(pattern.path));
+        if (!base || (actual.kind != TypeKind::Class && actual.kind != TypeKind::Struct) ||
+            actual.path.empty()) {
+            return false;
+        }
+        const auto ref = s_.entityByQName(actual.path.front());
+        const Sema::InstanceInfo* info = ref ? ref->owner->instanceInfo(ref->local) : nullptr;
+        if (info == nullptr || base->path.empty() || info->generic != base->path.front() ||
+            info->args.size() != pattern.args.size()) {
+            return false;
+        }
+        for (std::size_t i = 0; i < pattern.args.size(); ++i) {
+            if (!unifyParam(pattern.args[i], info->args[i], names, bound, owner)) {
+                return false;
+            }
+        }
+        return true;
+    }
+    const auto concrete = owner.resolve(pattern);
+    return concrete && sameType(*concrete, actual);
+}
+
+std::vector<Lowerer::OverloadCandidate> Lowerer::genericCandidates(const ScopeEntry& entry,
+                                                                   const Expr& call) {
+    Sema& owner = entry.owner != nullptr ? *entry.owner : s_;
+    std::vector<const Item*> items = entry.overloads;
+    if (items.empty()) {
+        items.push_back(entry.item);
+    }
+    std::vector<EP> trial;
+    bool have_trial = false;
+    const std::vector<Type> no_args;
+    std::vector<OverloadCandidate> out;
+    for (const Item* item : items) {
+        const std::vector<std::string> names = Sema::genericParamsOf(*item);
+        if (names.empty()) {
+            continue;
+        }
+        const std::string local = declBase(*item).name;
+        const Sema::Symbol* sym = owner.find(local);
+        if (sym == nullptr) {
+            continue;
+        }
+        const Sema::EntityRef gref{&owner, sym, local};
+        const auto& decl = std::get<FnDecl>(item->decl);
+        std::size_t arity = 0;
+        for (const Param& p : decl.params) {
+            arity += p.is_self ? 0 : 1;
+        }
+        if (arity != call.args.size()) {
+            continue;
+        }
+        std::vector<Type> targs;
+        const std::vector<Type>& written = call.lhs ? call.lhs->generic_args : no_args;
+        if (!written.empty()) {
+            if (written.size() != names.size()) {
+                continue;
+            }
+            for (const Type& a : written) {
+                targs.push_back(resolved(a));
+            }
+        } else {
+            if (!have_trial) {
+                QuietScope quiet(s_.diag_);
+                for (const ExprPtr& a : call.args) {
+                    trial.push_back(expr(*a, nullptr));
+                }
+                have_trial = true;
+            }
+            std::map<std::string, Type> bound;
+            bool ok = true;
+            std::size_t i = 0;
+            for (const Param& p : decl.params) {
+                if (p.is_self) {
+                    continue;
+                }
+                if (!trial[i] || isUnknown(trial[i]->type) ||
+                    !unifyParam(p.type, trial[i]->type, names, bound, owner)) {
+                    ok = false;
+                    break;
+                }
+                ++i;
+            }
+            if (!ok) {
+                continue;
+            }
+            for (const std::string& n : names) {
+                const auto it = bound.find(n);
+                if (it == bound.end()) {
+                    err("E0724",
+                        call.span,
+                        std::format("cannot infer `{}`", n),
+                        std::format("write the type arguments: `{}<...>(...)`", local));
+                    return out;
+                }
+                targs.push_back(it->second);
+            }
+        }
+        const auto inst = owner.instantiate(gref, targs, call.span);
+        if (!inst) {
+            continue;
+        }
+        const auto& idecl = std::get<FnDecl>(inst->sym->item->decl);
+        OverloadCandidate c;
+        c.decl = &idecl;
+        for (const Param& p : idecl.params) {
+            if (!p.is_self) {
+                c.params.push_back(resolvedIn(owner, p.type));
+            }
+        }
+        c.ret = resolvedIn(owner, idecl.return_type);
+        c.key = inst->qname();
+        out.push_back(std::move(c));
+    }
+    return out;
+}
+
 std::vector<Lowerer::OverloadCandidate> Lowerer::candidatesOf(const ScopeEntry& entry) {
     Sema& owner = entry.owner != nullptr ? *entry.owner : s_;
     std::vector<const Item*> items = entry.overloads;
@@ -1274,6 +1445,9 @@ std::vector<Lowerer::OverloadCandidate> Lowerer::candidatesOf(const ScopeEntry& 
     const std::string qname = entry.qname.empty() ? entry.name : entry.qname;
     std::vector<OverloadCandidate> out;
     for (const Item* item : items) {
+        if (!Sema::genericParamsOf(*item).empty()) {
+            continue;  // generic overloads are instantiated per call (genericCandidates)
+        }
         OverloadCandidate c;
         c.decl = &std::get<FnDecl>(item->decl);
         for (const Param& p : c.decl->params) {
@@ -1287,18 +1461,6 @@ std::vector<Lowerer::OverloadCandidate> Lowerer::candidatesOf(const ScopeEntry& 
 }
 
 namespace {
-
-/// Quiet trial lowering for the lifetime of the scope.
-class QuietScope {
-public:
-    explicit QuietScope(DiagnosticEngine& diag) : diag_(diag) { diag_.beginQuiet(); }
-    ~QuietScope() { diag_.endQuiet(); }
-    QuietScope(const QuietScope&) = delete;
-    QuietScope& operator=(const QuietScope&) = delete;
-
-private:
-    DiagnosticEngine& diag_;
-};
 
 /// Cost of passing `arg` to a parameter of type `param` (lower is better). Untyped literals use
 /// their own rules; a typed argument costs 0 when the types match, 1 for integer widening or
@@ -1843,7 +2005,30 @@ void Lowerer::checkImpl(const ImplInfo& info) {
 }
 
 void Lowerer::lowerItems() {
+    std::vector<const Item*> items;
     for (const Item& item : s_.program_.items) {
+        items.push_back(&item);
+    }
+    lowerBatch(items);
+    lowerPendingInstances();
+}
+
+bool Lowerer::lowerPendingInstances() {
+    bool any = false;
+    for (std::vector<const Item*> batch = s_.takePendingInstances(); !batch.empty();
+         batch = s_.takePendingInstances()) {
+        any = true;
+        lowerBatch(batch);
+    }
+    return any;
+}
+
+void Lowerer::lowerBatch(const std::vector<const Item*>& items) {
+    for (const Item* ip : items) {
+        const Item& item = *ip;
+        if (!Sema::genericParamsOf(item).empty()) {
+            continue;  // a generic declaration is lowered per instance
+        }
         if (const auto* e = std::get_if<EnumDecl>(&item.decl)) {
             lowerEnum(*e);
         } else if (std::holds_alternative<StructDecl>(item.decl) ||
@@ -1891,7 +2076,11 @@ void Lowerer::lowerItems() {
         }
     }
     // Methods after all signatures/types exist.
-    for (const Item& item : s_.program_.items) {
+    for (const Item* ip : items) {
+        const Item& item = *ip;
+        if (!Sema::genericParamsOf(item).empty()) {
+            continue;
+        }
         if (const auto* cl = std::get_if<ClassDecl>(&item.decl)) {
             const std::string cq = s_.qualify(cl->name);
             const Type self = Type::makePointer(resolved(Type::makeNamed({cl->name})));
@@ -2288,6 +2477,28 @@ void Lowerer::lowerDropAssign(EP target, EP value, const Span& span, std::vector
         live.value = boolConst(true, span);
         out.push_back(std::move(live));
     }
+}
+
+Lowerer::EP Lowerer::genericConstruct(const Expr& e, const Expr& callee, const ScopeEntry& entry) {
+    Sema& owner = entry.owner != nullptr ? *entry.owner : s_;
+    const std::string local = declBase(*entry.item).name;
+    const Sema::Symbol* sym = owner.find(local);
+    if (sym == nullptr || callee.generic_args.empty()) {
+        err("E0724",
+            e.span,
+            std::format("cannot infer the type arguments of `{}`", local),
+            std::format("write them: `{}<...>(...)`", local));
+        return nullptr;
+    }
+    std::vector<Type> targs;
+    for (const Type& a : callee.generic_args) {
+        targs.push_back(resolved(a));
+    }
+    const auto inst = owner.instantiate(Sema::EntityRef{&owner, sym, local}, targs, e.span);
+    if (!inst) {
+        return nullptr;
+    }
+    return constructCall(e, entryOf(*inst, entry.name, e.span));
 }
 
 bool Lowerer::lowerInitCall(const Expr& e, const Type& t, std::string& key, std::vector<EP>& args) {
@@ -3387,6 +3598,13 @@ Lowerer::EP Lowerer::fromEntry(const ScopeEntry& entry, const Expr& at, const Ty
     case ScopeEntry::Kind::Function: {
         Sema& owner = entry.owner != nullptr ? *entry.owner : s_;
         const auto cands = candidatesOf(entry);
+        if (cands.empty()) {
+            err("E0724",
+                at.span,
+                std::format("`{}` is generic; a function value needs its type arguments", entry.name),
+                "call it, or write the instance name explicitly");
+            return nullptr;
+        }
         std::size_t pick = 0;
         if (cands.size() > 1) {
             // An overloaded name used as a value is chosen by the expected `fn(...)` type.
@@ -3918,6 +4136,43 @@ Lowerer::EP Lowerer::builtinCall(const Expr& e, const std::string& name) {
     if (name == "__builtin_asm") {
         return asmCall(e);
     }
+    if (name == "__builtin_needsDrop") {
+        // `__builtin_needsDrop<T>()`: a compile-time bool.
+        static const std::vector<Type> none;
+        const auto& written = e.lhs ? e.lhs->generic_args : none;
+        if (written.size() != 1 || !e.args.empty()) {
+            err("E0710",
+                e.span,
+                "`__builtin_needsDrop` takes one type: `__builtin_needsDrop<T>()`",
+                "wrong number of arguments");
+            return nullptr;
+        }
+        return boolConst(needsDrop(resolved(written[0])), e.span);
+    }
+    if (name == "__builtin_drop") {
+        // `__builtin_drop(p)`: runs the drop of the pointee of `p` (nothing when it needs none).
+        if (e.args.size() != 1) {
+            err("E0710", e.span, "`__builtin_drop` takes one pointer", "wrong number of arguments");
+            return nullptr;
+        }
+        EP p = expr(*e.args[0], nullptr);
+        if (!p) {
+            return nullptr;
+        }
+        if (p->type.kind != TypeKind::Pointer || !p->type.elem) {
+            err("E0709",
+                e.args[0]->span,
+                std::format("`__builtin_drop` needs a pointer, found `{}`", typeToString(p->type)),
+                "pass `&x`");
+            return nullptr;
+        }
+        const Type t = *p->type.elem;
+        if (!needsDrop(t)) {
+            EP nop = mk(hir::ExprKind::Asm, Type::makeVoid(), e.span);
+            return nop;
+        }
+        return dropCallOn(std::move(p), t, e.span);
+    }
     if (name == "__builtin_fence") {
         if (e.args.size() != 1) {
             err("E0710",
@@ -4350,7 +4605,17 @@ Lowerer::EP Lowerer::methodCall(const Expr& e, const Expr& recv_ast) {
 
 Lowerer::EP Lowerer::callEntry(const Expr& e, const ScopeEntry& entry, const std::string& name) {
     if (entry.kind == ScopeEntry::Kind::Function) {
-        const auto cands = candidatesOf(entry);
+        auto cands = candidatesOf(entry);
+        for (OverloadCandidate& g : genericCandidates(entry, e)) {
+            cands.push_back(std::move(g));
+        }
+        if (cands.empty()) {
+            err("E0404",
+                e.span,
+                std::format("no `{}` fits this call", name),
+                "check the arguments and the type arguments");
+            return nullptr;
+        }
         std::size_t pick = 0;
         if (cands.size() > 1) {
             const auto chosen = resolveOverload(e, name, cands);
@@ -4406,6 +4671,9 @@ Lowerer::EP Lowerer::callExpr(const Expr& e, const Type* expected) {
         }
         if (entry != nullptr && entry->kind == ScopeEntry::Kind::Type && entry->item != nullptr &&
             std::holds_alternative<ClassDecl>(entry->item->decl)) {
+            if (!Sema::genericParamsOf(*entry->item).empty()) {
+                return genericConstruct(e, callee, *entry);  // `Vec<i32>(args)`
+            }
             return constructCall(e, *entry);  // `T(args)` builds a class
         }
         if (entry != nullptr) {
@@ -4821,6 +5089,9 @@ bool Lowerer::isConstValue(const hir::Expr& e, const hir::Expr** offender) const
 void Lowerer::run() {
     buildModuleScope();
     lowerItems();
+}
+
+void Lowerer::finish() {
     scopes_.pop();
 }
 
@@ -4838,6 +5109,17 @@ hir::Module lowerProgram(const std::vector<Sema*>& modules) {
     }
     for (auto& l : lowerers) {
         l->run();
+    }
+    // Generic instances requested by one module can belong to another: lower until none is left.
+    bool more = true;
+    while (more) {
+        more = false;
+        for (auto& l : lowerers) {
+            more = l->lowerPendingInstances() || more;
+        }
+    }
+    for (auto& l : lowerers) {
+        l->finish();
     }
     return std::move(shared.module);
 }

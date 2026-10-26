@@ -201,10 +201,26 @@ std::string mangleType(const Type& type) {
     case TypeKind::Class:
     case TypeKind::Interface:
     case TypeKind::Named: {
+        // A generic instance is named `Base<args>` in its path; its mangled name is the base name
+        // followed by `G<args>E`.
         std::string name = joinPath(type.path);
+        std::string generic;
+        if (const auto open = name.find('<'); open != std::string::npos) {
+            name.resize(open);
+        }
+        for (std::size_t p = name.find("::"); p != std::string::npos; p = name.find("::", p)) {
+            name.replace(p, 2, "_");
+        }
         std::replace(name.begin(), name.end(), '.', '_');
         std::replace(name.begin(), name.end(), '/', '_');
-        return std::format("N{}{}", name.size(), name);
+        if (!type.args.empty()) {
+            generic = "G";
+            for (const Type& a : type.args) {
+                generic += mangleType(a);
+            }
+            generic += "E";
+        }
+        return std::format("N{}{}{}", name.size(), name, generic);
     }
     }
     return "void";

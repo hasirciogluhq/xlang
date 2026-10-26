@@ -6,6 +6,7 @@
 #include "xlang/sema/layout.h"
 #include "xlang/util/diagnostics.h"
 
+#include <deque>
 #include <map>
 #include <optional>
 #include <set>
@@ -117,6 +118,23 @@ public:
     /// when the target is missing or not a function).
     [[nodiscard]] std::optional<EntityRef> resolveFnAlias(const std::vector<std::string>& path,
                                                           const Span& at);
+
+    /// A concrete instance of a generic declaration: its origin and type arguments.
+    struct InstanceInfo {
+        std::string generic;  ///< qualified name of the generic declaration
+        std::vector<Type> args;
+    };
+    /// The instance of the generic declaration `generic` for `args` (created on first use, cached;
+    /// E0724 on a wrong argument count, E0725 when the nesting of arguments is too deep).
+    [[nodiscard]] std::optional<EntityRef> instantiate(const EntityRef& generic,
+                                                       const std::vector<Type>& args,
+                                                       const Span& at);
+    /// Instances created since the last call, for lowering.
+    [[nodiscard]] std::vector<const Item*> takePendingInstances();
+    /// Origin of an instance by its local name (nullptr when `local` is not an instance).
+    [[nodiscard]] const InstanceInfo* instanceInfo(const std::string& local) const;
+    /// Names of the type parameters of a `fn`, `struct` or `class` (empty when not generic).
+    [[nodiscard]] static std::vector<std::string> genericParamsOf(const Item& item);
     /// By qualified name (as stored in resolved types).
     [[nodiscard]] std::optional<EntityRef> entityByQName(const std::string& qname);
     [[nodiscard]] const Symbol* findLocal(const std::string& name) const { return find(name); }
@@ -165,6 +183,12 @@ private:
     Item memory_order_item_;
     std::map<std::string, Symbol> symbols_;
     std::vector<std::string> aggregate_order_;
+
+    // Generic instances (core-language phase 6). Instances of this module's generic declarations
+    // are stored here; `pending_instances_` are the ones not lowered yet.
+    std::deque<Item> instances_;
+    std::map<std::string, InstanceInfo> instance_info_;  ///< instance local name -> origin
+    std::vector<const Item*> pending_instances_;
     std::map<std::string, std::optional<ConstValue>> define_cache_;
     std::set<std::string> define_in_progress_;
     std::set<std::string> alias_in_progress_;

@@ -39,8 +39,13 @@ Everything in the original plan is implemented; this file lists what is intentio
   <<= >>=`) and statement-level `x++` / `x--`. `a op= b` is `a = a op b`; a target containing a call is
   evaluated once through a hidden pointer. `++`/`--` are lexed as tokens, so `a--b` no longer parses as `a - -b`:
   write `a - -b`. Break/continue across a `switch` or `for` header are not otherwise restricted.
-- No generics, no tuples/multiple return values (design decisions are open: syntax, constraints, monomorphization
-  versus erasure). Not added because the plan does not define them.
+- Generics (core-language phase 6) are instantiated per use (monomorphized). Not done: generic interfaces, generic `impl`
+  blocks, constraints on type parameters, explicit type arguments on class methods, and generic function values without
+  a call (`E0724`). Generic instances are not `linkonce_odr` (the whole program is one module). Expression-level
+  `f<T>(x)` is recognized when the `>` is followed by `(` or `{`, so `i < j > (k)` is a generic call. `__builtin_needsDrop`
+  and `__builtin_drop` take their type with `<...>`, not as an argument, because a type is not an expression. Instances
+  report errors at the generic declaration without a "in instantiation of" note.
+- No tuples/multiple return values (not defined by the plan).
 - `const` (core-language phase 2): a `const` is not a `define` constant, so it cannot be an array length, a `staticAssert`
   operand or a `define` argument. Its initializer cannot read another variable or `const` (a `GlobalRef` is not a compile-time
   value), and an untyped module-level `const` takes only the default type of a literal (an enum member or an array needs
@@ -56,8 +61,8 @@ Everything in the original plan is implemented; this file lists what is intentio
 - Overloading (core-language phase 3): an overloaded function's HIR name is its qualified name plus its mangled parameter
   types (not the link symbol); this is the unique key codegen uses. Overload resolution lowers each argument once per
   candidate plus once more, so nested overloaded calls cost time exponential in their depth. Class-to-base pointer
-  conversion is not an implicit conversion in this language, so it does not count as a candidate. Overloaded `init`
-  and virtual methods are not supported (virtual methods are `E0405`).
+  conversion is not an implicit conversion in this language, so it does not count as a candidate. Virtual methods are not
+  overloadable (`E0405`); `init` constructors are.
 - `str` (phase 1 of the core-language work): no `==`/`!=` in the compiler (`strEq` in std), no implicit or `as`
   conversion to `*ui8` (only `.ptr`), no way to make a `str` from a pointer except `std/str` (`strFromParts` reinterprets a
   `@repr(c)` two-word struct). A `str` view does not keep its bytes alive: the caller must. Writing through the `*ui8` of a

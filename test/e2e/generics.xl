@@ -1,0 +1,60 @@
+// Generics: generic fn, struct and class declarations are instantiated per use (like C++ templates).
+from "std" import println, print
+
+global failures: i32 = 0
+
+fn check(name: *ui8, ok: bool) {
+    if !ok {
+        failures = failures + 1
+        print("FAIL ")
+        println(name)
+    }
+}
+
+fn max<T>(a: T, b: T) -> T {
+    if a > b {
+        return a
+    }
+    return b
+}
+
+struct Pair<A, B> {
+    a: A
+    b: B
+}
+
+class Box<T> {
+    value: T
+
+    fn init(self, v: T) { self.value = v }
+
+    fn get(self) -> T { return self.value }
+}
+
+class Counter {
+    n: i32
+
+    fn drop(self) { }
+}
+
+fn main() -> i32 {
+    check("inferred i32", max(3, 9) == 9)
+    check("explicit i64", max<i64>(4, 2) == 4)
+    check("inferred from a typed value", max(7, 5) == 7)
+    local p: Pair<i32, str> = Pair<i32, str> { a: 1, b: "x" }
+    check("pair fields", p.a == 1 && p.b.len == 1)
+    local bx = Box<i32>(41)
+    check("generic class method", bx.get() == 41)
+    local nested: Box<Box<i32>> = Box<Box<i32>>(Box<i32>(5))
+    local inner = nested.get()
+    check("nested type arguments", inner.get() == 5)
+    local i: i32 = 1
+    local j: i32 = 2
+    check("comparison is not a generic call", i < j && j > 0)
+    check("needsDrop on a class", __builtin_needsDrop<Counter>())
+    check("needsDrop on i32", !__builtin_needsDrop<i32>())
+    if failures == 0 {
+        println("generics ok")
+    }
+    return failures
+}

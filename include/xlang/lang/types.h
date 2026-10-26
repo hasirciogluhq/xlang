@@ -42,6 +42,8 @@ struct Type {
     /// FnPtr: parameter and return types.
     std::vector<Type> params;
     std::shared_ptr<const Type> ret;
+    /// Named/Struct/Class: generic arguments (`Vec<i32>`); resolved instances keep them too.
+    std::vector<Type> args;
     /// Array: compile-time constant length expression.
     std::shared_ptr<const Expr> length;
     Span span;

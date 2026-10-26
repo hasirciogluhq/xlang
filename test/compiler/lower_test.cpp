@@ -562,6 +562,26 @@ void testOverloads() {
     }
 }
 
+void testGenerics() {
+    {
+        Lowered b("fn f<T>() -> i32 { return 0 }\nfn main() -> i32 {\n f()\n return 0 }\n");
+        CHECK(b.failedWith("E0724"));
+    }
+    {
+        Lowered b("interface I<T> { fn m(self) }\n");
+        CHECK(b.failedWith("E0724"));
+    }
+    {
+        Lowered b("struct Box<T> { v: T }\nfn main() -> i32 {\n local b: Box<i32, i32>\n return 0 }\n");
+        CHECK(b.failedWith("E0724"));
+    }
+    {
+        Lowered b("struct Chain<T> { next: *Chain<*T> }\nfn main() -> i32 {\n local c: Chain<i32>\n"
+                  " return 0 }\n");
+        CHECK(b.failedWith("E0725"));
+    }
+}
+
 void testOwnership() {
     {
         Lowered b("class C { fn drop(self) { } }\nclass H { c: C }\n"
@@ -617,4 +637,5 @@ void runLowerTests() {
     testConst();
     testOverloads();
     testOwnership();
+    testGenerics();
 }

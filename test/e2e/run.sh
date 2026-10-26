@@ -34,6 +34,7 @@ tests=(
   "strings|0|strings ok|0|1"
   "overload|0|overload ok|0|1"
   "raii|0|raii ok|0|1"
+  "generics|0|generics ok|0|1"
 )
 [ "${XLANG_E2E_NET:-}" = 1 ] && tests+=("https|0|https ok|0|1")
 
