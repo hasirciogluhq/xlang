@@ -2,6 +2,7 @@
 // Paths are NUL-terminated `*ui8`; written data is a `str`, so embedded NUL bytes are kept.
 // Nothing allocates: the caller supplies the buffers.
 from "sys" import sysOpenRead, sysOpenWrite, sysClose, sysUnlink, sysFileSize, sysRead, sysWrite
+from "string" import String
 
 /// Writes all of `n` bytes to `fd`; false on error.
 fn writeAll(fd: i32, data: *ui8, n: usize) -> bool {
@@ -92,4 +93,20 @@ export fn fsRead(fd: i32, buf: *ui8, n: usize) -> isize {
 
 export fn fsClose(fd: i32) {
     sysClose(fd)
+}
+
+/// Reads the whole file into a new String (empty when the file cannot be read).
+export fn fsReadAllString(path: *ui8) -> String {
+    local text: String = String()
+    local size: i64 = fsSize(path)
+    if size <= 0 {
+        return text
+    }
+    // fsReadAll needs one byte of room beyond the file and its NUL: reserve size + 1 content bytes.
+    text.reserve(size as usize + 1)
+    local n: isize = fsReadAll(path, text.ptr, text.cap + 1)
+    if n > 0 {
+        text.len = n as usize
+    }
+    return text
 }

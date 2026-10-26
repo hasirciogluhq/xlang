@@ -1,0 +1,53 @@
+// Collections: the owned, growable String (std/string) and the file round trip through it.
+from "std" import println, print, String, fsWrite, fsReadAllString, fsRemove
+
+global failures: i32 = 0
+
+fn check(name: *ui8, ok: bool) {
+    if !ok {
+        failures = failures + 1
+        print("FAIL ")
+        println(name)
+    }
+}
+
+fn main() -> i32 {
+    local s: String = String("Jones")
+    check("length from a literal", s.length() == 5)
+    s.append(" and ")
+    local tail: String = String("x")
+    s.append(&tail)
+    check("append str and String", s.equals("Jones and x"))
+    check("equals String", s.equals(&tail) == false)
+
+    local copy: String = s.clone()
+    s.clear()
+    check("clone is independent", copy.equals("Jones and x") && s.length() == 0)
+
+    local nul: String = String("a\0b")
+    check("embedded NUL survives", nul.length() == 3 && nul.at(1) == 0)
+
+    local grow: String = String()
+    local i: i32 = 0
+    while i < 1000 {
+        grow.push(65)
+        i = i + 1
+    }
+    check("push grows", grow.length() == 1000 && grow.at(999) == 65)
+
+    local word: String = String("abc")
+    check("cstr ends with NUL", word.cstr()[3] == 0)
+    local empty: String = String()
+    check("empty cstr", empty.cstr()[0] == 0)
+
+    local path: *ui8 = "xlang_e2e_collections.tmp"
+    check("write", fsWrite(path, "round trip\n\0 bytes"))
+    local read: String = fsReadAllString(path)
+    check("read back", read.length() == 18 && read.at(17) == 115 && read.at(11) == 0)
+    fsRemove(path)
+
+    if failures == 0 {
+        println("collections ok")
+    }
+    return failures
+}

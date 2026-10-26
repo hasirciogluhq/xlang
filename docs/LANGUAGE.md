@@ -358,6 +358,8 @@ All of it is in `std/`; `import "std"` or `from "std" import name` brings it in,
 |--------|----------|
 | `std/io` | `print`, `println`, `eprint`, `printInt`, `printUInt` |
 | `std/assert` | `assert!(cond)` macro (panics on failure) |
+| `std/str` | `str` helpers: `strEq`, `strFromC`, `strFromParts`, `strSlice` |
+| `std/string` | `String`: an owned, growable byte string on the registered allocator (`init()`, `init(str)`, `length`, `asStr`, `cstr`, `at`, `push`, `append(str)`, `append(*String)`, `equals`, `clone`, `clear`, `reserve`). It frees itself when dropped. Appending a view of its own buffer is not supported. Empty strings do not allocate; there is no small-string optimization |
 | `std/memory` | `memcpy`, `memmove`, `memset`, `memcmp`, `strlen`, mapping helpers |
 | `std/mem` | default heap allocator, `free`, `setAllocator` |
 | `std/math` | `abs`, `min`, `max`, `minInt`, `maxInt`, `sqrt` |
