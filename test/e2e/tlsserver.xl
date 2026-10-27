@@ -2,7 +2,7 @@
 // 127.0.0.1:tlsPort until a client asks for `/quit`. Failed handshakes (the client's negative tests)
 // are expected and just logged. Build with `-D tlsPort=14433` and optionally `-D tlsEc=1` for the
 // ECDSA P-256 certificate instead of RSA-2048.
-from "std" import println, tlsLoadCredentialsPem, tlsListen, tlsAccept, tlsRead, tlsWrite, tlsClose
+from "std" import print, tlsLoadCredentialsPem, tlsListen, tlsAccept, tlsRead, tlsWrite, tlsClose
 from "std" import tlsErrorText, TlsConn, TlsCredentials, TLS_OK, strlen
 from "std/sys" import sysClose
 from "tls/fixture" import rsaCert, rsaKey, ecCert, ecKey
@@ -27,16 +27,17 @@ fn main() -> i32 {
     local r: i32 = tlsLoadCredentialsPem(&cred, rsaCert, strlen(rsaCert), rsaKey, strlen(rsaKey))
 #endif
     if r != TLS_OK {
-        println("server: credentials")
-        println(tlsErrorText(r))
+        print("server: credentials\n")
+        print(tlsErrorText(r))
+        print("\n")
         return 1
     }
     local fd: i32 = tlsListen(2130706433, tlsPort as ui16)
     if fd < 0 {
-        println("server: listen")
+        print("server: listen\n")
         return 2
     }
-    println("server: listening")
+    print("server: listening\n")
     local running: bool = true
     while running {
         local c: TlsConn
@@ -68,11 +69,12 @@ fn main() -> i32 {
             }
             tlsClose(&c)
         } else {
-            println("server: handshake rejected")
-            println(tlsErrorText(e))
+            print("server: handshake rejected\n")
+            print(tlsErrorText(e))
+            print("\n")
         }
     }
     sysClose(fd)
-    println("server: done")
+    print("server: done\n")
     return 0
 }

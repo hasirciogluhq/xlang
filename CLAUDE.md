@@ -14,8 +14,9 @@
 - No compatibility layers. Language and compiler can change freely.
 - Ignore `examples/`, `test/xlang/`, old `.xlang` files, and `.cursor/`.
 - Maintain only `std/` (`.xl`) and `test/e2e/`.
-- Compiler knows only the language, CPU primitives, and a closed builtin list (`syscall`, `__builtin_` atomics/fence/asm, `sizeOf`-style, `staticAssert`, `nil`, `MemoryOrder`).
+- Compiler knows only the language, CPU primitives, and a closed builtin list (`syscall`, `__builtin_` atomics/fence/asm, `__builtin_read`/`__builtin_write`/`__builtin_drop`/`__builtin_needsDrop`/`__builtin_setRegistered`, `sizeOf`-style, `staticAssert`, `nil`, `MemoryOrder`).
 - Roles via `register`: `panic`, `allocator`. Bodies of builtins come from the compiler; everything else from stdlib.
+- Entry symbols (`_start`, `mainCRTStartup`) and `_xl_initAll` are compiler-owned; user symbols with those names are `E0726`.
 - `memcpy` family, `malloc`/`free`/allocator are **not** builtins. They live in stdlib (`std/memory`, `std/mem`).
 - Compiler loads default stdlib but gives no special treatment to names inside it.
 - **libc is forbidden.** Never use, call, imitate, or suggest it (or any OS C runtime).
@@ -38,13 +39,16 @@ Object to bad ideas but leave decision to user. Cite real precedents. Do not re-
 
 ## Language summary
 - Functions: `fn name(a: i32) -> i32 { }` (no `->` = void).
-- Control: `while`, `do {} while`, `for`, `for i in lo..hi`, labeled `break`/`continue`, `switch` (no fallthrough), `defer`, ternary, compound assignment, `x++`/`x--`. No generics/tuples yet.
+- Control: `while`, `do {} while`, `for`, `for i in lo..hi`, labeled `break`/`continue`, `switch` (no fallthrough), `defer`, ternary, compound assignment, `x++`/`x--`. Generics on fn, struct, class, interface, alias and class method (monomorphized, no constraints); no tuples yet.
 - Naming: types `PascalCase`, functions/vars/fields `camelCase`. `__builtin_` prefix stays. External names keep original spelling.
 - Types: `i8..i64`, `ui8..ui64`, `f32/f64`, `bool`, `void`, `*T`, `fn(A)->R`, `[T; N]` (fixed array). Bounds check under `--safety=checked` (default).
 - `enum Name: T { ... }` (default `i32`). Access `Name.A`. Explicit `as` for conversions. `MemoryOrder` is builtin enum.
 - Diagnostics: `E` error, `W` warning (e.g. `E0501`, `W0402`).
 - Implicit conversions: same-signedness integer widening only. Signed int → float warns (`W0601`). Unsigned ↔ signed is error (`E0601`). `unsafe` allows some relaxations; narrowing always needs `as`.
-- `register(role) decl`: makes name global + exported. Roles: `panic` (noreturn), `allocator`. One per role. Shadowing warns.
+- `register(role) decl`: makes name global + exported. Roles: `panic` (noreturn), `allocator`. One per role per group. Shadowing warns. Group 1 (stdlib) is the default; a group 2 (user) registration of the same role replaces it; a same-group duplicate is `E0502`; `register(start)` is `E0503`.
+- `@init fn name() { }`: module-level boot function, no params, no return. Run order: stdlib group first, then user; per group, imports before importers, source order within a module. Calling it, or using its name as a value, is `E0727`; bad signature or method use is `E0729`.
+- `__builtin_setRegistered("role", value)`: replaces a registered global; only inside an `@init` fn (`E0728`).
+- `__builtin_read(p)` / `__builtin_write(p, v)`: raw move through a pointer, no drop; `__builtin_write` is a statement (`E0709` as a value).
 - Memory: default xlang layout; `@repr(c)` for C layout. `class` (single inheritance + vptr), `interface` (fat pointer).
 - Conditional: `#if/#elif/#else/#endif` (normal expression syntax). Inactive regions only lexed.
 - `type Name = T` (transparent). Macros: `define`, `define f(x: expr) { ... }`, call with `f!(...)`. Hygienic, no stringify.

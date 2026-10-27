@@ -1,5 +1,5 @@
 // std/json lookups on a flat object.
-from "std" import jsonInt, jsonString, jsonBool, jsonHas
+from "std" import jsonInt, jsonString, jsonBool, jsonHas, strFromC
 from "std/testing" import Suite, T, suiteInit, test, suiteRun, expectEq, expectEqStr, expectTrue, expectFalse
 
 global doc: *ui8 = "{\"userId\": 7, \"id\": -42, \"title\": \"hello world\", \"done\": true, \"pending\": false, \"nested\": {\"id\": 1}}"
@@ -15,7 +15,7 @@ fn ints(t: *T) {
 
 fn strings(t: *T) {
     expectTrue(t, jsonString(doc, "title", &title[0], 32))
-    expectEqStr(t, &title[0], "hello world")
+    expectEqStr(t, strFromC(&title[0]), "hello world")
 }
 
 fn bools(t: *T) {

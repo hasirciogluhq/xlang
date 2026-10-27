@@ -1,5 +1,5 @@
 // A reader task parks on an empty pipe until a writer task fills it (readiness polling).
-from "std" import println, printInt, assert, spawn, waitAll, yield, ioRead, ioWrite, sys
+from "std" import print, assert, spawn, waitAll, yield, ioRead, ioWrite, sys
 
 global fds: [i32; 2]
 global received: i64 = 0
@@ -25,8 +25,8 @@ fn main() -> i32 {
     spawn(reader, nil)
     spawn(writer, nil)
     waitAll()
-    printInt(received)
-    println("")
+    print(received)
+    print("\n")
     assert!(received == 5)
     return 0
 }

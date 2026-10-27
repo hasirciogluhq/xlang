@@ -1,0 +1,17 @@
+// cyclicdep: the partner of cyclic. It imports cyclic and cyclic imports it, and its `@init` runs
+// before the `@init` of the entry module (the importer finishes last in the post-order).
+from "cyclic" import cycValue
+
+global depSeq: i32 = 0
+
+@init fn depBoot() {
+    depSeq = 1
+}
+
+export fn depSeqValue() -> i32 {
+    return depSeq
+}
+
+export fn depPlusCycle() -> i32 {
+    return cycValue() + 10
+}

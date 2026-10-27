@@ -117,8 +117,98 @@ constexpr std::size_t kLeadWidth = 40;
          "interface does not have, or a method has a different signature."},
         {"E0714", Severity::Error, "code generation failed",
          "The back end could not lower the program: an unresolved external reference, a syscall "
-         "form the target does not support, or a generated module that failed LLVM verification "
-         "(an internal error)."},
+         "form the target does not support, a generated module that failed LLVM verification, or "
+         "a module whose back end returned no object without a reason (an internal error that "
+         "names the module)."},
+        {"E0403", Severity::Error, "ambiguous overloaded call or use",
+         "Several overloads of a function match the arguments (or the expected function type) "
+         "equally well, so no one is chosen. Give the arguments types that prefer one overload, "
+         "or use a typed value instead of an untyped literal."},
+        {"E0404", Severity::Error, "no overload matches",
+         "No overload of a function takes these arguments (or has the expected function type). "
+         "The diagnostic lists the declared signatures. Change the arguments or the call."},
+        {"E0405", Severity::Error, "function cannot be overloaded",
+         "A name with more than one declaration names a function that cannot be overloaded: `main`, "
+         "a `register`ed function, `export(c)` (one C symbol per name) or `declare` (one external "
+         "symbol). Keep a single declaration with that name."},
+        {"E0715", Severity::Error, "`const` initializer is not a compile-time constant",
+         "The value of a `const` (module level or in a block) must be known at compile time: "
+         "literals, arithmetic and casts on them, `define` constants, arrays and struct literals "
+         "of such values, and `&global`. Calls and reads of other variables or `const`s are not "
+         "allowed. A module-level `const` without a type must have a literal value; write "
+         "`const NAME: T = ...` otherwise."},
+        {"E0716", Severity::Error, "write to a read-only place",
+         "A value that cannot change is assigned to: an element or field of a `str` (`s[i] = x`, "
+         "`s.len = n`), or the name of a `const`. Copy the bytes into a `[ui8; N]` local or a "
+         "`String` to get a writable buffer."},
+        {"E0717", Severity::Error, "string literal does not fit the array",
+         "A string literal initializes a `[ui8; N]` but has more than N bytes. Make the array "
+         "longer, or use a `str` value instead."},
+        {"E0726", Severity::Error, "reserved entry symbol",
+         "A symbol named `_start`, `mainCRTStartup` or `_xl_initAll` was requested through `export(c)`, "
+         "`@mangle` or `declare`. The compiler generates these symbols to start the program. Rename the "
+         "function or global."},
+        {"E0727", Severity::Error, "call or value use of an `@init` function",
+         "An `@init` function runs once before `main` and cannot be called from code or used as a "
+         "function value. Move the shared code into a normal function and call or use that."},
+        {"E0728", Severity::Error, "`__builtin_setRegistered` outside an `@init` function",
+         "`__builtin_setRegistered(role, value)` is a statement that only works inside an `@init` "
+         "function. It cannot be used as a value."},
+        {"E0729", Severity::Error, "invalid `@init` function",
+         "`@init` marks a module-level function with no generics, no parameters, no return type and a "
+         "body. It is not allowed on methods or on other kinds of declarations."},
+        {"E0720", Severity::Error, "move out of a field, element or pointer",
+         "A value that needs drop was moved out of a class field, an array element or a dereferenced "
+         "pointer. Only locals and parameters can give up ownership. Take its address or copy it "
+         "through a `clone()` method."},
+        {"E0721", Severity::Error, "value that needs drop in a place that cannot own it",
+         "A global, a struct field, a local or a parameter has a type that needs drop, or an array "
+         "whose element type needs drop. Structs and globals are plain data, and arrays do not drop "
+         "their elements. Use a class field or a local of a class type."},
+        {"E0722", Severity::Error, "invalid `init` or `drop` method",
+         "An `init` method takes no return type, and a `drop` method takes only `self`, returns "
+         "nothing and cannot be virtual. A class whose `init` needs a base constructor requires that "
+         "base to have an `init` without arguments."},
+        {"E0723", Severity::Error, "literal for a class or struct with an `init`",
+         "A class with an `init` cannot be built with a field literal, because the literal would skip "
+         "the constructor. Build it with `T(...)` or allocate it with `new T(...)`."},
+        {"E0724", Severity::Error, "wrong or missing type arguments",
+         "A generic declaration needs one type argument per type parameter. A non-generic declaration "
+         "takes none, and a generic function value needs its type arguments written out."},
+        {"E0725", Severity::Error, "generic instantiation too deep",
+         "The type arguments of a generic instance nest more than 64 levels. Use a simpler type "
+         "argument."},
+        {"E0730", Severity::Error, "generic method cannot be virtual",
+         "A method with its own type parameters cannot be `virtual` or `override`: a vtable slot "
+         "has one fixed signature. Remove the `virtual`/`override` or the type parameters."},
+        {"E0731", Severity::Error, "conflicting impls",
+         "Two `impl` blocks give the same interface for the same type, after generic arguments are "
+         "filled in. Keep one of them."},
+        {"E0732", Severity::Error, "impl type parameter not in the target",
+         "Every type parameter of a generic `impl` must be a direct type argument of its target, so "
+         "that the target type fixes it. Write `impl<T> Iface for Target<T>`."},
+        {"E0733", Severity::Error, "generic method outside a class",
+         "Generic methods are monomorphized per class, so only methods of a `class` (not of an "
+         "`impl` or an `interface`) can have their own type parameters. Move the method into the "
+         "class, or make it a generic free function."},
+        {"E0734", Severity::Error, "invalid parameter pack",
+         "A `..name` parameter takes the arguments after the fixed parameters, so it must be the "
+         "last parameter, and a function can have only one. Remove the extra pack or move it to "
+         "the end of the parameter list."},
+        {"E0735", Severity::Error, "parameter pack used as a value",
+         "A parameter pack is not a value. Read its count with `name.len`, iterate it with "
+         "`for x in name { }`, or pass it on with `..name` in a call. Nothing else may use it."},
+        {"E0736", Severity::Error, "parameter pack not allowed here",
+         "Only a free function with a body can take a parameter pack. It cannot be `declare`d, "
+         "`export(c)`, `virtual` or `override`, have type parameters, or be a method of a class, "
+         "impl or interface."},
+        {"E0737", Severity::Error, "spread outside a pack call",
+         "`..name` is valid only as an argument of a call, and only when `name` is the parameter "
+         "pack of the enclosing function. Pass the pack's elements to a function that takes them, "
+         "or write the arguments out."},
+        {"E0738", Severity::Error, "parameter pack indexed",
+         "A parameter pack has no index operator, because its elements have different types. "
+         "Iterate it with `for x in name { }`, or pass it on with `..name`."},
         {"W0701", Severity::Warning, "missing return",
          "Control can fall off the end of a function that returns a value: some path has no "
          "`return` (a loop that ends with `break`, an `if` without `else`, ...). Add a `return`, "
@@ -323,6 +413,9 @@ bool DiagnosticEngine::isAllowed(const Diagnostic& diagnostic) const {
 }
 
 void DiagnosticEngine::report(Diagnostic diagnostic) {
+    if (quiet_ > 0) {
+        return;
+    }
     if (const DiagnosticInfo* info = findDiagnosticInfo(diagnostic.code)) {
         diagnostic.severity = info->severity;
     }
@@ -378,7 +471,7 @@ void DiagnosticEngine::flush() {
 }
 
 void DiagnosticEngine::error(std::string code, const Span& span, std::string message,
-                             std::string label) {
+                             std::string label, std::vector<Note> notes) {
     Diagnostic d;
     d.code = std::move(code);
     d.severity = Severity::Error;
@@ -386,6 +479,7 @@ void DiagnosticEngine::error(std::string code, const Span& span, std::string mes
     if (span.valid()) {
         d.labels.push_back({span, std::move(label)});
     }
+    d.notes = std::move(notes);
     report(std::move(d));
 }
 
@@ -554,6 +648,13 @@ std::string DiagnosticEngine::renderText(const Diagnostic& diagnostic) const {
         out += std::format("{} |\n", blank_gutter);
     }
 
+    for (const Note& note : diagnostic.notes) {
+        out += std::format("note: {}\n", note.message);
+        if (note.span.valid()) {
+            out += std::format("  --> {}:{}:{}\n", sources_.file(note.span.file).path().string(),
+                               note.span.line, note.span.column);
+        }
+    }
     appendBlock(out, "detail: ", diagnostic.detail);
     appendBlock(out, "reason: ", diagnostic.reason);
     appendBlock(out, "fix:    ", diagnostic.fix);
@@ -584,6 +685,15 @@ std::string DiagnosticEngine::renderJson(const Diagnostic& diagnostic) const {
             "\"text\":\"{}\"}}",
             jsonEscape(sources_.file(label.span.file).path().string()), label.span.line,
             label.span.column, label.span.end_line, label.span.end_column, jsonEscape(label.text));
+    }
+    out += "]";
+    out += ",\"notes\":[";
+    for (std::size_t i = 0; i < diagnostic.notes.size(); ++i) {
+        const Note& note = diagnostic.notes[i];
+        out += std::format("{}{{\"file\":\"{}\",\"line\":{},\"column\":{},\"message\":\"{}\"}}",
+                           i == 0 ? "" : ",",
+                           jsonEscape(sources_.file(note.span.file).path().string()), note.span.line,
+                           note.span.column, jsonEscape(note.message));
     }
     out += "]";
     out += std::format(",\"detail\":\"{}\",\"reason\":\"{}\",\"fix\":\"{}\"}}",

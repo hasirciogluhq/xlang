@@ -1,0 +1,79 @@
+// print: every plain overload of print, println and fprint, the format versions, printEndl,
+// sprintf, format, toString and snprintf truncation. The program checks its own results and prints
+// "print ok" when all of them hold.
+from "std" import print, println, printEndl, fprint, fprintln, sprintf, format, snprintf, toString, String
+
+global failures: i32 = 0
+
+fn check(name: *ui8, ok: bool) {
+    if !ok {
+        failures = failures + 1
+        print("FAIL ")
+        print(name)
+        print("\n")
+    }
+}
+
+fn main() -> i32 {
+    print("str\n")
+    local p: *ui8 = "ptr\n"
+    print(p)
+    print(42)
+    print("\n")
+    print(-7)
+    print("\n")
+    print(3 as ui64)
+    print("\n")
+    print(2.5)
+    print("\n")
+    print(true)
+    print("\n")
+    local s: String = String("owned")
+    print(&s)
+    print("\n")
+    print("{} and {}, {{}} {}\n", "x", 7, false)
+
+    println("println")
+    println(42)
+    println(&s)
+    println("{} {} {} {} {} {}", 1, 2, 3, 4, 5, 6)
+    fprint(1, "fprint ")
+    fprintln(1, "fprintln {}", -1)
+    printEndl()
+
+    local buf: [ui8; 4]
+    local n: usize = snprintf(&buf[0], 4 as usize, "hello")
+    check("snprintf returns the full length", n == 5)
+    check("snprintf keeps the prefix", buf[0] == 104 && buf[2] == 108)
+    check("snprintf NUL-terminates", buf[3] == 0)
+    print("snprintf: ")
+    print(&buf[0])
+    print("\n")
+
+    local t: String = toString(-12)
+    check("toString i64", t.equals("-12"))
+    local u: String = toString(7 as ui64)
+    check("toString ui64", u.equals("7"))
+    local v: String = toString(2.5)
+    check("toString f64", v.equals("2.500000"))
+    local w: String = toString(false)
+    check("toString bool", w.equals("false"))
+    local x: String = toString("text")
+    check("toString str", x.equals("text"))
+    local y: String = toString(p)
+    check("toString *ui8", y.equals("ptr\n"))
+
+    local two: String = sprintf("{}-{}", 1, "b")
+    check("sprintf 2 arguments", two.equals("1-b"))
+    local six: String = sprintf("{}{}{}{}{}{}", 1, 2, 3, 4, 5, 6)
+    check("sprintf 6 arguments", six.equals("123456"))
+    local none: String = sprintf("plain {{}}")
+    check("sprintf 0 arguments", none.equals("plain {}"))
+    local fmt: String = format("{}{{}}{}", 7, true)
+    check("format escapes", fmt.equals("7{}true"))
+
+    if failures == 0 {
+        print("print ok\n")
+    }
+    return failures
+}

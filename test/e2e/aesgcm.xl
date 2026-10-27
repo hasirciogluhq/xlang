@@ -1,7 +1,7 @@
 // AES-128 (FIPS 197 appendix C.1) and AES-128-GCM (the original GCM spec's test cases 1, 2 and 4)
 // known-answer tests, plus a tamper check.
 from "std/aesgcm" import aes128EncryptBlock, aesGcmSeal, aesGcmOpen
-from "std" import println
+from "std" import print
 
 fn hexVal(c: ui8) -> ui8 {
     if c >= 97 { return c - 87 }
@@ -30,7 +30,8 @@ global failures: i32 = 0
 
 fn check(name: *ui8, ok: bool) {
     if !ok {
-        println(name)
+        print(name)
+        print("\n")
         failures = failures + 1
     }
 }
@@ -82,6 +83,6 @@ fn main() -> i32 {
         "d9313225f88406e5a55909c5aff5269a86a7a9531534f7da2e4c303d8a318a721c3c0c95956809532fcf0e2449a6b525b16aedf5aa0de657ba637b39",
         "42831ec2217774244b7221b784d0d49ce3aa212f2c02a4e035c17e2329aca12e21d514b25466931c7d8f6a5aac84aa051ba30b396a0aac973d58e091",
         "5bc94fbc3221a5db94fae95ae7121a47")
-    if failures == 0 { println("aesgcm ok") }
+    if failures == 0 { print("aesgcm ok\n") }
     return failures
 }

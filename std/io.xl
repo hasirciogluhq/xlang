@@ -1,41 +1,283 @@
-// std/io: output on top of the raw write syscall; none of it is built into the compiler.
-from "sys" import sysWrite
-from "memory" import strlen
+// std/io: the print family. Every function writes straight to its fd through an FmtSink and makes
+// no allocator calls. `print` writes without a newline, `println` adds one "\n" after the text, and
+// `printEndl()` writes only "\n". The text rules (`{}`, `{{`, `}}`) live in std/fmt.
+from "fmt" import FmtSink, FmtFd, fmtWrite, fmtEmit
+from "string" import String
 
-export fn print(s: *ui8) {
-    sysWrite(1, s, strlen(s))
+// ---- stdout ---------------------------------------------------------------------------------
+
+export fn print(s: str) {
+    local sink: FmtSink = FmtSink(FmtFd, 1, nil, 0, nil)
+    fmtWrite(&sink, s)
 }
 
-export fn println(s: *ui8) {
-    sysWrite(1, s, strlen(s))
-    sysWrite(1, "\n", 1)
+export fn print(p: *ui8) {
+    local sink: FmtSink = FmtSink(FmtFd, 1, nil, 0, nil)
+    fmtWrite(&sink, p)
 }
 
-export fn eprint(s: *ui8) {
-    sysWrite(2, s, strlen(s))
+export fn print(v: i64) {
+    local sink: FmtSink = FmtSink(FmtFd, 1, nil, 0, nil)
+    fmtWrite(&sink, v)
 }
 
-export fn printUInt(v: ui64) {
-    local buf: [ui8; 24]
-    local i: usize = 24
-    local n: ui64 = v
-    if n == 0 {
-        sysWrite(1, "0", 1)
-        return
-    }
-    while n > 0 {
-        i = i - 1
-        buf[i] = ((n % 10) as ui8) + 48
-        n = n / 10
-    }
-    sysWrite(1, &buf[i], 24 - i)
+export fn print(v: ui64) {
+    local sink: FmtSink = FmtSink(FmtFd, 1, nil, 0, nil)
+    fmtWrite(&sink, v)
 }
 
-export fn printInt(v: i64) {
-    if v < 0 {
-        sysWrite(1, "-", 1)
-        printUInt((0 - v) as ui64)
-        return
-    }
-    printUInt(v as ui64)
+export fn print(v: f64) {
+    local sink: FmtSink = FmtSink(FmtFd, 1, nil, 0, nil)
+    fmtWrite(&sink, v)
+}
+
+export fn print(b: bool) {
+    local sink: FmtSink = FmtSink(FmtFd, 1, nil, 0, nil)
+    fmtWrite(&sink, b)
+}
+
+export fn print(s: *String) {
+    local sink: FmtSink = FmtSink(FmtFd, 1, nil, 0, nil)
+    fmtWrite(&sink, s)
+}
+
+/// `print("x = {}, y = {}", x, y)`: `{}` takes the next argument, `{{` and `}}` are braces.
+export fn print(fmt: str, ..args) {
+    local sink: FmtSink = FmtSink(FmtFd, 1, nil, 0, nil)
+    fmtEmit(&sink, fmt, ..args)
+}
+
+export fn println(s: str) {
+    local sink: FmtSink = FmtSink(FmtFd, 1, nil, 0, nil)
+    fmtWrite(&sink, s)
+    sink.write("\n")
+}
+
+export fn println(p: *ui8) {
+    local sink: FmtSink = FmtSink(FmtFd, 1, nil, 0, nil)
+    fmtWrite(&sink, p)
+    sink.write("\n")
+}
+
+export fn println(v: i64) {
+    local sink: FmtSink = FmtSink(FmtFd, 1, nil, 0, nil)
+    fmtWrite(&sink, v)
+    sink.write("\n")
+}
+
+export fn println(v: ui64) {
+    local sink: FmtSink = FmtSink(FmtFd, 1, nil, 0, nil)
+    fmtWrite(&sink, v)
+    sink.write("\n")
+}
+
+export fn println(v: f64) {
+    local sink: FmtSink = FmtSink(FmtFd, 1, nil, 0, nil)
+    fmtWrite(&sink, v)
+    sink.write("\n")
+}
+
+export fn println(b: bool) {
+    local sink: FmtSink = FmtSink(FmtFd, 1, nil, 0, nil)
+    fmtWrite(&sink, b)
+    sink.write("\n")
+}
+
+export fn println(s: *String) {
+    local sink: FmtSink = FmtSink(FmtFd, 1, nil, 0, nil)
+    fmtWrite(&sink, s)
+    sink.write("\n")
+}
+
+/// `println("x = {}", x)`: the same as `print` followed by one "\n".
+export fn println(fmt: str, ..args) {
+    local sink: FmtSink = FmtSink(FmtFd, 1, nil, 0, nil)
+    fmtEmit(&sink, fmt, ..args)
+    sink.write("\n")
+}
+
+/// Writes only "\n"; the same as `print("\n")`.
+export fn printEndl() {
+    local sink: FmtSink = FmtSink(FmtFd, 1, nil, 0, nil)
+    sink.write("\n")
+}
+
+// ---- stderr ---------------------------------------------------------------------------------
+
+export fn eprint(s: str) {
+    local sink: FmtSink = FmtSink(FmtFd, 2, nil, 0, nil)
+    fmtWrite(&sink, s)
+}
+
+export fn eprint(p: *ui8) {
+    local sink: FmtSink = FmtSink(FmtFd, 2, nil, 0, nil)
+    fmtWrite(&sink, p)
+}
+
+export fn eprint(v: i64) {
+    local sink: FmtSink = FmtSink(FmtFd, 2, nil, 0, nil)
+    fmtWrite(&sink, v)
+}
+
+export fn eprint(v: ui64) {
+    local sink: FmtSink = FmtSink(FmtFd, 2, nil, 0, nil)
+    fmtWrite(&sink, v)
+}
+
+export fn eprint(v: f64) {
+    local sink: FmtSink = FmtSink(FmtFd, 2, nil, 0, nil)
+    fmtWrite(&sink, v)
+}
+
+export fn eprint(b: bool) {
+    local sink: FmtSink = FmtSink(FmtFd, 2, nil, 0, nil)
+    fmtWrite(&sink, b)
+}
+
+export fn eprint(s: *String) {
+    local sink: FmtSink = FmtSink(FmtFd, 2, nil, 0, nil)
+    fmtWrite(&sink, s)
+}
+
+export fn eprint(fmt: str, ..args) {
+    local sink: FmtSink = FmtSink(FmtFd, 2, nil, 0, nil)
+    fmtEmit(&sink, fmt, ..args)
+}
+
+export fn eprintln(s: str) {
+    local sink: FmtSink = FmtSink(FmtFd, 2, nil, 0, nil)
+    fmtWrite(&sink, s)
+    sink.write("\n")
+}
+
+export fn eprintln(p: *ui8) {
+    local sink: FmtSink = FmtSink(FmtFd, 2, nil, 0, nil)
+    fmtWrite(&sink, p)
+    sink.write("\n")
+}
+
+export fn eprintln(v: i64) {
+    local sink: FmtSink = FmtSink(FmtFd, 2, nil, 0, nil)
+    fmtWrite(&sink, v)
+    sink.write("\n")
+}
+
+export fn eprintln(v: ui64) {
+    local sink: FmtSink = FmtSink(FmtFd, 2, nil, 0, nil)
+    fmtWrite(&sink, v)
+    sink.write("\n")
+}
+
+export fn eprintln(v: f64) {
+    local sink: FmtSink = FmtSink(FmtFd, 2, nil, 0, nil)
+    fmtWrite(&sink, v)
+    sink.write("\n")
+}
+
+export fn eprintln(b: bool) {
+    local sink: FmtSink = FmtSink(FmtFd, 2, nil, 0, nil)
+    fmtWrite(&sink, b)
+    sink.write("\n")
+}
+
+export fn eprintln(s: *String) {
+    local sink: FmtSink = FmtSink(FmtFd, 2, nil, 0, nil)
+    fmtWrite(&sink, s)
+    sink.write("\n")
+}
+
+export fn eprintln(fmt: str, ..args) {
+    local sink: FmtSink = FmtSink(FmtFd, 2, nil, 0, nil)
+    fmtEmit(&sink, fmt, ..args)
+    sink.write("\n")
+}
+
+// ---- any fd ---------------------------------------------------------------------------------
+
+export fn fprint(fd: i32, s: str) {
+    local sink: FmtSink = FmtSink(FmtFd, fd, nil, 0, nil)
+    fmtWrite(&sink, s)
+}
+
+export fn fprint(fd: i32, p: *ui8) {
+    local sink: FmtSink = FmtSink(FmtFd, fd, nil, 0, nil)
+    fmtWrite(&sink, p)
+}
+
+export fn fprint(fd: i32, v: i64) {
+    local sink: FmtSink = FmtSink(FmtFd, fd, nil, 0, nil)
+    fmtWrite(&sink, v)
+}
+
+export fn fprint(fd: i32, v: ui64) {
+    local sink: FmtSink = FmtSink(FmtFd, fd, nil, 0, nil)
+    fmtWrite(&sink, v)
+}
+
+export fn fprint(fd: i32, v: f64) {
+    local sink: FmtSink = FmtSink(FmtFd, fd, nil, 0, nil)
+    fmtWrite(&sink, v)
+}
+
+export fn fprint(fd: i32, b: bool) {
+    local sink: FmtSink = FmtSink(FmtFd, fd, nil, 0, nil)
+    fmtWrite(&sink, b)
+}
+
+export fn fprint(fd: i32, s: *String) {
+    local sink: FmtSink = FmtSink(FmtFd, fd, nil, 0, nil)
+    fmtWrite(&sink, s)
+}
+
+export fn fprint(fd: i32, fmt: str, ..args) {
+    local sink: FmtSink = FmtSink(FmtFd, fd, nil, 0, nil)
+    fmtEmit(&sink, fmt, ..args)
+}
+
+export fn fprintln(fd: i32, s: str) {
+    local sink: FmtSink = FmtSink(FmtFd, fd, nil, 0, nil)
+    fmtWrite(&sink, s)
+    sink.write("\n")
+}
+
+export fn fprintln(fd: i32, p: *ui8) {
+    local sink: FmtSink = FmtSink(FmtFd, fd, nil, 0, nil)
+    fmtWrite(&sink, p)
+    sink.write("\n")
+}
+
+export fn fprintln(fd: i32, v: i64) {
+    local sink: FmtSink = FmtSink(FmtFd, fd, nil, 0, nil)
+    fmtWrite(&sink, v)
+    sink.write("\n")
+}
+
+export fn fprintln(fd: i32, v: ui64) {
+    local sink: FmtSink = FmtSink(FmtFd, fd, nil, 0, nil)
+    fmtWrite(&sink, v)
+    sink.write("\n")
+}
+
+export fn fprintln(fd: i32, v: f64) {
+    local sink: FmtSink = FmtSink(FmtFd, fd, nil, 0, nil)
+    fmtWrite(&sink, v)
+    sink.write("\n")
+}
+
+export fn fprintln(fd: i32, b: bool) {
+    local sink: FmtSink = FmtSink(FmtFd, fd, nil, 0, nil)
+    fmtWrite(&sink, b)
+    sink.write("\n")
+}
+
+export fn fprintln(fd: i32, s: *String) {
+    local sink: FmtSink = FmtSink(FmtFd, fd, nil, 0, nil)
+    fmtWrite(&sink, s)
+    sink.write("\n")
+}
+
+export fn fprintln(fd: i32, fmt: str, ..args) {
+    local sink: FmtSink = FmtSink(FmtFd, fd, nil, 0, nil)
+    fmtEmit(&sink, fmt, ..args)
+    sink.write("\n")
 }

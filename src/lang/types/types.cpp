@@ -2,6 +2,7 @@
 
 #include "xlang/lang/ast.h"
 
+#include <algorithm>
 #include <format>
 
 namespace xlang {
@@ -62,6 +63,12 @@ Type Type::makeNamed(std::vector<std::string> path) {
     return t;
 }
 
+Type Type::makeStr() {
+    Type t;
+    t.kind = TypeKind::Str;
+    return t;
+}
+
 std::optional<Type> primitiveFromName(std::string_view name) {
     struct Entry {
         std::string_view name;
@@ -77,6 +84,7 @@ std::optional<Type> primitiveFromName(std::string_view name) {
         {"ui64", TypeKind::Int, 64, false}, {"usize", TypeKind::Int, 0, false},
         {"f32", TypeKind::Float, 32, true}, {"f64", TypeKind::Float, 64, true},
         {"bool", TypeKind::Bool, 0, false}, {"void", TypeKind::Void, 0, false},
+        {"str", TypeKind::Str, 0, false},
     };
     for (const Entry& e : table) {
         if (e.name != name) {
@@ -86,6 +94,7 @@ std::optional<Type> primitiveFromName(std::string_view name) {
         case TypeKind::Int: return Type::makeInt(e.bits, e.is_signed);
         case TypeKind::Float: return Type::makeFloat(e.bits);
         case TypeKind::Bool: return Type::makeBool();
+        case TypeKind::Str: return Type::makeStr();
         default: return Type::makeVoid();
         }
     }
@@ -128,6 +137,7 @@ std::string typeToString(const Type& type) {
     switch (type.kind) {
     case TypeKind::Void: return "void";
     case TypeKind::Bool: return "bool";
+    case TypeKind::Str: return "str";
     case TypeKind::Int:
         if (type.bits == 0) {
             return type.is_signed ? "isize" : "usize";
@@ -159,6 +169,61 @@ std::string typeToString(const Type& type) {
     case TypeKind::Named: return joinPath(type.path);
     }
     return "?";
+}
+
+std::string mangleType(const Type& type) {
+    switch (type.kind) {
+    case TypeKind::Void: return "void";
+    case TypeKind::Bool: return "bool";
+    case TypeKind::Str: return "str";
+    case TypeKind::Int:
+        if (type.bits == 0) {
+            return type.is_signed ? "isize" : "usize";
+        }
+        return std::format("{}{}", type.is_signed ? "i" : "ui", type.bits);
+    case TypeKind::Float: return std::format("f{}", type.bits);
+    case TypeKind::Pointer: return "P" + (type.elem ? mangleType(*type.elem) : "void");
+    case TypeKind::FnPtr: {
+        std::string out = "F";
+        for (const Type& p : type.params) {
+            out += mangleType(p);
+        }
+        out += "R" + (type.ret ? mangleType(*type.ret) : "void") + "E";
+        return out;
+    }
+    case TypeKind::Array: {
+        const std::uint64_t len =
+            type.length && type.length->kind == Expr::Kind::IntLiteral ? type.length->int_value : 0;
+        return std::format("A{}_", len) + (type.elem ? mangleType(*type.elem) : "void");
+    }
+    case TypeKind::Enum:
+    case TypeKind::Struct:
+    case TypeKind::Class:
+    case TypeKind::Interface:
+    case TypeKind::Named: {
+        // A generic instance is named `Base<args>` in its path; its mangled name is the base name
+        // followed by `G<args>E`.
+        std::string name = joinPath(type.path);
+        std::string generic;
+        if (const auto open = name.find('<'); open != std::string::npos) {
+            name.resize(open);
+        }
+        for (std::size_t p = name.find("::"); p != std::string::npos; p = name.find("::", p)) {
+            name.replace(p, 2, "_");
+        }
+        std::replace(name.begin(), name.end(), '.', '_');
+        std::replace(name.begin(), name.end(), '/', '_');
+        if (!type.args.empty()) {
+            generic = "G";
+            for (const Type& a : type.args) {
+                generic += mangleType(a);
+            }
+            generic += "E";
+        }
+        return std::format("N{}{}{}", name.size(), name, generic);
+    }
+    }
+    return "void";
 }
 
 }  // namespace xlang

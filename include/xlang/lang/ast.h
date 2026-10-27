@@ -6,6 +6,7 @@
 
 #include <cstdint>
 #include <iosfwd>
+#include <map>
 #include <memory>
 #include <string>
 #include <variant>
@@ -69,6 +70,7 @@ struct Expr {
         New,           ///< new T { fields } / new(lhs) T { fields }; lhs null = registered allocator
         Ternary,       ///< lhs ? rhs : args[0]
         MacroCall,     ///< text!( macro_args... ), arguments kept as raw token lists
+        Spread,        ///< `..name` as a call argument: expands a parameter pack (text = pack name)
         AsmOperand,    ///< `in(reg) x` / `out("rax") y` / `inout(reg) z` inside `__builtin_asm(...)`:
                        ///< text = in|out|inout, lhs = register spec, rhs = operand
     } kind{Kind::IntLiteral};
@@ -87,6 +89,10 @@ struct Expr {
     std::vector<FieldInit> fields;
     /// Cast: target type. StructLiteral/New: the constructed type.
     Type type;
+    /// New: written as `new T(args)` (constructor arguments in `args`, possibly none).
+    bool has_call_args{false};
+    /// Name/Call/StructLiteral: explicit generic arguments (`max<i64>(a, b)`, `Pair<A, B> { }`).
+    std::vector<Type> generic_args;
     std::vector<std::vector<Token>> macro_args;
 };
 
@@ -104,6 +110,8 @@ struct SwitchCase {
 struct Stmt {
     enum class Kind {
         Local,   ///< local name [: type] [= expr]
+        Delete,  ///< delete [(allocator)] ptr: runs the drop glue, then frees (expr = pointer, target = allocator)
+        Const,   ///< const name [: type] = expr (read-only; the value is a compile-time constant)
         Assign,  ///< target = expr; compound (`+=` ...) when `has_compound_op`
         Return,  ///< return [expr]
         Expr,    ///< expr
@@ -112,6 +120,7 @@ struct Stmt {
         DoWhile, ///< [label:] do { body } while expr
         For,     ///< [label:] for [init]; [cond]; [step] { body }
         ForRange,///< [label:] for name in expr .. rhs { body }   (rhs exclusive)
+        ForPack, ///< [label:] for name in pack { body }   (expr = the pack's name; unrolled per element)
         Switch,  ///< switch expr { case a, b { } ... default { } }
         Defer,   ///< defer stmt (runs when the enclosing block is left)
         Continue,  ///< continue [label] (jumps to the loop's next iteration)
@@ -166,8 +175,9 @@ struct Modifiers {
 
 struct Param {
     std::string name;
-    Type type;  ///< unused for `self`
+    Type type;  ///< unused for `self` and for a pack
     bool is_self{false};
+    bool is_pack{false};  ///< `..args`: the untyped trailing parameter pack (see docs-ai/variadic.md)
     Span span;
 };
 
@@ -179,6 +189,7 @@ struct FieldDecl {
 };
 
 struct FnDecl : DeclBase {
+    std::vector<std::string> generic_params;  ///< `fn f<T, U>`: type parameters (empty = not generic)
     std::vector<Param> params;
     bool has_return_type{false};
     Type return_type;  ///< void when `->` is absent
@@ -190,15 +201,19 @@ struct FnDecl : DeclBase {
 
 struct GlobalDecl : DeclBase {
     Type type;
+    bool has_type{true};  ///< false for `const NAME = expr` (the type comes from the value)
+    bool is_const{false}; ///< `const`: read-only, compile-time initializer, no storage to write
     ExprPtr init;  ///< null = zero-initialized / external
 };
 
 struct StructDecl : DeclBase {
+    std::vector<std::string> generic_params;  ///< `struct Pair<A, B>`
     std::vector<FieldDecl> fields;
     bool opaque{false};  ///< `declare struct S` without a body
 };
 
 struct ClassDecl : DeclBase {
+    std::vector<std::string> generic_params;  ///< `class Vec<T>`
     bool has_base{false};
     std::vector<std::string> base;  ///< qualified base class name
     std::vector<FieldDecl> fields;
@@ -207,12 +222,15 @@ struct ClassDecl : DeclBase {
 };
 
 struct InterfaceDecl : DeclBase {
+    std::vector<std::string> generic_params;  ///< `interface Iter<T>`
     std::vector<FnDecl> methods;  ///< signatures (no body)
     bool opaque{false};
 };
 
 struct ImplDecl : DeclBase {
+    std::vector<std::string> generic_params;  ///< `impl<T> Iter<T> for Box<T>`
     std::vector<std::string> interface_path;
+    std::vector<Type> interface_args;  ///< the `<...>` after the interface name
     Type target;
     std::vector<FnDecl> methods;
 };
@@ -231,6 +249,7 @@ struct EnumDecl : DeclBase {
 };
 
 struct TypeAliasDecl : DeclBase {
+    std::vector<std::string> generic_params;  ///< `type Pair2<T> = Pair<T, T>`
     Type target;
 };
 
@@ -290,9 +309,15 @@ struct TopLevelCallDecl : DeclBase {
     ExprPtr call;
 };
 
+/// `fn short = target`: a module-level name for a function (or a qualified `module.name` path).
+struct FnAliasDecl : DeclBase {
+    std::vector<std::string> target;  ///< `name` or `module.name`
+    Span target_span;
+};
+
 using Decl = std::variant<FnDecl, GlobalDecl, StructDecl, ClassDecl, InterfaceDecl, ImplDecl,
                           EnumDecl, TypeAliasDecl, DefineConstDecl, DefineMacroDecl, ImportDecl,
-                          ExportFromDecl, MacroCallDecl, TopLevelCallDecl>;
+                          ExportFromDecl, MacroCallDecl, TopLevelCallDecl, FnAliasDecl>;
 
 struct Item {
     Modifiers modifiers;
@@ -301,6 +326,24 @@ struct Item {
 
 [[nodiscard]] const DeclBase& declBase(const Item& item);
 [[nodiscard]] const char* declKindName(const Decl& decl);
+
+/// Generic instantiation: type parameter name -> the concrete type it stands for.
+using TypeEnv = std::map<std::string, Type>;
+
+/// `type` with every type parameter in `env` replaced (also inside pointers, arrays, function
+/// types and generic arguments).
+[[nodiscard]] Type substituteType(const Type& type, const TypeEnv& env);
+
+/// A deep copy of a generic `fn`, `struct`, `class` or `interface` with its type parameters replaced
+/// by `env`, named `name`. The copy has no type parameters of its own.
+[[nodiscard]] Item instantiateItem(const Item& generic, const TypeEnv& env, const std::string& name);
+
+/// A deep copy of a generic method (or `fn`) with its type parameters replaced by `env`. The copy
+/// keeps its name and has no type parameters of its own.
+[[nodiscard]] FnDecl instantiateFn(const FnDecl& generic, const TypeEnv& env);
+
+/// A deep copy of a block with no type parameters replaced (used to unroll a pack loop per element).
+[[nodiscard]] Block copyBlock(const Block& block);
 
 struct Program {
     FileId file{kNoFile};

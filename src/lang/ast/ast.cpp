@@ -49,7 +49,7 @@ const DeclBase& declBase(const Item& item) {
 const char* declKindName(const Decl& decl) {
     struct Visitor {
         const char* operator()(const FnDecl&) const { return "function"; }
-        const char* operator()(const GlobalDecl&) const { return "global"; }
+        const char* operator()(const GlobalDecl& g) const { return g.is_const ? "const" : "global"; }
         const char* operator()(const StructDecl&) const { return "struct"; }
         const char* operator()(const ClassDecl&) const { return "class"; }
         const char* operator()(const InterfaceDecl&) const { return "interface"; }
@@ -62,6 +62,7 @@ const char* declKindName(const Decl& decl) {
         const char* operator()(const ExportFromDecl&) const { return "re-export"; }
         const char* operator()(const MacroCallDecl&) const { return "macro call"; }
         const char* operator()(const TopLevelCallDecl&) const { return "call"; }
+        const char* operator()(const FnAliasDecl&) const { return "function alias"; }
     };
     return std::visit(Visitor{}, decl);
 }
@@ -186,6 +187,7 @@ public:
         case Expr::Kind::New:
             return std::format("new{} {}{}", e.lhs ? "(" + expr(*e.lhs) + ")" : std::string(),
                                typeToString(e.type), fieldInits(e));
+        case Expr::Kind::Spread: return ".." + e.text;
         case Expr::Kind::AsmOperand:
             return std::format("{}({}) {}", e.text, expr(*e.lhs), expr(*e.rhs));
         case Expr::Kind::MacroCall: {
@@ -257,6 +259,15 @@ public:
                              s.has_type ? ": " + typeToString(s.type) : std::string(),
                              s.expr ? " = " + expr(*s.expr) : std::string()));
             break;
+        case Stmt::Kind::Delete:
+            line(std::format("{}delete{} {}", attrs, s.target ? "(" + expr(*s.target) + ")" : std::string(),
+                             expr(*s.expr)));
+            break;
+        case Stmt::Kind::Const:
+            line(std::format("{}const {}{}{}", attrs, s.name,
+                             s.has_type ? ": " + typeToString(s.type) : std::string(),
+                             s.expr ? " = " + expr(*s.expr) : std::string()));
+            break;
         case Stmt::Kind::Assign:
             line(std::format("{}{} {}= {}", attrs, expr(*s.target),
                              s.has_compound_op ? binaryOpName(s.compound_op) : "", expr(*s.expr)));
@@ -320,6 +331,12 @@ public:
         case Stmt::Kind::ForRange: {
             line(std::format("{}{}for {} in {} .. {}", attrs, labelPrefix(s), s.name, expr(*s.expr),
                              expr(*s.expr2)));
+            Scope scope(*this);
+            block(*s.body);
+            break;
+        }
+        case Stmt::Kind::ForPack: {
+            line(std::format("{}{}for {} in {}", attrs, labelPrefix(s), s.name, expr(*s.expr)));
             Scope scope(*this);
             block(*s.body);
             break;
@@ -391,8 +408,9 @@ public:
                 d.fnBody(fn);
             }
             void operator()(const GlobalDecl& g) const {
-                d.line(std::format("{}global {}: {}{}", head, g.name, typeToString(g.type),
-                                   g.init ? " = " + d.expr(*g.init) : std::string()));
+                const std::string type = g.has_type ? ": " + typeToString(g.type) : std::string();
+                d.line(std::format("{}{} {}{}{}", head, g.is_const ? "const" : "global", g.name,
+                                   type, g.init ? " = " + d.expr(*g.init) : std::string()));
             }
             void operator()(const StructDecl& s) const {
                 d.line(std::format("{}struct {}{}", head, s.name, s.opaque ? "  [opaque]" : ""));
@@ -444,6 +462,13 @@ public:
             }
             void operator()(const TypeAliasDecl& t) const {
                 d.line(std::format("{}type {} = {}", head, t.name, typeToString(t.target)));
+            }
+            void operator()(const FnAliasDecl& a) const {
+                std::string target;
+                for (std::size_t i = 0; i < a.target.size(); ++i) {
+                    target += (i != 0 ? "." : "") + a.target[i];
+                }
+                d.line(std::format("{}fn {} = {}", head, a.name, target));
             }
             void operator()(const DefineConstDecl& c) const {
                 d.line(std::format("{}define {} = {}", head, c.name, d.expr(*c.value)));

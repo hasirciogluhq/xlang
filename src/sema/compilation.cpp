@@ -6,11 +6,14 @@
 
 #include <algorithm>
 #include <format>
+#include <set>
 #include <sstream>
 
 namespace xlang {
 
-hir::Module lowerProgram(const std::vector<Sema*>& modules);
+hir::Module lowerProgram(const std::vector<Sema*>& modules,
+                         const std::vector<Sema*>& init_order,
+                         const std::set<const Sema*>& std_modules);
 
 namespace {
 
@@ -21,6 +24,19 @@ namespace {
 [[nodiscard]] std::string lastSegment(const std::string& spec) {
     const std::size_t slash = spec.find_last_of('/');
     return slash == std::string::npos ? spec : spec.substr(slash + 1);
+}
+
+/// Appends `m` after the modules of its own group it imports (depth-first, each once).
+void initPostOrder(ModuleInfo* m, std::set<const ModuleInfo*>& done, std::vector<Sema*>& out) {
+    if (!done.insert(m).second) {
+        return;
+    }
+    for (ModuleInfo* dep : m->deps) {
+        if (dep->is_std == m->is_std) {
+            initPostOrder(dep, done, out);
+        }
+    }
+    out.push_back(m->sema.get());
 }
 
 } // namespace
@@ -137,7 +153,7 @@ ModuleInfo* Compilation::importTarget(ModuleInfo& from, const std::string& spec,
     ModuleInfo* target = nullptr;
     if (path) {
         target = loadModule(*path, false);
-    } else if (!diag_.hasErrors() || true) {
+    } else {
         diag_.error("E0711",
                     at,
                     std::format("module `{}` not found", spec),
@@ -186,6 +202,7 @@ ModuleInfo* Compilation::loadModule(const std::filesystem::path& path, bool is_r
         root_dir_ = path.parent_path();
     }
     m->key = keyFor(path, is_root);
+    m->is_std = !std_root_.empty() && norm.starts_with(normalizedKey(std_root_) + "/");
     {
         std::string name = m->key;
         if (name.empty()) {
@@ -506,6 +523,9 @@ void Compilation::linkImports(ModuleInfo& m) {
 }
 
 void Compilation::collectRegistered() {
+    // A user registration replaces a stdlib one of the same name; a stdlib one never replaces a
+    // user's; two registrations in the same group are an error.
+    std::map<std::string, bool> from_std;
     for (ModuleInfo* m : order_) {
         for (const Item& item : m->program.items) {
             if (!item.modifiers.registered) {
@@ -518,18 +538,27 @@ void Compilation::collectRegistered() {
             }
             const auto [it, inserted] =
                 registered_.emplace(base.name, Sema::EntityRef{m->sema.get(), sym, base.name});
-            if (!inserted) {
-                Diagnostic d;
-                d.code = "E0502";
-                d.severity = Severity::Error;
-                d.message = std::format("`{}` is registered twice", base.name);
-                d.labels.push_back(
-                    {declBase(*it->second.sym->item).name_span, "first registration"});
-                d.labels.push_back({base.name_span, "second registration"});
-                d.fix = "register the name once: remove one registration, or, if the stdlib already "
-                        "registers it, disable that stdlib feature or build with --no-std";
-                diag_.report(std::move(d));
+            bool& existing_std = from_std[base.name];
+            if (inserted) {
+                existing_std = m->is_std;
+                continue;
             }
+            if (existing_std != m->is_std) {
+                if (!m->is_std) {
+                    it->second = Sema::EntityRef{m->sema.get(), sym, base.name};
+                    existing_std = false;
+                }
+                continue;
+            }
+            Diagnostic d;
+            d.code = "E0502";
+            d.severity = Severity::Error;
+            d.message = std::format("`{}` is registered twice", base.name);
+            d.labels.push_back({declBase(*it->second.sym->item).name_span, "first registration"});
+            d.labels.push_back({base.name_span, "second registration"});
+            d.fix = "register the name once per group: remove one registration, or, if the stdlib "
+                    "already registers it, register the name from your own code instead";
+            diag_.report(std::move(d));
         }
     }
 }
@@ -566,10 +595,38 @@ void Compilation::analyzeAll() {
 
 hir::Module Compilation::lowerAll() {
     std::vector<Sema*> modules;
+    std::set<const Sema*> std_modules;
     for (ModuleInfo* m : order_) {
         modules.push_back(m->sema.get());
+        if (m->is_std) {
+            std_modules.insert(m->sema.get());
+        }
     }
-    hir::Module out = lowerProgram(modules);
+    // `@init` order: the stdlib group first, then the rest. Each group starts at its entry module
+    // (the stdlib index, the root) and takes its dependencies first; leftovers follow `order_`.
+    std::vector<ModuleInfo*> starts;
+    for (ModuleInfo* m : order_) {
+        if (m->is_std && normalizedKey(m->path) == normalizedKey(std_root_ / "index.xl")) {
+            starts.push_back(m);
+        }
+    }
+    for (ModuleInfo* m : order_) {
+        if (m->is_std) {
+            starts.push_back(m);
+        }
+    }
+    if (root_ != nullptr) {
+        starts.push_back(root_);
+    }
+    for (ModuleInfo* m : order_) {
+        starts.push_back(m);
+    }
+    std::set<const ModuleInfo*> done;
+    std::vector<Sema*> init_order;
+    for (ModuleInfo* m : starts) {
+        initPostOrder(m, done, init_order);
+    }
+    hir::Module out = lowerProgram(modules, init_order, std_modules);
     // Plan 4.6b: a `declare`d symbol nothing in this compilation defines is only a warning (it is
     // looked up at link time; with `--emit=obj` that is normal).
     std::set<std::string> defined;

@@ -1,6 +1,6 @@
 # Known limitations and open decisions
 
-Everything in the original plan is implemented; this file lists what is intentionally incomplete.
+The original plan is implemented except the items below, which are intentionally incomplete or blocked.
 
 ## Platform support
 - **macOS raw threads:** `bsdthread_register` returns `EINVAL` in a process that did not come up through
@@ -18,7 +18,7 @@ Everything in the original plan is implemented; this file lists what is intentio
   `sched`/`threads`/`panics` e2e programs are not run there. The entry stub (`mainCRTStartup`) exits through
   `NtTerminateProcess` and provides `__chkstk`/`_fltused` itself. Not done: threads (`NtCreateThreadEx` +
   `WaitOnAddress`), readiness polling (IOCP/AFD), pipes; UTF-8 paths are widened as Latin-1; the fd is the
-  handle's low 32 bits (socket fds carry bit 30); `-D ssn...` no longer exists. Entry stubs exist for linux and macos on x86_64 and aarch64 and for windows on x86_64 only; the Windows stub is x86_64 assembly with no aarch64 variant. Every stub calls the registered `start` (std/runtime.xl) before `main`.
+  handle's low 32 bits (socket fds carry bit 30); `-D ssn...` no longer exists. Entry stubs exist for linux and macos on x86_64 and aarch64 and for windows on x86_64 only; the Windows stub is x86_64 assembly with no aarch64 variant. Every stub calls `_xl_initAll` (the `@init` functions) before `main`.
 - **Linux/macOS sockets ignore SIGPIPE** (`std/sys`: process-wide on Linux, `SO_NOSIGPIPE` on macOS), so a
   write to a vanished peer is an error return, never a crash.
 
@@ -39,8 +39,50 @@ Everything in the original plan is implemented; this file lists what is intentio
   <<= >>=`) and statement-level `x++` / `x--`. `a op= b` is `a = a op b`; a target containing a call is
   evaluated once through a hidden pointer. `++`/`--` are lexed as tokens, so `a--b` no longer parses as `a - -b`:
   write `a - -b`. Break/continue across a `switch` or `for` header are not otherwise restricted.
-- No generics, no tuples/multiple return values (design decisions are open: syntax, constraints, monomorphization
-  versus erasure). Not added because the plan does not define them.
+- Variadic packs (`..args`, core-language phase 12.1): a pack is a compile-time list, so each distinct argument count and
+  type list is a separate instance and code size grows with the number of such calls. A pack cannot be indexed, cannot
+  be used as a value, and a pack function cannot be `export(c)`, `declare`, virtual, generic or a method (`E0736`);
+  there is no C-ABI form of a variadic function. Each argument of a `print`-family call needs a `fmtWrite` overload for
+  its type, so an unsupported type fails at the call, not at the format string.
+- Generics are instantiated per use (monomorphized). Not done: constraints on type parameters, generic methods outside
+  a class (`E0733`), overloaded generic methods (`E0405`), and generic methods of an interface declaration (checked only
+  when implemented or called). An overlap between two generic impl templates (`E0731`) is found only when an instance
+  that matches both is used. Generic instances are not `linkonce_odr` (the whole program is one module). Expression-level
+  `f<T>(x)` is recognized when the closing `>` is followed by `(`, `{`, `)`, `]`, `,`, `;` or the end of the line, so
+  `i < j > (k)` is a generic call. `__builtin_needsDrop`
+  and `__builtin_drop` take their type with `<...>`, not as an argument, because a type is not an expression. An error
+  inside an instance is followed by one "in instantiation of" note per level, at most 8.
+- **Boot and registrations (core-language phase 10).** The generated init entry is `_xl_initAll`, not `$xl$initAll`
+  as the plan said: in the raw AT&T entry stub a `$` that starts an operand is an immediate prefix, so
+  `call $xl$initAll` would not assemble. The Linux and macOS paths are verified only through the Docker e2e runs.
+  **Allocator replacement is not tracked per block:** after `__builtin_setRegistered("allocator", v)`, `new`, `delete`,
+  `free` and `String` all use `v`, so a block allocated before the replacement and freed afterwards goes to `v.free`. The
+  compiler does not check the pairing. `std/sched` keeps using `Heap` and `sysMap` directly and is not redirected. An
+  A bodyless `@init fn boot();` is the parser's `E0002`; the sema check for a missing body in `E0729` is therefore only a
+  guard.
+- No tuples/multiple return values (not defined by the plan).
+- `Vec<T>` (`std/vec`): the element accessors `get`, `first` and `last` return `*T` rather than a value, so a droppable element is never copied. `vecClone` panics for an element type that needs drop, because a bitwise copy would drop the element twice. The index panic text (`Vec: index I out of range for length L`) is built by `fmtIndexPanic` in `std/fmt`, on the stack and without allocating. `set` drops the old element through a plain `*slot = v` assignment. A drop-counter element type in `test/e2e/collections.xl` checks that `set`, `insert`, `remove`, `swapRemove` and `truncate` drop each element exactly once.
+- `String` (core-language phase 7): the HTTP and TLS modules still use `*ui8` buffers. `fsReadAllString` is in `std/fs`.
+- `const` (core-language phase 2): a `const` is not a `define` constant, so it cannot be an array length, a `staticAssert`
+  operand or a `define` argument. Its initializer cannot read another variable or `const` (a `GlobalRef` is not a compile-time
+  value), and an untyped module-level `const` takes only the default type of a literal (an enum member or an array needs
+  `: T`). Block-level `const` names are not `define` names: they are read-only globals with a unique symbol.
+- Ownership (core-language phase 5): drops are statically dispatched (deleting a derived object through a base pointer runs
+  only the base drop). There is no explicit base constructor call: a derived `init` runs the base's argument-less `init`
+  automatically. An array whose element needs drop is `E0721` at locals, parameters, fields and globals, because arrays do
+  not drop their elements. `delete(a)` needs an interface allocator value. Temporaries used as receivers are materialized with a drop flag; a droppable temporary inside `&&`/`||`
+  or a `?:` branch is dropped only if it was created.
+- Overloading (core-language phase 3): an overloaded function's HIR name is its qualified name plus its mangled parameter
+  types (not the link symbol); this is the unique key codegen uses. Overload resolution lowers each non-literal argument
+  once, with no expected type, so an array literal passed to an overloaded or generic call has no element type context
+  and must be written with a typed local. Nested overloaded calls cost time linear in their size. Class-to-base pointer
+  conversion is not an implicit conversion in this language, so it does not count as a candidate. Virtual methods are not
+  overloadable (`E0405`); `init` constructors are.
+- `str` (phase 1 of the core-language work): no `==`/`!=` in the compiler (`strEq` in std), no implicit or `as`
+  conversion to `*ui8` (only `.ptr`), no way to make a `str` from a pointer except `std/str` (`strFromParts` reinterprets a
+  `@repr(c)` two-word struct). A `str` view does not keep its bytes alive: the caller must. Writing through the `*ui8` of a
+  literal is undefined behavior (its bytes are in read-only data); `[ui8; N]` is the writable form. `std/http` and the TLS
+  modules still pass `*ui8` pointer and length pairs; their `strEq` is named `cstrEq` to avoid the name of `std/str`.
 - `W0701`: a function with a return type can reach its end without `return`. The analysis is syntactic: every
   path must end in `return`, an infinite `while true` without `break`, `__builtin_asm(..., options("noreturn"))` or
   a call to the registered `panic`. Other `noreturn` callees are not recognized (a warning, not an error).
@@ -95,8 +137,7 @@ Everything in the original plan is implemented; this file lists what is intentio
 ## Testing
 - **`std/testing` has no discovery:** a test file registers its tests explicitly (`test(&s, "name", fn)`) and
   returns `suiteRun`. Auto-discovery of `fn test*` would need reflection or a compiler-side convention.
-- **No chained matchers** (`expect(x).toEqual(y)`): there are no generics, so the matchers are typed
-  functions (`expectEq` for `i64`, `expectEqUInt`, `expectEqStr`, `expectNear`, ...).
+- **No chained matchers** (`expect(x).toEqual(y)`): the matchers are typed functions (`expectEq` for `i64`, `expectEqUInt`, `expectEqStr`, `expectNear`, ...).
 - **A failed expectation does not stop the test** (no unwinding); a `panic` ends the whole file's run, which
   `xlang test` reports as that file failing.
 - **`xlang test` runs files sequentially** (no `--jobs`) and has no per-test name filter; granularity is the

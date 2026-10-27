@@ -6,7 +6,7 @@ from "../sys" import sysTcpSocket, sysTcpConnect, sysClose, sysRead, sysWrite, s
 from "../memory" import strlen, mapGrow
 from "../dns" import dnsResolve
 from "../tls" import TlsConn, TLS_ERR_DNS, tlsConnectHost, tlsWrite, tlsRead, tlsClose
-from "util" import strEq, startsCI, memMove, formatUInt, formatHex, append, hexDigit, headerEnd, terminateLines, headerLookup, hasHeader
+from "util" import cstrEq, startsCI, memMove, formatUInt, formatHex, append, hexDigit, headerEnd, terminateLines, headerLookup, hasHeader
 from "url" import Url, FetchOptions, urlParse, FETCH_OK, FETCH_ERR_URL, FETCH_ERR_DNS, FETCH_ERR_CONNECT, FETCH_ERR_TLS, FETCH_ERR_IO, FETCH_ERR_TOO_LARGE, FETCH_ERR_BODY
 
 /// An open client connection with a response being read. Fill it with `httpOpen`, read with
@@ -245,7 +245,7 @@ export fn streamOpen(s: *HttpStream, u: *Url, o: *FetchOptions, hbuf: *ui8, hcap
     if o.timeoutMs > 0 { sysSetRecvTimeout(s.fd, o.timeoutMs) }
 
     // ---- request head
-    local isHead: bool = strEq(method, "HEAD")
+    local isHead: bool = cstrEq(method, "HEAD")
     local hasBody: bool = o.body != nil && o.bodyLen > 0
     local hl: usize = 0
     if o.headers != nil { hl = strlen(o.headers) }
@@ -285,7 +285,7 @@ export fn streamOpen(s: *HttpStream, u: *Url, o: *FetchOptions, hbuf: *ui8, hcap
             len = append(req, len, reqCap, &num[0])
             len = append(req, len, reqCap, "\r\n")
         } else {
-            if strEq(method, "POST") || strEq(method, "PUT") || strEq(method, "PATCH") {
+            if cstrEq(method, "POST") || cstrEq(method, "PUT") || cstrEq(method, "PATCH") {
                 len = append(req, len, reqCap, "Content-Length: 0\r\n")
             }
         }

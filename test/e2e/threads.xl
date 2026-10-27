@@ -1,5 +1,5 @@
 // Threads + mutex + condition variable on raw syscalls.
-from "std" import println, printInt, assert, Mutex, mutexLock, mutexUnlock, threadStart, threadJoin, Thread, free
+from "std" import print, assert, Mutex, mutexLock, mutexUnlock, threadStart, threadJoin, Thread, free
 
 global counter: i64 = 0
 global atomicCounter: ui32 = 0
@@ -25,8 +25,8 @@ fn main() -> i32 {
     threadJoin(t1)
     threadJoin(t2)
     threadJoin(t3)
-    printInt(counter)
-    println("")
+    print(counter)
+    print("\n")
     assert!(counter == 40000)
     assert!(atomicCounter == 40000)
     return 0

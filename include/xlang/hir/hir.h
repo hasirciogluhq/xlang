@@ -29,7 +29,7 @@ enum class ExprKind {
     IntConst,       ///< int_value (two's complement bits), type Int/Enum
     FloatConst,     ///< float_value
     BoolConst,      ///< bool_value
-    StrConst,       ///< text; type `*ui8` (or an enum with a `*ui8` underlying type)
+    StrConst,       ///< text; type `*ui8` (or an enum over `*ui8`), or `str` = { ptr, len }
     Nil,            ///< `nil`, typed as the pointer/function pointer it was converted to
     LocalRef,       ///< local
     GlobalRef,      ///< text = global name
@@ -62,6 +62,13 @@ enum class ExprKind {
     AtomicAdd,      ///< lhs = pointer, rhs = value; returns the old value
     Fence,          ///< index = MemoryOrder; void
     Asm,            ///< text = template, asm_operands, clobbers, nomem/noreturn; void
+    Construct,      ///< `T(args)` of a class: a new object of type `target` (zeroed, vptr set); text =
+                    ///< its `init` function (empty = none), args = the init arguments (no `self`)
+    Move,           ///< lhs (a droppable local) read by value; clears the drop flag `local`
+    Materialize,    ///< lhs (a droppable temporary) stored in local `local`, drop flag `index` set; an
+                    ///< lvalue: the stored object
+    RawRead,        ///< `__builtin_read`: lhs = pointer; the pointee read by value. Neither the drop flag nor
+                    ///< the place changes; the caller owns the copy. Codegen treats it as `Deref`
 };
 
 
@@ -87,6 +94,9 @@ struct Expr {
     Type type;
     Span span;
     bool lvalue{false};
+    /// A place that must not be written: a `const`, or an element/field of one (`readonly` is
+    /// not set through a pointer, so `*p` of a `const` pointer stays writable).
+    bool readonly{false};
 
     std::uint64_t int_value{0};
     double float_value{0.0};
@@ -147,6 +157,7 @@ struct Function {
     std::string import_library;  ///< `@library("name")` on a `declare fn`: the OS library it is imported from
     bool registered{false};
     std::string register_role;
+    bool is_init{false};  ///< `@init`: called by `_xl_initAll` before `main`
     bool is_virtual{false};
     bool is_override{false};
     Span span;
@@ -158,6 +169,7 @@ struct Global {
     std::string symbol;
     Type type;
     ExprPtr init;  ///< compile-time constant; null = zero-initialized / external
+    bool constant{false};  ///< `const`: emitted read-only (.rodata); written only by its initializer
     bool exported{false};
     bool export_c{false};
     bool declared{false};
@@ -228,7 +240,7 @@ struct Module {
     std::vector<Enum> enums;
     std::string panic_function;     ///< `register(panic)` function, empty = plain trap
     std::string allocator_global;   ///< `register(allocator)` global, empty = none
-    std::string start_function;     ///< `register(start)` function, empty = none
+    std::vector<std::string> init_functions;  ///< `@init` functions in run order (stdlib group first)
 };
 
 void dumpModule(std::ostream& out, const Module& module);

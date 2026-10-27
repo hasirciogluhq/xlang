@@ -4,13 +4,15 @@
 # Runs natively; when Docker is available, also on Linux aarch64 and x86_64 (cross-built); when
 # `cxrun` (CrossOver/Wine: `cxrun <exe>` runs a Windows executable and returns its exit status) is on
 # PATH, also as Windows x86_64 executables. XLANG_E2E_NET=1 adds the tests that need the Internet.
+# A Docker registry failure is a SKIP, not a FAIL: alpine:3 is pulled once up front (3 attempts), and a
+# container that never starts (exit 125) is retried once. Only a wrong result or a build error fails.
 set -u
 here=$(cd "$(dirname "$0")" && pwd)
 root=$(cd "$here/../.." && pwd)
 xlang=${1:-$root/build/xlang}
 work=$(mktemp -d)
 trap 'rm -rf "$work"; [ -n "${spid:-}" ] && kill "$spid" 2>/dev/null' EXIT
-pass=0; fail=0
+pass=0; fail=0; skip=0
 
 # name | expected exit code | expected stdout (a `grep -F` substring) | needs raw OS threads | runs on Windows
 tests=(
@@ -20,6 +22,7 @@ tests=(
   "stdlib|0|499500|0|1"
   "fsjson|0||0|1"
   "panics|134|before|0|0"
+  "vecpanic|134|before|0|0"
   "threads|0|40000|1|0"
   "sched|0|20100|0|0"
   "sched_io|0|5|0|0"
@@ -31,6 +34,19 @@ tests=(
   "chacha20poly1305|0|chacha20poly1305 ok|0|1"
   "x25519|0|x25519 ok|0|1"
   "ecdsa|0|ecdsa ok|0|1"
+  "strings|0|strings ok|0|1"
+  "strtools|0|strtools ok|0|1"
+  "overload|0|overload ok|0|1"
+  "raii|0|raii ok|0|1"
+  "generics|0|generics ok|0|1"
+  "collections|0|collections ok|0|1"
+  "print|0|print ok|0|1"
+  "printalloc|0|printalloc ok|0|1"
+  "variadic|0|variadic ok|0|1"
+  "printpanic|134|format: 2 placeholders, got 1 arguments|0|0"
+  "init|0|init ok|0|1"
+  "initset|0|initset ok|0|1"
+  "cyclic|0|cyclic ok|0|1"
 )
 [ "${XLANG_E2E_NET:-}" = 1 ] && tests+=("https|0|https ok|0|1")
 
@@ -59,9 +75,35 @@ run_one() {   # target-label  binary  expected-exit  expected-text  runner...
   echo "ok   [$label]"; pass=$((pass+1))
 }
 
+# Pulls alpine:3 for both platforms before any test: up to 3 attempts each, waiting 5 and then 15
+# seconds between attempts. Returns 1 when a pull still fails.
+pull_images() {
+  local plat try delay=(5 15 30)
+  for plat in arm64 amd64; do
+    for try in 1 2 3; do
+      docker pull -q --platform "linux/$plat" alpine:3 >/dev/null 2>&1 && break
+      [ "$try" = 3 ] && return 1
+      sleep "${delay[$((try - 1))]}"
+    done
+  done
+}
+
+# Docker tests per run: two Linux legs per test, and four legs per server/client pair (2 certificates
+# x 2 architectures). They are counted as skipped when the registry is unavailable.
+docker_legs=$(( 2 * ${#tests[@]} + 4 * ${#pairs[@]} ))
+docker_ok=0
+if command -v docker >/dev/null 2>&1 && docker info >/dev/null 2>&1; then
+  if pull_images; then
+    docker_ok=1
+  else
+    echo "docker: alpine:3 unavailable, $docker_legs tests skipped"
+    skip=$((skip + docker_legs))
+  fi
+fi
+
 docker_run() {  # platform binary
   local plat=$1 bin=$2 cid
-  cid=$(docker run -d --platform "linux/$plat" -v "$(dirname "$bin")":/w alpine:3 "/w/$(basename "$bin")") || return 125
+  cid=$(docker run -d --platform "linux/$plat" -v "$(dirname "$bin")":/w alpine:3 "/w/$(basename "$bin")" 2>"$work/docker.err") || return 125
   for _ in $(seq 1 60); do
     [ "$(docker inspect -f '{{.State.Running}}' "$cid")" = "false" ] && break
     sleep 0.5
@@ -80,19 +122,23 @@ for t in "${tests[@]}"; do
   src=$here/$name.xl
   # native (macOS has no raw thread creation yet: the scheduler falls back to one thread)
   if [ "$threads" = 1 ] && [ "$host_os" = Darwin ]; then
-    echo "skip [$host_os/$name] raw OS threads are not available on macOS"
+    echo "skip [$host_os/$name] raw OS threads are not available on macOS"; skip=$((skip+1))
   elif "$xlang" build "$src" -o "$work/$name" 2>"$work/$name.err"; then
     run_one "$host_os/$name" "$work/$name" "$want" "$text" env
   else
     echo "FAIL [$host_os/$name] build"; head -8 "$work/$name.err"; fail=$((fail+1))
   fi
   # Linux through Docker
-  if command -v docker >/dev/null 2>&1 && docker info >/dev/null 2>&1; then
+  if [ "$docker_ok" = 1 ]; then
     for spec in "arm64:aarch64-unknown-linux-gnu" "amd64:x86_64-unknown-linux-gnu"; do
       plat=${spec%%:*}; triple=${spec#*:}
       if "$xlang" build "$src" --target "$triple" -o "$work/$name.$plat" 2>"$work/$name.$plat.err"; then
         out=$(docker_run "$plat" "$work/$name.$plat"); code=$?
-        if [ "$code" != "$want" ] || { [ -n "$text" ] && ! grep -qF "$text" <<<"$out"; }; then
+        # 125: the container never started (registry or daemon error); retry once, then SKIP
+        [ "$code" = 125 ] && { out=$(docker_run "$plat" "$work/$name.$plat"); code=$?; }
+        if [ "$code" = 125 ]; then
+          echo "skip [linux-$plat/$name] docker: $(head -1 "$work/docker.err")"; skip=$((skip+1))
+        elif [ "$code" != "$want" ] || { [ -n "$text" ] && ! grep -qF "$text" <<<"$out"; }; then
           echo "FAIL [linux-$plat/$name] exit $code"; echo "$out" | head -5; fail=$((fail+1))
         else
           echo "ok   [linux-$plat/$name]"; pass=$((pass+1))
@@ -127,9 +173,15 @@ run_pair() {   # label server-bin client-bin text mode(native|docker:PLAT|window
       out=$("$cli" 2>&1); code=$?
       ;;
     docker:*)
-      local plat=${mode#docker:}
-      out=$(docker run --rm --platform "linux/$plat" -v "$(dirname "$srv")":/w alpine:3 sh -c \
-        "/w/$(basename "$srv") >/dev/null 2>&1 & sleep 1; /w/$(basename "$cli")" 2>&1); code=$?
+      local plat=${mode#docker:} try
+      for try in 1 2; do   # 125: the container never started; retried once, then SKIP
+        out=$(docker run --rm --platform "linux/$plat" -v "$(dirname "$srv")":/w alpine:3 sh -c \
+          "/w/$(basename "$srv") >/dev/null 2>&1 & sleep 1; /w/$(basename "$cli")" 2>&1); code=$?
+        [ "$code" != 125 ] && break
+      done
+      if [ "$code" = 125 ]; then
+        echo "skip [$label] docker: $(head -1 <<<"$out")"; skip=$((skip+1)); return
+      fi
       ;;
     windows)
       cxrun "$srv" >"$work/srv.log" 2>&1 & spid=$!
@@ -155,7 +207,7 @@ for p in "${pairs[@]}"; do
     extra=(); [ "$cert" = ec ] && extra=(-D tlsEc=1)
     port=$((port + 1))
     legs=("native:$host_os")
-    command -v docker >/dev/null 2>&1 && docker info >/dev/null 2>&1 && legs+=("docker:arm64" "docker:amd64")
+    [ "$docker_ok" = 1 ] && legs+=("docker:arm64" "docker:amd64")
     command -v cxrun >/dev/null 2>&1 && legs+=("windows:windows")
     for leg in "${legs[@]}"; do
       mode=${leg%%:*}; arg=${leg#*:}
@@ -199,5 +251,5 @@ else
   echo "FAIL [xlang test/glob]"; fail=$((fail+1))
 fi
 
-echo "e2e: $pass passed, $fail failed"
+echo "e2e: $pass passed, $fail failed, $skip skipped"
 [ "$fail" = 0 ]

@@ -41,6 +41,8 @@ enum class TokenKind {
     Declare,
     Register,
     Global,
+    Const,
+    Delete,
     Struct,
     Class,
     Interface,

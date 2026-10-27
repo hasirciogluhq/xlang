@@ -1,14 +1,15 @@
 // std/http/middleware: ready-made middleware for `routerUse` / `groupUse`.
 from "../io" import eprint
+from "../str" import strFromC
 from "context" import Context, ctxNext, ctxSetHeader, ctxAbortWithStatus
-from "util" import strEq
+from "util" import cstrEq
 
 /// Runs the rest of the chain, then logs `METHOD PATH` to stderr.
 export fn mwLogger(c: *Context) {
     ctxNext(c)
-    eprint(c.method)
+    eprint(strFromC(c.method))
     eprint(" ")
-    eprint(c.path)
+    eprint(strFromC(c.path))
     eprint("\n")
 }
 
@@ -17,7 +18,7 @@ export fn mwCors(c: *Context) {
     ctxSetHeader(c, "Access-Control-Allow-Origin", "*")
     ctxSetHeader(c, "Access-Control-Allow-Methods", "GET, POST, PUT, PATCH, DELETE, HEAD, OPTIONS")
     ctxSetHeader(c, "Access-Control-Allow-Headers", "Content-Type, Authorization")
-    if strEq(c.method, "OPTIONS") {
+    if cstrEq(c.method, "OPTIONS") {
         ctxAbortWithStatus(c, 204)
     }
 }

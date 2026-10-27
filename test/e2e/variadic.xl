@@ -1,0 +1,75 @@
+// variadic: `..args` packs with zero to eight arguments, mixed argument types, two-level forwarding,
+// loop control inside the unrolled `for`, and a fixed overload that wins over a pack. Each failed
+// check prints "FAIL" with its name; the last line says `variadic ok` when every check passes.
+from "std" import print, println, sprintf, snprintf, String
+
+fn count(..args) -> usize {
+    return args.len as usize
+}
+
+fn firstNonZero(..args) -> i64 {
+    local found: i64 = -1
+    for a in args {
+        if a == 0 {
+            continue
+        }
+        found = a
+        break
+    }
+    return found
+}
+
+fn wrap(fmt: str, ..args) -> String {
+    return sprintf(fmt, ..args)
+}
+
+fn pick(a: i64) -> i64 {
+    return a + 100
+}
+
+fn pick(..args) -> i64 {
+    return 0 - 1
+}
+
+fn expect(name: str, ok: bool) -> i32 {
+    if ok {
+        return 0
+    }
+    print("FAIL ")
+    println(name)
+    return 1
+}
+
+fn main() -> i32 {
+    local failures: i32 = 0
+    local owned: String = String("owned")
+
+    failures += expect("empty pack", count() == 0 as usize)
+    failures += expect("three args", count(1, 2, 3) == 3 as usize)
+    failures += expect("eight args", count(1, 2, 3, 4, 5, 6, 7, 8) == 8 as usize)
+    failures += expect("continue and break", firstNonZero(0, 0, 4, 5) == 4)
+    failures += expect("no non-zero value", firstNonZero(0, 0) == -1)
+
+    local eight: String = sprintf("{}{}{}{}{}{}{}{}", 1, 2, 3, 4, 5, 6, 7, 8)
+    failures += expect("sprintf eight placeholders", eight.len == 8 as usize)
+    println(&eight)
+
+    local forwarded: String = wrap("{}-{}", 1, 2)
+    failures += expect("two-level forwarding", forwarded.len == 3 as usize)
+    println(&forwarded)
+
+    local mix: String = sprintf("{}|{}|{}|{}|{}|{}", -1 as i8, 2 as ui64, 2.5, true, "str", &owned)
+    println(&mix)
+
+    local buf: [ui8; 16]
+    failures += expect("snprintf length", snprintf(&buf[0], 16 as usize, "{}-{}", 7, 8) == 3 as usize)
+    failures += expect("snprintf truncated length", snprintf(&buf[0], 4 as usize, "{}{}", 12345, 6) == 6 as usize)
+
+    failures += expect("fixed overload wins", pick(5) == 105)
+    failures += expect("pack overload with no args", pick() == -1)
+
+    if failures == 0 {
+        println("variadic ok")
+    }
+    return failures
+}

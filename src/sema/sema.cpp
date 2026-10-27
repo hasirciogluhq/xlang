@@ -158,7 +158,32 @@ void Sema::error(const char* code, const Span& at, std::string message, std::str
     if (!reported_.insert(key).second) {
         return;
     }
-    diag_.error(code, at, std::move(message), std::move(label));
+    diag_.error(code, at, std::move(message), std::move(label), instantiationNotes());
+}
+
+std::vector<Note> Sema::instantiationNotes() const {
+    constexpr std::size_t max_levels = 8;
+    std::vector<Note> notes;
+    const Sema* owner = this;
+    std::string local = current_instance_;
+    while (!local.empty() && owner != nullptr && notes.size() < max_levels) {
+        const InstanceInfo* info = owner->instanceInfo(local);
+        if (info == nullptr) {
+            break;
+        }
+        if (info->requested_at.valid()) {
+            notes.push_back({info->requested_at,
+                             std::format("in instantiation of `{}` requested here", local)});
+        }
+        owner = info->parent_owner;
+        local = info->parent;
+    }
+    return notes;
+}
+
+void Sema::setCurrentInstance(const Item* item) {
+    const auto it = item_instance_.find(item);
+    current_instance_ = it == item_instance_.end() ? std::string{} : it->second;
 }
 
 void Sema::notConstant(const Span& at, std::string why) {
@@ -174,10 +199,14 @@ void Sema::collect() {
         bool named = true;
         if (std::holds_alternative<StructDecl>(item.decl)) {
             sym.kind = Symbol::Kind::Struct;
-            aggregate_order_.push_back(base.name);
+            if (genericParamsOf(item).empty()) {
+                aggregate_order_.push_back(base.name);
+            }
         } else if (std::holds_alternative<ClassDecl>(item.decl)) {
             sym.kind = Symbol::Kind::Class;
-            aggregate_order_.push_back(base.name);
+            if (genericParamsOf(item).empty()) {
+                aggregate_order_.push_back(base.name);
+            }
         } else if (std::holds_alternative<InterfaceDecl>(item.decl)) {
             sym.kind = Symbol::Kind::Interface;
         } else if (std::holds_alternative<EnumDecl>(item.decl)) {
@@ -190,6 +219,8 @@ void Sema::collect() {
             sym.kind = Symbol::Kind::Global;
         } else if (std::holds_alternative<FnDecl>(item.decl)) {
             sym.kind = Symbol::Kind::Fn;
+        } else if (std::holds_alternative<FnAliasDecl>(item.decl)) {
+            sym.kind = Symbol::Kind::FnAlias;
         } else if (std::holds_alternative<DefineMacroDecl>(item.decl)) {
             sym.kind = Symbol::Kind::Macro;
         } else {
@@ -199,6 +230,15 @@ void Sema::collect() {
             continue;
         }
         const auto [it, inserted] = symbols_.emplace(base.name, sym);
+        if (sym.kind == Symbol::Kind::Fn) {
+            // Functions may share a name (overloads); the signatures are checked when lowered.
+            if (inserted) {
+                it->second.overloads.push_back(&item);
+            } else if (it->second.kind == Symbol::Kind::Fn) {
+                it->second.overloads.push_back(&item);
+                continue;
+            }
+        }
         if (!inserted && it->second.item != &memory_order_item_) {
             const DeclBase& first = declBase(*it->second.item);
             Diagnostic d;
@@ -211,6 +251,282 @@ void Sema::collect() {
             diag_.report(std::move(d));
         }
     }
+    // A name with overloads may only name ordinary functions.
+    for (const auto& [name, sym] : symbols_) {
+        if (sym.kind != Symbol::Kind::Fn || sym.overloads.size() < 2) {
+            continue;
+        }
+        for (const Item* f : sym.overloads) {
+            std::string why;
+            if (name == "main") {
+                why = "`main` is the entry point";
+            } else if (f->modifiers.registered) {
+                why = "a `register`ed function fills a role";
+            } else if (f->modifiers.export_c) {
+                why = "`export(c)` names one C symbol";
+            } else if (f->modifiers.declared) {
+                why = "a `declare`d function is one external symbol";
+            }
+            if (!why.empty()) {
+                diag_.error("E0405",
+                            declBase(*f).name_span,
+                            std::format("`{}` cannot be overloaded: {}", name, why),
+                            "keep one declaration with this name");
+            }
+        }
+    }
+}
+
+std::string Sema::linkName(const std::vector<Attribute>& attrs,
+                           bool export_c,
+                           bool declared,
+                           const std::string& local_name,
+                           const std::vector<Type>& params,
+                           bool overloaded) const {
+    if (!overloaded) {
+        // Priority: export(c) > @mangle on the item > @file(mangle) > --mangle.
+        if (export_c) {
+            return local_name;
+        }
+        if (const Attribute* m = findAttr(attrs, "mangle"); m != nullptr && !m->args.empty()) {
+            const AttributeArg& a = m->args[0];
+            return a.kind == AttributeArg::Kind::String ? a.text : local_name;
+        }
+        bool none = config_.mangle == "none";
+        if (const Attribute* f = findAttr(program_.file_attributes, "file")) {
+            for (const AttributeArg& a : f->args) {
+                if (a.key == "mangle") {
+                    none = a.text == "none";
+                }
+            }
+        }
+        if (none || declared) {
+            return local_name;
+        }
+    }
+    // `_xl$<module>$<name>$<param types>`; the module is the mangling name of the defining module.
+    std::string sig;
+    for (const Type& p : params) {
+        sig += "$" + mangleType(p);
+    }
+    std::string module = key_;
+    if (module.empty() && comp_ != nullptr && comp_->root() != nullptr) {
+        module = comp_->root()->mangle_name;
+    }
+    if (module.empty()) {
+        module = "main";
+    }
+    std::replace(module.begin(), module.end(), '/', '.');
+    // A generic instance is named `f<i32, str>`: its link name spells the brackets `G`/`E`.
+    std::string name;
+    for (const char c : local_name) {
+        switch (c) {
+        case '<': name += 'G'; break;
+        case '>': name += 'E'; break;
+        case ',':
+        case ' ': break;
+        case '.':
+        case ':':
+        case '*':
+        case '[':
+        case ']':
+        case ';':
+        case '(':
+        case ')': name += '_'; break;
+        default: name += c; break;
+        }
+    }
+    return "_xl$" + module + "$" + name + sig;
+}
+
+std::optional<Sema::EntityRef> Sema::resolveFnAlias(const std::vector<std::string>& path,
+                                                     const Span& at) {
+    std::set<std::string> seen;
+    Sema* where = this;
+    std::vector<std::string> cur = path;
+    Span span = at;
+    while (true) {
+        std::string shown;
+        for (std::size_t i = 0; i < cur.size(); ++i) {
+            shown += (i != 0 ? "." : "") + cur[i];
+        }
+        const auto ref = cur.size() == 1 ? where->lookupEntity(cur.front())
+                                         : where->lookupQualified(cur);
+        if (!ref) {
+            error("E0706", span, std::format("unknown function `{}`", shown), "not declared here");
+            return std::nullopt;
+        }
+        if (ref->sym->kind == Symbol::Kind::Fn) {
+            return ref;
+        }
+        if (ref->sym->kind != Symbol::Kind::FnAlias) {
+            error("E0706", span, std::format("`{}` is not a function", shown), "a function is expected");
+            return std::nullopt;
+        }
+        if (!seen.insert(ref->qname()).second) {
+            error("E0704", span, std::format("function alias `{}` refers to itself", shown), "cyclic alias");
+            return std::nullopt;
+        }
+        const auto& alias = std::get<FnAliasDecl>(ref->sym->item->decl);
+        where = ref->owner;
+        cur = alias.target;
+        span = alias.target_span;
+    }
+}
+
+std::vector<std::string> Sema::genericParamsOf(const Item& item) {
+    if (const auto* f = std::get_if<FnDecl>(&item.decl)) {
+        return f->generic_params;
+    }
+    if (const auto* s = std::get_if<StructDecl>(&item.decl)) {
+        return s->generic_params;
+    }
+    if (const auto* c = std::get_if<ClassDecl>(&item.decl)) {
+        return c->generic_params;
+    }
+    if (const auto* a = std::get_if<TypeAliasDecl>(&item.decl)) {
+        return a->generic_params;
+    }
+    if (const auto* i = std::get_if<InterfaceDecl>(&item.decl)) {
+        return i->generic_params;
+    }
+    return {};
+}
+
+namespace {
+
+/// Nesting depth of a type: `i32` is 0, `Vec<Vec<i32>>` and `*[*i32; 2]` are deeper.
+int typeNesting(const Type& t) {
+    int inner = 0;
+    if (t.elem) {
+        inner = std::max(inner, typeNesting(*t.elem));
+    }
+    if (t.ret) {
+        inner = std::max(inner, typeNesting(*t.ret));
+    }
+    for (const Type& p : t.params) {
+        inner = std::max(inner, typeNesting(p));
+    }
+    for (const Type& a : t.args) {
+        inner = std::max(inner, typeNesting(a));
+    }
+    const bool has_children = t.elem || t.ret || !t.params.empty() || !t.args.empty();
+    return has_children ? inner + 1 : 0;
+}
+
+}  // namespace
+
+std::optional<Sema::EntityRef> Sema::instantiate(const EntityRef& generic,
+                                                 const std::vector<Type>& args,
+                                                 const Span& at) {
+    const Item& gitem = *generic.sym->item;
+    const std::vector<std::string> params = genericParamsOf(gitem);
+    Sema& owner = *generic.owner;
+    if (params.size() != args.size()) {
+        error("E0724",
+              at,
+              std::format("`{}` takes {} type argument(s), {} given",
+                          generic.local,
+                          params.size(),
+                          args.size()),
+              "write one type per type parameter");
+        return std::nullopt;
+    }
+    int nesting = 0;
+    for (const Type& a : args) {
+        nesting = std::max(nesting, typeNesting(a));
+    }
+    if (nesting > 64) {
+        error("E0725",
+              at,
+              "generic instantiation too deep",
+              "the type arguments nest more than 64 levels");
+        return std::nullopt;
+    }
+    // Instance names use `.` for qualified type names: `::` separates the module (see qualify).
+    std::string shown;
+    for (std::size_t i = 0; i < args.size(); ++i) {
+        std::string spelled = typeToString(args[i]);
+        for (std::size_t p = spelled.find("::"); p != std::string::npos; p = spelled.find("::", p)) {
+            spelled.replace(p, 2, ".");
+        }
+        shown += (i != 0 ? ", " : "") + spelled;
+    }
+    const std::string local = generic.local + "<" + shown + ">";
+    if (owner.symbols_.find(local) == owner.symbols_.end()) {
+        TypeEnv env;
+        for (std::size_t i = 0; i < params.size(); ++i) {
+            env[params[i]] = args[i];
+        }
+        owner.instances_.push_back(instantiateItem(gitem, env, local));
+        const Item* item = &owner.instances_.back();
+        Symbol sym;
+        sym.item = item;
+        if (std::holds_alternative<ClassDecl>(item->decl)) {
+            sym.kind = Symbol::Kind::Class;
+            owner.aggregate_order_.push_back(local);
+        } else if (std::holds_alternative<StructDecl>(item->decl)) {
+            sym.kind = Symbol::Kind::Struct;
+            owner.aggregate_order_.push_back(local);
+        } else if (std::holds_alternative<InterfaceDecl>(item->decl)) {
+            sym.kind = Symbol::Kind::Interface;
+        } else {
+            sym.kind = Symbol::Kind::Fn;
+            sym.overloads = {item};
+        }
+        owner.symbols_.emplace(local, std::move(sym));
+        owner.instance_info_[local] = InstanceInfo{generic.qname(), args, at, current_instance_, this};
+        owner.item_instance_[item] = local;
+        owner.pending_instances_.push_back(item);
+    }
+    return EntityRef{&owner, &owner.symbols_.at(local), local};
+}
+
+std::vector<const Item*> Sema::takePendingInstances() {
+    std::vector<const Item*> out;
+    out.swap(pending_instances_);
+    return out;
+}
+
+const Sema::InstanceInfo* Sema::instanceInfo(const std::string& local) const {
+    const auto it = instance_info_.find(local);
+    return it == instance_info_.end() ? nullptr : &it->second;
+}
+
+const Item* Sema::addImplInstance(Item item) {
+    instances_.push_back(std::move(item));
+    const Item* out = &instances_.back();
+    pending_instances_.push_back(out);
+    return out;
+}
+
+const Sema::MethodInstance* Sema::instantiateMethod(const FnDecl& generic,
+                                                    const std::string& cls,
+                                                    const std::string& cls_q,
+                                                    const std::vector<Type>& args) {
+    std::string key = cls_q + "." + generic.name + "<";
+    for (std::size_t i = 0; i < args.size(); ++i) {
+        key += (i == 0 ? "" : ", ") + typeToString(args[i]);
+    }
+    key += ">";
+    if (const auto it = method_index_.find(key); it != method_index_.end()) {
+        return it->second;
+    }
+    TypeEnv env;
+    for (std::size_t i = 0; i < generic.generic_params.size() && i < args.size(); ++i) {
+        env[generic.generic_params[i]] = args[i];
+    }
+    method_instances_.push_back(MethodInstance{instantiateFn(generic, env), key, cls, cls_q});
+    const MethodInstance* out = &method_instances_.back();
+    method_index_.emplace(key, out);
+    pending_methods_.push_back(out);
+    return out;
+}
+
+std::vector<const Sema::MethodInstance*> Sema::takePendingMethods() {
+    std::vector<const MethodInstance*> out;
+    out.swap(pending_methods_);
+    return out;
 }
 
 const Sema::Symbol* Sema::find(const std::string& name) const {
@@ -270,7 +586,9 @@ std::optional<Type> Sema::resolve(const Type& type) {
 
     std::optional<EntityRef> ref;
     if (type.path.size() == 1) {
-        ref = lookupEntity(type.path.front());
+        // A name already qualified by `qualify` (a substituted generic argument) names its module.
+        ref = type.path.front().find("::") != std::string::npos ? entityByQName(type.path.front())
+                                                                : lookupEntity(type.path.front());
     } else if (type.path.size() == 2) {
         ref = lookupQualified(type.path);
         if (!ref && comp_ == nullptr) {
@@ -285,6 +603,92 @@ std::optional<Type> Sema::resolve(const Type& type) {
               type.span,
               std::format("unknown type `{}`", shown),
               "not declared in this module");
+        return std::nullopt;
+    }
+    if (!type.args.empty() && ref->sym->kind == Symbol::Kind::Alias && ref->sym->item != nullptr &&
+        !genericParamsOf(*ref->sym->item).empty()) {
+        // `Alias<A, B>`: the target with its parameters replaced, resolved in the alias's module.
+        const std::vector<std::string> params = genericParamsOf(*ref->sym->item);
+        if (params.size() != type.args.size()) {
+            error("E0724",
+                  type.span,
+                  std::format("`{}` takes {} type argument(s), {} given",
+                              shown,
+                              params.size(),
+                              type.args.size()),
+                  "write one type per type parameter");
+            return std::nullopt;
+        }
+        TypeEnv env;
+        for (std::size_t i = 0; i < params.size(); ++i) {
+            auto r = resolve(type.args[i]);
+            if (!r) {
+                return std::nullopt;
+            }
+            env[params[i]] = std::move(*r);
+        }
+        Sema& owner = *ref->owner;
+        if (!owner.alias_in_progress_.insert(ref->local).second) {
+            error("E0704",
+                  type.span,
+                  std::format("type alias `{}` refers to itself", shown),
+                  "cyclic alias");
+            return std::nullopt;
+        }
+        auto target = owner.resolve(
+            substituteType(std::get<TypeAliasDecl>(ref->sym->item->decl).target, env));
+        owner.alias_in_progress_.erase(ref->local);
+        if (!target) {
+            return std::nullopt;
+        }
+        target->span = type.span;
+        return target;
+    }
+    if (!type.args.empty()) {
+        // `Name<A, B>`: an instance of a generic struct or class.
+        if (ref->sym->item == nullptr || genericParamsOf(*ref->sym->item).empty()) {
+            error("E0724",
+                  type.span,
+                  std::format("`{}` takes no type arguments", shown),
+                  "remove the `<...>`");
+            return std::nullopt;
+        }
+        std::vector<Type> args;
+        for (const Type& a : type.args) {
+            auto r = resolve(a);
+            if (!r) {
+                return std::nullopt;
+            }
+            args.push_back(std::move(*r));
+        }
+        const auto inst = ref->owner->instantiate(*ref, args, type.span);
+        if (!inst) {
+            return std::nullopt;
+        }
+        Type out = type;
+        out.path = {inst->qname()};
+        out.args = std::move(args);
+        switch (inst->sym->kind) {
+        case Symbol::Kind::Class:
+            out.kind = TypeKind::Class;
+            break;
+        case Symbol::Kind::Interface:
+            out.kind = TypeKind::Interface;
+            break;
+        default:
+            out.kind = TypeKind::Struct;
+            break;
+        }
+        return out;
+    }
+    if (ref->sym->item != nullptr && !genericParamsOf(*ref->sym->item).empty()) {
+        // A generic struct, class or interface names no type until its arguments are written.
+        error("E0724",
+              type.span,
+              std::format("`{}` is generic and takes {} type argument(s), none given",
+                          shown,
+                          genericParamsOf(*ref->sym->item).size()),
+              std::format("write the arguments: `{}<...>`", shown));
         return std::nullopt;
     }
     Sema& owner = *ref->owner;
@@ -311,6 +715,13 @@ std::optional<Type> Sema::resolve(const Type& type) {
         return out;
     }
     case Symbol::Kind::Alias: {
+        if (const auto params = genericParamsOf(*ref->sym->item); !params.empty()) {
+            error("E0724",
+                  type.span,
+                  std::format("`{}` takes {} type argument(s), none given", shown, params.size()),
+                  "write `<...>` with one type per type parameter");
+            return std::nullopt;
+        }
         if (!owner.alias_in_progress_.insert(ref->local).second) {
             error("E0704",
                   type.span,
@@ -419,6 +830,12 @@ std::optional<Sema::EntityRef> Sema::entityOfExpr(const Expr& expr) {
 std::optional<Type> Sema::exprToType(const Expr& expr) {
     switch (expr.kind) {
     case Expr::Kind::Name: {
+        if (expr.type.kind != TypeKind::Void) {
+            // A type parameter substituted by an instance: already resolved (see cloneExpr).
+            Type t = expr.type;
+            t.span = expr.span;
+            return t;
+        }
         if (auto prim = primitiveFromName(expr.text)) {
             prim->span = expr.span;
             return prim;
@@ -1015,6 +1432,24 @@ std::optional<TypeLayout> Sema::layoutOf(const Type& type, const Span& at) {
         }
         return ref->owner->layoutOfName(ref->local, at);
     }
+    case TypeKind::Str: {
+        // `str` is `{ ptr, len }`; the fields are visible to `s.ptr` and `s.len`.
+        const std::uint64_t word = config_.target.pointer_width / 8;
+        out.align = word;
+        out.size = 2 * word;
+        out.data_size = out.size;
+        out.fields.push_back(FieldLayout{.name = "ptr",
+                                         .type = Type::makePointer(Type::makeInt(8, false)),
+                                         .offset = 0,
+                                         .size = word,
+                                         .align = word});
+        out.fields.push_back(FieldLayout{.name = "len",
+                                         .type = Type::makeInt(0, false),
+                                         .offset = word,
+                                         .size = word,
+                                         .align = word});
+        return out;
+    }
     case TypeKind::Named:
         error("E0703",
               at,
@@ -1405,11 +1840,14 @@ void Sema::analyze() {
         if (const auto* e = std::get_if<EnumDecl>(&item.decl)) {
             checkEnum(*e);
         } else if (const auto* a = std::get_if<TypeAliasDecl>(&item.decl)) {
-            (void)resolve(a->target);
-            checkType(a->target, base.span);
-            Type self = Type::makeNamed({base.name});
-            self.span = base.name_span;
-            (void)resolve(self); // cyclic aliases
+            // A generic alias has no concrete target until it is used; each use resolves it.
+            if (a->generic_params.empty()) {
+                (void)resolve(a->target);
+                checkType(a->target, base.span);
+                Type self = Type::makeNamed({base.name});
+                self.span = base.name_span;
+                (void)resolve(self); // cyclic aliases
+            }
         } else if (std::holds_alternative<DefineConstDecl>(item.decl)) {
             Expr name;
             name.kind = Expr::Kind::Name;
@@ -1419,11 +1857,19 @@ void Sema::analyze() {
                 (void)evalConst(name);
             }
         } else if (const auto* g = std::get_if<GlobalDecl>(&item.decl)) {
-            checkType(g->type, base.span);
+            if (g->has_type) {
+                checkType(g->type, base.span);
+            }
             if (g->init) {
                 checkExpr(*g->init);
             }
-        } else if (const auto* f = std::get_if<FnDecl>(&item.decl)) {
+        } else if (isPackFn(item)) {
+            // A pack function is checked here for its declaration and its uses of the pack; its
+            // body is checked per element count, when a call instantiates it.
+            checkPackFn(item);
+        } else if (const auto* f = std::get_if<FnDecl>(&item.decl);
+                   f != nullptr && f->generic_params.empty()) {
+            // Generic declarations are checked per instance, when they are instantiated.
             for (const Param& p : f->params) {
                 if (!p.is_self) {
                     checkType(p.type, p.span);
@@ -1433,8 +1879,9 @@ void Sema::analyze() {
             if (f->has_body) {
                 checkStatements(f->body);
             }
-        } else if (std::holds_alternative<StructDecl>(item.decl) ||
-                   std::holds_alternative<ClassDecl>(item.decl)) {
+        } else if ((std::holds_alternative<StructDecl>(item.decl) ||
+                    std::holds_alternative<ClassDecl>(item.decl)) &&
+                   genericParamsOf(item).empty()) {
             const auto* fields = std::holds_alternative<StructDecl>(item.decl)
                                      ? &std::get<StructDecl>(item.decl).fields
                                      : &std::get<ClassDecl>(item.decl).fields;
@@ -1443,7 +1890,9 @@ void Sema::analyze() {
             }
             if (const auto* c = std::get_if<ClassDecl>(&item.decl)) {
                 for (const FnDecl& m : c->methods) {
-                    if (m.has_body) {
+                    checkNoPackMethod(m);
+                    // A generic method has no body to check until an instance is made.
+                    if (m.has_body && m.generic_params.empty()) {
                         checkStatements(m.body);
                     }
                 }
@@ -1456,9 +1905,14 @@ void Sema::analyze() {
             }
         } else if (const auto* impl = std::get_if<ImplDecl>(&item.decl)) {
             for (const FnDecl& m : impl->methods) {
+                checkNoPackMethod(m);
                 if (m.has_body) {
                     checkStatements(m.body);
                 }
+            }
+        } else if (const auto* iface = std::get_if<InterfaceDecl>(&item.decl)) {
+            for (const FnDecl& m : iface->methods) {
+                checkNoPackMethod(m);
             }
         } else if (const auto* call = std::get_if<TopLevelCallDecl>(&item.decl)) {
             checkStaticAssert(*call);

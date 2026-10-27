@@ -1,0 +1,8 @@
+// print: a format with a different number of placeholders than arguments panics before any output.
+from "std" import print
+
+fn main() -> i32 {
+    print("before\n")
+    print("{} and {}\n", 1)
+    return 0
+}

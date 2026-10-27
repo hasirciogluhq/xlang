@@ -59,6 +59,7 @@ target("xlang-frontend")
     end)
     add_files(
         "$(projectdir)/src/lang/ast/ast.cpp",
+        "$(projectdir)/src/lang/ast/clone.cpp",
         "$(projectdir)/src/lang/lexer/lexer.cpp",
         "$(projectdir)/src/lang/preprocess/preprocess.cpp",
         "$(projectdir)/src/lang/macro/macro.cpp",
@@ -72,6 +73,7 @@ target("xlang-frontend")
         "$(projectdir)/src/sema/scope.cpp",
         "$(projectdir)/src/sema/compilation.cpp",
         "$(projectdir)/src/sema/lower.cpp",
+        "$(projectdir)/src/sema/variadic.cpp",
         "$(projectdir)/src/hir/hir.cpp",
         "$(projectdir)/src/util/source.cpp",
         "$(projectdir)/src/util/diagnostics.cpp"

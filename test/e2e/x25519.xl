@@ -1,6 +1,6 @@
 // X25519 known-answer tests (RFC 7748 section 5.2 and 6.1).
 from "std/x25519" import x25519, x25519Base
-from "std" import println, print
+from "std" import print
 
 fn hexVal(c: ui8) -> ui8 {
     if c >= 97 { return c - 87 }
@@ -35,14 +35,14 @@ fn main() -> i32 {
     unhex("c3da55379de9c6908e94ea4df28d084f32eccf03491c71f754b4075577a28552", &want[0], 32)
     x25519(&out[0], &k[0], &u[0])
     if !same(&out[0], &want[0]) {
-        println("FAIL vector 1")
+        print("FAIL vector 1\n")
         failures = failures + 1
     }
     unhex("77076d0a7318a57d3c16c17251b26645df4c2f87ebc0992ab177fba51db92c2a", &k[0], 32)
     unhex("8520f0098930a754748b7ddcb43ef75a0dbf3a0d26381af4eba4a98eaa9b4e6a", &want[0], 32)
     x25519Base(&out[0], &k[0])
     if !same(&out[0], &want[0]) {
-        println("FAIL alice public key")
+        print("FAIL alice public key\n")
         failures = failures + 1
     }
     // shared secret: alice private * bob public
@@ -52,11 +52,11 @@ fn main() -> i32 {
     local shared: [ui8; 32]
     x25519(&shared[0], &k[0], &bob[0])      // `bob` holds Bob's public key
     if !same(&shared[0], &want[0]) {
-        println("FAIL shared secret")
+        print("FAIL shared secret\n")
         failures = failures + 1
     }
     if failures == 0 {
-        println("x25519 ok")
+        print("x25519 ok\n")
         return 0
     }
     return 1

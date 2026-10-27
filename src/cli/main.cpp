@@ -542,6 +542,17 @@ int main(int argc, char** argv) {
                             cg.only_module = m->key;
                             auto artifact = xlang::codegen::generate(cg);
                             if (!artifact) {
+                                // The back end failed without reporting why: say so, so the
+                                // build does not end with no error at all.
+                                if (!diagnostics.hasErrors()) {
+                                    diagnostics.error(
+                                        "E0714",
+                                        xlang::Span{},
+                                        std::format("code generation for module `{}` failed "
+                                                    "without a diagnostic",
+                                                    name),
+                                        "internal error: the back end returned no object");
+                                }
                                 break;
                             }
                             artifact->optimize(config.opt_level);

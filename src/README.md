@@ -16,12 +16,13 @@ src/
     config.cpp         # BuildConfig, target triples, -D values
     frontend.cpp       # lex -> preprocess -> macros -> parse
   sema/
-    sema.cpp           # names, aliases, enums, const eval, layouts, staticAssert
+    sema.cpp           # names, aliases, enums, const eval, layouts, staticAssert, generic instances and method instances
     layout.cpp         # layout record / xl.layout history
     conversion.cpp     # implicit conversion rules (E0601 / W0601)
     scope.cpp          # ScopeStack: module -> function -> block scopes (plan 4.1)
     compilation.cpp    # module loading, exports/imports, registrations, whole-program driver (4.6, 4.12)
     lower.cpp          # body type checking + HIR lowering over all modules (4.2-4.5, 4.8-4.12)
+    variadic.cpp       # `..args` packs: per-count instances, args.len folding, unrolled for, pack checks (E0734-E0738)
   hir/
     hir.cpp            # typed HIR dump (`xlang check --hir`)
   codegen/

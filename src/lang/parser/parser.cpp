@@ -152,6 +152,7 @@ class Parser {
         case TokenKind::Register:
         case TokenKind::Fn:
         case TokenKind::Global:
+        case TokenKind::Const:
         case TokenKind::Struct:
         case TokenKind::Class:
         case TokenKind::Interface:
@@ -309,6 +310,95 @@ class Parser {
     // ------------------------------------------------------------------------------------
     // Types
 
+    /// `<T, U>` after a `fn`, `struct` or `class` name.
+    std::vector<std::string> parseGenericParams() {
+        std::vector<std::string> names;
+        expect(TokenKind::Lt, "`<` starting the type parameters");
+        while (!at(TokenKind::Gt) && !at(TokenKind::End)) {
+            names.push_back(expectIdent("a type parameter name"));
+            if (!match(TokenKind::Comma)) {
+                break;
+            }
+        }
+        closeAngle();
+        return names;
+    }
+
+    /// Type parameters on a declaration that cannot have them (E0724); they are consumed.
+    void rejectTypeParams() {
+        if (at(TokenKind::Lt)) {
+            diag_.error("E0724",
+                        cur().span,
+                        "type parameters are only allowed on `fn`, `struct` and `class`",
+                        "remove the `<...>`");
+            (void)parseGenericParams();
+        }
+    }
+
+    /// `<A, B>` after a type name or an identifier in an expression.
+    std::vector<Type> parseTypeArgs() {
+        std::vector<Type> args;
+        expect(TokenKind::Lt, "`<` starting the type arguments");
+        while (!at(TokenKind::Gt) && !at(TokenKind::Shr) && !at(TokenKind::End)) {
+            args.push_back(parseType());
+            if (!match(TokenKind::Comma)) {
+                break;
+            }
+        }
+        closeAngle();
+        return args;
+    }
+
+    /// Consumes one `>`. A `>>` (or `>=`, `>>=`) token gives up its first character, so nested
+    /// type arguments `Vec<Vec<i32>>` close one level at a time.
+    void closeAngle() {
+        Token& t = tokens_[pos_];
+        switch (t.kind) {
+        case TokenKind::Gt: advance(); return;
+        case TokenKind::Shr: t.kind = TokenKind::Gt; t.text = ">"; return;
+        case TokenKind::Ge: t.kind = TokenKind::Assign; t.text = "="; return;
+        case TokenKind::ShrAssign: t.kind = TokenKind::Ge; t.text = ">="; return;
+        default: expected("`>` closing the type arguments");
+        }
+    }
+
+    /// Whether the `<` at the cursor opens type arguments of an identifier in an expression: they
+    /// must close with `>` directly followed by `(` or `{`, and contain only type-like tokens.
+    /// Otherwise the `<` is a comparison.
+    [[nodiscard]] bool genericArgsAhead() const {
+        int depth = 0;
+        for (std::size_t i = pos_; i < tokens_.size(); ++i) {
+            switch (tokens_[i].kind) {
+            case TokenKind::Lt: ++depth; break;
+            case TokenKind::Gt: --depth; break;
+            case TokenKind::Shr: depth -= 2; break;
+            case TokenKind::Ident:
+            case TokenKind::PrimType:
+            case TokenKind::Star:
+            case TokenKind::Comma:
+            case TokenKind::Dot:
+            case TokenKind::LBracket:
+            case TokenKind::RBracket:
+            case TokenKind::Int:
+            case TokenKind::Semicolon: break;
+            default: return false;
+            }
+            if (depth < 0) {
+                return false;
+            }
+            if (depth == 0) {
+                // A `>` that ends a comparison needs a right operand, so after it these tokens
+                // can only close type arguments of a generic function value or call.
+                const bool ends_here = i + 1 >= tokens_.size() || tokens_[i + 1].newline_before;
+                const TokenKind next = i + 1 < tokens_.size() ? tokens_[i + 1].kind : TokenKind::End;
+                return ends_here || next == TokenKind::LParen || next == TokenKind::LBrace ||
+                       next == TokenKind::RParen || next == TokenKind::RBracket ||
+                       next == TokenKind::Comma || next == TokenKind::Semicolon;
+            }
+        }
+        return false;
+    }
+
     Type parseType() {
         const Span start = cur().span;
         Type type;
@@ -365,6 +455,9 @@ class Parser {
                 path.push_back(advance().text);
             }
             type = Type::makeNamed(std::move(path));
+            if (at(TokenKind::Lt)) {
+                type.args = parseTypeArgs();
+            }
             break;
         }
         default:
@@ -674,6 +767,13 @@ class Parser {
     /// A call argument. Inline-asm operands are written `in(reg) x`, `out("rax") y`,
     /// `inout(reg) z`: a register spec in parentheses followed by the operand expression.
     ExprPtr parseCallArg() {
+        if (at(TokenKind::DotDot)) {  // `..args`: spreads a parameter pack into the call
+            ExprPtr spread = makeExpr(Expr::Kind::Spread, cur().span);
+            advance();
+            spread->text = expectIdent("a parameter pack name after `..`");
+            spread->span = spanFrom(spread->span);
+            return spread;
+        }
         ExprPtr arg = parseExpr();
         const bool operand_head =
             arg->kind == Expr::Kind::Call && arg->lhs->kind == Expr::Kind::Name &&
@@ -730,6 +830,9 @@ class Parser {
                 }
                 ExprPtr field = makeExpr(Expr::Kind::Field, expr->span);
                 field->text = advance().text;
+                if (at(TokenKind::Lt) && genericArgsAhead()) {
+                    field->generic_args = parseTypeArgs();  // `obj.m<T>(...)`
+                }
                 field->span = spanFrom(expr->span);
                 field->lhs = std::move(expr);
                 expr = std::move(field);
@@ -746,6 +849,7 @@ class Parser {
                        !pathOf(*expr).empty() && looksLikeStructLiteral()) {
                 ExprPtr lit = makeExpr(Expr::Kind::StructLiteral, expr->span);
                 Type type = Type::makeNamed(splitPath(pathOf(*expr)));
+                type.args = expr->generic_args;
                 type.span = expr->span;
                 lit->type = std::move(type);
                 lit->fields = parseFieldInits();
@@ -791,6 +895,9 @@ class Parser {
             ExprPtr e = makeExpr(Expr::Kind::Name, start);
             e->text = tok.text;
             advance();
+            if (at(TokenKind::Lt) && genericArgsAhead()) {
+                e->generic_args = parseTypeArgs();
+            }
             return e;
         }
         case TokenKind::SelfKw: {
@@ -875,10 +982,27 @@ class Parser {
             expect(TokenKind::RParen, "`)` closing the allocator argument");
         }
         e->type = parseType();
-        if (!at(TokenKind::LBrace)) {
-            expected("`{` with the field initializers after the type of `new`");
+        if (at(TokenKind::LParen)) {
+            // `new T(args)`: the class constructor (its `init`) runs on the new object.
+            advance();
+            ++nl_depth_;
+            const bool saved_no_struct = no_struct_;
+            no_struct_ = false;
+            while (!at(TokenKind::RParen)) {
+                e->args.push_back(parseCallArg());
+                if (!match(TokenKind::Comma)) {
+                    break;
+                }
+            }
+            no_struct_ = saved_no_struct;
+            --nl_depth_;
+            expect(TokenKind::RParen, "`)` closing the constructor arguments");
+            e->has_call_args = true;
+        } else if (at(TokenKind::LBrace)) {
+            e->fields = parseFieldInits();
+        } else {
+            expected("`(` with the constructor arguments or `{` with the field initializers after the type of `new`");
         }
-        e->fields = parseFieldInits();
         e->span = spanFrom(start);
         return e;
     }
@@ -972,6 +1096,32 @@ class Parser {
             } else if (!stmt.has_type) {
                 expected("`:` with a type or `=` with an initializer");
             }
+            endOfStatement();
+            return stmt;
+        }
+        case TokenKind::Delete: {
+            advance();
+            stmt.kind = Stmt::Kind::Delete;
+            if (match(TokenKind::LParen)) {
+                ++nl_depth_;
+                stmt.target = parseExpr();
+                --nl_depth_;
+                expect(TokenKind::RParen, "`)` closing the allocator argument");
+            }
+            stmt.expr = parseExpr();
+            endOfStatement();
+            return stmt;
+        }
+        case TokenKind::Const: {
+            advance();
+            stmt.kind = Stmt::Kind::Const;
+            stmt.name = expectIdent("a constant name");
+            if (match(TokenKind::Colon)) {
+                stmt.has_type = true;
+                stmt.type = parseType();
+            }
+            expect(TokenKind::Assign, "`=` and the value of the `const`");
+            stmt.expr = parseExpr();
             endOfStatement();
             return stmt;
         }
@@ -1119,10 +1269,16 @@ class Parser {
         const bool saved_header = for_header_;
         no_struct_ = true;
         if (at(TokenKind::Ident) && peekKind(1) == TokenKind::Ident && peek(1).text == "in") {
-            stmt.kind = Stmt::Kind::ForRange;
             stmt.name = advance().text;
             advance();  // 'in'
             stmt.expr = parseExpr();
+            if (at(TokenKind::LBrace)) {  // `for a in args { }` iterates a parameter pack
+                stmt.kind = Stmt::Kind::ForPack;
+                no_struct_ = saved_no_struct;
+                stmt.body = parseBlockPtr();
+                return stmt;
+            }
+            stmt.kind = Stmt::Kind::ForRange;
             expect(TokenKind::DotDot, "`..` between the bounds of the range");
             stmt.expr2 = parseExpr();
             no_struct_ = saved_no_struct;
@@ -1294,10 +1450,17 @@ class Parser {
         const Token& kw = cur();
         switch (kw.kind) {
         case TokenKind::Fn:
-            addItem(program, s, parseFn(s, /*member=*/false));
+            if (peek(1).kind == TokenKind::Ident && peek(2).kind == TokenKind::Assign) {
+                addItem(program, s, parseFnAlias(s));
+            } else {
+                addItem(program, s, parseFn(s, /*member=*/false));
+            }
             return;
         case TokenKind::Global:
             addItem(program, s, parseGlobal(s));
+            return;
+        case TokenKind::Const:
+            addItem(program, s, parseConstItem(s));
             return;
         case TokenKind::Struct:
             addItem(program, s, parseStruct(s));
@@ -1438,6 +1601,9 @@ class Parser {
         }
         const std::string name = advance().text;
         const Span name_span = name_tok.span;
+        if (at(TokenKind::Lt)) {
+            fn.generic_params = parseGenericParams();
+        }
 
         expect(TokenKind::LParen, "`(` starting the parameter list");
         ++nl_depth_;
@@ -1448,6 +1614,10 @@ class Parser {
                 advance();
                 param.name = "self";
                 param.is_self = true;
+            } else if (at(TokenKind::DotDot)) {  // `..args`: the untyped trailing pack
+                advance();
+                param.name = expectIdent("a parameter pack name after `..`");
+                param.is_pack = true;
             } else {
                 param.name = expectIdent("a parameter name");
                 expect(TokenKind::Colon, "`:` and the parameter type");
@@ -1493,16 +1663,54 @@ class Parser {
 
     // --- global ------------------------------------------------------------------------------
 
+    /// `fn name = target` or `fn name = module.target` at module level.
+    FnAliasDecl parseFnAlias(const DeclStart& s) {
+        FnAliasDecl a;
+        advance(); // 'fn'
+        const Token& name_tok = cur();
+        const std::string name = expectIdent("a function alias name");
+        expect(TokenKind::Assign, "`=` and the function the alias names");
+        a.target_span = cur().span;
+        a.target.push_back(expectIdent("a function name"));
+        while (match(TokenKind::Dot)) {
+            a.target.push_back(expectIdent("a function name"));
+        }
+        a.target_span = spanFrom(a.target_span);
+        endOfItemLine();
+        finishDecl(a, s, name, name_tok.span);
+        return a;
+    }
+
     GlobalDecl parseGlobal(const DeclStart& s) {
         GlobalDecl g;
         advance(); // 'global'
         const Token& name_tok = cur();
         const std::string name = expectIdent("a global name");
+        rejectTypeParams();
         expect(TokenKind::Colon, "`:` and the type of the global");
         g.type = parseType();
         if (match(TokenKind::Assign)) {
             g.init = parseExpr();
         }
+        endOfItemLine();
+        finishDecl(g, s, name, name_tok.span);
+        return g;
+    }
+
+    /// `const NAME [: T] = expr` at module level. The type is optional.
+    GlobalDecl parseConstItem(const DeclStart& s) {
+        GlobalDecl g;
+        g.is_const = true;
+        advance(); // 'const'
+        const Token& name_tok = cur();
+        const std::string name = expectIdent("a constant name");
+        rejectTypeParams();
+        g.has_type = match(TokenKind::Colon);
+        if (g.has_type) {
+            g.type = parseType();
+        }
+        expect(TokenKind::Assign, "`=` and the value of the `const`");
+        g.init = parseExpr();
         endOfItemLine();
         finishDecl(g, s, name, name_tok.span);
         return g;
@@ -1536,6 +1744,9 @@ class Parser {
         advance(); // 'struct'
         const Token& name_tok = cur();
         const std::string name = expectIdent("a struct name");
+        if (at(TokenKind::Lt)) {
+            decl.generic_params = parseGenericParams();
+        }
         if (at(TokenKind::LBrace)) {
             advance();
             const int saved_depth = nl_depth_;
@@ -1571,6 +1782,9 @@ class Parser {
         advance(); // 'class'
         const Token& name_tok = cur();
         const std::string name = expectIdent("a class name");
+        if (at(TokenKind::Lt)) {
+            decl.generic_params = parseGenericParams();
+        }
         if (match(TokenKind::Colon)) {
             decl.has_base = true;
             decl.base.push_back(expectIdent("a base class name"));
@@ -1631,6 +1845,9 @@ class Parser {
         advance(); // 'interface'
         const Token& name_tok = cur();
         const std::string name = expectIdent("an interface name");
+        if (at(TokenKind::Lt)) {
+            decl.generic_params = parseGenericParams();
+        }
         if (at(TokenKind::LBrace)) {
             advance();
             const int saved_depth = nl_depth_;
@@ -1658,11 +1875,17 @@ class Parser {
     ImplDecl parseImpl(const DeclStart& s) {
         ImplDecl decl;
         advance(); // 'impl'
+        if (at(TokenKind::Lt)) {
+            decl.generic_params = parseGenericParams();
+        }
         const Token& name_tok = cur();
         decl.interface_path.push_back(expectIdent("an interface name"));
         while (at(TokenKind::Dot) && peekKind(1) == TokenKind::Ident) {
             advance();
             decl.interface_path.push_back(advance().text);
+        }
+        if (at(TokenKind::Lt)) {
+            decl.interface_args = parseTypeArgs();
         }
         expect(TokenKind::For, "`for` and the implementing type");
         decl.target = parseType();
@@ -1691,6 +1914,7 @@ class Parser {
         advance(); // 'enum'
         const Token& name_tok = cur();
         const std::string name = expectIdent("an enum name");
+        rejectTypeParams();
         if (match(TokenKind::Colon)) {
             decl.has_underlying = true;
             decl.underlying = parseType();
@@ -1724,6 +1948,9 @@ class Parser {
         advance(); // 'type'
         const Token& name_tok = cur();
         const std::string name = expectIdent("a type alias name");
+        if (at(TokenKind::Lt)) {
+            decl.generic_params = parseGenericParams();
+        }
         expect(TokenKind::Assign, "`=` and the aliased type");
         decl.target = parseType();
         endOfItemLine();

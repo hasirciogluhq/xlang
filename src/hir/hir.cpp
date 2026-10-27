@@ -46,6 +46,9 @@ void dumpExpr(std::ostream& out, const Function* fn, const Expr& e) {
     case ExprKind::GlobalRef: out << '@' << e.text; return;
     case ExprKind::FuncRef: out << "&fn " << e.text; return;
     case ExprKind::External: out << "external(" << e.text << '.' << e.member << ')'; return;
+    case ExprKind::Construct: out << "construct " << typeName(e.target) << ' ' << e.text; break;
+    case ExprKind::Move: out << "move#" << e.local; break;
+    case ExprKind::Materialize: out << "materialize#" << e.local << " live#" << e.index; break;
     case ExprKind::Unary: sub(unaryOpName(e.unary_op)); break;
     case ExprKind::Binary: sub(binaryOpName(e.binary_op)); break;
     case ExprKind::Cast: sub(e.implicit ? "cast.implicit" : "cast"); break;
@@ -63,6 +66,7 @@ void dumpExpr(std::ostream& out, const Function* fn, const Expr& e) {
     case ExprKind::Select: sub("select"); break;
     case ExprKind::Index: sub(e.checked ? "index.checked" : "index"); break;
     case ExprKind::Deref: sub("deref"); break;
+    case ExprKind::RawRead: sub("rawRead"); break;
     case ExprKind::AddrOf: sub("addr"); break;
     case ExprKind::ArrayList: sub("array"); break;
     case ExprKind::ArrayRepeat: out << std::format("(array.repeat {}", e.int_value); break;
@@ -186,8 +190,8 @@ void dumpModule(std::ostream& out, const Module& m) {
     if (!m.allocator_global.empty()) {
         out << "register(allocator) " << m.allocator_global << '\n';
     }
-    if (!m.start_function.empty()) {
-        out << "register(start) " << m.start_function << '\n';
+    for (const std::string& init : m.init_functions) {
+        out << "init " << init << '\n';
     }
     for (const Enum& e : m.enums) {
         out << "enum " << e.name << ": " << typeName(e.underlying) << '\n';
@@ -219,7 +223,7 @@ void dumpModule(std::ostream& out, const Module& m) {
         out << "impl " << i.interface << " for " << i.type << '\n';
     }
     for (const Global& g : m.globals) {
-        out << "global " << g.name << ": " << typeName(g.type);
+        out << (g.constant ? "const " : "global ") << g.name << ": " << typeName(g.type);
         if (g.init) {
             out << " = ";
             dumpExpr(out, nullptr, *g.init);

@@ -1,15 +1,15 @@
 // Uses the default stdlib: print, the registered heap allocator, `new`, `free`, assert!.
-from "std" import print, println, printInt, free, assert, strlen, sqrt
+from "std" import print, free, assert, strlen, sqrt
 
 struct Point { x: i32, y: i32 }
 
 fn main() -> i32 {
-    println("hello from std")
+    print("hello from std\n")
     local p: *Point = new Point { x: 3, y: 4 }
     assert!(p != nil)
     assert!(p.x * p.y == 12)
-    printInt((p.x + p.y) as i64)
-    println("")
+    print((p.x + p.y) as i64)
+    print("\n")
     free(p as *void)
 
     local total: i32 = 0
@@ -20,8 +20,8 @@ fn main() -> i32 {
         free(q as *void)
         i = i + 1
     }
-    printInt(total as i64)
-    println("")
+    print(total as i64)
+    print("\n")
     assert!(strlen("four") == 4)
     assert!(sqrt(16.0) > 3.999 && sqrt(16.0) < 4.001)
     return 0

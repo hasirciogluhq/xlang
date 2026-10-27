@@ -16,7 +16,8 @@
 // that itself when stdout is not a terminal). The registry grows on demand: no fixed limits.
 from "sys" import sysWrite
 from "memory" import strlen, mapGrow
-from "io" import print, println, printInt, printUInt
+from "str" import strEq
+from "io" import print
 
 #ifdef xlTestNoColor
 define COLOR = 0
@@ -89,7 +90,8 @@ fn announce(t: *T) {
     red()
     print("\xe2\x9c\x97 ")
     reset()
-    println(t.name)
+    print(t.name)
+    print("\n")
 }
 
 fn failLine(t: *T) {
@@ -101,7 +103,7 @@ fn failLine(t: *T) {
 
 fn failEnd() {
     reset()
-    println("")
+    print("\n")
 }
 
 // ---- expectations ---------------------------------------------------------------------------------
@@ -131,9 +133,9 @@ export fn expectEq(t: *T, actual: i64, expected: i64) {
     if actual == expected { return }
     failLine(t)
     print("expected ")
-    printInt(expected)
+    print(expected)
     print(", got ")
-    printInt(actual)
+    print(actual)
     failEnd()
 }
 
@@ -141,7 +143,7 @@ export fn expectNe(t: *T, actual: i64, other: i64) {
     if actual != other { return }
     failLine(t)
     print("expected a value other than ")
-    printInt(other)
+    print(other)
     failEnd()
 }
 
@@ -150,45 +152,45 @@ export fn expectEqUInt(t: *T, actual: ui64, expected: ui64) {
     if actual == expected { return }
     failLine(t)
     print("expected ")
-    printUInt(expected)
+    print(expected)
     print(", got ")
-    printUInt(actual)
+    print(actual)
     failEnd()
 }
 
 export fn expectGt(t: *T, actual: i64, bound: i64) {
     if actual > bound { return }
     failLine(t)
-    printInt(actual)
+    print(actual)
     print(" is not greater than ")
-    printInt(bound)
+    print(bound)
     failEnd()
 }
 
 export fn expectGe(t: *T, actual: i64, bound: i64) {
     if actual >= bound { return }
     failLine(t)
-    printInt(actual)
+    print(actual)
     print(" is not greater than or equal to ")
-    printInt(bound)
+    print(bound)
     failEnd()
 }
 
 export fn expectLt(t: *T, actual: i64, bound: i64) {
     if actual < bound { return }
     failLine(t)
-    printInt(actual)
+    print(actual)
     print(" is not less than ")
-    printInt(bound)
+    print(bound)
     failEnd()
 }
 
 export fn expectLe(t: *T, actual: i64, bound: i64) {
     if actual <= bound { return }
     failLine(t)
-    printInt(actual)
+    print(actual)
     print(" is not less than or equal to ")
-    printInt(bound)
+    print(bound)
     failEnd()
 }
 
@@ -202,16 +204,14 @@ export fn expectNear(t: *T, actual: f64, expected: f64, eps: f64) {
     failEnd()
 }
 
-/// NUL-terminated string equality.
-export fn expectEqStr(t: *T, actual: *ui8, expected: *ui8) {
-    local i: usize = 0
-    while actual[i] != 0 && actual[i] == expected[i] { i = i + 1 }
-    if actual[i] == expected[i] { return }
+/// Byte-wise string equality. The report writes the bytes as they are (embedded NULs included).
+export fn expectEqStr(t: *T, actual: str, expected: str) {
+    if strEq(actual, expected) { return }
     failLine(t)
     print("expected \"")
-    print(expected)
+    sysWrite(1, expected.ptr, expected.len)
     print("\", got \"")
-    print(actual)
+    sysWrite(1, actual.ptr, actual.len)
     print("\"")
     failEnd()
 }
@@ -242,13 +242,13 @@ export fn suiteRun(s: *Suite) -> i32 {
             dim()
             print(c.name)
             reset()
-            println("")
+            print("\n")
         } else {
             s.failed = s.failed + 1
         }
         i = i + 1
     }
-    println("")
+    print("\n")
     print("  ")
     if s.failed == 0 {
         green()
@@ -256,20 +256,20 @@ export fn suiteRun(s: *Suite) -> i32 {
         red()
     }
     bold()
-    printInt(s.passed as i64)
+    print(s.passed as i64)
     print(" passed")
     if s.failed > 0 {
         print(", ")
-        printInt(s.failed as i64)
+        print(s.failed as i64)
         print(" failed")
     }
     reset()
     dim()
     print(" (")
-    printInt((s.passed + s.failed) as i64)
+    print((s.passed + s.failed) as i64)
     print(" tests)")
     reset()
-    println("")
+    print("\n")
     if s.failed > 0 { return 1 }
     return 0
 }

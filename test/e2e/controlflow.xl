@@ -1,6 +1,6 @@
 // End-to-end: the control-flow syntax (break, labels, for, do-while, switch, defer, ?:, op=, ++/--).
 // Exits with the number of failed checks and prints "controlflow ok" when all pass.
-from "std" import print, println, printInt
+from "std" import print
 
 enum Color { Red, Green, Blue }
 
@@ -14,8 +14,8 @@ fn check(name: *ui8, got: i64, want: i64) {
         print("FAIL ")
         print(name)
         print(": ")
-        printInt(got)
-        println("")
+        print(got)
+        print("\n")
     }
 }
 
@@ -148,7 +148,7 @@ fn main() -> i32 {
     check("defer-loop", deferInLoop(), 402)
 
     if failures == 0 {
-        println("controlflow ok")
+        print("controlflow ok\n")
     }
     return failures
 }

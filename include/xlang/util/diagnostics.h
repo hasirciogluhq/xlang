@@ -22,11 +22,18 @@ struct Label {
     std::string text;
 };
 
+/// A secondary message at a place, such as the request that caused an instantiation.
+struct Note {
+    Span span;
+    std::string message;
+};
+
 struct Diagnostic {
     std::string code;
     Severity severity{Severity::Error};
     std::string message;
     std::vector<Label> labels;
+    std::vector<Note> notes;
     std::string detail;  ///< what exactly is wrong
     std::string reason;  ///< why it matters
     std::string fix;     ///< how to fix it
@@ -76,8 +83,14 @@ public:
     void report(Diagnostic diagnostic);
     void flush();
 
+    /// Trial lowering (overload resolution): while quiet, reports are dropped and do not count.
+    /// Calls nest; each `beginQuiet` needs one `endQuiet`.
+    void beginQuiet() { ++quiet_; }
+    void endQuiet() { --quiet_; }
+
     // Builders for the common shapes.
-    void error(std::string code, const Span& span, std::string message, std::string label = {});
+    void error(std::string code, const Span& span, std::string message, std::string label = {},
+               std::vector<Note> notes = {});
     void warning(std::string code, const Span& span, std::string message, std::string label = {});
 
     [[nodiscard]] std::size_t errorCount() const { return errors_; }
@@ -108,6 +121,7 @@ private:
     std::optional<std::ofstream> log_;
     std::vector<Diagnostic> pending_;
     std::size_t errors_{0};
+    std::size_t quiet_{0};
     std::size_t warnings_{0};
 };
 

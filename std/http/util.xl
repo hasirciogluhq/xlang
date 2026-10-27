@@ -2,7 +2,7 @@
 // Everything here works on NUL-terminated byte strings and caller-provided buffers.
 from "../memory" import strlen
 
-export fn strEq(a: *ui8, b: *ui8) -> bool {
+export fn cstrEq(a: *ui8, b: *ui8) -> bool {
     local i: usize = 0
     while a[i] != 0 && a[i] == b[i] { i = i + 1 }
     return a[i] == b[i]

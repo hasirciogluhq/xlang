@@ -1,7 +1,7 @@
 // End-to-end: the Gin-style router (params, catch-all, groups, middleware, 404/405) driven without a
 // socket. Handlers record what they saw. Exits with the number of failed checks and prints
 // "router ok" when all pass.
-from "std" import print, println, strEq, Router, Group, Context, routerInit, routerGet, routerPost, routerUse, routerGroup, groupGet, groupUse, routerDispatch, routerNoRoute, ctxInit, ctxParam, ctxNext, ctxAbort
+from "std" import print, cstrEq, Router, Group, Context, routerInit, routerGet, routerPost, routerUse, routerGroup, groupGet, groupUse, routerDispatch, routerNoRoute, ctxInit, ctxParam, ctxNext, ctxAbort
 
 global failures: i32 = 0
 global hit: i32 = 0
@@ -12,7 +12,8 @@ fn check(name: *ui8, ok: bool) {
     if !ok {
         failures += 1
         print("FAIL ")
-        println(name)
+        print(name)
+        print("\n")
     }
 }
 
@@ -64,11 +65,11 @@ fn main() -> i32 {
     run(&r, "GET", "/")
     check("root", hit == 1)
     run(&r, "GET", "/users/42")
-    check("param", hit == 2 && lastParam != nil && strEq(lastParam, "42"))
+    check("param", hit == 2 && lastParam != nil && cstrEq(lastParam, "42"))
     run(&r, "GET", "/users/me")
     check("static wins", hit == 3)
     run(&r, "GET", "/files/a/b.txt")
-    check("catch-all", hit == 4 && lastParam != nil && strEq(lastParam, "/a/b.txt"))
+    check("catch-all", hit == 4 && lastParam != nil && cstrEq(lastParam, "/a/b.txt"))
     run(&r, "POST", "/users")
     check("post", hit == 6)
     run(&r, "GET", "/api/ping")
@@ -78,6 +79,6 @@ fn main() -> i32 {
     run(&r, "HEAD", "/")
     check("head falls back to get", hit == 1)
 
-    if failures == 0 { println("router ok") }
+    if failures == 0 { print("router ok\n") }
     return failures
 }

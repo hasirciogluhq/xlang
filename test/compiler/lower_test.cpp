@@ -46,6 +46,14 @@ struct Lowered {
     }
 };
 
+std::size_t countOf(const std::string& text, const std::string& needle) {
+    std::size_t n = 0;
+    for (std::size_t at = text.find(needle); at != std::string::npos; at = text.find(needle, at + 1)) {
+        ++n;
+    }
+    return n;
+}
+
 void testScopeStack() {
     ScopeStack s;
     s.push(ScopeKind::Module);
@@ -277,6 +285,69 @@ void testRegisterRoles() {
         Lowered r("register(panic) fn panic(msg: *ui8) { }\nfn f() { local panic: i32 = 1 }\n");
         CHECK(r.out.str().find("W0402") != std::string::npos);
     }
+    {
+        // `start` is no longer a role: `@init` replaces it.
+        Lowered r("register(start) fn start() { }\n");
+        CHECK(r.failedWith("E0503"));
+    }
+}
+
+void testInitFunctions() {
+    {
+        Lowered r("@init fn boot() { }\nfn main() -> i32 { return 0 }\n");
+        CHECK(!r.diag->hasErrors());
+        CHECK(r.module.init_functions == std::vector<std::string>{"boot"});
+        CHECK(r.has("init boot"));
+    }
+    {
+        Lowered r("@init fn first() { }\n@init fn second() { }\n");
+        CHECK(!r.diag->hasErrors());
+        CHECK(r.module.init_functions == (std::vector<std::string>{"first", "second"}));
+    }
+    {
+        Lowered r("@init fn boot(x: i32) { }\n");
+        CHECK(r.failedWith("E0729"));
+    }
+    {
+        Lowered r("@init fn boot() -> i32 { return 0 }\n");
+        CHECK(r.failedWith("E0729"));
+    }
+    {
+        Lowered r("@init fn boot<T>() { }\n");
+        CHECK(r.failedWith("E0729"));
+    }
+    {
+        Lowered r("@init fn boot();\n");
+        CHECK(r.failedWith("E0002"));
+    }
+    {
+        Lowered r("@init global x: i32 = 1\n");
+        CHECK(r.failedWith("E0729"));
+    }
+    {
+        Lowered r("@init fn boot() { }\nfn f() { boot() }\n");
+        CHECK(r.failedWith("E0727"));
+    }
+    {
+        Lowered r("fn f() { __builtin_setRegistered(\"allocator\", nil) }\n");
+        CHECK(r.failedWith("E0728"));
+    }
+    {
+        Lowered r("@init fn boot() { }\nfn f() -> i32 { return __builtin_setRegistered(\"allocator\", nil) }\n");
+        CHECK(r.failedWith("E0728"));
+    }
+    {
+        Lowered r("@init fn boot() { __builtin_setRegistered(\"allocator\", nil) }\n");
+        CHECK(r.failedWith("E0503"));
+    }
+    {
+        Lowered r("export(c) fn _start() { }\n");
+        CHECK(r.failedWith("E0726"));
+    }
+    {
+        Lowered r("export(c) fn mainCRTStartup() { }\n");
+        CHECK(r.failedWith("E0726"));
+    }
 }
 
 void testGlobalInitializersAreConstant() {
@@ -363,6 +434,25 @@ struct Multi {
         return diag->hasErrors() && out.str().find(code) != std::string::npos;
     }
 };
+
+void testCyclicModules() {
+    {
+        // A name that reaches the importer only through an `export *` loop is never exported.
+        Multi r({{"app/a.xl", "export * from \"b\"\nfn main() -> i32 { return 0 }\n"},
+                 {"app/b.xl", "export * from \"a\"\nfrom \"a\" import ghost\n"}});
+        CHECK(r.failedWith("E0711"));
+    }
+    {
+        // Mutual imports with calls in both directions are legal.
+        Multi r({{"app/a.xl",
+                  "from \"b\" import fb\nexport fn fa() -> i32 { return 1 }\n"
+                  "fn main() -> i32 { return fb() }\n"},
+                 {"app/b.xl", "from \"a\" import fa\nexport fn fb() -> i32 { return fa() + 1 }\n"}});
+        CHECK(!r.diag->hasErrors());
+        CHECK(r.has("fn fa("));
+        CHECK(r.has("fn b::fb("));
+    }
+}
 
 void testModulesImportAndExport() {
     {
@@ -474,6 +564,296 @@ void testClassesAndInterfacesChecks() {
     }
 }
 
+void testStrings() {
+    {
+        Lowered b("fn f() {\n local s = \"abc\"\n s[0] = 1\n}\n");
+        CHECK(b.failedWith("E0716"));
+    }
+    {
+        Lowered b("fn f() {\n local s = \"abc\"\n s.len = 1\n}\n");
+        CHECK(b.failedWith("E0716"));
+    }
+    {
+        Lowered b("fn f() {\n local b: [ui8; 2] = \"abc\"\n}\n");
+        CHECK(b.failedWith("E0717"));
+    }
+    {
+        Lowered b("fn f() {\n local b: [ui8; 3] = \"abc\"\n local s = \"x\\0y\"\n"
+                  " local n: usize = s.len\n local c: ui8 = s[1]\n}\n");
+        CHECK(!b.diag->hasErrors());
+    }
+    {
+        Lowered b("fn f(x: i32) {\n switch x {\n case 1 { }\n case 1 { }\n }\n}\n");
+        CHECK(b.failedWith("E0709"));
+    }
+    {
+        Lowered b("enum C { A, B }\nfn f(c: C) {\n switch c {\n case C.A { }\n case C.A { }\n }\n}\n");
+        CHECK(b.failedWith("E0709"));
+    }
+}
+
+void testConst() {
+    {
+        Lowered b("fn f(x: i32) {\n const y = x\n}\n");
+        CHECK(b.failedWith("E0715"));
+    }
+    {
+        Lowered b("global y: i32 = 1\nconst X = y\n");
+        CHECK(b.failedWith("E0715"));
+    }
+    {
+        Lowered b("const N = 1\nfn f() {\n N = 2\n}\n");
+        CHECK(b.failedWith("E0716"));
+    }
+    {
+        Lowered b("fn f() {\n const M = 2\n M = 3\n}\n");
+        CHECK(b.failedWith("E0716"));
+    }
+    {
+        Lowered b("const T: [i32; 2] = [1, 2]\nfn f() {\n T[0] = 3\n}\n");
+        CHECK(b.failedWith("E0716"));
+    }
+    {
+        Lowered b("const N = 1\nfn f() -> i32 {\n local p: *i32 = &N\n return N\n}\n");
+        CHECK(!b.diag->hasErrors());
+        CHECK(b.has("const "));
+    }
+}
+
+void testOverloads() {
+    {
+        Lowered b("fn h(a: i64, b: i32) { }\nfn h(a: i32, b: i64) { }\n"
+                  "fn main() -> i32 {\n h(1, 2)\n return 0 }\n");
+        CHECK(b.failedWith("E0403"));
+    }
+    {
+        Lowered b("fn k(x: str) { }\nfn k(x: bool) { }\nfn main() -> i32 {\n k(1.5)\n return 0 }\n");
+        CHECK(b.failedWith("E0404"));
+    }
+    {
+        Lowered b("export(c) fn e(x: i32) { }\nfn e(x: i64) { }\n");
+        CHECK(b.failedWith("E0405"));
+    }
+    {
+        Lowered b("fn d(x: i32) { }\nfn d(x: i32) { }\n");
+        CHECK(b.failedWith("E0401"));
+    }
+    {
+        Lowered b("fn q(x: i32) { }\nfn q(x: str) { }\nfn main() -> i32 {\n local g = q\n return 0 }\n");
+        CHECK(b.failedWith("E0403"));
+    }
+    {
+        Lowered b("fn q(x: i32) { }\nfn q(x: str) { }\nfn main() -> i32 {\n q(\"a\")\n return 0 }\n");
+        CHECK(!b.diag->hasErrors());
+    }
+    {
+        Lowered b("fn a = b\nfn b = a\nfn main() -> i32 {\n a(1)\n return 0 }\n");
+        CHECK(b.failedWith("E0704"));
+    }
+}
+
+void testGenerics() {
+    {
+        Lowered b("fn f<T>() -> i32 { return 0 }\nfn main() -> i32 {\n f()\n return 0 }\n");
+        CHECK(b.failedWith("E0724"));
+    }
+    {
+        Lowered b("interface I<T> { fn m(self) }\nfn f(x: I) { }\nfn main() -> i32 { return 0 }\n");
+        CHECK(b.failedWith("E0724"));
+    }
+    {
+        Lowered b("struct Box<T> { v: T }\nfn main() -> i32 {\n local b: Box<i32, i32>\n return 0 }\n");
+        CHECK(b.failedWith("E0724"));
+    }
+    {
+        Lowered b("struct Chain<T> { next: *Chain<*T> }\nfn main() -> i32 {\n local c: Chain<i32>\n"
+                  " return 0 }\n");
+        CHECK(b.failedWith("E0725"));
+    }
+}
+
+void testRawMoves() {
+    {
+        Lowered r("fn main() -> i32 {\n local x: i32 = 0\n __builtin_write(&x, 1)\n"
+                  " return __builtin_read(&x) }\n");
+        CHECK(!r.diag->hasErrors());
+    }
+    {
+        Lowered r("fn main() -> i32 {\n local x: i32 = 0\n local y = __builtin_write(&x, 1)\n return 0 }\n");
+        CHECK(r.failedWith("E0709"));
+    }
+    {
+        Lowered r("fn main() -> i32 {\n local x: i32 = 0\n return __builtin_read(x) }\n");
+        CHECK(r.failedWith("E0709"));
+    }
+    {
+        Lowered r("fn main() -> i32 {\n __builtin_write(1, 2)\n return 0 }\n");
+        CHECK(r.failedWith("E0709"));
+    }
+    {
+        Lowered r("fn main() -> i32 {\n return __builtin_read() }\n");
+        CHECK(r.failedWith("E0710"));
+    }
+}
+
+void testDroppableArraysAndNotes() {
+    const std::string cls = "class C { fn drop(self) { } }\n";
+    {
+        Lowered r(cls + "fn main() -> i32 {\n local a: [C; 2]\n return 0 }\n");
+        CHECK(r.failedWith("E0721"));
+    }
+    {
+        Lowered r(cls + "fn f(a: [C; 2]) { }\nfn main() -> i32 { return 0 }\n");
+        CHECK(r.failedWith("E0721"));
+    }
+    {
+        Lowered r(cls + "global g: [C; 2]\n");
+        CHECK(r.failedWith("E0721"));
+    }
+    {
+        Lowered r(cls + "struct S { a: [C; 2] }\n");
+        CHECK(r.failedWith("E0721"));
+    }
+    {
+        Lowered r(cls + "class D { a: [C; 2] }\n");
+        CHECK(r.failedWith("E0721"));
+    }
+    {
+        Lowered r(cls + "fn main() -> i32 {\n local a: [[C; 2]; 2]\n return 0 }\n");
+        CHECK(r.failedWith("E0721"));
+    }
+    {
+        Lowered r("fn main() -> i32 {\n local a: [i32; 2]\n return 0 }\n");
+        CHECK(!r.diag->hasErrors());
+    }
+    {
+        Lowered r("@init fn boot() { }\nfn main() -> i32 {\n local f = boot\n return 0 }\n");
+        CHECK(r.failedWith("E0727"));
+    }
+    {
+        Lowered r("fn bad<T>(x: T) -> i32 {\n return missingName\n}\n"
+                  "fn main() -> i32 {\n return bad<i32>(1)\n}\n");
+        CHECK(r.failedWith("E0706"));
+        CHECK(r.out.str().find("in instantiation of `bad<i32>` requested here") !=
+              std::string::npos);
+    }
+    {
+        Lowered r("fn inner<T>(x: T) -> i32 {\n return missingName\n}\n"
+                  "fn outer<T>(x: T) -> i32 {\n return inner<T>(x)\n}\n"
+                  "fn main() -> i32 {\n return outer<i32>(1)\n}\n");
+        CHECK(r.diag->hasErrors());
+        CHECK(r.out.str().find("in instantiation of `inner<i32>` requested here") !=
+              std::string::npos);
+        CHECK(r.out.str().find("in instantiation of `outer<i32>` requested here") !=
+              std::string::npos);
+    }
+    {
+        // Each argument is lowered once, so six nested calls with four overloads stay linear.
+        Lowered r("fn f(x: i64) -> i64 { return x }\nfn f(x: i32) -> i64 { return x as i64 }\n"
+                  "fn f(x: bool) -> i64 { return 1 }\nfn f(x: f64) -> i64 { return 2 }\n"
+                  "fn main() -> i32 {\n return f(f(f(f(f(f(1)))))) as i32\n}\n");
+        CHECK(!r.diag->hasErrors());
+    }
+}
+
+void testOwnership() {
+    {
+        Lowered b("class C { fn drop(self) { } }\nclass H { c: C }\n"
+                  "fn f(h: H) {\n local x = h.c\n}\n");
+        CHECK(b.failedWith("E0720"));
+    }
+    {
+        Lowered b("class C { fn drop(self) { } }\nstruct S { c: C }\n");
+        CHECK(b.failedWith("E0721"));
+    }
+    {
+        Lowered b("class C { fn init(self) -> i32 { return 1 } }\n");
+        CHECK(b.failedWith("E0722"));
+    }
+    {
+        Lowered b("class C { fn drop(self, x: i32) { } }\n");
+        CHECK(b.failedWith("E0722"));
+    }
+    {
+        Lowered b("class C { fn init(self, x: i32) { } }\nfn f() {\n local c = C { }\n}\n");
+        CHECK(b.failedWith("E0723"));
+    }
+    {
+        Lowered b("class C { fn init(self, x: i32) { } fn drop(self) { } }\n"
+                  "fn f() {\n local c = C(1)\n}\n");
+        CHECK(!b.diag->hasErrors());
+    }
+}
+
+void testVariadicPacks() {
+    {
+        // Each argument count gets its own instance, and `args.len` folds to a constant.
+        Lowered r("fn count(..args) -> usize { return args.len as usize }\n"
+                  "fn main() -> i32 {\n local a: usize = count()\n local b: usize = count(1)\n"
+                  " local c: usize = count(1, 2, 3)\n return (a + b + c) as i32 }\n");
+        CHECK(!r.diag->hasErrors());
+        CHECK(r.has("count<>"));
+        CHECK(r.has("count<i32>"));
+        CHECK(r.has("count<i32, i32, i32>"));
+        CHECK(r.has("(cast 3:i32):usize"));  // args.len folded to the element count
+        CHECK(!r.has("args.len"));
+    }
+    {
+        // A `for` over the pack is unrolled: one call per argument, each with its own type.
+        Lowered r("fn tap(x: i32) -> i32 { return x }\nfn tap(x: str) -> i32 { return 0 }\n"
+                  "fn unroll(..args) -> i32 {\n local s: i32 = 0\n for a in args {\n  s = s + tap(a)\n }\n"
+                  " return s }\n"
+                  "fn main() -> i32 {\n return unroll(1, 2, 3) }\n");
+        CHECK(!r.diag->hasErrors());
+        CHECK(countOf(r.hir_text, "(call tap$i32 ") == 3);
+        CHECK(r.has("local a#5: i32 = args#1#1"));
+    }
+    {
+        // A pack forwarded through another pack: the inner call receives the same elements.
+        Lowered r("fn inner(..args) -> i32 { return args.len as i32 }\n"
+                  "fn outer(..args) -> i32 { return inner(..args) }\n"
+                  "fn main() -> i32 { return outer(1, 2) }\n");
+        CHECK(!r.diag->hasErrors());
+        CHECK(r.has("(call inner<i32, i32> args#0#0 args#1#1):i32"));
+    }
+    {
+        // A fixed-arity overload with the same call shape wins over a pack instance.
+        Lowered r("fn pick(a: i32) -> i32 { return a }\nfn pick(..args) -> i32 { return 0 }\n"
+                  "fn main() -> i32 { return pick(1) }\n");
+        CHECK(!r.diag->hasErrors());
+        CHECK(r.has("(call pick$i32 1:i32):i32"));
+        CHECK(!r.has("pick<"));
+    }
+    {
+        Lowered r("fn bad(..a, x: i32) { }\n");
+        CHECK(r.failedWith("E0734"));
+    }
+    {
+        Lowered r("fn bad(..a, ..b) { }\n");
+        CHECK(r.failedWith("E0734"));
+    }
+    {
+        Lowered r("fn bad(..a) -> i32 {\n return a\n}\n");
+        CHECK(r.failedWith("E0735"));
+    }
+    {
+        Lowered r("export(c) fn bad(..a) { }\n");
+        CHECK(r.failedWith("E0736"));
+    }
+    {
+        Lowered r("class C { fn m(self, ..a) { } }\n");
+        CHECK(r.failedWith("E0736"));
+    }
+    {
+        Lowered r("fn bad(v: i32) { g(..v) }\nfn g(x: i32) { }\n");
+        CHECK(r.failedWith("E0737"));
+    }
+    {
+        Lowered r("fn bad(..a) -> i32 {\n return a[0]\n}\n");
+        CHECK(r.failedWith("E0738"));
+    }
+}
+
 }  // namespace
 
 void runLowerTests() {
@@ -489,11 +869,21 @@ void runLowerTests() {
     testMethodsAreFunctionsWithSelf();
     testNewAndRegisteredAllocator();
     testRegisterRoles();
+    testInitFunctions();
     testGlobalInitializersAreConstant();
     testImportsAreExternal();
     testEnumsAndStaticAssertInBodies();
     testModulesImportAndExport();
+    testCyclicModules();
     testModulesShareTypes();
     testModuleRegistrationsAndMangling();
     testClassesAndInterfacesChecks();
+    testStrings();
+    testConst();
+    testOverloads();
+    testOwnership();
+    testDroppableArraysAndNotes();
+    testRawMoves();
+    testGenerics();
+    testVariadicPacks();
 }

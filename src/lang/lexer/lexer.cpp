@@ -27,6 +27,7 @@ namespace {
         {"from", TokenKind::From},     {"as", TokenKind::As},
         {"export", TokenKind::Export}, {"declare", TokenKind::Declare},
         {"register", TokenKind::Register}, {"global", TokenKind::Global},
+        {"const", TokenKind::Const}, {"delete", TokenKind::Delete},
         {"struct", TokenKind::Struct}, {"class", TokenKind::Class},
         {"interface", TokenKind::Interface}, {"impl", TokenKind::Impl},
         {"enum", TokenKind::Enum},     {"type", TokenKind::Type},
@@ -569,6 +570,8 @@ const char* tokenKindName(TokenKind kind) {
     case TokenKind::Declare: return "declare";
     case TokenKind::Register: return "register";
     case TokenKind::Global: return "global";
+    case TokenKind::Const: return "const";
+    case TokenKind::Delete: return "delete";
     case TokenKind::Struct: return "struct";
     case TokenKind::Class: return "class";
     case TokenKind::Interface: return "interface";

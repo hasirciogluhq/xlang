@@ -1,0 +1,191 @@
+// std/string: an owned, growable byte string on the registered allocator. The bytes are not
+// NUL-free: `ptr[len] == 0` whenever `cap > 0`, so `cstr()` is a C string. Embedded NUL bytes are
+// kept. No small-string optimization: a non-empty String always allocates.
+from "mem" import currentAllocator
+from "memory" import memcpy
+from "str" import strFromParts, strEq, strSlice, strFind, strStartsWith, strEndsWith
+
+export class String {
+    ptr: *ui8     // nil when cap == 0
+    len: usize    // bytes of content
+    cap: usize    // bytes for content, not counting the NUL slot
+
+    fn init(self) {
+        self.ptr = nil
+        self.len = 0
+        self.cap = 0
+    }
+
+    fn init(self, s: str) {
+        self.ptr = nil
+        self.len = 0
+        self.cap = 0
+        self.append(s)
+    }
+
+    /// `n` copies of the byte `b`.
+    fn init(self, n: usize, b: ui8) {
+        self.ptr = nil
+        self.len = 0
+        self.cap = 0
+        self.reserve(n)
+        local i: usize = 0
+        while i < n {
+            self.ptr[i] = b
+            i = i + 1
+        }
+        self.len = n
+        if self.cap > 0 {
+            self.ptr[n] = 0
+        }
+    }
+
+    fn drop(self) {
+        if self.cap > 0 {
+            currentAllocator.free(self.ptr as *void)
+        }
+    }
+
+    fn length(self) -> usize {
+        return self.len
+    }
+
+    /// A view of the bytes; valid until the String changes or is dropped.
+    fn asStr(self) -> str {
+        return strFromParts(self.ptr, self.len)
+    }
+
+    /// NUL-terminated bytes (an empty String gives a pointer to a static NUL).
+    fn cstr(self) -> *ui8 {
+        if self.cap == 0 {
+            return ""
+        }
+        return self.ptr
+    }
+
+    /// The byte at `i`; panics when `i` is outside the content.
+    fn at(self, i: usize) -> ui8 {
+        if i >= self.len {
+            panic("String index out of bounds")
+        }
+        return self.ptr[i]
+    }
+
+    /// Makes room for `n` bytes of content. Growth: max(n, 2 * cap, 15).
+    fn reserve(self, n: usize) {
+        if n <= self.cap {
+            return
+        }
+        local want: usize = n
+        if self.cap * 2 > want {
+            want = self.cap * 2
+        }
+        if want < 15 {
+            want = 15
+        }
+        local fresh: *ui8 = currentAllocator.alloc(want + 1, 1) as *ui8
+        if fresh == nil {
+            panic("String: out of memory")
+        }
+        if self.len > 0 {
+            memcpy(fresh as *void, self.ptr as *void, self.len)
+        }
+        fresh[self.len] = 0
+        if self.cap > 0 {
+            currentAllocator.free(self.ptr as *void)
+        }
+        self.ptr = fresh
+        self.cap = want
+    }
+
+    fn push(self, b: ui8) {
+        self.reserve(self.len + 1)
+        self.ptr[self.len] = b
+        self.len = self.len + 1
+        self.ptr[self.len] = 0
+    }
+
+    /// Appends the bytes of `s`. `s` must not be a view of this String's own buffer.
+    fn append(self, s: str) {
+        self.reserve(self.len + s.len)
+        if s.len > 0 {
+            memcpy(&self.ptr[self.len] as *void, s.ptr as *void, s.len)
+        }
+        self.len = self.len + s.len
+        if self.cap > 0 {
+            self.ptr[self.len] = 0
+        }
+    }
+
+    fn append(self, o: *String) {
+        self.append(o.asStr())
+    }
+
+    fn equals(self, s: str) -> bool {
+        return strEq(self.asStr(), s)
+    }
+
+    fn equals(self, o: *String) -> bool {
+        return strEq(self.asStr(), o.asStr())
+    }
+
+    fn clone(self) -> String {
+        local copy: String = String(self.asStr())
+        return copy
+    }
+
+    fn clear(self) {
+        self.len = 0
+        if self.cap > 0 {
+            self.ptr[0] = 0
+        }
+    }
+
+    /// A view of `n` bytes starting at `first`; panics when the range is outside the content.
+    fn slice(self, first: usize, n: usize) -> str {
+        return strSlice(self.asStr(), first, n)
+    }
+
+    /// The byte offset of the first `needle` in the content, or -1 when there is none.
+    fn find(self, needle: str) -> i64 {
+        return strFind(self.asStr(), needle)
+    }
+
+    fn startsWith(self, prefix: str) -> bool {
+        return strStartsWith(self.asStr(), prefix)
+    }
+
+    fn endsWith(self, suffix: str) -> bool {
+        return strEndsWith(self.asStr(), suffix)
+    }
+
+    /// A new String with the ASCII letters A to Z made lowercase; other bytes are unchanged.
+    fn toLowerAscii(self) -> String {
+        local out: String = String()
+        local i: usize = 0
+        while i < self.len {
+            local c: ui8 = self.ptr[i]
+            if c >= 65 && c <= 90 {
+                c = c + 32
+            }
+            out.push(c)
+            i = i + 1
+        }
+        return out
+    }
+
+    /// A new String with the ASCII letters a to z made uppercase; other bytes are unchanged.
+    fn toUpperAscii(self) -> String {
+        local out: String = String()
+        local i: usize = 0
+        while i < self.len {
+            local c: ui8 = self.ptr[i]
+            if c >= 97 && c <= 122 {
+                c = c - 32
+            }
+            out.push(c)
+            i = i + 1
+        }
+        return out
+    }
+}

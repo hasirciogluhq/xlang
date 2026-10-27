@@ -69,6 +69,7 @@ private:
     void buildTables();
     void defineGlobal(const hir::Global& g);
     void defineFunction(const hir::Function& f);
+    void emitInitAll();
     void emitEntry();
     llvm::GlobalVariable* stringGlobal(const std::string& text);
     llvm::Constant* vtablePointer(const std::string& class_name);
@@ -84,6 +85,8 @@ private:
     llvm::Value* genMem(const hir::Expr& e);
     void genInto(const hir::Expr& e, llvm::Value* dest);
     llvm::Value* genCall(const hir::Expr& e, llvm::Value** mem_result);
+    /// Calls the `init` function `key` on the object at `self` with the given arguments.
+    void callInit(const std::string& key, llvm::Value* self, const std::vector<hir::ExprPtr>& args, const Span& span);
     llvm::Value* genCallCommon(llvm::FunctionType* fty, llvm::Value* callee, const std::vector<const hir::Expr*>& args,
                                llvm::Value* self, const Type& ret, llvm::Value** mem_result, const Span& at);
     llvm::Value* genSyscall(const hir::Expr& e);
@@ -157,7 +160,7 @@ private:
 
 bool Gen::isMem(const Type& t) const {
     return t.kind == TypeKind::Struct || t.kind == TypeKind::Class || t.kind == TypeKind::Array ||
-           t.kind == TypeKind::Interface;
+           t.kind == TypeKind::Interface || t.kind == TypeKind::Str;
 }
 
 bool Gen::isSigned(const Type& t) const {
@@ -415,8 +418,7 @@ void Gen::declareFunction(const hir::Function& f) {
     llvm::FunctionType* fty = fnTypeFor(params, f.ret);
     llvm::GlobalValue::LinkageTypes link = llvm::GlobalValue::InternalLinkage;
     const bool root_main = f.module.empty() && f.name == "main";
-    const bool start_fn = !hm_.start_function.empty() && f.name == hm_.start_function;
-    if (f.exported || f.declared || root_main || start_fn || !f.has_body || in_.only_module) {
+    if (f.exported || f.declared || root_main || !f.has_body || in_.only_module) {
         link = llvm::GlobalValue::ExternalLinkage;  // per-module objects reference each other
     }
     llvm::Function* fn = llvm::Function::Create(fty, link, f.symbol.empty() ? f.name : f.symbol, mod_);
@@ -443,7 +445,7 @@ void Gen::declareGlobal(const hir::Global& g) {
     const bool here = definedHere(in_, g.module);
     llvm::Constant* init = (g.declared || !here) ? nullptr : llvm::Constant::getNullValue(ty);
     const bool external = g.exported || g.declared || in_.only_module;
-    auto* gv = new llvm::GlobalVariable(mod_, ty, false,
+    auto* gv = new llvm::GlobalVariable(mod_, ty, g.constant,
                                         external ? llvm::GlobalValue::ExternalLinkage : llvm::GlobalValue::InternalLinkage,
                                         init, g.symbol.empty() ? g.name : g.symbol);
     gv->setAlignment(llvm::Align(std::max<std::uint64_t>(align, 1)));
@@ -612,8 +614,15 @@ llvm::Constant* Gen::genConst(const hir::Expr& e) {
         auto* st = llvm::StructType::get(ctx_, {ptrTy(), ptrTy()}, true);
         return llvm::ConstantStruct::get(st, {data, itable});
     }
-    case hir::ExprKind::StrConst:
-        return stringGlobal(e.text);
+    case hir::ExprKind::StrConst: {
+        llvm::GlobalVariable* bytes = stringGlobal(e.text);
+        if (e.type.kind != TypeKind::Str) {
+            return bytes;
+        }
+        auto* st = llvm::StructType::get(ctx_, {ptrTy(), llvm::Type::getInt64Ty(ctx_)}, true);
+        return llvm::ConstantStruct::get(
+            st, {bytes, llvm::ConstantInt::get(llvm::Type::getInt64Ty(ctx_), e.text.size())});
+    }
     case hir::ExprKind::Nil:
         return llvm::Constant::getNullValue(ptrTy());
     case hir::ExprKind::FuncRef: {
@@ -697,7 +706,7 @@ void Gen::defineGlobal(const hir::Global& g) {
         return;
     }
     // The initializer has its own (packed struct) type: replace the placeholder variable.
-    auto* gv = new llvm::GlobalVariable(mod_, init->getType(), false, old->getLinkage(), init, "");
+    auto* gv = new llvm::GlobalVariable(mod_, init->getType(), old->isConstant(), old->getLinkage(), init, "");
     gv->setAlignment(old->getAlign().value_or(llvm::Align(1)));
     gv->takeName(old);
     old->replaceAllUsesWith(gv);
@@ -916,6 +925,7 @@ llvm::Value* Gen::genAddr(const hir::Expr& e) {
         }
         return it->second;
     }
+    case hir::ExprKind::RawRead:
     case hir::ExprKind::Deref: return genScalar(*e.lhs);
     case hir::ExprKind::Field: {
         llvm::Value* base = e.through_pointer ? genScalar(*e.lhs) : genAddr(*e.lhs);
@@ -924,12 +934,26 @@ llvm::Value* Gen::genAddr(const hir::Expr& e) {
     }
     case hir::ExprKind::Index: {
         const bool is_array = e.lhs->type.kind == TypeKind::Array;
-        llvm::Value* base = is_array ? genAddr(*e.lhs) : genScalar(*e.lhs);
+        const bool is_str = e.lhs->type.kind == TypeKind::Str;
+        llvm::Value* base = is_array || is_str ? genAddr(*e.lhs) : genScalar(*e.lhs);
         llvm::Value* idx = genScalar(*e.rhs);
         const bool idx_signed = isSigned(e.rhs->type);
         llvm::Type* i64 = llvm::Type::getInt64Ty(ctx_);
         if (idx->getType()->getIntegerBitWidth() != 64) {
             idx = idx_signed ? B_.CreateSExt(idx, i64) : B_.CreateZExt(idx, i64);
+        }
+        if (is_str) {
+            // `str` is { ptr, len }: check the index against len, then index the bytes at ptr.
+            llvm::Value* len = B_.CreateZExt(
+                B_.CreateAlignedLoad(sty(Type::makeInt(0, false)), byteOffset(base, ptrBits() / 8),
+                                     llvm::Align(ptrBits() / 8)),
+                i64);
+            if (e.checked) {
+                checkedBranch(B_.CreateICmpUGE(idx, len), "str index out of bounds");
+            }
+            llvm::Value* data =
+                B_.CreateAlignedLoad(ptrTy(), base, llvm::Align(ptrBits() / 8));
+            return B_.CreateInBoundsGEP(llvm::Type::getInt8Ty(ctx_), data, {idx});
         }
         if (is_array && e.checked) {
             const TypeLayout* l = layoutOf(e.lhs->type);
@@ -1030,6 +1054,32 @@ void Gen::genInto(const hir::Expr& e, llvm::Value* dest) {
         B_.CreateAlignedStore(itable, byteOffset(dest, ptrBits() / 8), llvm::Align(ptrBits() / 8));
         return;
     }
+    case hir::ExprKind::Construct: {
+        // A new object in `dest`: zeroed, vptr stored, then its `init` runs on it.
+        const TypeLayout* l = layoutOf(e.target);
+        if (l != nullptr) {
+            zeroMem(dest, l->size, l->align);
+        }
+        if (e.target.kind == TypeKind::Class) {
+            if (llvm::Constant* vp = vtablePointer(e.target.path.front())) {
+                B_.CreateAlignedStore(vp, dest, llvm::Align(ptrBits() / 8));
+            }
+        }
+        if (!e.text.empty()) {
+            callInit(e.text, dest, e.args, e.span);
+        }
+        return;
+    }
+    case hir::ExprKind::StrConst: {
+        if (e.type.kind != TypeKind::Str) {
+            storeScalar(e.type, genScalar(e), dest);
+            return;
+        }
+        B_.CreateAlignedStore(stringGlobal(e.text), dest, llvm::Align(ptrBits() / 8));
+        B_.CreateAlignedStore(B_.getInt64(e.text.size()), byteOffset(dest, ptrBits() / 8),
+                              llvm::Align(ptrBits() / 8));
+        return;
+    }
     default: {
         llvm::Value* src = genMem(e);
         if (src != dest) {
@@ -1045,6 +1095,7 @@ llvm::Value* Gen::genMem(const hir::Expr& e) {
     switch (e.kind) {
     case hir::ExprKind::LocalRef:
     case hir::ExprKind::GlobalRef:
+    case hir::ExprKind::RawRead:
     case hir::ExprKind::Deref:
     case hir::ExprKind::Field:
     case hir::ExprKind::Index:
@@ -1056,6 +1107,18 @@ llvm::Value* Gen::genMem(const hir::Expr& e) {
         llvm::Value* mem = nullptr;
         (void)genCall(e, &mem);
         return mem;
+    }
+    case hir::ExprKind::Move: {
+        // The value is read first; the drop flag is cleared, so the owner no longer drops it.
+        llvm::Value* src = genMem(*e.lhs);
+        storeScalar(Type::makeBool(), B_.getInt1(false), locals_[e.local]);
+        return src;
+    }
+    case hir::ExprKind::Materialize: {
+        llvm::Value* tmp = locals_[e.local];
+        genInto(*e.lhs, tmp);
+        storeScalar(Type::makeBool(), B_.getInt1(true), locals_[e.index]);
+        return tmp;
     }
     case hir::ExprKind::External:
     case hir::ExprKind::ExternalCall:
@@ -1311,6 +1374,21 @@ llvm::Value* Gen::genSyscall(const hir::Expr& e) {
     return result;
 }
 
+void Gen::callInit(const std::string& key, llvm::Value* self, const std::vector<hir::ExprPtr>& args, const Span& span) {
+    llvm::Function* f = functionNamed(key);
+    if (f == nullptr) {
+        error(span, std::format("unknown function `{}`", key));
+        return;
+    }
+    std::vector<Type> params{Type::makePointer(Type::makeVoid())};
+    std::vector<const hir::Expr*> av;
+    for (const hir::ExprPtr& a : args) {
+        params.push_back(a->type);
+        av.push_back(a.get());
+    }
+    genCallCommon(fnTypeFor(params, Type::makeVoid()), f, av, self, Type::makeVoid(), nullptr, span);
+}
+
 llvm::Value* Gen::genCallCommon(llvm::FunctionType* fty, llvm::Value* callee,
                                 const std::vector<const hir::Expr*>& args, llvm::Value* self, const Type& ret,
                                 llvm::Value** mem_result, const Span& at) {
@@ -1490,6 +1568,9 @@ llvm::Value* Gen::genNew(const hir::Expr& e) {
         if (llvm::Constant* vp = vtablePointer(t.path.front())) {
             B_.CreateAlignedStore(vp, mem, llvm::Align(ptrBits() / 8));
         }
+    }
+    if (!e.text.empty()) {
+        callInit(e.text, mem, e.args, e.span);
     }
     const TypeLayout* l = layoutOf(t);
     for (const hir::FieldInit& f : e.fields) {
@@ -1704,6 +1785,7 @@ llvm::Value* Gen::genScalar(const hir::Expr& e) {
     }
     case hir::ExprKind::LocalRef:
     case hir::ExprKind::GlobalRef:
+    case hir::ExprKind::RawRead:
     case hir::ExprKind::Deref:
     case hir::ExprKind::Field:
     case hir::ExprKind::Index:
@@ -1779,16 +1861,31 @@ llvm::Value* Gen::genScalar(const hir::Expr& e) {
 // ---------------------------------------------------------------------------------------------
 // Entry point and driver
 
+void Gen::emitInitAll() {
+    // `_xl_initAll` runs the `@init` functions in order. It is named without `$` so that the raw
+    // AT&T entry stubs can call it: a `$` starting an operand is an immediate there.
+    llvm::Function* init_all = llvm::Function::Create(
+        llvm::FunctionType::get(llvm::Type::getVoidTy(ctx_), false),
+        llvm::GlobalValue::ExternalLinkage,
+        "_xl_initAll",
+        mod_);
+    init_all->addFnAttr(llvm::Attribute::NoUnwind);
+    llvm::BasicBlock* entry = llvm::BasicBlock::Create(ctx_, "entry", init_all);
+    B_.SetInsertPoint(entry);
+    for (const std::string& name : hm_.init_functions) {
+        if (llvm::Function* f = functionNamed(name)) {
+            B_.CreateCall(f);
+        }
+    }
+    B_.CreateRetVoid();
+}
+
 void Gen::emitEntry() {
     const TargetInfo& t = in_.config.target;
     const hir::Function* main_fn = nullptr;
-    const hir::Function* start_fn = nullptr;
     for (const hir::Function& f : hm_.functions) {
         if (f.module.empty() && f.name == "main" && f.has_body) {
             main_fn = &f;
-        }
-        if (!hm_.start_function.empty() && f.name == hm_.start_function && f.has_body) {
-            start_fn = &f;
         }
     }
     if (main_fn == nullptr) {
@@ -1798,35 +1895,31 @@ void Gen::emitEntry() {
     const auto symOf = [mach_o](const hir::Function& f) {
         return (mach_o ? "_" : "") + (f.symbol.empty() ? f.name : f.symbol);
     };
-    // `register(start)` runs first; the stub never returns, so the clobbered return registers and
-    // link register are harmless. Both calls keep the stack 16-byte aligned at the call site.
-    const std::string call_start = start_fn == nullptr ? "" : "\tcall " + symOf(*start_fn) + "\n";
+    // `_xl_initAll` runs first and returns normally. Every call keeps the stack 16-byte aligned at
+    // the call site.
+    const std::string init_sym = std::string(mach_o ? "_" : "") + "_xl_initAll";
+    const std::string x86_init = "\tcall " + init_sym + "\n";
+    const std::string arm_init = "\tbl " + init_sym + "\n";
     const std::string sym = symOf(*main_fn);
     const bool returns_int = main_fn->ret.kind == TypeKind::Int;
     std::string text;
     if (t.os == "linux" && t.arch == "x86_64") {
-        text = ".text\n.globl _start\n_start:\n\txorl %ebp, %ebp\n\tandq $-16, %rsp\n" + call_start + "\tcall " + sym + "\n";
+        text = ".text\n.globl _start\n_start:\n\txorl %ebp, %ebp\n\tandq $-16, %rsp\n" + x86_init + "\tcall " + sym + "\n";
         text += returns_int ? "\tmovl %eax, %edi\n" : "\txorl %edi, %edi\n";
         text += "\tmovl $231, %eax\n\tsyscall\n";   // exit_group: ends the worker threads too
     } else if (t.os == "linux") {
-        text = ".text\n.globl _start\n_start:\n";
-        if (start_fn != nullptr) {
-            text += "\tbl " + symOf(*start_fn) + "\n";
-        }
+        text = ".text\n.globl _start\n_start:\n" + arm_init;
         text += "\tbl " + sym + "\n";
         if (!returns_int) {
             text += "\tmov x0, #0\n";
         }
         text += "\tmov x8, #94\n\tsvc #0\n";   // exit_group
     } else if (t.os == "macos" && t.arch == "x86_64") {
-        text = ".text\n.globl _start\n_start:\n\txorl %ebp, %ebp\n\tandq $-16, %rsp\n" + call_start + "\tcall " + sym + "\n";
+        text = ".text\n.globl _start\n_start:\n\txorl %ebp, %ebp\n\tandq $-16, %rsp\n" + x86_init + "\tcall " + sym + "\n";
         text += returns_int ? "\tmovl %eax, %edi\n" : "\txorl %edi, %edi\n";
         text += "\tmovl $0x2000001, %eax\n\tsyscall\n";
     } else if (t.os == "macos") {
-        text = ".text\n.globl _start\n.p2align 2\n_start:\n";
-        if (start_fn != nullptr) {
-            text += "\tbl " + symOf(*start_fn) + "\n";
-        }
+        text = ".text\n.globl _start\n.p2align 2\n_start:\n" + arm_init;
         text += "\tbl " + sym + "\n";
         if (!returns_int) {
             text += "\tmov x0, #0\n";
@@ -1835,7 +1928,7 @@ void Gen::emitEntry() {
     } else if (t.os == "windows") {
         // The process ends through ntdll's `NtTerminateProcess` (the linker driver always imports
         // it for Windows executables): its exit status is `main`'s result, or 0 for a void `main`.
-        text = ".text\n.globl mainCRTStartup\nmainCRTStartup:\n\tsubq $40, %rsp\n" + call_start + "\tcall " + sym + "\n";
+        text = ".text\n.globl mainCRTStartup\nmainCRTStartup:\n\tsubq $40, %rsp\n" + x86_init + "\tcall " + sym + "\n";
         text += returns_int ? "\tmovl %eax, %edx\n" : "\txorl %edx, %edx\n";
         text += "\tmovq $-1, %rcx\n\tcall NtTerminateProcess\n\tint3\n";
         // Without a C runtime nothing else defines the stack probe LLVM calls for frames over 4 KiB
@@ -1880,6 +1973,7 @@ bool Gen::run() {
         }
     }
     if (in_.emit_entry && (!in_.only_module || in_.only_module->empty())) {
+        emitInitAll();
         emitEntry();
     }
     if (di_) {

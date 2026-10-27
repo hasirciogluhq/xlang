@@ -4,7 +4,7 @@
 from "../memory" import strlen
 from "../tls" import TlsConn, tlsWrite
 from "../sys" import sysWrite
-from "util" import strEq, formatUInt, formatHex, append, headerLookup
+from "util" import cstrEq, formatUInt, formatHex, append, headerLookup
 
 export define HTTP_MAX_CHAIN = 8      // middleware + handler per route
 export define HTTP_MAX_PARAMS = 8
@@ -265,7 +265,7 @@ export fn ctxDefaultQuery(c: *Context, name: *ui8, fallback: *ui8) -> *ui8 {
 export fn ctxParam(c: *Context, name: *ui8) -> *ui8 {
     local i: i32 = 0
     while i < c.paramCount {
-        if strEq(c.paramName[i], name) { return c.paramVal[i] }
+        if cstrEq(c.paramName[i], name) { return c.paramVal[i] }
         i = i + 1
     }
     return nil
