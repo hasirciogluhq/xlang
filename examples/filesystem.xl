@@ -1,5 +1,5 @@
 // std/fs: write, append, read back, stat, stream and remove a file. Run from the repository root.
-from "std" import print, println, printInt, fsWrite, fsAppend, fsReadAll, fsExists, fsSize, fsRemove
+from "std" import print, println, fsWrite, fsAppend, fsReadAll, fsExists, fsSize, fsRemove
 from "std" import fsOpenRead, fsRead, fsClose
 
 global body: [ui8; 4096]
@@ -15,8 +15,7 @@ fn main() -> i32 {
 
     if fsExists(path) {
         print("size: ")
-        printInt(fsSize(path))
-        println("")
+        println(fsSize(path))
     }
 
     local f: i32 = fsOpenRead(path)

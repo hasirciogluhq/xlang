@@ -1,5 +1,5 @@
 // Pointers (*T), address-of (&), deref (*) and casts (`as`).
-from "std" import print, println, printInt, printUInt
+from "std" import print, println
 
 fn bump(p: *i32) {
     *p = *p + 1
@@ -11,27 +11,22 @@ fn main() -> i32 {
     *p = 20
     bump(p)
     print("x=")
-    printInt(x as i64)
-    println("")
+    println(x as i64)
     print("x-pointer: ")
-    printUInt(p as usize)
-    println("")
+    println(p as usize as ui64)
 
     local wide: i64 = x as i64
     print("wide=")
-    printInt(wide)
-    println("")
+    println(wide)
 
     local raw: usize = p as usize
     local back: *i32 = raw as *i32
     print("via bits=")
-    printInt(*back as i64)
-    println("")
+    println(*back as i64)
 
     local q: *i32 = nil
     q = &x
     print("q=")
-    printInt(*q as i64)
-    println("")
+    println(*q as i64)
     return 0
 }

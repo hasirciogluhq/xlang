@@ -1,5 +1,5 @@
 // Mutex + atomic counter shared by tasks started with spawn.
-from "std" import print, println, printInt, spawn, waitAll, Mutex, mutexLock, mutexUnlock
+from "std" import print, println, spawn, waitAll, Mutex, mutexLock, mutexUnlock
 
 struct SharedCounter {
     total: ui64
@@ -17,7 +17,7 @@ fn bump(n: ui64) {
 fn worker(arg: *void) {
     bump(1)
     print("worker ")
-    printInt(arg as usize as i64)
+    print(arg as usize as i64)
     println(" done")
 }
 
@@ -29,7 +29,6 @@ fn main() -> i32 {
     }
     waitAll()
     print("total=")
-    printInt(__builtin_atomicLoad(&counter.total, MemoryOrder.seqCst) as i64)
-    println("")
+    println(__builtin_atomicLoad(&counter.total, MemoryOrder.seqCst) as i64)
     return 0
 }

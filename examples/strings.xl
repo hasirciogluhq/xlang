@@ -1,19 +1,16 @@
 // Strings are NUL-terminated `*ui8`; there is no concatenation operator and no format string.
-from "std" import print, println, printInt, strlen
+from "std" import print, println, strlen
 
 fn main() -> i32 {
     local s: *ui8 = "hello world"
     println(s)
     print("length: ")
-    printInt(strlen(s) as i64)
-    println("")
+    println(strlen(s) as i64)
     print("first byte: ")
-    printInt(s[0] as i64)
-    println("")
+    println(s[0] as i64)
     print("User: ")
     println("ahmet")
     print("score: ")
-    printInt(100)
-    println("")
+    println(100 as i64)
     return 0
 }
