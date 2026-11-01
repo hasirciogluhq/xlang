@@ -261,15 +261,15 @@ export async function resolveCompilerPath(): Promise<string> {
   return "xlang";
 }
 
-/** Prefer build/xlang; fall back to xmake's build/<plat>/<arch>/<mode>/xlang. */
+/** Prefer outputs/xlang; fall back to xmake's outputs/<plat>/<arch>/<mode>/xlang. */
 function findBuiltXlang(root: string): string | undefined {
   const exe = process.platform === "win32" ? "xlang.exe" : "xlang";
-  const direct = path.normalize(path.join(root, "build", exe));
+  const direct = path.normalize(path.join(root, "outputs", exe));
   if (fs.existsSync(direct)) {
     return direct;
   }
 
-  const buildDir = path.join(root, "build");
+  const buildDir = path.join(root, "outputs");
   if (!fs.existsSync(buildDir)) {
     return undefined;
   }

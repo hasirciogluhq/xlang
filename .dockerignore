@@ -2,6 +2,7 @@
 .gitignore
 .cursor
 build
+outputs
 **/node_modules
 vscode/out
 vscode/*.vsix

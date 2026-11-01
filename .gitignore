@@ -1,5 +1,7 @@
 # Build
 /build/
+/outputs/
+/.direnv/
 /dist/
 .xmake/
 compile_commands.json

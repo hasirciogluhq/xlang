@@ -9,7 +9,7 @@
 set -u
 here=$(cd "$(dirname "$0")" && pwd)
 root=$(cd "$here/../.." && pwd)
-xlang=${1:-$root/build/xlang}
+xlang=${1:-$root/outputs/xlang}
 work=$(mktemp -d)
 trap 'rm -rf "$work"; [ -n "${spid:-}" ] && kill "$spid" 2>/dev/null' EXIT
 pass=0; fail=0; skip=0

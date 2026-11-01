@@ -126,7 +126,7 @@ target("std")
     set_enabled(not cross)
     add_deps("xlang")
     after_build(function (target)
-        local exe = path.join(os.projectdir(), "build", "xlang")
+        local exe = path.join(os.projectdir(), "outputs", "xlang")
         os.execv(exe, {"check", path.join(os.projectdir(), "std", "index.xl"), "--no-std"})
     end)
 

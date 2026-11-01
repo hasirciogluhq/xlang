@@ -43,20 +43,20 @@ xmake
 # optional: xmake f -m debug && xmake
 ```
 
-Compiler binary: `./build/xlang`
+Compiler binary: `./outputs/xlang`
 
 xmake builds the C/C++ compiler and host tooling only.
 
 ## Quick start
 
 ```bash
-./build/xlang run examples/strings.xlang
-./build/xlang run examples/hello.xlang
-./build/xlang run examples/types.xlang
-./build/xlang run examples/scheduler.xlang
-./build/xlang run examples/pointers.xlang
-./build/xlang run examples/filesystem.xlang
-./build/xlang run examples/http_server.xlang
+./outputs/xlang run examples/strings.xl
+./outputs/xlang run examples/hello.xl
+./outputs/xlang run examples/types.xl
+./outputs/xlang run examples/scheduler.xl
+./outputs/xlang run examples/pointers.xl
+./outputs/xlang run examples/filesystem.xl
+./outputs/xlang run examples/http_server.xl
 ```
 
 ## CLI

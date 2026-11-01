@@ -209,6 +209,11 @@ constexpr std::size_t kLeadWidth = 40;
         {"E0738", Severity::Error, "parameter pack indexed",
          "A parameter pack has no index operator, because its elements have different types. "
          "Iterate it with `for x in name { }`, or pass it on with `..name`."},
+        {"E0739", Severity::Error, "executable without an entry point",
+         "`--emit=exe` (and `xlang run`) needs a root-module function `main` with a body: the compiler "
+         "generates the program entry stub around it. A file without `main`, such as a library module "
+         "that other files import, cannot be linked as an executable. Add `fn main()`, or build the "
+         "file with `--emit=obj`, `--emit=static` or `--emit=shared`."},
         {"W0701", Severity::Warning, "missing return",
          "Control can fall off the end of a function that returns a value: some path has no "
          "`return` (a loop that ends with `break`, an `if` without `else`, ...). Add a `return`, "

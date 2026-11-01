@@ -128,7 +128,7 @@ jobs:
         run: |
           set -euo pipefail
           chmod +x scripts/release/*.sh
-          scripts/release/package.sh "$VERSION" "$OS" "$ARCH" build/xlang
+          scripts/release/package.sh "$VERSION" "$OS" "$ARCH" outputs/xlang
 
       - uses: actions/upload-artifact@v4
         with:

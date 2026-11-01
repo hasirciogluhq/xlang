@@ -70,7 +70,7 @@ fn main() -> i32 {
 - `@init` marks a module-level boot function: `@init fn boot() { ... }` with no parameters, no return type and a body. It runs before `main`, in this order: the stdlib group first, then the user group. Within a group the order is a depth-first post-order over the import statements, taken in the order they appear: a module's imports run before the module, and each module runs once. In a cycle, a module reached again while it is still being visited is skipped, so the module that was entered first in the cycle runs last among the modules of that cycle.
 - Calling an `@init` function, or using its name as a value, is error `E0727`. `@init` on a class method, on a generic or non-function item, or on a function with parameters or a return type is `E0729`. A bodyless `@init fn boot();` is the parser's error `E0002`.
 - The entry symbols (`_start`, `mainCRTStartup`) and `_xl_initAll` are compiler-owned: a user `export(c)`, `@mangle` or `declare` that uses one of these names is `E0726`.
-- No entry stub is emitted when the program has no `main`.
+- No entry stub is emitted when the program has no `main`. Building such a file as an executable (`--emit=exe`, and therefore `xlang run`) is `E0739`; library modules are built with `--emit=obj`, `--emit=static` or `--emit=shared`.
 - Entry stubs exist for Linux and macOS on x86_64 and aarch64, and for Windows on x86_64.
 
 ---

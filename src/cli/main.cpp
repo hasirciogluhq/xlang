@@ -450,7 +450,20 @@ int main(int argc, char** argv) {
                         out = dir / ((windows ? "" : "lib") + stem + ext);
                     }
                 }
-                if (emit == "header") {
+                bool has_main = false;
+                for (const xlang::hir::Function& f : module.functions) {
+                    has_main = has_main || (f.module.empty() && f.name == "main" && f.has_body);
+                }
+                if (emit == "exe" && !has_main) {
+                    // The compiler generates the entry stub only around `main`; without it the
+                    // linker would fail on the stub's own symbol.
+                    diagnostics.error("E0739",
+                                      xlang::Span{},
+                                      std::format("`{}` has no entry point: no `main` function",
+                                                  path.filename().string()),
+                                      "define `fn main()` in this file, or build it as a library "
+                                      "with `--emit=obj`, `--emit=static` or `--emit=shared`");
+                } else if (emit == "header") {
                     std::string guard = "XLANG_" + stem + "_H";
                     for (char& ch : guard) {
                         ch = static_cast<char>(std::toupper(static_cast<unsigned char>(ch)));

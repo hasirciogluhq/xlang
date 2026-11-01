@@ -12,7 +12,7 @@ add_rules("plugin.compile_commands.autoupdate", {outputdir = "build"})
 
 set_languages("c11", "c++23")
 set_warnings("all")
-set_targetdir("$(projectdir)/build")
+set_targetdir("$(projectdir)/outputs")
 
 includes("xmake/context.lua")
 includes("xmake/toolchains.lua")

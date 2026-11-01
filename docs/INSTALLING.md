@@ -147,6 +147,14 @@ Lookup order:
 
 ---
 
+# Working inside this repository (macOS)
+
+- The repository `.envrc` (direnv, macOS only) links `.direnv/bin/xl` to `outputs/xlang` and puts that directory first on `PATH`, so `xl` inside the repository is the freshly built compiler and overrides any global `xl`.
+- Run `direnv allow` once, and again after `.envrc` changes. Rebuilding with `xmake build` is enough to update `xl`; the link follows the binary.
+- Outside the repository `xl` is whatever the global installation provides.
+
+---
+
 # Related documents
 
 | Document | Role |

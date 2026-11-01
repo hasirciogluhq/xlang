@@ -62,7 +62,7 @@ Problems found in an imported file are shown on the first line of the importing 
 
 | Setting | Default | Description |
 |---------|---------|-------------|
-| `xlang.compilerPath` | *(auto)* | Path to the `xlang` binary (auto: `build/xlang` in the workspace, then `PATH`) |
+| `xlang.compilerPath` | *(auto)* | Path to the `xlang` binary (auto: `outputs/xlang` in the workspace, then `PATH`) |
 | `xlang.stdPath` | *(auto)* | Directory with the stdlib sources (`index.xl`) for IntelliSense |
 | `xlang.enableDiagnostics` | `true` | Run `xlang check` on open/save |
 | `xlang.diagnosticsOnType` | `false` | Re-check while typing (debounced) |

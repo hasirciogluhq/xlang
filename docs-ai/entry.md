@@ -9,4 +9,5 @@ A user registration of the panic or allocator role replaces the stdlib one, and 
 Inside an init function a program may replace a registered global with the builtin __builtin_setRegistered, and that builtin is an error anywhere else.
 main is the user program's entry and may be defined freely, and a void main makes the process exit with status 0.
 Without a main no entry stub is emitted.
+Building a file without a main as an executable is a diagnostic reported before code generation, and not a linker failure.
 Entry stubs exist for linux and macos on x86_64 and aarch64 and for windows on x86_64 only.

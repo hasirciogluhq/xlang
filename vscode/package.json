@@ -69,7 +69,7 @@
         "xlang.compilerPath": {
           "type": "string",
           "default": "",
-          "description": "Path to the xlang compiler binary (build/xlang). Empty = auto-detect (workspace build/, then PATH)."
+          "description": "Path to the xlang compiler binary (outputs/xlang). Empty = auto-detect (workspace outputs/, then PATH)."
         },
         "xlang.stdPath": {
           "type": "string",
