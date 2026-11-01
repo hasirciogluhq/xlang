@@ -129,3 +129,4 @@ case ":$PATH:" in
     printf '\n%s is not on your PATH. Add it to your shell profile:\n\n  export PATH="%s:$PATH"\n\n' "$dir" "$dir" >&2 ;;
 esac
 note "update later with: xlang self-update"
+note "tab completion: xlang completions <bash|zsh|fish>  (see the README)"

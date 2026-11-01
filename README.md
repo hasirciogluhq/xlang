@@ -56,6 +56,18 @@ xlang self-update --check   # only report whether a newer release exists
 
 `self-update` downloads the latest release for your OS and CPU, verifies it, and replaces the running binary; when you already have the latest it says so. A Homebrew install is updated with `brew upgrade xlang` instead. Details: **[docs/INSTALL.md](docs/INSTALL.md)**.
 
+### Shell completion
+
+`xlang` prints a completion script for bash, zsh and fish, generated from its own command tree (subcommands, flags, and the values of options such as `--emit` and `--color`). Add the line for your shell to its startup file:
+
+```bash
+source <(xlang completions bash)          # ~/.bashrc
+source <(xlang completions zsh)           # ~/.zshrc, after compinit
+xlang completions fish | source           # ~/.config/fish/config.fish
+```
+
+It covers `xlang` and `xl`. After `xlang self-update` start a new shell, so new commands appear.
+
 ## Requirements (building from source)
 
 - [xmake](https://xmake.io) ≥ 2.8

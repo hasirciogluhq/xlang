@@ -1,3 +1,4 @@
+#include "completions.h"
 #include "style.h"
 #include "test_runner.h"
 #include "update.h"
@@ -16,8 +17,8 @@
 #include <CLI/CLI.hpp>
 
 #include <cctype>
-#include <cstdlib>
 #include <cstdint>
+#include <cstdlib>
 #include <filesystem>
 #include <format>
 #include <fstream>
@@ -340,25 +341,36 @@ int main(int argc, char** argv) {
         "Build and run test files (`*.test.xl`); patterns: file, directory, glob (`**`, `*`, `?`), "
         "`re:<regex>` or a path substring");
     test->add_option("patterns", test_options.patterns, "Tests to run (default: **/*.test.xl)");
-    test->add_option("-x,--exclude", test_options.excludes, "Skip files matching this pattern (repeatable)");
+    test->add_option(
+        "-x,--exclude", test_options.excludes, "Skip files matching this pattern (repeatable)");
     test->add_flag("--list", test_options.list_only, "Only print the matching test files");
     test->add_flag("--no-color", test_no_color, "Plain output");
     addBuildOptions(test, test_build_options);
 
     std::filesystem::path run_input;
     BuildCliOptions run_build_options;
-    CLI::App* run = app.add_subcommand("run", "Build a program into a temporary file, run it and exit with its status");
+    CLI::App* run = app.add_subcommand(
+        "run", "Build a program into a temporary file, run it and exit with its status");
     run->add_option("file", run_input, "Source file (.xl)")->required();
     addBuildOptions(run, run_build_options);
 
+    std::string completions_shell;
+    CLI::App* completions = app.add_subcommand(
+        "completions", "Print a shell completion script (bash, zsh or fish) for this CLI");
+    completions->add_option("shell", completions_shell, "Shell")
+        ->required()
+        ->check(CLI::IsMember({"bash", "zsh", "fish"}));
+
     xlang::cli::SelfUpdateOptions update_options;
-    CLI::App* self_update = app.add_subcommand(
-        "self-update",
-        "Install the latest release for this OS and CPU (reports \"up to date\" when there is none)");
+    CLI::App* self_update = app.add_subcommand("self-update",
+                                               "Install the latest release for this OS and CPU "
+                                               "(reports \"up to date\" when there is none)");
     self_update->alias("update");
     self_update->alias("upgrade");
-    self_update->add_flag("--check", update_options.check_only, "Only report whether an update exists");
-    self_update->add_flag("--force", update_options.force, "Reinstall the latest release even if current");
+    self_update->add_flag(
+        "--check", update_options.check_only, "Only report whether an update exists");
+    self_update->add_flag(
+        "--force", update_options.force, "Reinstall the latest release even if current");
 
     try {
         app.parse(static_cast<int>(raw.size()), raw.data());
@@ -381,6 +393,11 @@ int main(int argc, char** argv) {
                 return 1;
             }
             std::cout << text;
+            return 0;
+        }
+
+        if (completions->parsed()) {
+            std::cout << xlang::cli::generateCompletions(app, completions_shell);
             return 0;
         }
 

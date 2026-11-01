@@ -70,6 +70,6 @@ Object to bad ideas but leave decision to user. Cite real precedents. Do not re-
 
 ## Build
 - xmake. `xmake build`. LLVM from `llvm-config` (static link).
-- CLI: `xlang build|parse|check|layout|run|test|self-update`, plus `--explain`, `--version`, `--color`, flags for defines/target/opt/debug/cpu/mangle/safety/std.
+- CLI: `xlang build|parse|check|layout|run|test|self-update|completions`, plus `--explain`, `--version`, `--color`, flags for defines/target/opt/debug/cpu/mangle/safety/std.
 - Stdlib embedded at build time. `xmake build std` type-checks it.
 - Tests: `xmake build xlang-tests && xmake run xlang-tests` (frontend/sema/HIR) and `xmake run e2e` (native + Docker + CrossOver for Windows).

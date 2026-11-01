@@ -99,7 +99,7 @@ target("xlang")
     set_default(not cross)
     set_enabled(not cross)
     add_files("$(projectdir)/src/cli/main.cpp", "$(projectdir)/src/cli/test_runner.cpp",
-              "$(projectdir)/src/cli/update.cpp")
+              "$(projectdir)/src/cli/update.cpp", "$(projectdir)/src/cli/completions.cpp")
     add_deps("xlang-codegen", "xlang-frontend")
     add_target_defines()
     xlang_ctx.add_llvm()
