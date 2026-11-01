@@ -23,6 +23,7 @@ namespace {
         {"do", TokenKind::Do},         {"switch", TokenKind::Switch},
         {"case", TokenKind::Case},     {"default", TokenKind::Default},
         {"defer", TokenKind::Defer},
+        {"try", TokenKind::Try},       {"catch", TokenKind::Catch},
         {"unsafe", TokenKind::Unsafe}, {"import", TokenKind::Import},
         {"from", TokenKind::From},     {"as", TokenKind::As},
         {"export", TokenKind::Export}, {"declare", TokenKind::Declare},
@@ -562,6 +563,8 @@ const char* tokenKindName(TokenKind kind) {
     case TokenKind::Case: return "case";
     case TokenKind::Default: return "default";
     case TokenKind::Defer: return "defer";
+    case TokenKind::Try: return "try";
+    case TokenKind::Catch: return "catch";
     case TokenKind::Unsafe: return "unsafe";
     case TokenKind::Import: return "import";
     case TokenKind::From: return "from";

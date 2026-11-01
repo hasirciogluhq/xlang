@@ -33,6 +33,8 @@ enum class TokenKind {
     Case,
     Default,
     Defer,
+    Try,
+    Catch,
     Unsafe,
     Import,
     From,

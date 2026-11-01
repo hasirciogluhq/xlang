@@ -108,10 +108,51 @@ The original plan is implemented except the items below, which are intentionally
   types is arithmetic. In `define`/global constants `~x` is the untyped `-x - 1`; cast the result.
 - `HIR` does not fold constant expressions (`N * 2` is constant in global initializers but folded later).
 - Module resolution: `std`/`std/x` come from the stdlib root; other paths from the importing file's
-  directory, then the root file's directory. `import "x"` without alias binds the last path segment.
-  No package or search-path strategies.
+  directory, then the root file's directory; a path under a dependency's repository path comes from that
+  installed package (`docs/PACKAGE_MANAGER.md`). `import "x"` without alias binds the last path segment.
+  There are no other search-path strategies.
 - The default stdlib is embedded in the compiler (generated `build/gen/std_blob.cpp`, rebuilt when
-  `std/**/*.xl` changes); `--std=<dir>` replaces it. The compiler never searches the file system for it.
+  `std/**/*.xl` changes); `--std=<dir>`, `--std=host/user/repo[@tag]` and `[std]` in `xlang.toml` replace it.
+  The compiler never searches the file system for it.
+
+## Packages (`xlang package`, `xlang.toml`, `xlang.lock`)
+Decisions taken when the package system was added (`docs/PACKAGE_MANAGER.md` is the reference):
+- **Git is the registry.** Packages are tags of git repositories, fetched by running the `git` executable
+  (`ls-remote`, `clone --depth 1`); no HTTP client, no hosting API, no search, no publish command. Builds
+  never fetch: `xlang package install` is the only command that uses the network. Go-style auto-download
+  on build was rejected to keep builds offline and deterministic.
+- **Integrity is the commit hash** recorded in `xlang.lock` (tag moved or cache edited = error). There are no
+  content checksums or signatures; a compromised host or a force-pushed first download is not detected.
+  A transparency log or checksum database is not planned.
+- **No version solving.** One copy per repository per build; the project's own `[dependencies]` entry wins,
+  otherwise two different required versions are `E0743`. No semver ranges, no "highest compatible" rule, no
+  major-version import suffix (`/v2`): `v2.0.0` and `v1.9.0` of one repository cannot coexist.
+- **Version rule:** release tags are `v?MAJOR.MINOR.PATCH`; a `-suffix` is a pre-release and a suffix
+  ending in `test` a test tag; neither is ever `latest` (no fallback when only those exist: `E0744`), both
+  install when named (`repo@v1.2.0-test`). A tag is not otherwise
+  validated, so a `v1.0.0` that does not build is the publisher's problem.
+- **Only exact tags, no branches or commits.** `version = "main"` or a commit hash is `E0742`; there is no way
+  to track a branch except a `path` dependency on a checkout.
+- **Dependencies of dependencies:** read from the package's `xlang.toml` (a package without one has none) and
+  resolved transitively with exact tags only. A package's `[std]` is ignored; a stdlib package's own
+  dependencies are not resolved. There is no `dev-dependencies` or optional-dependency notion.
+- **`[[native]]` files are committed to the repository** and linked into executables and shared libraries
+  only; `--emit=static|obj` do not include them. No download step, build step, or `url` form, and the compiler
+  never runs a command from a package. Entries are chosen by `os` and `arch` only (no ABI/libc flavor, which
+  is not a concept in xlang). A native file must be built `--no-std` if it is an xlang library (it would
+  carry a second copy of the stdlib). Native inputs of dependencies that the program does not import are
+  still linked.
+- **No per-package compiler-version requirement** (`xlang = ">=0.x"` is not implemented), no `build.xl`
+  hooks, no feature flags for packages, no `-D` forwarding to packages.
+- **Package identity is the repository path.** A repository that moves hosts needs a `source` override or a
+  rename of the import paths. Git `submodules` are not fetched. LFS files are not fetched.
+- **Cache is per project** (`<root>/.xlang/cache`), not shared between projects, and old versions are never
+  pruned automatically (`xlang package clean` deletes all).
+- **POSIX hosts only** (fork/exec, `file://` URLs); the compiler has no native Windows build either.
+- **`install` can leave downloaded sources in the cache** when a later package of the same run fails; the
+  manifest and lock are untouched in that case.
+- Package modules are keyed by their import path, which contains dots (`github.com/u/r`); mangled symbol
+  names therefore contain dots too. `import "github.com/u/r"` without alias binds the last segment (`r`).
 
 ## Stdlib: files, JSON, HTTP
 - **`std/http`:** the server speaks HTTP (`routerServe`) or HTTPS (`routerServeTls`, TLS 1.3; one connection
@@ -154,6 +195,15 @@ The original plan is implemented except the items below, which are intentionally
 - **`std/testing` has no discovery:** a test file registers its tests explicitly (`test(&s, "name", fn)`) and
   returns `suiteRun`. Auto-discovery of `fn test*` would need reflection or a compiler-side convention.
 - **No chained matchers** (`expect(x).toEqual(y)`): the matchers are typed functions (`expectEq` for `i64`, `expectEqUInt`, `expectEqStr`, `expectNear`, ...).
+- **`try` / `catch` unwinds panics only.** There are no typed errors (`Result`, `?`); that is a separate decision.
+  The unwinder (`std/runtime/unwind`) walks frame pointers and uses a table of (function, landing pad) addresses, so:
+  frames of foreign code (not compiled by xlang) cannot be unwound; the table covers the functions of the module being
+  compiled, so separately compiled modules (`only_module`) are not unwound through; a function with `defer`, drops or
+  `try` keeps every local in memory and is never inlined; a panic with no `try` runs no cleanup. Verified on macOS
+  arm64 and Linux arm64/x86-64; `try` is an error on Windows (register snapshot not written). A cleanup that itself
+  panics while unwinding is not handled. `xlang test` still ends the file's run on a `panic`; it does not use `try` yet.
+  The compiler hooks this adds (`unwind` role, `__builtin_unwindPads`, `__builtin_unwindPadCount`, the `try` snapshot asm)
+  are the only compiler knowledge of unwinding; the walker, registry and message copy are stdlib.
 - **A failed expectation does not stop the test** (no unwinding); a `panic` ends the whole file's run, which
   `xlang test` reports as that file failing.
 - **`xlang test` runs files sequentially** (no `--jobs`) and has no per-test name filter; granularity is the

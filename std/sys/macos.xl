@@ -84,9 +84,9 @@ global threadRegistered: ui32
 /// Runs `func(arg)` and terminates the thread, letting the kernel release its stack.
 fn threadStub() {
 #if arch == "aarch64"
-    __builtin_asm("mov x19, x1\nmov x20, x3\nmov x9, x2\nmov x0, x3\nblr x9\nldr x0, [x20, #24]\nldr x1, [x20, #32]\nmov x2, x19\nmov x3, #0\nmov x16, #361\nsvc #0x80\nbrk #1")
+    __builtin_asm("mov x29, xzr\nmov x19, x1\nmov x20, x3\nmov x9, x2\nmov x0, x3\nblr x9\nldr x0, [x20, #24]\nldr x1, [x20, #32]\nmov x2, x19\nmov x3, #0\nmov x16, #361\nsvc #0x80\nbrk #1")
 #elif arch == "x86_64"
-    __builtin_asm("mov r12, rsi\nmov r13, rcx\nmov rdi, rcx\ncall rdx\nmov rdi, [r13 + 24]\nmov rsi, [r13 + 32]\nmov rdx, r12\nxor ecx, ecx\nmov eax, 0x2000169\nsyscall\nud2")
+    __builtin_asm("xor ebp, ebp\nmov r12, rsi\nmov r13, rcx\nmov rdi, rcx\ncall rdx\nmov rdi, [r13 + 24]\nmov rsi, [r13 + 32]\nmov rdx, r12\nxor ecx, ecx\nmov eax, 0x2000169\nsyscall\nud2")
 #endif
 }
 

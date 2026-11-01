@@ -159,7 +159,9 @@ Consequences:
 
 ## Notes
 
-- `defer` is not an exception/unwind mechanism: there are no exceptions in xl, and `panic` does
-  not run deferred statements.
+- A `panic` caught by an enclosing [`try`](LANGUAGE.md#try--catch) runs the registered `defer`
+  statements (and drops) of every frame between the panic and the `try`, innermost first. A
+  `defer` is run on this path only if its statement was already reached. A panic with no
+  enclosing `try` ends the process and runs nothing.
 - There is no RAII or destructor concept; `defer` is the replacement for scope guards
   (`lock` + `defer unlock`, `alloc` + `defer free`, `open` + `defer close`).

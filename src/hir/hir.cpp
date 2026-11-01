@@ -81,6 +81,8 @@ void dumpExpr(std::ostream& out, const Function* fn, const Expr& e) {
     case ExprKind::AtomicCas: out << "(atomic.cas order=" << e.index; break;
     case ExprKind::AtomicAdd: out << "(atomic.add order=" << e.index; break;
     case ExprKind::Fence: out << "(fence order=" << e.index; break;
+    case ExprKind::UnwindPads: out << "(unwind.pads"; break;
+    case ExprKind::UnwindPadCount: out << "(unwind.pad.count"; break;
     case ExprKind::Asm:
         out << "(asm \"" << e.text << "\"" << (e.nomem ? " nomem" : "") << (e.noreturn ? " noreturn" : "");
         for (const AsmOperand& op : e.asm_operands) {
@@ -172,6 +174,12 @@ void dumpStmt(std::ostream& out, const Function& fn, const Stmt& s, int indent) 
         out << "block\n";
         dumpStmts(out, fn, s.body, indent + 1);
         break;
+    case StmtKind::Try:
+        out << "try snapshot=" << fn.locals[s.local].name << '#' << s.local << " message=" << s.msg_local << '\n';
+        dumpStmts(out, fn, s.body, indent + 1);
+        out << pad << "catch\n";
+        dumpStmts(out, fn, s.else_body, indent + 1);
+        break;
     }
 }
 
@@ -192,6 +200,9 @@ void dumpModule(std::ostream& out, const Module& m) {
     }
     if (!m.free_function.empty()) {
         out << "register(free) " << m.free_function << '\n';
+    }
+    if (!m.unwind_function.empty()) {
+        out << "register(unwind) " << m.unwind_function << '\n';
     }
     for (const std::string& init : m.init_functions) {
         out << "init " << init << '\n';
@@ -240,6 +251,10 @@ void dumpModule(std::ostream& out, const Module& m) {
         }
         out << ") -> " << typeName(f.ret) << (f.has_body ? "\n" : " (no body)\n");
         dumpStmts(out, f, f.body, 1);
+        if (!f.unwind_body.empty()) {
+            out << "  unwind\n";
+            dumpStmts(out, f, f.unwind_body, 2);
+        }
     }
 }
 

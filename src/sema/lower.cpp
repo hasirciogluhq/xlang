@@ -263,6 +263,16 @@ class Lowerer {
     std::map<hir::LocalId, hir::LocalId> drop_flags_;  ///< droppable local -> its drop flag
     std::map<std::string, bool> needs_drop_;           ///< class qname -> needsDrop
     std::vector<std::pair<hir::LocalId, hir::LocalId>> entry_temps_;  ///< (temp, flag) per function
+    /// Cleanup flags (drop flags of locals, `defer` flags) declared `false` at the function head so a
+    /// landing pad can read them before the statement that sets them has run.
+    std::vector<hir::LocalId> entry_flags_;
+    /// Every flag-guarded cleanup of the function in registration order; the landing pad runs them
+    /// in reverse. A `try` handler runs the ones registered inside its body.
+    std::vector<hir::Stmt> unwind_entries_;
+    bool has_try_{false};  ///< the function being lowered contains a `try`
+    void lowerTry(const Stmt& s, std::vector<hir::Stmt>& out);
+    /// `unwind(0, snapshot, nil)`: the `try` body is left normally; the record is removed.
+    [[nodiscard]] hir::Stmt leaveCall(hir::LocalId snap, const Span& span);
     std::string base_init_call_;  ///< set for the next `init` lowered: the base constructor it runs
     void lowerEnum(const EnumDecl& e);
     void lowerAggregate(const Item& item);
@@ -601,6 +611,7 @@ static hir::Stmt cloneHirStmt(const hir::Stmt& s) {
     c.kind = s.kind;
     c.span = s.span;
     c.local = s.local;
+    c.msg_local = s.msg_local;
     c.post_test = s.post_test;
     c.depth = s.depth;
     if (s.target) {
@@ -640,6 +651,11 @@ static bool breaksOut(const std::vector<hir::Stmt>& body, std::uint32_t level) {
                 return true;
             }
             break;
+        case hir::StmtKind::Try:
+            if (breaksOut(s.body, level) || breaksOut(s.else_body, level)) {
+                return true;
+            }
+            break;
         case hir::StmtKind::While:
             if (breaksOut(s.body, level + 1)) {
                 return true;
@@ -665,6 +681,7 @@ static bool terminates(const std::vector<hir::Stmt>& body, const std::string& pa
             }
             break;
         case hir::StmtKind::If:
+        case hir::StmtKind::Try:
             if (!s.else_body.empty() && terminates(s.body, panic_fn) &&
                 terminates(s.else_body, panic_fn)) {
                 return true;
@@ -1355,8 +1372,23 @@ void Lowerer::checkRegistrations() {
             ok = fn != nullptr && fn->params.size() == 1 && !fn->params[0].is_self &&
                  fn->return_type.isVoid() && isVoidPointer(resolved(fn->params[0].type));
             why = "`register(free)` needs `fn(p: *void)` with no return type";
+        } else if (role == "unwind") {
+            ok = fn != nullptr && fn->params.size() == 3 && fn->return_type.isVoid();
+            if (ok) {
+                const Type a = resolved(fn->params[0].type);
+                const Type b = resolved(fn->params[1].type);
+                const Type c = resolved(fn->params[2].type);
+                const auto bytes = [](const Type& t) {
+                    return t.kind == TypeKind::Pointer && t.elem && t.elem->kind == TypeKind::Int &&
+                           t.elem->bits == 8 && !t.elem->is_signed;
+                };
+                ok = a.kind == TypeKind::Int && a.bits == 32 && a.is_signed &&
+                     b.kind == TypeKind::Pointer && b.elem && b.elem->kind == TypeKind::Int &&
+                     b.elem->bits == 0 && !b.elem->is_signed && bytes(c);  // `*usize`, `*ui8`
+            }
+            why = "`register(unwind)` needs `fn(op: i32, snapshot: *usize, message: *ui8)` with no return type";
         } else {
-            why = std::format("unknown role `{}`; known roles: panic, alloc, free", role);
+            why = std::format("unknown role `{}`; known roles: panic, alloc, free, unwind", role);
         }
         if (!ok) {
             err("E0503",
@@ -1396,8 +1428,10 @@ void Lowerer::checkRegistrations() {
             mod_.panic_function = qname;
         } else if (role == "alloc") {
             mod_.alloc_function = qname;
-        } else {
+        } else if (role == "free") {
             mod_.free_function = qname;
+        } else {
+            mod_.unwind_function = qname;
         }
     }
 }
@@ -2203,6 +2237,9 @@ void Lowerer::lowerFunction(const FnDecl& f,
     std::vector<OwnedParam> owned_params;
     const std::string base_call = std::exchange(base_init_call_, {});
     entry_temps_.clear();
+    entry_flags_.clear();
+    unwind_entries_.clear();
+    has_try_ = false;
     defers_.emplace_back();
     std::vector<Type> param_types;
     for (const Param& p : f.params) {
@@ -2286,7 +2323,17 @@ void Lowerer::lowerFunction(const FnDecl& f,
         emitDefers(defers_.size() - 1, out.body);
     }
     defers_.pop_back();
-    std::vector<hir::Stmt> head = std::move(prologue);
+    // Flags first: the prologue and the body set them.
+    std::vector<hir::Stmt> head;
+    for (const hir::LocalId flag : entry_flags_) {
+        hir::Stmt live;
+        live.kind = hir::StmtKind::Local;
+        live.span = f.span;
+        live.local = flag;
+        live.value = boolConst(false, f.span);
+        head.push_back(std::move(live));
+    }
+    entry_flags_.clear();
     for (const auto& [tmp, flag] : entry_temps_) {
         hir::Stmt decl;
         decl.kind = hir::StmtKind::Local;
@@ -2301,6 +2348,18 @@ void Lowerer::lowerFunction(const FnDecl& f,
         head.push_back(std::move(live));
     }
     entry_temps_.clear();
+    for (hir::Stmt& p : prologue) {
+        head.push_back(std::move(p));
+    }
+    // The landing pad: every registered cleanup, newest first (needs the registered `unwind`).
+    if (!mod_.unwind_function.empty() && f.has_body) {
+        for (std::size_t i = unwind_entries_.size(); i-- > 0;) {
+            out.unwind_body.push_back(cloneHirStmt(unwind_entries_[i]));
+        }
+    }
+    out.has_try = has_try_;
+    unwind_entries_.clear();
+    has_try_ = false;
     out.body.insert(out.body.begin(), std::make_move_iterator(head.begin()),
                     std::make_move_iterator(head.end()));
     scopes_.pop();
@@ -2888,15 +2947,19 @@ void Lowerer::registerDrop(hir::LocalId var,
                            const Span& span,
                            std::vector<hir::Stmt>& decls) {
     const hir::LocalId flag = hiddenLocal("live", Type::makeBool(), span);
+    // The flag itself is declared `false` at the function head; here it is set.
+    entry_flags_.push_back(flag);
     hir::Stmt decl;
-    decl.kind = hir::StmtKind::Local;
+    decl.kind = hir::StmtKind::Assign;
     decl.span = span;
-    decl.local = flag;
+    decl.target = localRef(flag, Type::makeBool(), span);
     decl.value = boolConst(initialized, span);
     decls.push_back(std::move(decl));
     drop_flags_[var] = flag;
     if (!defers_.empty()) {
-        defers_.back().push_back(dropStmt(var, flag, t, span));
+        hir::Stmt cleanup = dropStmt(var, flag, t, span);
+        unwind_entries_.push_back(cloneHirStmt(cleanup));
+        defers_.back().push_back(std::move(cleanup));
     }
 }
 
@@ -2933,7 +2996,9 @@ Lowerer::EP Lowerer::materializeTemp(EP value, const Span& span) {
     const hir::LocalId tmp = hiddenLocal("tmp", t, span);
     const hir::LocalId flag = hiddenLocal("live", Type::makeBool(), span);
     entry_temps_.emplace_back(tmp, flag);
-    defers_.back().push_back(dropStmt(tmp, flag, t, span));
+    hir::Stmt cleanup = dropStmt(tmp, flag, t, span);
+    unwind_entries_.push_back(cloneHirStmt(cleanup));
+    defers_.back().push_back(std::move(cleanup));
     EP m = mk(hir::ExprKind::Materialize, t, span);
     m->local = tmp;
     m->index = flag;
@@ -3084,6 +3149,102 @@ void Lowerer::lowerBlock(const Block& block, std::vector<hir::Stmt>& out, bool n
     if (new_scope) {
         scopes_.pop();
     }
+}
+
+hir::Stmt Lowerer::leaveCall(hir::LocalId snap, const Span& span) {
+    const Type usize_t = Type::makeInt(0, false);
+    EP call = mk(hir::ExprKind::Call, Type::makeVoid(), span);
+    call->text = mod_.unwind_function;
+    call->args.push_back(intConst(0, Type::makeInt(32, true), span));
+    EP addr = mk(hir::ExprKind::AddrOf, Type::makePointer(fn_->locals[snap].type), span);
+    addr->lhs = localRef(snap, fn_->locals[snap].type, span);
+    EP cast = mk(hir::ExprKind::Cast, Type::makePointer(usize_t), span);
+    cast->lhs = std::move(addr);
+    call->args.push_back(std::move(cast));
+    call->args.push_back(mk(hir::ExprKind::Nil, Type::makePointer(Type::makeInt(8, false)), span));
+    hir::Stmt st;
+    st.kind = hir::StmtKind::Expr;
+    st.span = span;
+    st.value = std::move(call);
+    return st;
+}
+
+void Lowerer::lowerTry(const Stmt& s, std::vector<hir::Stmt>& out) {
+    if (mod_.unwind_function.empty()) {
+        err("E0501",
+            s.span,
+            "`try` has no registered `unwind` function",
+            "register one with `register(unwind) fn ...`; the stdlib registers one (not with `--no-std`)");
+        return;
+    }
+    has_try_ = true;
+    const Type usize_t = Type::makeInt(0, false);
+    const Type byte_t = Type::makeInt(8, false);
+    const auto arrayOf = [&](const Type& elem, std::uint64_t n) {
+        auto len = std::make_shared<Expr>();
+        len->kind = Expr::Kind::IntLiteral;
+        len->int_value = n;
+        len->span = s.span;
+        return Type::makeArray(elem, len);
+    };
+    const Type snap_t = arrayOf(usize_t, 32);
+    const Type msg_t = arrayOf(byte_t, 256);
+    const hir::LocalId snap = hiddenLocal("snap", snap_t, s.span);
+    const hir::LocalId msg = hiddenLocal("msg", msg_t, s.span);
+    for (const hir::LocalId id : {snap, msg}) {
+        hir::Stmt decl;
+        decl.kind = hir::StmtKind::Local;
+        decl.span = s.span;
+        decl.local = id;
+        out.push_back(std::move(decl));
+    }
+    hir::Stmt t;
+    t.kind = hir::StmtKind::Try;
+    t.span = s.span;
+    t.local = snap;
+    t.msg_local = msg;
+
+    // The body: leaving it by any way runs `leave`; cleanups registered inside it also belong to the handler.
+    const std::size_t first = unwind_entries_.size();
+    scopes_.push(ScopeKind::Block);
+    defers_.emplace_back();
+    defers_.back().push_back(leaveCall(snap, s.span));
+    for (const Stmt& b : s.body->statements) {
+        lowerStmt(b, t.body);
+    }
+    const bool jumps = !t.body.empty() && (t.body.back().kind == hir::StmtKind::Return ||
+                                           t.body.back().kind == hir::StmtKind::Break ||
+                                           t.body.back().kind == hir::StmtKind::Continue);
+    if (!jumps) {
+        emitDefers(defers_.size() - 1, t.body);
+    }
+    defers_.pop_back();
+    scopes_.pop();
+    const std::size_t last = unwind_entries_.size();
+
+    // The handler runs the body's pending cleanups first, then binds the message.
+    scopes_.push(ScopeKind::Block);
+    for (std::size_t i = last; i-- > first;) {
+        t.else_body.push_back(cloneHirStmt(unwind_entries_[i]));
+    }
+    if (!s.name.empty()) {
+        const Type ptr = Type::makePointer(byte_t);
+        const hir::LocalId id = addLocal(s.name, ptr, false, s.span);
+        bindLocal(s.name, id, ptr, s.span);
+        EP addr = mk(hir::ExprKind::AddrOf, Type::makePointer(msg_t), s.span);
+        addr->lhs = localRef(msg, msg_t, s.span);
+        EP cast = mk(hir::ExprKind::Cast, ptr, s.span);
+        cast->lhs = std::move(addr);
+        hir::Stmt bind;
+        bind.kind = hir::StmtKind::Local;
+        bind.span = s.span;
+        bind.local = id;
+        bind.value = std::move(cast);
+        t.else_body.push_back(std::move(bind));
+    }
+    lowerBlock(*s.else_body, t.else_body, false);
+    scopes_.pop();
+    out.push_back(std::move(t));
 }
 
 void Lowerer::emitDefers(std::size_t from, std::vector<hir::Stmt>& out) const {
@@ -3727,9 +3888,31 @@ void Lowerer::lowerStmt(const Stmt& s, std::vector<hir::Stmt>& out) {
         }
         std::vector<hir::Stmt> lowered;
         lowerStmt(inner, lowered);
+        // The deferred statement runs under a flag set here, so a panic unwinding through the
+        // function runs exactly the defers that were registered and not yet run.
+        const hir::LocalId flag = hiddenLocal("dfr", Type::makeBool(), s.span);
+        entry_flags_.push_back(flag);
+        hir::Stmt arm;
+        arm.kind = hir::StmtKind::Assign;
+        arm.span = s.span;
+        arm.target = localRef(flag, Type::makeBool(), s.span);
+        arm.value = boolConst(true, s.span);
+        out.push_back(std::move(arm));
+        hir::Stmt guard;
+        guard.kind = hir::StmtKind::If;
+        guard.span = s.span;
+        guard.value = localRef(flag, Type::makeBool(), s.span);
+        hir::Stmt clear;
+        clear.kind = hir::StmtKind::Assign;
+        clear.span = s.span;
+        clear.target = localRef(flag, Type::makeBool(), s.span);
+        clear.value = boolConst(false, s.span);
+        guard.body.push_back(std::move(clear));
         for (hir::Stmt& d : lowered) {
-            defers_.back().push_back(std::move(d));
+            guard.body.push_back(std::move(d));
         }
+        unwind_entries_.push_back(cloneHirStmt(guard));
+        defers_.back().push_back(std::move(guard));
         return;
     }
     case Stmt::Kind::Expr: {
@@ -3791,6 +3974,9 @@ void Lowerer::lowerStmt(const Stmt& s, std::vector<hir::Stmt>& out) {
     case Stmt::Kind::Continue:
     case Stmt::Kind::Break:
         lowerJump(s, out);
+        return;
+    case Stmt::Kind::Try:
+        lowerTry(s, out);
         return;
     case Stmt::Kind::Unsafe:
         ++unsafe_;
@@ -4818,6 +5004,15 @@ Lowerer::EP Lowerer::builtinCall(const Expr& e, const std::string& name) {
             return nop;
         }
         return dropCallOn(std::move(p), t, e.span);
+    }
+    if (name == "__builtin_unwindPads" || name == "__builtin_unwindPadCount") {
+        if (!e.args.empty()) {
+            err("E0710", e.span, std::format("`{}` takes no arguments", name), "wrong number of arguments");
+            return nullptr;
+        }
+        const bool pads = name == "__builtin_unwindPads";
+        return mk(pads ? hir::ExprKind::UnwindPads : hir::ExprKind::UnwindPadCount,
+                  pads ? Type::makePointer(Type::makeInt(0, false)) : Type::makeInt(0, false), e.span);
     }
     if (name == "__builtin_fence") {
         if (e.args.size() != 1) {

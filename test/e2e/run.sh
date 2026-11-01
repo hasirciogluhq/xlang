@@ -24,6 +24,7 @@ tests=(
   "panics|134|before|0|0"
   "vecpanic|134|before|0|0"
   "threads|0|40000|1|0"
+  "try|0|try ok|0|0"
   "sched|0|20100|0|0"
   "sched_io|0|5|0|0"
   "bitops|0|bitops ok|0|1"
@@ -250,6 +251,9 @@ if [ "$("$xlang" test 'examples/**/js*.test.xl' --list)" = "examples/tests/json.
 else
   echo "FAIL [xlang test/glob]"; fail=$((fail+1))
 fi
+
+# Package system (local git repositories, no network): see packages.sh.
+. "$here/packages.sh"
 
 echo "e2e: $pass passed, $fail failed, $skip skipped"
 [ "$fail" = 0 ]

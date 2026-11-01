@@ -1,4 +1,5 @@
 #include "completions.h"
+#include "package.h"
 #include "style.h"
 #include "test_runner.h"
 #include "update.h"
@@ -366,6 +367,30 @@ int main(int argc, char** argv) {
                           completion_install.refresh,
                           "With install: only rewrite scripts that are already installed");
 
+    xlang::cli::PackageOptions package_options;
+    CLI::App* package = app.add_subcommand(
+        "package",
+        "Manage dependencies from git repositories (xlang.toml, xlang.lock, .xlang/cache)");
+    package->require_subcommand(1, 1);
+    const auto packageAction = [&](const char* name, const char* help, const char* specs_help) {
+        CLI::App* c = package->add_subcommand(name, help);
+        if (specs_help != nullptr) {
+            c->add_option("repositories", package_options.specs, specs_help);
+        }
+        return c;
+    };
+    CLI::App* package_install = packageAction(
+        "install",
+        "Download dependencies; `install host/user/repo[@vX.Y.Z]` adds one (latest release by default)",
+        "Repositories to add, e.g. github.com/user/repo or github.com/user/repo@v1.2.0");
+    package_install->add_flag("--update", package_options.update, "Re-resolve `latest` entries instead of using xlang.lock");
+    package_install->add_option("--std", package_options.std_spec, "Use this repository as the standard library ([std] in xlang.toml)");
+    CLI::App* package_update = packageAction(
+        "update", "Move dependencies (all, or the named ones) to their latest release", "Repositories to update");
+    CLI::App* package_remove = packageAction("remove", "Remove dependencies from xlang.toml", "Repositories to remove");
+    CLI::App* package_list = packageAction("list", "Show the resolved dependencies", nullptr);
+    CLI::App* package_clean = packageAction("clean", "Delete .xlang/cache", nullptr);
+
     xlang::cli::SelfUpdateOptions update_options;
     CLI::App* self_update = app.add_subcommand("self-update",
                                                "Install the latest release for this OS and CPU "
@@ -408,6 +433,16 @@ int main(int argc, char** argv) {
         if (completions->parsed()) {
             std::cout << xlang::cli::generateCompletions(app, completions_shell);
             return 0;
+        }
+
+        if (package->parsed()) {
+            package_options.action = package_install->parsed()  ? "install"
+                                     : package_update->parsed() ? "update"
+                                     : package_remove->parsed() ? "remove"
+                                     : package_list->parsed()   ? "list"
+                                     : package_clean->parsed()  ? "clean"
+                                                                : "";
+            return xlang::cli::runPackage(package_options);
         }
 
         if (self_update->parsed()) {
@@ -470,9 +505,10 @@ int main(int argc, char** argv) {
 
         // Whole program: root + imports + stdlib (unless --no-std), then analysis and lowering.
         xlang::Compilation compilation(sources, config, diagnostics, &history);
-        if (!config.std_path.empty()) {
-            compilation.setStdRoot(config.std_path); // otherwise the embedded stdlib is used
-        }
+        // xlang.toml (found from the root file's directory) supplies packages, the stdlib source
+        // (`[std]` / `--std`) and prebuilt files to link; without any, the embedded stdlib is used.
+        const std::vector<std::filesystem::path> native_inputs =
+            xlang::cli::attachProject(path, config, compilation, diagnostics);
         compilation.loadRoot(path);
         compilation.finish();
         if (!diagnostics.hasErrors()) {
@@ -647,6 +683,7 @@ int main(int argc, char** argv) {
                         } else {
                             xlang::codegen::LinkRequest req;
                             req.objects = objects;
+                            req.objects.insert(req.objects.end(), native_inputs.begin(), native_inputs.end());
                             req.output = out;
                             req.kind = emit == "shared" ? xlang::codegen::LinkKind::Shared
                                                         : xlang::codegen::LinkKind::Executable;
@@ -679,6 +716,7 @@ int main(int argc, char** argv) {
                                 } else {
                                     xlang::codegen::LinkRequest req;
                                     req.objects = {obj};
+                                    req.objects.insert(req.objects.end(), native_inputs.begin(), native_inputs.end());
                                     req.output = out;
                                     req.kind = emit == "shared"
                                                    ? xlang::codegen::LinkKind::Shared

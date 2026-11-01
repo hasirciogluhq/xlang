@@ -69,6 +69,8 @@ enum class ExprKind {
                     ///< lvalue: the stored object
     RawRead,        ///< `__builtin_read`: lhs = pointer; the pointee read by value. Neither the drop flag nor
                     ///< the place changes; the caller owns the copy. Codegen treats it as `Deref`
+    UnwindPads,     ///< `__builtin_unwindPads()`: `*usize` to the table of (function, landing pad) address pairs
+    UnwindPadCount, ///< `__builtin_unwindPadCount()`: `usize`, the number of pairs in that table
 };
 
 
@@ -122,12 +124,13 @@ struct Expr {
     bool noreturn{false};  ///< Asm: `options("noreturn")`
 };
 
-enum class StmtKind { Local, Assign, Return, Expr, If, While, Continue, Break, Block };
+enum class StmtKind { Local, Assign, Return, Expr, If, While, Continue, Break, Block, Try };
 
 struct Stmt {
     StmtKind kind{StmtKind::Expr};
     Span span;
-    LocalId local{0};    ///< Local
+    LocalId local{0};    ///< Local; Try: the snapshot buffer (`[usize; 32]`)
+    LocalId msg_local{0};  ///< Try: the message buffer (`[ui8; 256]`) the panic text is written to
     ExprPtr target;      ///< Assign
     ExprPtr value;       ///< Local init / Assign value / Return value / Expr / If,While condition
     std::vector<Stmt> body;
@@ -150,6 +153,10 @@ struct Function {
     std::uint32_t param_count{0};
     Type ret;
     std::vector<Stmt> body;
+    /// The cleanups (flag-guarded drops and `defer`s) of the whole function in reverse registration
+    /// order: the landing pad a panic unwinding through this frame runs. Empty = no landing pad.
+    std::vector<Stmt> unwind_body;
+    bool has_try{false};  ///< the body contains a `try`: all locals stay in memory
     bool has_body{false};
     bool exported{false};
     bool export_c{false};
@@ -241,6 +248,7 @@ struct Module {
     std::string panic_function;     ///< `register(panic)` function, empty = plain trap
     std::string alloc_function;     ///< `register(alloc)` function, empty = none (`new T` is E0501)
     std::string free_function;      ///< `register(free)` function, empty = none (`delete p` is E0501)
+    std::string unwind_function;    ///< `register(unwind)` function, empty = none (no landing pads, `try` is E0501)
     std::vector<std::string> init_functions;  ///< `@init` functions in run order (stdlib group first)
 };
 

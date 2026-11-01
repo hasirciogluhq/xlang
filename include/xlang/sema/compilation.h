@@ -52,6 +52,9 @@ public:
 
     /// Where `std`, `std/<x>` are looked up (`--std=<path>` or the installed library).
     void setStdRoot(std::filesystem::path root) { std_root_ = std::move(root); }
+    /// Makes `import "<import_path>"` and `import "<import_path>/sub"` resolve inside `dir`
+    /// (an installed package). The longest matching import path wins.
+    void addPackage(std::string import_path, std::filesystem::path dir);
     /// In-memory file (tests): found by `loadRoot`/imports like a file on disk.
     void addVirtualFile(const std::string& path, std::string text);
 
@@ -77,6 +80,8 @@ public:
 
 private:
     [[nodiscard]] bool fileExists(const std::filesystem::path& p) const;
+    /// The package whose import path is `spec` or a parent of it, or null.
+    [[nodiscard]] const std::pair<std::string, std::filesystem::path>* packageOf(const std::string& spec) const;
     [[nodiscard]] std::optional<std::filesystem::path> locate(const std::string& spec, const ModuleInfo* from,
                                                               const Span& at);
     ModuleInfo* loadModule(const std::filesystem::path& path, bool is_root);
@@ -93,6 +98,8 @@ private:
     const LayoutHistory* history_;
     std::filesystem::path std_root_;
     std::filesystem::path root_dir_;
+    /// Installed packages: import path -> directory.
+    std::vector<std::pair<std::string, std::filesystem::path>> packages_;
     std::map<std::string, std::string> virtual_files_;
     std::map<std::string, std::unique_ptr<ModuleInfo>> by_path_;
     std::map<std::string, ModuleInfo*> by_key_;

@@ -360,6 +360,17 @@ public:
             stmt(*s.step);
             break;
         }
+        case Stmt::Kind::Try: {
+            line(attrs + "try");
+            {
+                Scope scope(*this);
+                block(*s.body);
+            }
+            line("catch" + (s.name.empty() ? std::string() : " " + s.name));
+            Scope scope(*this);
+            block(*s.else_body);
+            break;
+        }
         case Stmt::Kind::Continue:
             line(attrs + "continue" + (s.name.empty() ? std::string() : " " + s.name));
             break;

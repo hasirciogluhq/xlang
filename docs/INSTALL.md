@@ -1,6 +1,6 @@
 # Installing the compiler
 
-This page covers the prebuilt `xlang` compiler: the install script, `xlang self-update`, and what is supported. Installing packages with `xlang add` is a different topic: see [Installing and Uninstalling](INSTALLING.md).
+This page covers the prebuilt `xlang` compiler: the install script, `xlang self-update`, and what is supported. Installing packages with `xlang package install` is a different topic: see [Packages](PACKAGE_MANAGER.md).
 
 ## Supported platforms
 

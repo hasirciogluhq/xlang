@@ -4,10 +4,11 @@ Context folders — each concern owns its tree.
 
 ```
 src/
-  cli/                 # xlang CLI entry (`parse`, `check`, `build`, `layout`, `run`, `test`, `self-update`, `completions`, `--explain`, `--version`, `--color`)
+  cli/                 # xlang CLI entry (`parse`, `check`, `build`, `layout`, `run`, `test`, `package`, `self-update`, `completions`, `--explain`, `--version`, `--color`)
     test_runner.cpp    # `xlang run` and `xlang test`: file/glob/regex selection, build + run per file, colored report
     update.cpp         # `xlang self-update` (aliases `update`, `upgrade`): latest release, checksum, in-place replace
     completions.cpp    # `xlang completions bash|zsh|fish|install`: scripts generated from the CLI11 command tree; `install` sets up the shells in use
+    package.cpp        # `xlang package install|update|remove|list|clean` and `attachProject` (xlang.toml -> packages, stdlib source, native files for a build)
     style.h            # ANSI `Palette` and `useColor` (`--color`, `NO_COLOR`, `XLANG_COLOR`) shared by the CLI
     version.h          # `kVersion`, the `XLANG_VERSION` define from xmake.lua
   lang/
@@ -27,6 +28,12 @@ src/
     compilation.cpp    # module loading, exports/imports, registrations, whole-program driver (4.6, 4.12)
     lower.cpp          # body type checking + HIR lowering over all modules (4.2-4.5, 4.8-4.12)
     variadic.cpp       # `..args` packs: per-count instances, args.len folding, unrolled for, pack checks (E0734-E0738)
+  pkg/
+    toml.cpp           # TOML subset parser (xlang.toml, xlang.lock)
+    semver.cpp         # release tags: `v?X.Y.Z`, pre-release, `-test` tags, latest
+    manifest.cpp       # xlang.toml model + validation, in-place text edits that keep comments
+    git.cpp            # `git` as a child process: ls-remote tags, clone a tag into the cache
+    project.cpp        # resolver: lock + cache (offline) or fetch (install), transitive deps, conflicts, native inputs, xlang.lock
   hir/
     hir.cpp            # typed HIR dump (`xlang check --hir`)
   codegen/
@@ -39,8 +46,9 @@ src/
     source.cpp         # SourceManager / Span
     diagnostics.cpp    # code registry, rendering, allow/deny, log
 test/compiler/         # unit tests (xlang-tests)
-test/e2e/              # end-to-end programs + run.sh
-std/                   # the standard library, plain xl (plan phase 7)
+test/e2e/              # end-to-end programs + run.sh (+ packages.sh: the package system against local git repositories)
+std/                   # the standard library, plain xl (plan phase 7), nested by area
+  runtime/             #   panic, unwind (try/catch walker, register(unwind)), context (stack switch)
 ```
 
 Headers: `include/xlang/{lang,sema,hir,codegen,util}/*`.

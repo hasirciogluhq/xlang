@@ -1159,6 +1159,17 @@ class Parser {
             stmt.step = std::make_unique<Stmt>(parseStatement());
             return stmt;
         }
+        case TokenKind::Try: {
+            advance();
+            stmt.kind = Stmt::Kind::Try;
+            stmt.body = parseBlockPtr();
+            expect(TokenKind::Catch, "`catch` after the `try` block");
+            if (at(TokenKind::Ident)) {
+                stmt.name = advance().text;
+            }
+            stmt.else_body = parseBlockPtr();
+            return stmt;
+        }
         case TokenKind::Continue:
         case TokenKind::Break: {
             stmt.kind = advance().kind == TokenKind::Break ? Stmt::Kind::Break : Stmt::Kind::Continue;

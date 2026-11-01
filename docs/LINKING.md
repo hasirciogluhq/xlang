@@ -17,12 +17,13 @@ This document describes how the compiler turns a program into an executable, sha
 
 ## What gets linked
 
-- The program's object code, including the stdlib modules it imports (the stdlib is embedded in the compiler; `--no-std` and `--std=<dir>` change that).
+- The program's object code, including the stdlib modules it imports (the stdlib is embedded in the compiler; `--no-std`, `--std=<dir>` and `--std=host/user/repo` change that) and the modules of the installed packages it imports.
+- Prebuilt object files and archives that installed packages list in `[[native]]` entries matching the target (executables and shared libraries only; see [PACKAGE_MANAGER.md](PACKAGE_MANAGER.md)).
 - For an executable, the compiler-generated entry stub (see below).
 - Nothing else: there is no C runtime, no implicit `-lc`, no `-pthread`. Memory routines such as `memcpy` are stdlib code exported with C names.
 - `--incremental` writes one object per module into a cache directory (`--cache-dir`, default `.xlang-cache` next to the output) and reuses unchanged ones.
 
-There is no way to pass extra objects or archives on the command line.
+There is no way to pass extra objects or archives on the command line; a package supplies them through `[[native]]`. A static library built by xlang contains the stdlib modules it imported, so a library meant to be linked into another xlang program is built with `--no-std`.
 
 ---
 
@@ -73,4 +74,4 @@ declare fn helper(x: i32) -> i32
 | Document | Role |
 |----------|------|
 | [Language Reference](LANGUAGE.md) | `declare`, `@library`, `export(c)`, entry points |
-| [Package Manager](PACKAGE_MANAGER.md) | Planned package tooling (not implemented) |
+| [Packages](PACKAGE_MANAGER.md) | Dependencies from git repositories, `[[native]]` prebuilt files |

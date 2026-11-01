@@ -32,3 +32,5 @@ out
 # Debug
 *.dSYM/
 .xlang-cache/
+# Package cache (xlang.toml / xlang.lock are committed, the downloaded sources are not)
+.xlang/

@@ -123,6 +123,7 @@ struct Stmt {
         ForPack, ///< [label:] for name in pack { body }   (expr = the pack's name; unrolled per element)
         Switch,  ///< switch expr { case a, b { } ... default { } }
         Defer,   ///< defer stmt (runs when the enclosing block is left)
+        Try,     ///< try { body } catch [name] { else_body }  (name = the message binding, empty = none)
         Continue,  ///< continue [label] (jumps to the loop's next iteration)
         Break,   ///< break [label]
         Unsafe,  ///< unsafe { body }

@@ -3,7 +3,7 @@
 local cross = xlang_ctx.is_cross()
 
 if not cross then
-    add_requires("cli11 2.4.2")
+    add_requires("cli11 2.7.2")
 end
 
 -- LLVM comes from the system (`llvm-config`, or $LLVM_CONFIG). Linked statically; only the
@@ -35,7 +35,7 @@ function xlang_ctx.add_llvm()
         local function run(args)
             return (os.iorun(cfg .. " " .. args)):trim()
         end
-        target:add("includedirs", run("--includedir"))
+        target:add("sysincludedirs", run("--includedir"))
         target:add("linkdirs", run("--libdir"))
         for _, l in ipairs(run("--link-static --libs aarch64 x86 passes irreader bitwriter object mc target codegen"):split("%s+")) do
             local name = l:gsub("^%-l", "")

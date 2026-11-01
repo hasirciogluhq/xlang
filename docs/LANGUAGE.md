@@ -210,6 +210,22 @@ defer cleanup(p)
 - `defer stmt` runs when the enclosing block is left; see [defer.md](defer.md).
 - `cond ? a : b` is the conditional expression.
 
+### try / catch
+
+```
+try {
+    work()
+} catch e {            // `e: *ui8`, the panic message; `catch { }` without a name is allowed
+    handle(e)
+}
+```
+
+- A `panic` (explicit, or a compiler check such as division by zero or an array bound) raised inside the `try` body, at any call depth, continues in the `catch` block after the `defer` statements and drops of every frame in between have run, innermost first. The program goes on after the `catch`.
+- Leaving the body normally, or with `return`, `break` or `continue`, skips the `catch`. A panic inside the `catch` goes to the next enclosing `try`; `panic(e)` rethrows.
+- `e` points into a buffer owned by the `try` (255 bytes plus NUL); copy it to keep it past the `catch`.
+- A panic with no enclosing `try` is fatal and runs nothing. There are no typed errors.
+- The compiler gives functions that own cleanups a landing pad and keeps their locals in memory (they are not inlined); the walker is stdlib (`std/runtime/unwind`) behind the `unwind` role. Without the role `try` is `E0501`. See `KNOWN-LIMITATIONS.md` for the limits (foreign frames, Windows).
+
 ---
 
 ## Expressions and operators
@@ -273,7 +289,7 @@ Registrations of the same role override by group: the stdlib (the default) is re
 
 ## Modules and import
 
-A module path `"x"` resolves to `x.xl` or `x/index.xl`. `std` and `std/x` come from the stdlib root; other paths are searched from the importing file's directory, then the root file's directory.
+A module path `"x"` resolves to `x.xl` or `x/index.xl`. `std` and `std/x` come from the stdlib root; a path that starts with a dependency's repository path (`"github.com/user/repo"`, `"github.com/user/repo/sub"`) comes from that installed package (see [PACKAGE_MANAGER.md](PACKAGE_MANAGER.md)); other paths are searched from the importing file's directory, then the root file's directory.
 
 ```
 import "std"                                // module as a namespace
@@ -297,7 +313,8 @@ export { sysClockSeconds, sysRandom } from "sys"
 - Modules may import each other. Every module of the program loads before any import or export is resolved, so a cycle is legal. A name that reaches an importer only through an `export *` loop, and that no module in the loop exports, is `E0711`.
 - Only `export`ed declarations are visible to importers.
 - Two exports or imports of the same name are an error; the same entity reaching a module by two paths is warning `W0401`.
-- `import "std"` gives the whole standard library; the compiler itself loads the default stdlib unless `--no-std` or `--std=<dir>` is given.
+- `import "std"` gives the whole standard library; the compiler itself loads the default stdlib unless `--no-std` is given. `--std=<dir>`, `--std=host/user/repo[@tag]` and `[std]` in `xlang.toml` replace the embedded copy.
+- An import path that looks like a repository path but is neither a file nor under a dependency is `E0745`.
 
 ---
 
@@ -382,7 +399,7 @@ All of it is in `std/`; `import "std"` or `from "std" import name` brings it in,
 | `std/dns`, `std/tls`, `std/http` | name resolution, TLS 1.3 client/server, HTTP server and client (see [http.md](http.md)) |
 | `std/sha256`, `std/sha512`, `std/hmac`, `std/aesgcm`, `std/chacha20poly1305`, `std/x25519`, `std/rsa`, `std/ecdsa`, `std/bignum`, `std/x509`, `std/pem` | crypto and certificate code used by TLS |
 | `std/cpu`, `std/gpu`, `std/sys` | CPU helpers; GPU access; the per-OS raw system layer |
-| `std/runtime` | the registered `panic` |
+| `std/runtime` | `panic` (the registered `panic`), `unwind` (panic unwinding and the registered `unwind`, what `try` / `catch` run on) and `context` (`switchContext`, the stack-switching primitive of `std/sched`) |
 | `std/testing` | test framework |
 
 Memory-related defaults can be changed with `--std-features` (for example `-default-allocator`); each feature becomes a `featureXxx` constant for `#if`.

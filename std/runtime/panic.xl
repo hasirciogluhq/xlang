@@ -1,0 +1,16 @@
+// std/runtime/panic: the registered `panic`. The compiler's failure paths (division by zero, array
+// bounds) call `panic`; user code can call it too. A panic first asks the unwinder (std/runtime/unwind)
+// for an enclosing `try`: if there is one, the frames in between run their `defer` statements and
+// drops and control continues in its `catch`. Without one the panic is fatal: the message goes to
+// stderr and the process exits with status 134. A program that registers its own `panic` replaces this.
+from "../sys" import sysWrite, sysExit
+from "../memory" import strlen
+from "unwind" import unwindPanic
+
+register(panic) fn panic(msg: *ui8) {
+    unwindPanic(msg)
+    sysWrite(2, "panic: ", 7)
+    sysWrite(2, msg, strlen(msg))
+    sysWrite(2, "\n", 1)
+    sysExit(134)
+}

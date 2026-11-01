@@ -2,6 +2,7 @@
 
 #include "xlang/lang/embedded_std.h"
 #include "xlang/lang/frontend.h"
+#include "xlang/pkg/manifest.h"
 #include "xlang/util/error.h"
 
 #include <algorithm>
@@ -53,6 +54,23 @@ void Compilation::addVirtualFile(const std::string& path, std::string text) {
     virtual_files_[normalizedKey(path)] = std::move(text);
 }
 
+void Compilation::addPackage(std::string import_path, std::filesystem::path dir) {
+    packages_.emplace_back(std::move(import_path), std::move(dir));
+    // Longest import path first, so `github.com/u/r/sub` beats `github.com/u/r`.
+    std::stable_sort(packages_.begin(), packages_.end(),
+                     [](const auto& a, const auto& b) { return a.first.size() > b.first.size(); });
+}
+
+const std::pair<std::string, std::filesystem::path>* Compilation::packageOf(const std::string& spec) const {
+    for (const auto& pkg : packages_) {
+        if (spec == pkg.first || (spec.size() > pkg.first.size() && spec.starts_with(pkg.first) &&
+                                  spec[pkg.first.size()] == '/')) {
+            return &pkg;
+        }
+    }
+    return nullptr;
+}
+
 bool Compilation::fileExists(const std::filesystem::path& p) const {
     if (virtual_files_.contains(normalizedKey(p))) {
         return true;
@@ -89,6 +107,13 @@ std::string Compilation::keyFor(const std::filesystem::path& path, bool is_root)
     if (const auto r = relativeTo(std_root_)) {
         return r->empty() ? "std" : "std/" + *r;
     }
+    // Installed packages live outside (or inside, for path dependencies) the project directory,
+    // so they are checked before it. Their keys are import paths: `github.com/u/r/sub`.
+    for (const auto& [import_path, dir] : packages_) {
+        if (const auto r = relativeTo(dir)) {
+            return r->empty() ? import_path : import_path + "/" + *r;
+        }
+    }
     if (const auto r = relativeTo(root_dir_)) {
         return *r;
     }
@@ -105,6 +130,12 @@ Compilation::locate(const std::string& spec, const ModuleInfo* from, const Span&
         if (!std_root_.empty()) {
             bases.push_back(std_root_);
             rest = spec == "std" ? "" : spec.substr(4);
+        }
+    }
+    if (bases.empty()) {
+        if (const auto* pkg = packageOf(spec)) {
+            bases.push_back(pkg->second);
+            rest = spec.size() == pkg->first.size() ? std::string{} : spec.substr(pkg->first.size() + 1);
         }
     }
     if (bases.empty()) {
@@ -153,6 +184,11 @@ ModuleInfo* Compilation::importTarget(ModuleInfo& from, const std::string& spec,
     ModuleInfo* target = nullptr;
     if (path) {
         target = loadModule(*path, false);
+    } else if (packageOf(spec) == nullptr && pkg::looksLikePackageImport(spec)) {
+        diag_.error("E0745",
+                    at,
+                    std::format("package `{}` is not a declared dependency", spec),
+                    "no file with that path, and no `[dependencies]` entry of xlang.toml is a prefix of it");
     } else {
         diag_.error("E0711",
                     at,
@@ -260,10 +296,8 @@ ModuleInfo* Compilation::loadRoot(const std::filesystem::path& path) {
         // The default stdlib is compiled into the compiler: expose it as virtual files so that
         // `import "std/..."` resolves like any other module.
         std_root_ = "<xlang-std>";
-        for (unsigned long i = 0; i < kEmbeddedStdCount; ++i) {
-            const EmbeddedFile& f = kEmbeddedStd[i];
-            addVirtualFile((std_root_ / f.path).generic_string(),
-                           std::string(reinterpret_cast<const char*>(f.data), f.size));
+        for (const auto& [rel, content] : embeddedStd()) {
+            addVirtualFile((std_root_ / rel).generic_string(), std::string(content));
         }
     }
     return loadModule(path, true);

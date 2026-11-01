@@ -35,21 +35,24 @@ target("xlang-frontend")
         local files = os.files(path.join(os.projectdir(), "std", "**.xl"))
         table.sort(files)
         local out = {"// Generated from std/**/*.xl by xmake/compiler.lua. Do not edit.\n",
-                     "#include \"xlang/lang/embedded_std.h\"\n\nnamespace xlang {\n\n"}
+                     "#include \"xlang/lang/embedded_std.h\"\n\n#include <array>\n\n",
+                     "namespace xlang {\nnamespace {\n\n"}
         local entries = {}
         for i, file in ipairs(files) do
             local data = io.readfile(file)
             local bytes = {}
             for j = 1, #data do
-                bytes[#bytes + 1] = string.format("%d", data:byte(j))
+                local b = data:byte(j)
+                bytes[j] = b < 128 and b or b - 256 -- `char` is signed: keep the initializers narrowing-free
             end
-            out[#out + 1] = string.format("static const unsigned char kData%d[] = {%s%s};\n", i,
-                                          table.concat(bytes, ","), #bytes > 0 and "," or "")
+            out[#out + 1] = string.format("constexpr char kData%d[] = {%s0}; // trailing NUL: never an empty array\n", i,
+                                          table.concat(bytes, ",") .. (#bytes > 0 and "," or ""))
             local rel = path.relative(file, path.join(os.projectdir(), "std")):gsub("\\", "/")
-            entries[#entries + 1] = string.format("    {\"%s\", kData%d, %d},\n", rel, i, #data)
+            entries[i] = string.format("    EmbeddedFile{\"%s\", {kData%d, %d}},\n", rel, i, #data)
         end
-        out[#out + 1] = "\nconst EmbeddedFile kEmbeddedStd[] = {\n" .. table.concat(entries) .. "};\n"
-        out[#out + 1] = string.format("const unsigned long kEmbeddedStdCount = %d;\n\n}  // namespace xlang\n", #files)
+        out[#out + 1] = string.format("\nconstexpr std::array<EmbeddedFile, %d> kFiles{{\n%s}};\n\n} // namespace\n\n",
+                                      #files, table.concat(entries))
+        out[#out + 1] = "std::span<const EmbeddedFile> embeddedStd() noexcept { return kFiles; }\n\n} // namespace xlang\n"
         local content = table.concat(out)
         local target_file = path.join(os.projectdir(), "build", "gen", "std_blob.cpp")
         if not os.isfile(target_file) or io.readfile(target_file) ~= content then
@@ -74,6 +77,11 @@ target("xlang-frontend")
         "$(projectdir)/src/sema/compilation.cpp",
         "$(projectdir)/src/sema/lower.cpp",
         "$(projectdir)/src/sema/variadic.cpp",
+        "$(projectdir)/src/pkg/toml.cpp",
+        "$(projectdir)/src/pkg/semver.cpp",
+        "$(projectdir)/src/pkg/manifest.cpp",
+        "$(projectdir)/src/pkg/git.cpp",
+        "$(projectdir)/src/pkg/project.cpp",
         "$(projectdir)/src/hir/hir.cpp",
         "$(projectdir)/src/util/source.cpp",
         "$(projectdir)/src/util/diagnostics.cpp"
@@ -99,7 +107,8 @@ target("xlang")
     set_default(not cross)
     set_enabled(not cross)
     add_files("$(projectdir)/src/cli/main.cpp", "$(projectdir)/src/cli/test_runner.cpp",
-              "$(projectdir)/src/cli/update.cpp", "$(projectdir)/src/cli/completions.cpp")
+              "$(projectdir)/src/cli/update.cpp", "$(projectdir)/src/cli/completions.cpp",
+              "$(projectdir)/src/cli/package.cpp")
     add_deps("xlang-codegen", "xlang-frontend")
     add_target_defines()
     xlang_ctx.add_llvm()
@@ -115,7 +124,7 @@ target("xlang-tests")
     set_default(false)
     set_enabled(not cross)
     add_files("$(projectdir)/test/compiler/main.cpp", "$(projectdir)/test/compiler/sema_test.cpp",
-              "$(projectdir)/test/compiler/lower_test.cpp")
+              "$(projectdir)/test/compiler/lower_test.cpp", "$(projectdir)/test/compiler/pkg_test.cpp")
     add_deps("xlang-frontend")
     add_tests("frontend")
 

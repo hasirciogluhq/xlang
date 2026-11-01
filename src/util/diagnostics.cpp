@@ -57,9 +57,10 @@ constexpr std::size_t kLeadWidth = 40;
         {"E0401", Severity::Error, "different entities bound to the same name",
          "Two imports or exports bind the same name to different entities. Rename one with `as`, "
          "use `except`, or import into a namespace with `import * as ns`."},
-        {"E0501", Severity::Error, "no registered `alloc` or `free` function",
-         "`new T { }` gets its memory from the function registered with `register(alloc)`, and "
-         "`delete p` releases it through the function registered with `register(free)`; the needed "
+        {"E0501", Severity::Error, "no registered `alloc`, `free` or `unwind` function",
+         "`new T { }` gets its memory from the function registered with `register(alloc)`, "
+         "`delete p` releases it through the function registered with `register(free)`, and "
+         "`try` / `catch` runs on the function registered with `register(unwind)`; the needed "
          "one was not found. Register it, or write `new(p) T { }` with memory you already have."},
         {"E0502", Severity::Error, "duplicate `register`",
          "A role (or a global name) was registered twice. At most one registration per role is "
@@ -67,7 +68,7 @@ constexpr std::size_t kLeadWidth = 40;
          "already registers it, disable that stdlib feature or build with --no-std."},
         {"E0503", Severity::Error, "`register` role contract not met",
          "The registered symbol does not fit its role: `panic` is `fn(msg: *ui8)`, `alloc` is "
-         "`fn(size: usize, align: usize) -> *void`, `free` is `fn(p: *void)`."},
+         "`fn(size: usize, align: usize) -> *void`, `free` is `fn(p: *void)`, `unwind` is `fn(op: i32, snapshot: *usize, message: *ui8)`."},
         {"E0504", Severity::Error, "interface used without `impl`",
          "Interfaces are nominal: a type is usable as an interface only after "
          "`impl Interface for Type`, even when its method names match."},
@@ -213,6 +214,33 @@ constexpr std::size_t kLeadWidth = 40;
          "generates the program entry stub around it. A file without `main`, such as a library module "
          "that other files import, cannot be linked as an executable. Add `fn main()`, or build the "
          "file with `--emit=obj`, `--emit=static` or `--emit=shared`."},
+        {"E0740", Severity::Error, "invalid xlang.toml or xlang.lock",
+         "The project manifest or lock file cannot be read or does not follow the format: a TOML syntax "
+         "error, an unknown key, a dependency that is not named by a repository path such as "
+         "`github.com/user/repo`, or a `[[native]]` entry without `link`. Fix the reported line; delete "
+         "xlang.lock and run `xlang package install` if the lock is damaged."},
+        {"E0741", Severity::Error, "package not installed",
+         "A package that the build needs is not in `.xlang/cache`, or the cached copy does not match the "
+         "commit in xlang.lock. Builds never use the network: run `xlang package install` once."},
+        {"E0742", Severity::Error, "invalid version tag",
+         "A dependency version must be `latest` (projects only) or a release tag: `vMAJOR.MINOR.PATCH` or "
+         "`MAJOR.MINOR.PATCH`, for example `v1.2.0`. Pre-release (`-rc.1`) and `-test` tags are never "
+         "chosen as `latest` but install when named explicitly (`repo@v1.2.0-test`). A package that other "
+         "projects depend on must pin exact tags for its own dependencies."},
+        {"E0743", Severity::Error, "conflicting package versions",
+         "Two packages need different versions of the same repository and the project does not choose. "
+         "There is one copy of each package per build. Name the version you want in the `[dependencies]` "
+         "table of your own xlang.toml; the project's choice wins."},
+        {"E0744", Severity::Error, "package download failed",
+         "`git` could not list or download a repository, the repository has no release tag, or a tag "
+         "moved to another commit than the one recorded in xlang.lock. Release tags must never move."},
+        {"E0745", Severity::Error, "import of an undeclared package",
+         "The import path looks like a repository path (`github.com/user/repo/...`) but no file matches "
+         "and no `[dependencies]` entry of xlang.toml is a prefix of it. Run `xlang package install "
+         "<repository>` to add it."},
+        {"E0746", Severity::Error, "native file missing",
+         "A `[[native]]` entry lists a file that does not exist in the package at the installed version. "
+         "Fix the `link` list, or commit the file."},
         {"W0701", Severity::Warning, "missing return",
          "Control can fall off the end of a function that returns a value: some path has no "
          "`return` (a loop that ends with `break`, an `if` without `else`, ...). Add a `return`, "

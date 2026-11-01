@@ -18,13 +18,24 @@
 |------|---------|
 | Types | `int32`, `int64`, `float`, `double`, `bool`, `string`, struct, pointer |
 | Functions | Overload, variadic (`...`), `export` / `external` / `declare` |
-| Modules | `import`, `import * as`, directory packages (`http/`) |
+| Modules | `import`, `import * as`, directory modules (`http/`), git packages (`import "github.com/user/repo"`) |
 | Memory | `new` / `delete`, struct fields, heap |
 | Control flow | `if` / `else`, `while` |
 | Strings | Concat (`+`), `printf`-style formatted `print` |
 | Concurrency | user-defined functions and linked objects |
 | Native kernel | `declare syscall <n> name(...)` or `@syscall(n, args...)` |
 | External symbols | plain `declare name(...)` → resolve from user-provided objects |
+
+## Packages
+
+A package is a git repository of plain `.xl` source, named by its repository path and versioned by its tags. There is no registry and no required layout: no monorepo or polyrepo rule, no `cmd/` or `apps/`, no standard the compiler enforces. Build your repositories the way you like; the package system only saves you the typing.
+
+```sh
+xlang package install github.com/user/repo      # newest stable tag (v1.2.0 or 1.2.0); repo@v1.2.0-test installs a test/pre-release tag when named
+xlang run main.xl                               # from "github.com/user/repo" import ...
+```
+
+`xlang.toml` lists dependencies, `xlang.lock` pins their commits, `.xlang/cache` holds the sources. Builds never touch the network. The standard library is a package too: the compiler embeds a default and any project may use a local directory or a repository at another version. Packages may also ship prebuilt files per platform (`[[native]]`), which the compiler links. Details: **[docs/PACKAGE_MANAGER.md](docs/PACKAGE_MANAGER.md)**.
 
 Full language reference: **[docs/LANGUAGE.md](docs/LANGUAGE.md)** · Linking: **[docs/LINKING.md](docs/LINKING.md)**  
 VS Code extension: **[vscode/README.md](vscode/README.md)**
@@ -71,7 +82,7 @@ The setup writes `~/.local/share/xlang/completions/xlang.{bash,zsh}` and adds on
 ## Requirements (building from source)
 
 - [xmake](https://xmake.io) ≥ 2.8
-- **C++23** compiler (Clang or GCC)
+- **C++26** compiler (Clang or GCC); C++23 is the minimum, and the build picks C++26 automatically when available
 - **Clang** on `PATH` (used when linking the final image)
 - LLVM (via xmake package)
 

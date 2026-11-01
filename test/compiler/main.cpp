@@ -474,10 +474,12 @@ void testOperatorPrecedenceAndCasts() {
 }  // namespace
 
 void runSemaTests();
+void runPackageTests();
 void runLowerTests();
 
 int main() {
     runSemaTests();
+    runPackageTests();
     runLowerTests();
     testWarningContextAndTwoSidedLabels();
     testErrorContextIsWiderAndGutterIsAligned();

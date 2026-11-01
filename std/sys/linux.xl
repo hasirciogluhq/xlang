@@ -152,11 +152,11 @@ export fn sysThreadCreate(entry: fn(*void), arg: *void, stack: *void, size: usiz
     local flags: usize = 2428672
     local ret: i64 = 0
 #if arch == "x86_64"
-    __builtin_asm("syscall\ntest rax, rax\njnz 2f\npop rax\npop rdi\ncall rax\nmov eax, 60\nxor edi, edi\nsyscall\n2:",
+    __builtin_asm("syscall\ntest rax, rax\njnz 2f\nxor ebp, ebp\npop rax\npop rdi\ncall rax\nmov eax, 60\nxor edi, edi\nsyscall\n2:",
                   in("rax") SYS_CLONE as i64, in("rdi") flags, in("rsi") top, in("rdx") 0, in("r10") ctid, in("r8") 0,
                   out("rax") ret, clobber("rcx"), clobber("r11"))
 #elif arch == "aarch64"
-    __builtin_asm("svc #0\ncbnz x0, 2f\nldp x1, x0, [sp], #16\nblr x1\nmov x8, #93\nmov x0, #0\nsvc #0\n2:",
+    __builtin_asm("svc #0\ncbnz x0, 2f\nmov x29, xzr\nldp x1, x0, [sp], #16\nblr x1\nmov x8, #93\nmov x0, #0\nsvc #0\n2:",
                   in("x8") SYS_CLONE as i64, in("x0") flags, in("x1") top, in("x2") 0, in("x3") 0, in("x4") ctid,
                   out("x0") ret)
 #endif
