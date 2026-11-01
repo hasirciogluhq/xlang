@@ -16,8 +16,9 @@
 - No raw owning pointers, no C-style arrays or casts, no manual `new`/`delete`, no C headers (`<stdio.h>` style), no out-parameters when a return value works, no macros where `constexpr`/templates work.
 
 ## File size (hard rule)
-- No source file (parser, sema, codegen, std, any category) may grow past about 1500 lines. Aim for one clear responsibility per file.
-- Never edit a file that is already over the limit. If a change touches one, first split it into cohesive parts (`src/<area>/<topic>_<part>.cpp` plus a shared internal header), build, then make the change in the right part.
+- There is no fixed line limit. The limit is dynamic: judge each file by complexity (distinct responsibilities, coupling, nesting) and by AI efficiency (how many tokens a model must read to edit it safely, and how many lines of unrelated code come along with one change).
+- Rule of thumb: a file is too big when one edit forces reading much unrelated code, when it holds more than one responsibility, or when it no longer fits comfortably in a single Read (roughly above 1000 lines for dense code such as parser, sema, codegen). Simple, flat, table-like files may be longer; tangled files must be split earlier. Aim for one clear responsibility per file.
+- Never edit a file that is too big by this judgment. If a change touches one, first split it into cohesive parts (`src/<area>/<topic>_<part>.cpp` plus a shared internal header), build, then make the change in the right part.
 - A split is a pure move: no behavior change, no renames beyond what the move needs. Update `src/README.md` and the build file (`xmake.lua`) in the same change.
 - New code goes into the matching part file, or a new part when none fits. Never append to a large catch-all file.
 

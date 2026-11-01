@@ -4,7 +4,7 @@ Type: **Missing** = absent. **Wrong** = present but incorrect or unsafe. **Unver
 
 | # | Topic | Type | Now | Should be |
 |---|-------|------|-----|-----------|
-| 1 | Sum type / payload enum | Missing | Enums are integer constants only (`enum Name: T`). AST nodes need class + `kind` field + manual casts. | Tagged union such as `enum Expr { Num(i64), Bin(*Expr, Op, *Expr) }`. `switch` binds the payload and checks exhaustiveness; reading the wrong variant is a compile or checked-mode error. |
+| 1 | Sum type / payload enum | **Done** | `enum Expr { Num(i64), Add(*Expr, *Expr), Nil }`; `Expr.Add(a, b)` builds, `switch` binds and checks exhaustiveness (E0747, E0749-E0751). Remaining: generics, named fields, nested patterns, droppable payloads (see `KNOWN-LIMITATIONS.md`). | Done. |
 | 2 | Slice (`[]T`) | Missing | Only `*T` (unchecked) and `[T; N]` (fixed size, checked). | `(ptr, len)` fat pointer with bounds checks under `--safety=checked`. `[T; N]` and `Vec` convert to it implicitly. |
 | 3 | Tuple / multiple return | Missing | None (not defined by the plan). | Either tuples with destructuring, or deliberately none and use generic `Result`/`Option`. User decision. |
 | 4 | `for x in coll` | Missing | `for` works only on `lo..hi` and variadic packs. | Desugar to the `Iter<T>` interface so any collection can be iterated. |

@@ -77,6 +77,13 @@ The original plan is implemented except the items below, which are intentionally
   removed. `String` and `Vec` still use the `Allocator` interface in `std/mem` directly. A bodyless `@init fn boot();` is the parser's `E0002`; the sema check for a missing body in `E0729` is therefore only a
   guard.
 - No tuples/multiple return values (not defined by the plan).
+- Payload enums (sum types): the parser turns `enum E { A(T), B }` into ordinary items: the struct `E` (`tag`, `data`), the
+  value enum `E$Tag`, the union struct `E$Data` and one struct `E$A` per variant with data. The union is not a language
+  feature: only the compiler-made `E$Data` has `is_union` (all fields at offset 0), there is no `union` keyword. The
+  names with `$` are visible in `xlang layout` and in some diagnostics (a droppable payload reports `E0721` on `E$A`).
+  Not done: generic payload enums (`E0724`), named payload fields, nested patterns (`case E.A(E.B(x))`), a payload
+  pattern next to other variants in one `case`, `==` on payload enums, `switch` through a pointer without `*`, and a
+  payload that needs drop (it would need drop glue that drops only the live variant). The tag is always `i32`.
 - `Vec<T>` (`std/vec`): the element accessors `get`, `first` and `last` return `*T` rather than a value, so a droppable element is never copied. `vecClone` panics for an element type that needs drop, because a bitwise copy would drop the element twice. The index panic text (`Vec: index I out of range for length L`) is built by `fmtIndexPanic` in `std/fmt`, on the stack and without allocating. `set` drops the old element through a plain `*slot = v` assignment. A drop-counter element type in `test/e2e/collections.xl` checks that `set`, `insert`, `remove`, `swapRemove` and `truncate` drop each element exactly once.
 - `String` (core-language phase 7): the HTTP and TLS modules still use `*ui8` buffers. `fsReadAllString` is in `std/fs`.
 - `const` (core-language phase 2): a `const` is not a `define` constant, so it cannot be an array length, a `staticAssert`

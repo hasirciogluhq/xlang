@@ -258,12 +258,33 @@ class Dog : Animal {
 }
 
 enum Color: i32 { Red, Green = 5, Blue }     // underlying type defaults to i32
+
+enum Expr {                                   // payload enum: each variant carries its own values
+    Num(i64)
+    Neg(*Expr)
+    Add(*Expr, *Expr)
+    Nil
+}
+
+fn eval(e: Expr) -> i64 {
+    switch e {
+        case Expr.Num(n) { return n }
+        case Expr.Neg(x) { return -eval(*x) }
+        case Expr.Add(a, b) { return eval(*a) + eval(*b) }
+        case Expr.Nil { return 0 }
+    }
+    return 0
+}
 ```
 
 - A `struct` holds data only (no methods). The default layout is xlang's own; `@repr(c)` selects C layout.
 - A `class` has fields, methods, single inheritance (`class Dog : Animal`) and a vptr; `virtual` methods are overridden with `override`. A `*Dog` converts to `*Animal` with `as`.
 - An `interface` is a set of method signatures. A value of interface type is a fat pointer (data pointer plus table); `impl Interface for Type` provides the methods, and a value of that type passes where the interface is expected. Interfaces are nominal: without the `impl` the use is error `E0504`.
 - Enum members are accessed as `Color.Green` and converted to integers with `as`.
+- A value enum (`enum Name: T { A, B = 5 }`) names constants. `T` is an integer, float, bool or `*ui8`; a member without `= value` is the previous integer plus one (the first is 0), and a non-integer enum needs a value on every member (`E0705`).
+- A payload enum has at least one member written `Name(T1, T2, ...)`. It has no `: T` and no `= value` members (`E0747`), and its tag is the position of the variant. A variant is built like a call, `Expr.Add(a, b)`, with exactly its number of values, each converted to the payload type at its position; a variant without data is a plain value, `Expr.Nil` (`E0751` for a wrong count, `E0706` for an unknown member). The payload types may be any type, including pointers to the enum itself, but not a class that needs drop (`E0721`). Generic payload enums are `E0724`.
+- A payload enum is a value: it is copied like a struct. Its size is the tag plus the largest payload, not the sum of the payloads. It is a struct `{ tag, data }` whose `data` is a union of one struct per variant, so `sizeOf(Expr)` and `alignOf(Expr)` work.
+- `switch` on a payload enum matches variants: `case Expr.Add(a, b) { }` binds the payload values to the names (copies, in order; `_` ignores one) and the names are visible in that case only. `case Expr.Add, Expr.Nil { }` matches several variants without binding anything; a bare variant name matches whatever it carries. A binding pattern must be alone in its `case` and name every value (`E0749`). Without `default` every variant needs a `case` (`E0750`), and a variant named twice is `E0709`. A `switch` on a payload enum cannot mix in integer cases (`E0749`).
 - Generics: `fn name<T, U>(...)`, `struct Name<T>`, `class Name<T>`, `interface Name<T>`, `type Name<T> = ...` and methods `fn name<U>(...)` of a class declare type parameters. Enums, globals, `const` and `define` cannot have them (`E0724`). Each use with concrete type arguments creates an instance: the declaration is copied with its type parameters replaced, then checked and lowered like any other declaration. A generic struct, class, interface or alias named without arguments is `E0724`. Type arguments are written in type positions (`Pair<Pair<i32, i32>, str>`), after a name in expressions (`max<i64>(a, b)`, `Pair<i32, str> { a: 1, b: "x" }`) and after a method name (`obj.apply<i32>(f)`). In an expression `Name<...>` is a generic argument list only when the closing `>` is followed by `(`, `{`, `)`, `]`, `,`, `;` or the end of the line; otherwise `<` is a comparison. Arguments of a generic call or method call are inferred from the argument types; untyped literals use their default types (`i32` or `i64`, `f64`, `str`). A parameter that stays unknown is `E0724`. A generic function named without a call (`local f: fn(i32) -> i32 = identity<i32>`) takes its arguments from the written list or, when none are written, from the expected `fn(...)` type. A generic method is instantiated per class instance and per argument list. A generic method cannot be `virtual` or `override` (`E0730`), cannot be overloaded (`E0405`), and is supported only in a class: a generic method of an `impl` or an `interface` is `E0733`. A generic `impl` names its type parameters in the target and the interface, as in `impl<T> Iter<T> for Cell<T>`; each of them must be a direct argument of the target (`E0732`), and the impl is instantiated for each instance of the target that exists. Concrete impls may name interface arguments (`impl Iter<i32> for Ticker`). Two impls that give the same interface for the same type, after the arguments are filled in, are `E0731`. An error inside an instance is reported at the generic declaration, followed by one `in instantiation of` note per enclosing instance, at most 8. Nesting of type arguments beyond 64 levels is `E0725`. There are no constraints: a body is checked only for the types it is instantiated with.
 - A class may declare `fn init(self, params...)` (a constructor; overloadable, no return type, `E0722` otherwise) and `fn drop(self)` (a destructor; at most one, no parameters besides `self`, no return type, not virtual, `E0722` otherwise). `T(args)` builds a new object: it is zeroed, its vptr is set and `init` runs on it. A class with an `init` cannot be built with `T { ... }` (`E0723`); a class without one keeps the field literal. In a class `init`, `self.f = v` on a droppable field is a raw store: the field holds zeroed memory there, so the old value is not dropped. A derived class whose `init` exists runs the base class `init` that takes no arguments first; if the base has constructors but none without arguments, the derived `init` is `E0722`.
 - A class *needs drop* when it has a `drop` method, or a field or base class that needs drop. Such values are move-only. A local or by-value parameter that needs drop is dropped when its block ends (or the function returns), in last-in first-out order together with `defer`. The drop runs the user `drop` body, then the drop of each field that needs drop in reverse declaration order, then the base class drop. Drops are statically dispatched: deleting a derived object through a base pointer runs only the base drop.

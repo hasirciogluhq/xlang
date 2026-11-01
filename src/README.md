@@ -15,7 +15,7 @@ src/
     lexer/             # tokens; `#if` ... directives are lexed here
     preprocess/        # conditional compilation on the token stream
     macro/             # `define f(x: expr) { }` / `f!(...)` token-level expansion
-    parser/            # recursive descent, error recovery
+    parser/            # recursive descent, error recovery; a payload enum is split into struct/union/tag items here
     ast/               # AST dump (`xlang parse`)
     types/             # Type tree + primitive names
     config.cpp         # BuildConfig, target triples, -D values
@@ -26,7 +26,7 @@ src/
     conversion.cpp     # implicit conversion rules (E0601 / W0601)
     scope.cpp          # ScopeStack: module -> function -> block scopes (plan 4.1)
     compilation.cpp    # module loading, exports/imports, registrations, whole-program driver (4.6, 4.12)
-    lower.cpp          # body type checking + HIR lowering over all modules (4.2-4.5, 4.8-4.12)
+    lower.cpp          # body type checking + HIR lowering over all modules (4.2-4.5, 4.8-4.12); payload enum variants and `switch` (E0749-E0751)
     variadic.cpp       # `..args` packs: per-count instances, args.len folding, unrolled for, pack checks (E0734-E0738)
   pkg/
     toml.cpp           # TOML subset parser (xlang.toml, xlang.lock)
