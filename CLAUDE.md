@@ -15,6 +15,12 @@
 - Do not repeat long type names or boilerplate. Use `using` aliases (preferred over `typedef`) and macros where they remove repetition; keep them central and reusable. Code must be reusable, DRY, easy to re-check, and short: write less, get the best result.
 - No raw owning pointers, no C-style arrays or casts, no manual `new`/`delete`, no C headers (`<stdio.h>` style), no out-parameters when a return value works, no macros where `constexpr`/templates work.
 
+## File size (hard rule)
+- No source file (parser, sema, codegen, std, any category) may grow past about 1500 lines. Aim for one clear responsibility per file.
+- Never edit a file that is already over the limit. If a change touches one, first split it into cohesive parts (`src/<area>/<topic>_<part>.cpp` plus a shared internal header), build, then make the change in the right part.
+- A split is a pure move: no behavior change, no renames beyond what the move needs. Update `src/README.md` and the build file (`xmake.lua`) in the same change.
+- New code goes into the matching part file, or a new part when none fits. Never append to a large catch-all file.
+
 ## Docs
 - `KNOWN-LIMITATIONS.md`: open decisions and intentional incompleteness.
 - `src/README.md`: layout. `std/`: stdlib. `test/e2e/`: end-to-end programs.

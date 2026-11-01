@@ -393,6 +393,57 @@ void testEnumsAndStaticAssertInBodies() {
     CHECK(bad.failedWith("E0702"));
 }
 
+// ---- payload enums: `Add(A, B)` variants are built like calls and matched by `switch`
+
+void testPayloadEnums() {
+    constexpr std::string_view shapes =
+        "enum Shape {\n Circle(i64)\n Rect(i32, i32)\n Empty\n}\n";
+    const auto program = [&](std::string_view body) { return Lowered(std::string(shapes) + std::string(body)); };
+    {
+        // Every variant shape builds, matches and binds; the union is as big as its largest payload.
+        Lowered ok = program(
+            "staticAssert(sizeOf(Shape) == 16)\n"
+            "fn area(s: Shape) -> i64 {\n"
+            "    switch s {\n"
+            "        case Shape.Circle(r) { return r }\n"
+            "        case Shape.Rect(w, _) { return w as i64 }\n"
+            "        case Shape.Empty { return 0 }\n"
+            "    }\n"
+            "    return -1\n"
+            "}\n"
+            "fn f() -> i64 { return area(Shape.Rect(3, 4)) + area(Shape.Empty) }\n");
+        CHECK(!ok.diag->hasErrors());
+    }
+    {
+        // `default` replaces missing cases; several variants can share a case when nothing is bound.
+        Lowered ok = program(
+            "fn f(s: Shape) -> i32 {\n"
+            "    switch s {\n"
+            "        case Shape.Circle, Shape.Rect { return 1 }\n"
+            "        default { return 0 }\n"
+            "    }\n"
+            "}\n");
+        CHECK(!ok.diag->hasErrors());
+    }
+    CHECK(program("fn f(s: Shape) {\n switch s {\n case Shape.Empty { }\n }\n}\n").failedWith("E0750"));
+    CHECK(program("fn f() { local s: Shape = Shape.Circle }\n").failedWith("E0751"));
+    CHECK(program("fn f() { local s: Shape = Shape.Empty(1) }\n").failedWith("E0751"));
+    CHECK(program("fn f() { local s: Shape = Shape.Rect(1) }\n").failedWith("E0751"));
+    CHECK(program("fn f() { local s: Shape = Shape.Missing }\n").failedWith("E0706"));
+    CHECK(program("fn f(s: Shape) {\n switch s {\n case Shape.Rect(w) { }\n default { }\n }\n}\n")
+              .failedWith("E0749"));
+    CHECK(program("fn f(s: Shape) {\n switch s {\n case 1 { }\n default { }\n }\n}\n").failedWith("E0749"));
+    CHECK(program("fn f(s: Shape) {\n switch s {\n case Shape.Empty { }\n case Shape.Empty { }\n default { }\n }\n}\n")
+              .failedWith("E0709"));
+    CHECK(Lowered("enum E: i32 { A(i32) }\n").failedWith("E0747"));
+    CHECK(Lowered("enum E { A(i32), B = 2 }\n").failedWith("E0747"));
+    {
+        // A payload type that needs drop cannot sit in a variant: it would sit in a struct.
+        Lowered bad("class Res {\n fn drop(self) { }\n}\nenum E {\n A(Res)\n}\n");
+        CHECK(bad.failedWith("E0721"));
+    }
+}
+
 // ---- multi-module programs (plan 4.6, 4.8, 4.9, 4.12)
 
 struct Multi {
@@ -870,6 +921,7 @@ void runLowerTests() {
     testGlobalInitializersAreConstant();
     testImportsAreExternal();
     testEnumsAndStaticAssertInBodies();
+    testPayloadEnums();
     testModulesImportAndExport();
     testCyclicModules();
     testModulesShareTypes();

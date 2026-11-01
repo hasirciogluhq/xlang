@@ -1,0 +1,147 @@
+// End-to-end: value enums (constants) and payload enums (sum types).
+// Exits with the number of failed checks and prints "enums ok" when all pass.
+from "std" import print
+
+// --- value enums: integer, float, bool and *ui8 constants, auto-numbering ------------------------
+enum Level: ui8 { Low, Mid = 5, High }
+enum Ratio: f64 { Half = 0.5, Quarter = 0.25 }
+enum Name: *ui8 { Admin = "admin", Guest = "guest" }
+
+// --- payload enums -------------------------------------------------------------------------------
+struct Point { x: i32, y: i32 }
+
+enum Value {
+    Int(i64)
+    Float(f64)
+    Flag(bool)
+    Pair(i32, i32)
+    At(Point)
+    Text(*ui8)
+    Nil
+}
+
+enum Expr {
+    Num(i64)
+    Neg(*Expr)
+    Add(*Expr, *Expr)
+    Mul(*Expr, *Expr)
+}
+
+enum Light { Red, Green(i32), Off }
+
+global failures: i32 = 0
+
+fn check(name: *ui8, got: i64, want: i64) {
+    if got != want {
+        failures += 1
+        print("FAIL ")
+        print(name)
+        print(": ")
+        print(got)
+        print("\n")
+    }
+}
+
+fn box(e: Expr) -> *Expr {
+    local p: *Expr = new Expr {}
+    *p = e
+    return p
+}
+
+fn eval(e: Expr) -> i64 {
+    switch e {
+        case Expr.Num(n) { return n }
+        case Expr.Neg(x) { return -eval(*x) }
+        case Expr.Add(a, b) { return eval(*a) + eval(*b) }
+        case Expr.Mul(a, b) { return eval(*a) * eval(*b) }
+    }
+    return 0
+}
+
+fn describe(v: Value) -> i64 {
+    switch v {
+        case Value.Int(n) { return n }
+        case Value.Float(f) { return f as i64 }
+        case Value.Flag(b) { return b ? 1 : 0 }
+        case Value.Pair(a, b) { return a + b }
+        case Value.At(p) { return p.x * 100 + p.y }
+        case Value.Text(s) { return s[0] as i64 }
+        case Value.Nil { return -1 }
+    }
+    return -2
+}
+
+fn light(l: Light) -> i64 {
+    switch l {
+        case Light.Red { return 1 }
+        case Light.Green(secs) { return 100 + secs }
+        default { return 0 }
+    }
+}
+
+fn isLive(l: Light) -> bool {
+    switch l {
+        case Light.Red, Light.Green { return true }
+        case Light.Off { return false }
+    }
+    return false
+}
+
+fn greenSeconds(l: Light) -> i64 {
+    switch l {
+        case Light.Green(_) { return 1 }
+        default { return 0 }
+    }
+}
+
+fn id(v: Value) -> Value { return v }
+
+fn main() -> i32 {
+    // value enums keep working
+    check("level-low", Level.Low as i64, 0)
+    check("level-mid", Level.Mid as i64, 5)
+    check("level-high", Level.High as i64, 6)
+    check("ratio", ((Ratio.Quarter as f64) * 4.0) as i64, 1)
+    check("name", (Name.Guest as *ui8)[0] as i64, 103)
+
+    // construction and matching of every payload shape
+    check("int", describe(Value.Int(42)), 42)
+    check("float", describe(Value.Float(7.9)), 7)
+    check("flag-true", describe(Value.Flag(true)), 1)
+    check("flag-false", describe(Value.Flag(false)), 0)
+    check("pair", describe(Value.Pair(3, 4)), 7)
+    check("point", describe(Value.At(Point { x: 5, y: 6 })), 506)
+    check("text", describe(Value.Text("A")), 65)
+    check("nil", describe(Value.Nil), -1)
+
+    // values are copied
+    local a: Value = Value.Pair(1, 2)
+    local b: Value = a
+    a = Value.Int(9)
+    check("copy-a", describe(a), 9)
+    check("copy-b", describe(b), 3)
+    check("through-call", describe(id(Value.Int(11))), 11)
+
+    // recursion through pointers: (2 + 3) * -(4)
+    local e: Expr = Expr.Mul(
+        box(Expr.Add(box(Expr.Num(2)), box(Expr.Num(3)))),
+        box(Expr.Neg(box(Expr.Num(4)))))
+    check("expr", eval(e), -20)
+
+    // switch forms
+    check("light-red", light(Light.Red), 1)
+    check("light-green", light(Light.Green(30)), 130)
+    check("light-default", light(Light.Off), 0)
+    check("live-red", isLive(Light.Red) ? 1 : 0, 1)
+    check("live-off", isLive(Light.Off) ? 1 : 0, 0)
+    check("ignore", greenSeconds(Light.Green(5)), 1)
+    check("ignore-other", greenSeconds(Light.Red), 0)
+
+    // size: the tag (4 bytes, padded to 8) plus the largest payload (8 bytes), not the sum
+    check("size", sizeOf(Value) as i64, 16)
+
+    if failures == 0 {
+        print("enums ok\n")
+    }
+    return failures
+}
