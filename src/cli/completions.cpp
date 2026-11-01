@@ -1,6 +1,13 @@
 #include "completions.h"
 
+#include "style.h"
+
 #include <CLI/CLI.hpp>
+
+#include <cstdlib>
+#include <filesystem>
+#include <fstream>
+#include <iostream>
 
 #include <algorithm>
 #include <map>
@@ -208,7 +215,8 @@ std::string zshScript(const Command& root, const std::vector<Command>& subs) {
     }
 
     std::string out =
-        "# zsh completion for xlang. Enable (after compinit) with:  source <(xlang completions zsh)\n"
+        "# zsh completion for xlang. Enable with:  source <(xlang completions zsh)\n"
+        "if (( ! $+functions[compdef] )); then autoload -Uz compinit && compinit; fi\n"
         "_xlang() {\n"
         "    local sub=\"\" i\n"
         "    for ((i = 2; i < CURRENT; i++)); do\n"
@@ -320,6 +328,148 @@ std::string generateCompletions(CLI::App& app, const std::string& shell) {
         return fishScript(root, subs);
     }
     return {};
+}
+
+namespace {
+
+namespace fs = std::filesystem;
+
+constexpr const char* kBlockBegin = "# >>> xlang completion >>>";
+constexpr const char* kBlockEnd = "# <<< xlang completion <<<";
+
+std::string envOr(const char* name, const std::string& fallback) {
+    const char* value = std::getenv(name);
+    return value != nullptr && *value != '\0' ? value : fallback;
+}
+
+std::string readFile(const fs::path& path) {
+    std::ifstream in(path, std::ios::binary);
+    return std::string(std::istreambuf_iterator<char>(in), std::istreambuf_iterator<char>());
+}
+
+bool writeFile(const fs::path& path, const std::string& content) {
+    std::error_code ec;
+    fs::create_directories(path.parent_path(), ec);
+    std::ofstream out(path, std::ios::binary | std::ios::trunc);
+    out << content;
+    return static_cast<bool>(out);
+}
+
+/// `/home/me/x` -> `$HOME/x`, so the block in a startup file survives a moved home directory.
+std::string withHomeVar(const fs::path& path, const std::string& home) {
+    const std::string text = path.string();
+    return text.starts_with(home + "/") ? "$HOME" + text.substr(home.size()) : text;
+}
+
+/// Appends the marked block that sources `script` unless the file already has it. Returns true
+/// when the file was changed.
+bool addSourceBlock(const fs::path& rc, const fs::path& script, const std::string& home) {
+    const std::string current = fs::exists(rc) ? readFile(rc) : std::string{};
+    if (current.find(kBlockBegin) != std::string::npos) {
+        return false;
+    }
+    std::string block = current.empty() || current.back() == '\n' ? "" : "\n";
+    block += std::string(current.empty() ? "" : "\n") + kBlockBegin + "\n" +
+             "# Added by `xlang completions install`; delete this block to opt out.\n" +
+             "[ -f \"" + withHomeVar(script, home) + "\" ] && source \"" +
+             withHomeVar(script, home) + "\"\n" + kBlockEnd + "\n";
+    std::ofstream out(rc, std::ios::binary | std::ios::app);
+    out << block;
+    return static_cast<bool>(out);
+}
+
+}  // namespace
+
+int installCompletions(CLI::App& app, const CompletionInstallOptions& options) {
+    const Palette c{options.color};
+    const std::string home = envOr("HOME", "");
+    if (home.empty()) {
+        std::cerr << c.boldRed() << "error:" << c.reset() << " HOME is not set\n";
+        return 1;
+    }
+    const std::string login = fs::path(envOr("SHELL", "")).filename().string();
+    const fs::path data = fs::path(envOr("XDG_DATA_HOME", home + "/.local/share")) / "xlang" / "completions";
+    const fs::path config = fs::path(envOr("XDG_CONFIG_HOME", home + "/.config"));
+#ifdef __APPLE__
+    // Terminal.app starts login shells, which read ~/.bash_profile rather than ~/.bashrc.
+    const std::vector<fs::path> bash_rcs = {fs::path(home) / ".bash_profile", fs::path(home) / ".bashrc"};
+#else
+    const std::vector<fs::path> bash_rcs = {fs::path(home) / ".bashrc"};
+#endif
+    const fs::path zsh_rc = fs::path(envOr("ZDOTDIR", home)) / ".zshrc";
+
+    bool any = false;
+    const auto report = [&](const std::string& shell, const std::string& what) {
+        any = true;
+        std::cout << c.boldGreen() << "completion " << c.reset() << shell << ": " << what << '\n';
+    };
+    const auto fail = [&](const std::string& what) {
+        std::cerr << c.boldRed() << "error:" << c.reset() << ' ' << what << '\n';
+        return 1;
+    };
+
+    // fish: autoloaded from its completions directory, one file per command name.
+    if (login == "fish" || fs::exists(config / "fish")) {
+        const std::string script = generateCompletions(app, "fish");
+        bool wrote = false;
+        for (const char* name : {"xlang.fish", "xl.fish"}) {
+            const fs::path file = config / "fish" / "completions" / name;
+            if (options.refresh && !fs::exists(file)) {
+                continue;
+            }
+            if (!writeFile(file, script)) {
+                return fail("cannot write " + file.string());
+            }
+            wrote = true;
+        }
+        if (wrote) {
+            report("fish", "installed in " + (config / "fish" / "completions").string());
+        }
+    }
+
+    // bash and zsh: a script file plus a marked block in the startup file that sources it.
+    struct Source {
+        std::string shell;
+        fs::path rc;
+        bool wanted;
+    };
+    fs::path bash_rc = bash_rcs.front();
+    for (const fs::path& candidate : bash_rcs) {
+        if (fs::exists(candidate)) {
+            bash_rc = candidate;
+            break;
+        }
+    }
+    const bool bash_wanted = login == "bash" || fs::exists(bash_rc);
+    const bool zsh_wanted = login == "zsh" || fs::exists(zsh_rc);
+    for (const Source& s : {Source{"bash", bash_rc, bash_wanted}, Source{"zsh", zsh_rc, zsh_wanted}}) {
+        if (!s.wanted) {
+            continue;
+        }
+        const fs::path script = data / ("xlang." + s.shell);
+        if (options.refresh && !fs::exists(script)) {
+            continue;
+        }
+        if (!writeFile(script, generateCompletions(app, s.shell))) {
+            return fail("cannot write " + script.string());
+        }
+        bool edited = false;
+        if (!options.refresh) {
+            edited = addSourceBlock(s.rc, script, home);
+        }
+        report(s.shell,
+               edited ? "installed, loaded from " + s.rc.string()
+                      : (options.refresh ? "refreshed " + script.string()
+                                         : "up to date (" + s.rc.string() + " already loads it)"));
+    }
+
+    if (!any && !options.refresh) {
+        std::cout << "no bash, zsh or fish setup found; run `xlang completions <bash|zsh|fish>` and "
+                     "source its output\n";
+    } else if (any && !options.refresh) {
+        std::cout << c.dim() << "open a new terminal to use tab completion" << c.reset() << '\n';
+    }
+    return 0;
 }
 
 }  // namespace xlang::cli

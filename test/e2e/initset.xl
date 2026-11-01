@@ -1,6 +1,6 @@
-// initset: an `@init` function replaces the registered allocator with `__builtin_setRegistered`,
-// and `new` and `free` then go through the replacement.
-from "std" import print, Allocator, Heap, free
+// initset: an `@init` function assigns `currentAllocator`, and `new` and `free` then go through
+// the replacement.
+from "std" import print, Allocator, Heap, free, currentAllocator
 
 class Cell {
     value: i64
@@ -28,7 +28,7 @@ impl Allocator for Counting {
 }
 
 @init fn useCounting() {
-    __builtin_setRegistered("allocator", counting)
+    currentAllocator = counting
 }
 
 fn check(name: *ui8, ok: bool) {

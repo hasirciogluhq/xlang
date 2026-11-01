@@ -57,17 +57,17 @@ constexpr std::size_t kLeadWidth = 40;
         {"E0401", Severity::Error, "different entities bound to the same name",
          "Two imports or exports bind the same name to different entities. Rename one with `as`, "
          "use `except`, or import into a namespace with `import * as ns`."},
-        {"E0501", Severity::Error, "no registered allocator for `new`",
-         "`new T { }` uses the global registered with `register(allocator)`, and none was found. "
-         "Write `new(a) T { }` or register an allocator."},
+        {"E0501", Severity::Error, "no registered `alloc` or `free` function",
+         "`new T { }` gets its memory from the function registered with `register(alloc)`, and "
+         "`delete p` releases it through the function registered with `register(free)`; the needed "
+         "one was not found. Register it, or write `new(p) T { }` with memory you already have."},
         {"E0502", Severity::Error, "duplicate `register`",
          "A role (or a global name) was registered twice. At most one registration per role is "
          "allowed in the whole program; remove the extra registration, or, if the stdlib "
          "already registers it, disable that stdlib feature or build with --no-std."},
         {"E0503", Severity::Error, "`register` role contract not met",
-         "The registered symbol does not fit its role (for example an `allocator` global whose "
-         "type is not `Allocator` and has no `impl Allocator for T`, or a `panic` with a wrong "
-         "signature)."},
+         "The registered symbol does not fit its role: `panic` is `fn(msg: *ui8)`, `alloc` is "
+         "`fn(size: usize, align: usize) -> *void`, `free` is `fn(p: *void)`."},
         {"E0504", Severity::Error, "interface used without `impl`",
          "Interfaces are nominal: a type is usable as an interface only after "
          "`impl Interface for Type`, even when its method names match."},
@@ -153,9 +153,6 @@ constexpr std::size_t kLeadWidth = 40;
         {"E0727", Severity::Error, "call or value use of an `@init` function",
          "An `@init` function runs once before `main` and cannot be called from code or used as a "
          "function value. Move the shared code into a normal function and call or use that."},
-        {"E0728", Severity::Error, "`__builtin_setRegistered` outside an `@init` function",
-         "`__builtin_setRegistered(role, value)` is a statement that only works inside an `@init` "
-         "function. It cannot be used as a value."},
         {"E0729", Severity::Error, "invalid `@init` function",
          "`@init` marks a module-level function with no generics, no parameters, no return type and a "
          "body. It is not allowed on methods or on other kinds of declarations."},

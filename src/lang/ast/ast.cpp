@@ -260,8 +260,7 @@ public:
                              s.expr ? " = " + expr(*s.expr) : std::string()));
             break;
         case Stmt::Kind::Delete:
-            line(std::format("{}delete{} {}", attrs, s.target ? "(" + expr(*s.target) + ")" : std::string(),
-                             expr(*s.expr)));
+            line(std::format("{}delete {}", attrs, expr(*s.expr)));
             break;
         case Stmt::Kind::Const:
             line(std::format("{}const {}{}{}", attrs, s.name,

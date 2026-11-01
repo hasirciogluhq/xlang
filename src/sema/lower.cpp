@@ -350,8 +350,6 @@ class Lowerer {
                   const Span& span,
                   std::vector<hir::Stmt>& out,
                   bool raw = false);
-    /// `__builtin_setRegistered("allocator", value)` in an `@init` function.
-    void lowerSetRegistered(const Expr& call, const Span& span, std::vector<hir::Stmt>& out);
     /// `__builtin_write(p, value)` as a statement: stores without dropping the old value.
     void lowerRawWrite(const Expr& call, const Span& span, std::vector<hir::Stmt>& out);
     void lowerCompound(const Stmt& s, std::vector<hir::Stmt>& out);
@@ -427,7 +425,6 @@ class Lowerer {
     /// Lowers the module's impls (concrete ones; generic instances are lowered as pending items).
     void lowerImpls();
     void lowerImplInfo(const ImplInfo& info);
-    [[nodiscard]] bool hasAllocMethod(const Type& t);
     [[nodiscard]] std::optional<Sema::EntityRef> entityOfType(const Type& t);
     void collectFields(const std::string& qname, std::vector<FieldInfo>& out);
     [[nodiscard]] const std::vector<SlotInfo>& vtableOf(const std::string& qname);
@@ -1317,20 +1314,13 @@ void Lowerer::collectImpls() {
     }
 }
 
-bool Lowerer::hasAllocMethod(const Type& t) {
-    const Type* agg = &t;
-    if (t.kind == TypeKind::Pointer && t.elem) {
-        agg = t.elem.get();
-    }
-    if (agg->kind == TypeKind::Interface) {
-        return findMethod(*agg, "alloc").has_value();
-    }
-    if (isAggregate(*agg)) {
-        const auto m = findMethod(*agg, "alloc");
-        return m && m->from_impl;
-    }
-    return false;
+namespace {
+
+[[nodiscard]] bool isVoidPointer(const Type& t) {
+    return t.kind == TypeKind::Pointer && t.elem && t.elem->kind == TypeKind::Void;
 }
+
+}  // namespace
 
 void Lowerer::checkRegistrations() {
     for (const Item& item : s_.program_.items) {
@@ -1340,7 +1330,6 @@ void Lowerer::checkRegistrations() {
         const DeclBase& base = declBase(item);
         const std::string& role = item.modifiers.register_role;
         const auto* fn = std::get_if<FnDecl>(&item.decl);
-        const auto* global = std::get_if<GlobalDecl>(&item.decl);
         bool ok = false;
         std::string why;
         if (role == "panic") {
@@ -1352,15 +1341,22 @@ void Lowerer::checkRegistrations() {
                      p.elem->bits == 8 && !p.elem->is_signed;
             }
             why = "`register(panic)` needs `fn(msg: *ui8)` with no return type";
-        } else if (role == "allocator") {
-            if (global != nullptr) {
-                const Type t = resolved(global->type);
-                ok = isUnknown(t) || t.kind == TypeKind::Interface || hasAllocMethod(t);
+        } else if (role == "alloc") {
+            ok = fn != nullptr && fn->params.size() == 2 && !fn->params[0].is_self &&
+                 !fn->params[1].is_self && isVoidPointer(resolved(fn->return_type));
+            if (ok) {
+                const Type a = resolved(fn->params[0].type);
+                const Type b = resolved(fn->params[1].type);
+                ok = a.kind == TypeKind::Int && !a.is_signed && b.kind == TypeKind::Int && !b.is_signed &&
+                     a.bits == 0 && b.bits == 0;  // `usize`
             }
-            why = "`register(allocator)` needs a global whose type is an interface or has an "
-                  "`impl` with `alloc`";
+            why = "`register(alloc)` needs `fn(size: usize, align: usize) -> *void`";
+        } else if (role == "free") {
+            ok = fn != nullptr && fn->params.size() == 1 && !fn->params[0].is_self &&
+                 fn->return_type.isVoid() && isVoidPointer(resolved(fn->params[0].type));
+            why = "`register(free)` needs `fn(p: *void)` with no return type";
         } else {
-            why = std::format("unknown role `{}`; known roles: panic, allocator", role);
+            why = std::format("unknown role `{}`; known roles: panic, alloc, free", role);
         }
         if (!ok) {
             err("E0503",
@@ -1398,8 +1394,10 @@ void Lowerer::checkRegistrations() {
         }
         if (role == "panic") {
             mod_.panic_function = qname;
+        } else if (role == "alloc") {
+            mod_.alloc_function = qname;
         } else {
-            mod_.allocator_global = qname;
+            mod_.free_function = qname;
         }
     }
 }
@@ -3198,38 +3196,6 @@ void Lowerer::assignTo(EP target,
     out.push_back(std::move(h));
 }
 
-void Lowerer::lowerSetRegistered(const Expr& call, const Span& span, std::vector<hir::Stmt>& out) {
-    if (fn_ == nullptr || !fn_->is_init) {
-        err("E0728",
-            call.span,
-            "`__builtin_setRegistered` only works inside an `@init` function",
-            "move the call into an `@init` function");
-        return;
-    }
-    if (call.args.size() != 2 || call.args[0]->kind != Expr::Kind::StringLiteral) {
-        err("E0710",
-            call.span,
-            "`__builtin_setRegistered` takes a role string and a value: "
-            "`__builtin_setRegistered(\"allocator\", value)`",
-            "wrong arguments");
-        return;
-    }
-    const std::string& role = call.args[0]->text;
-    const auto it = sh_.roles.find(role);
-    if (role != "allocator" || it == sh_.roles.end()) {
-        err("E0503",
-            call.args[0]->span,
-            std::format("no registered global of role `{}` to set", role),
-            "only a `register(allocator)` global can be set, and only when the program registers one");
-        return;
-    }
-    const ScopeEntry entry = entryOf(Sema::EntityRef{it->second.owner, it->second.sym, it->second.name},
-                                     it->second.name,
-                                     span);
-    EP target = fromEntry(entry, call, nullptr);
-    assignTo(std::move(target), *call.args[1], span, out);
-}
-
 /// `t op= v`  =>  `t = t op v`; a target with side effects is evaluated once through a pointer.
 void Lowerer::lowerCompound(const Stmt& s, std::vector<hir::Stmt>& out) {
     if (!astHasSideEffects(*s.target)) {
@@ -3644,39 +3610,18 @@ void Lowerer::lowerStmt(const Stmt& s, std::vector<hir::Stmt>& out) {
             drop.value = dropCallOn(localRef(tmp, ptr, s.span), t, s.span);
             out.push_back(std::move(drop));
         }
-        EP alloc;
-        if (s.target) {
-            alloc = expr(*s.target, nullptr);
-        } else {
-            const auto ref = s_.entityByQName(mod_.allocator_global);
-            if (mod_.allocator_global.empty() || !ref) {
-                err("E0501",
-                    s.span,
-                    "`delete` has no registered allocator",
-                    "write `delete(a) p` or register an allocator global");
-                return;
-            }
-            alloc = mk(hir::ExprKind::GlobalRef, resolvedIn(*ref->owner, std::get<GlobalDecl>(ref->sym->item->decl).type), s.span);
-            alloc->text = mod_.allocator_global;
-            alloc->lvalue = true;
-        }
-        if (!alloc) {
-            return;
-        }
-        const auto m = alloc->type.kind == TypeKind::Interface ? findMethod(alloc->type, "free")
-                                                              : std::nullopt;
-        if (!m) {
-            err("E0709",
+        if (mod_.free_function.empty()) {
+            err("E0501",
                 s.span,
-                std::format("`{}` is not an interface allocator with `free`", typeToString(alloc->type)),
-                "`delete` frees through an interface value");
+                "`delete` has no registered `free` function",
+                "register one with `register(free) fn name(p: *void)`");
             return;
         }
-        EP call = mk(hir::ExprKind::CallItable, Type::makeVoid(), s.span);
-        call->text = "free";
-        call->index = m->index;
-        call->lhs = std::move(alloc);
-        call->args.push_back(localRef(tmp, ptr, s.span));
+        EP call = mk(hir::ExprKind::Call, Type::makeVoid(), s.span);
+        call->text = mod_.free_function;
+        EP raw = mk(hir::ExprKind::Cast, Type::makePointer(Type::makeVoid()), s.span);
+        raw->lhs = localRef(tmp, ptr, s.span);
+        call->args.push_back(std::move(raw));
         hir::Stmt free_stmt;
         free_stmt.kind = hir::StmtKind::Expr;
         free_stmt.span = s.span;
@@ -3791,11 +3736,6 @@ void Lowerer::lowerStmt(const Stmt& s, std::vector<hir::Stmt>& out) {
         if (s.expr->kind == Expr::Kind::Call && s.expr->lhs->kind == Expr::Kind::Name &&
             s.expr->lhs->text == "staticAssert" && lookupName("staticAssert") == nullptr) {
             s_.checkStaticAssertCall(*s.expr);
-            return;
-        }
-        if (s.expr->kind == Expr::Kind::Call && s.expr->lhs->kind == Expr::Kind::Name &&
-            s.expr->lhs->text == "__builtin_setRegistered") {
-            lowerSetRegistered(*s.expr, s.span, out);
             return;
         }
         if (s.expr->kind == Expr::Kind::Call && s.expr->lhs->kind == Expr::Kind::Name &&
@@ -4810,13 +4750,6 @@ Lowerer::EP Lowerer::builtinCall(const Expr& e, const std::string& name) {
     if (name == "__builtin_asm") {
         return asmCall(e);
     }
-    if (name == "__builtin_setRegistered") {
-        err("E0728",
-            e.span,
-            "`__builtin_setRegistered` is a statement, not a value",
-            "call it as a statement inside an `@init` function");
-        return nullptr;
-    }
     if (name == "__builtin_write") {
         err("E0709",
             e.span,
@@ -5812,43 +5745,31 @@ Lowerer::EP Lowerer::newExpr(const Expr& e) {
     }
     lowerFields(e, t, out->fields);
     if (e.lhs) {
+        // Placement: `new(p) T { ... }` initializes the memory `p` points at; no allocation happens.
         EP a = expr(*e.lhs, nullptr);
         if (!a) {
             return nullptr;
         }
-        if (!isUnknown(a->type) && !hasAllocMethod(a->type)) {
-            Diagnostic d;
-            d.code = "E0504";
-            d.severity = Severity::Error;
-            d.message = std::format("`{}` is not an allocator", typeToString(a->type));
-            d.labels.push_back({e.lhs->span, "no `alloc` through an `impl` or interface"});
-            d.reason = "Interfaces are nominal; matching method names never count.";
-            d.fix = "add `impl Allocator for T { ... }` or pass an `Allocator` value";
-            s_.diag_.report(std::move(d));
+        if (!isUnknown(a->type) && a->type.kind != TypeKind::Pointer) {
+            err("E0709",
+                e.lhs->span,
+                std::format("`new(p) T` needs a pointer to the memory, found `{}`", typeToString(a->type)),
+                "pass the memory as a pointer, for example `new(allocator.alloc(sizeOf(T), alignOf(T))) T { }`");
             return nullptr;
         }
         out->lhs = std::move(a);
     } else {
-        if (mod_.allocator_global.empty()) {
+        if (mod_.alloc_function.empty()) {
             Diagnostic d;
             d.code = "E0501";
             d.severity = Severity::Error;
-            d.message = "`new` has no registered allocator";
-            d.labels.push_back({e.span, "no `register(allocator)` global in this compilation"});
+            d.message = "`new` has no registered `alloc` function";
+            d.labels.push_back({e.span, "no `register(alloc)` function in this compilation"});
             d.reason = "The compiler binds no allocator by name.";
-            d.fix = "write `new(a) T { ... }` or register an allocator global";
+            d.fix = "write `new(p) T { ... }` with your own memory or register an `alloc` function";
             s_.diag_.report(std::move(d));
             return nullptr;
         }
-        const auto ref = s_.entityByQName(mod_.allocator_global);
-        Type gt = unknownType();
-        if (ref && std::holds_alternative<GlobalDecl>(ref->sym->item->decl)) {
-            gt = resolvedIn(*ref->owner, std::get<GlobalDecl>(ref->sym->item->decl).type);
-        }
-        EP g = mk(hir::ExprKind::GlobalRef, gt, e.span);
-        g->text = mod_.allocator_global;
-        g->lvalue = true;
-        out->lhs = std::move(g);
         out->registered = true;
     }
     return out;

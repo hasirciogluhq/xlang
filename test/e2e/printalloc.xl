@@ -1,6 +1,6 @@
 // printalloc: an `@init` installs a counting allocator. The print family, fprint, fprintln and
 // snprintf must make no allocator calls; sprintf and toString must make at least one.
-from "std" import print, println, printEndl, fprint, fprintln, sprintf, format, snprintf, toString, Allocator, Heap, String
+from "std" import print, println, printEndl, fprint, fprintln, sprintf, format, snprintf, toString, Allocator, Heap, String, currentAllocator
 
 class Counting {
 }
@@ -22,7 +22,7 @@ impl Allocator for Counting {
 }
 
 @init fn useCounting() {
-    __builtin_setRegistered("allocator", counting)
+    currentAllocator = counting
 }
 
 fn check(name: *ui8, ok: bool) {

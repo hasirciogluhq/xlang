@@ -979,7 +979,7 @@ class Parser {
             e->lhs = parseExpr();
             no_struct_ = saved_no_struct;
             --nl_depth_;
-            expect(TokenKind::RParen, "`)` closing the allocator argument");
+            expect(TokenKind::RParen, "`)` closing the memory argument");
         }
         e->type = parseType();
         if (at(TokenKind::LParen)) {
@@ -1102,12 +1102,6 @@ class Parser {
         case TokenKind::Delete: {
             advance();
             stmt.kind = Stmt::Kind::Delete;
-            if (match(TokenKind::LParen)) {
-                ++nl_depth_;
-                stmt.target = parseExpr();
-                --nl_depth_;
-                expect(TokenKind::RParen, "`)` closing the allocator argument");
-            }
             stmt.expr = parseExpr();
             endOfStatement();
             return stmt;

@@ -52,8 +52,8 @@ enum class ExprKind {
     ArrayList,      ///< [args...]
     ArrayRepeat,    ///< [lhs; int_value]
     StructLit,      ///< type { fields }
-    New,            ///< allocate `target` through `lhs` (allocator value), then init fields; type `*target`;
-                    ///< `registered` when lhs is the registered allocator global
+    New,            ///< init `target` in the memory `lhs` points at (placement), then fields; type `*target`;
+                    ///< `registered` (no lhs): the memory comes from the `register(alloc)` function
     ToInterface,    ///< lhs (a pointer to the object) -> interface `type`; text = impl type name
     AtomicLoad,     ///< lhs = pointer, index = MemoryOrder
     AtomicStore,    ///< lhs = pointer, rhs = value, index = MemoryOrder; void
@@ -239,7 +239,8 @@ struct Module {
     std::vector<Impl> impls;
     std::vector<Enum> enums;
     std::string panic_function;     ///< `register(panic)` function, empty = plain trap
-    std::string allocator_global;   ///< `register(allocator)` global, empty = none
+    std::string alloc_function;     ///< `register(alloc)` function, empty = none (`new T` is E0501)
+    std::string free_function;      ///< `register(free)` function, empty = none (`delete p` is E0501)
     std::vector<std::string> init_functions;  ///< `@init` functions in run order (stdlib group first)
 };
 

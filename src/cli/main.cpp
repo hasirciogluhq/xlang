@@ -355,11 +355,16 @@ int main(int argc, char** argv) {
     addBuildOptions(run, run_build_options);
 
     std::string completions_shell;
+    xlang::cli::CompletionInstallOptions completion_install;
     CLI::App* completions = app.add_subcommand(
-        "completions", "Print a shell completion script (bash, zsh or fish) for this CLI");
-    completions->add_option("shell", completions_shell, "Shell")
+        "completions",
+        "Print a shell completion script (bash, zsh or fish), or `install` it for the shells in use");
+    completions->add_option("shell", completions_shell, "bash|zsh|fish|install")
         ->required()
-        ->check(CLI::IsMember({"bash", "zsh", "fish"}));
+        ->check(CLI::IsMember({"bash", "zsh", "fish", "install"}));
+    completions->add_flag("--refresh",
+                          completion_install.refresh,
+                          "With install: only rewrite scripts that are already installed");
 
     xlang::cli::SelfUpdateOptions update_options;
     CLI::App* self_update = app.add_subcommand("self-update",
@@ -396,6 +401,10 @@ int main(int argc, char** argv) {
             return 0;
         }
 
+        if (completions->parsed() && completions_shell == "install") {
+            completion_install.color = xlang::cli::useColor(STDOUT_FILENO);
+            return xlang::cli::installCompletions(app, completion_install);
+        }
         if (completions->parsed()) {
             std::cout << xlang::cli::generateCompletions(app, completions_shell);
             return 0;

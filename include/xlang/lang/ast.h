@@ -67,7 +67,7 @@ struct Expr {
         ArrayList,     ///< [args...]
         ArrayRepeat,   ///< [lhs; rhs]
         StructLiteral, ///< type { fields }
-        New,           ///< new T { fields } / new(lhs) T { fields }; lhs null = registered allocator
+        New,           ///< new T { fields } / new(lhs) T { fields }; lhs = memory pointer (placement); null = the `register(alloc)` function
         Ternary,       ///< lhs ? rhs : args[0]
         MacroCall,     ///< text!( macro_args... ), arguments kept as raw token lists
         Spread,        ///< `..name` as a call argument: expands a parameter pack (text = pack name)
@@ -110,7 +110,7 @@ struct SwitchCase {
 struct Stmt {
     enum class Kind {
         Local,   ///< local name [: type] [= expr]
-        Delete,  ///< delete [(allocator)] ptr: runs the drop glue, then frees (expr = pointer, target = allocator)
+        Delete,  ///< delete ptr: runs the drop glue, then frees through the `register(free)` function (expr = pointer)
         Const,   ///< const name [: type] = expr (read-only; the value is a compile-time constant)
         Assign,  ///< target = expr; compound (`+=` ...) when `has_compound_op`
         Return,  ///< return [expr]

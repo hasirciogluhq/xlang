@@ -58,15 +58,15 @@ xlang self-update --check   # only report whether a newer release exists
 
 ### Shell completion
 
-`xlang` prints a completion script for bash, zsh and fish, generated from its own command tree (subcommands, flags, and the values of options such as `--emit` and `--color`). Add the line for your shell to its startup file:
+Tab completion for bash, zsh and fish is set up **automatically** by every install method: the install script and `xlang completions install` configure the shells you use (the login shell, or any shell whose startup file already exists), and the Homebrew formula installs the scripts into Homebrew's completion directories. It covers subcommands, flags and option values (`--emit`, `--color`, ...) for both `xlang` and `xl`, and `xlang self-update` refreshes the scripts. Open a new terminal afterwards.
 
 ```bash
-source <(xlang completions bash)          # ~/.bashrc
-source <(xlang completions zsh)           # ~/.zshrc, after compinit
-xlang completions fish | source           # ~/.config/fish/config.fish
+xlang completions install            # (re)run the setup by hand, e.g. after a build from source
+xlang completions zsh                # print a script instead: bash | zsh | fish
+curl -fsSL https://raw.githubusercontent.com/hasirciogluhq/xlang/main/scripts/install.sh | bash -s -- --no-completions
 ```
 
-It covers `xlang` and `xl`. After `xlang self-update` start a new shell, so new commands appear.
+The setup writes `~/.local/share/xlang/completions/xlang.{bash,zsh}` and adds one marked block (`# >>> xlang completion >>>`) to `~/.zshrc` and `~/.bash_profile` (macOS) or `~/.bashrc` (Linux); fish gets `~/.config/fish/completions/{xlang,xl}.fish`. Delete the block to opt out.
 
 ## Requirements (building from source)
 

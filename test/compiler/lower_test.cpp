@@ -235,35 +235,44 @@ void testMethodsAreFunctionsWithSelf() {
 
 void testNewAndRegisteredAllocator() {
     const std::string types =
-        "interface Allocator { fn alloc(self, size: usize, align: usize) -> *void\n fn free(self, p: *void) }\n"
-        "class Heap { }\n"
-        "impl Allocator for Heap {\n"
-        "    fn alloc(self, size: usize, align: usize) -> *void { return nil }\n"
-        "    fn free(self, p: *void) { }\n"
-        "}\n"
-        "struct Point { x: i32, y: i32 }\n";
+        "struct Point { x: i32, y: i32 }\n"
+        "global slab: [ui8; 64]\n";
     {
         Lowered r(types + "fn main() -> i32 { local p: *Point = new Point { x: 1, y: 2 }\n return p.x }\n");
         CHECK(r.failedWith("E0501"));
     }
     {
-        Lowered r(types + "global heap: Heap\n"
-                          "register(allocator) global current: Allocator = heap\n"
-                          "fn main() -> i32 { local p: *Point = new Point { x: 1, y: 2 }\n return p.x }\n");
-        CHECK(!r.diag->hasErrors());
-        CHECK(r.has("(new Point registered"));
-        CHECK(r.module.allocator_global == "current");
+        Lowered r(types + "fn main() { local p: *Point = nil\n delete p }\n");
+        CHECK(r.failedWith("E0709") || r.failedWith("E0501"));
     }
     {
-        Lowered r(types + "fn main() -> i32 { local h: Heap = Heap { }\n"
-                          "local p: *Point = new(&h) Point { x: 1, y: 2 }\n return p.x }\n");
+        Lowered r(types + "register(alloc) fn grab(size: usize, align: usize) -> *void { return nil }\n"
+                          "register(free) fn drop(p: *void) { }\n"
+                          "fn main() -> i32 { local p: *Point = new Point { x: 1, y: 2 }\n"
+                          "delete p\n return p.x }\n");
+        CHECK(!r.diag->hasErrors());
+        CHECK(r.has("(new Point registered"));
+        CHECK(r.module.alloc_function == "grab");
+        CHECK(r.module.free_function == "drop");
+    }
+    {
+        Lowered r(types + "register(alloc) fn grab(size: i32) -> *void { return nil }\n");
+        CHECK(r.failedWith("E0503"));
+    }
+    {
+        Lowered r(types + "register(free) fn drop(p: *ui8) { }\n");
+        CHECK(r.failedWith("E0503"));
+    }
+    {
+        Lowered r(types + "fn main() -> i32 {\n"
+                          "local p: *Point = new(&slab[0]) Point { x: 1, y: 2 }\n return p.x }\n");
         CHECK(!r.diag->hasErrors());
         CHECK(r.has("(new Point"));
     }
     {
         Lowered r(types + "fn main() -> i32 { local pt: Point = Point { x: 0, y: 0 }\n"
-                          "local p: *Point = new(&pt) Point { x: 1, y: 2 }\n return p.x }\n");
-        CHECK(r.failedWith("E0504"));
+                          "local p: *Point = new(pt) Point { x: 1, y: 2 }\n return p.x }\n");
+        CHECK(r.failedWith("E0709"));
     }
 }
 
@@ -327,18 +336,6 @@ void testInitFunctions() {
     {
         Lowered r("@init fn boot() { }\nfn f() { boot() }\n");
         CHECK(r.failedWith("E0727"));
-    }
-    {
-        Lowered r("fn f() { __builtin_setRegistered(\"allocator\", nil) }\n");
-        CHECK(r.failedWith("E0728"));
-    }
-    {
-        Lowered r("@init fn boot() { }\nfn f() -> i32 { return __builtin_setRegistered(\"allocator\", nil) }\n");
-        CHECK(r.failedWith("E0728"));
-    }
-    {
-        Lowered r("@init fn boot() { __builtin_setRegistered(\"allocator\", nil) }\n");
-        CHECK(r.failedWith("E0503"));
     }
     {
         Lowered r("export(c) fn _start() { }\n");

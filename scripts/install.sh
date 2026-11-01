@@ -6,6 +6,7 @@
 # Options (or the matching environment variables):
 #   --version <x.y.z>   XLANG_VERSION      release to install (default: the latest release)
 #   --dir <path>        XLANG_INSTALL_DIR  where `xlang` is placed (default: $HOME/.local/bin)
+#   --no-completions    XLANG_NO_COMPLETIONS=1  skip the shell tab-completion setup
 #   -h, --help
 #
 # The script picks the archive for this machine's OS and CPU, checks it against the release's
@@ -15,6 +16,8 @@ set -euo pipefail
 REPO="hasirciogluhq/xlang"
 version="${XLANG_VERSION:-}"
 dir="${XLANG_INSTALL_DIR:-$HOME/.local/bin}"
+completions=1
+[ -n "${XLANG_NO_COMPLETIONS:-}" ] && completions=0
 
 if [ -t 2 ] && [ -z "${NO_COLOR:-}" ]; then
   bold=$'\033[1m'; red=$'\033[1;31m'; green=$'\033[1;32m'; cyan=$'\033[1;36m'; dim=$'\033[2m'; reset=$'\033[0m'
@@ -35,6 +38,7 @@ Install the xlang compiler (macOS and Linux, arm64 and amd64).
 Options (or the matching environment variables):
   --version <x.y.z>   XLANG_VERSION      release to install (default: the latest release)
   --dir <path>        XLANG_INSTALL_DIR  where `xlang` is placed (default: $HOME/.local/bin)
+  --no-completions    XLANG_NO_COMPLETIONS=1  skip the shell tab-completion setup
   -h, --help
 EOF
 }
@@ -43,6 +47,7 @@ while [ "$#" -gt 0 ]; do
   case "$1" in
     --version) [ "$#" -ge 2 ] || fail "--version needs a value"; version="$2"; shift 2 ;;
     --dir) [ "$#" -ge 2 ] || fail "--dir needs a value"; dir="$2"; shift 2 ;;
+    --no-completions) completions=0; shift ;;
     -h | --help) usage; exit 0 ;;
     *) fail "unknown option '$1' (try --help)" ;;
   esac
@@ -128,5 +133,11 @@ case ":$PATH:" in
   *)
     printf '\n%s is not on your PATH. Add it to your shell profile:\n\n  export PATH="%s:$PATH"\n\n' "$dir" "$dir" >&2 ;;
 esac
+
+# Tab completion for the shells in use (bash, zsh, fish). Never fails the install.
+if [ "$completions" = "1" ]; then
+  step "Setting up tab completion"
+  "$dir/xlang" completions install >&2 || note "could not set up completion; run 'xlang completions install' later"
+fi
+
 note "update later with: xlang self-update"
-note "tab completion: xlang completions <bash|zsh|fish>  (see the README)"

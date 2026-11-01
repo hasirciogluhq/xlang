@@ -1499,64 +1499,20 @@ llvm::Value* Gen::genCall(const hir::Expr& e, llvm::Value** mem_result) {
 llvm::Value* Gen::genNew(const hir::Expr& e) {
     const Type& t = e.target;
     const auto [size, align] = sizeAlign(t);
-    llvm::Type* i64 = llvm::Type::getInt64Ty(ctx_);
     llvm::Value* mem = nullptr;
-    const std::string iface_needed = "alloc";
-    if (e.lhs->type.kind == TypeKind::Interface) {
-        const hir::Interface* iface = interfaceNamed(e.lhs->type.path.front());
-        std::uint32_t idx = 0;
-        bool found = false;
-        if (iface != nullptr) {
-            for (std::uint32_t i = 0; i < iface->methods.size(); ++i) {
-                if (iface->methods[i].name == iface_needed) {
-                    idx = i;
-                    found = true;
-                }
-            }
-        }
-        if (!found) {
-            error(e.span, "allocator interface has no `alloc` method");
-            return llvm::Constant::getNullValue(ptrTy());
-        }
-        llvm::Value* ia = genMem(*e.lhs);
-        llvm::Value* data = B_.CreateAlignedLoad(ptrTy(), ia, llvm::Align(ptrBits() / 8));
-        llvm::Value* itable = B_.CreateAlignedLoad(ptrTy(), byteOffset(ia, ptrBits() / 8), llvm::Align(ptrBits() / 8));
-        llvm::Value* slot = B_.CreateInBoundsGEP(llvm::Type::getInt8Ty(ctx_), itable, {B_.getInt64(std::uint64_t(idx) * (ptrBits() / 8))});
-        llvm::Value* fn = B_.CreateAlignedLoad(ptrTy(), slot, llvm::Align(ptrBits() / 8));
-        llvm::FunctionType* fty = llvm::FunctionType::get(ptrTy(), {ptrTy(), llvm::Type::getIntNTy(ctx_, ptrBits()),
-                                                                     llvm::Type::getIntNTy(ctx_, ptrBits())},
-                                                          false);
-        mem = B_.CreateCall(fty, fn, {data, llvm::ConstantInt::get(llvm::Type::getIntNTy(ctx_, ptrBits()), size),
-                                      llvm::ConstantInt::get(llvm::Type::getIntNTy(ctx_, ptrBits()), align)});
+    llvm::Type* uty = llvm::Type::getIntNTy(ctx_, ptrBits());
+    if (e.lhs) {
+        // Placement: the memory is given; the compiler allocates nothing.
+        mem = genScalar(*e.lhs);
     } else {
-        // A struct/class value or pointer: find the `impl` that provides `alloc`.
-        const Type& obj = e.lhs->type.kind == TypeKind::Pointer && e.lhs->type.elem ? *e.lhs->type.elem : e.lhs->type;
-        std::string fname;
-        for (const hir::Impl& im : hm_.impls) {
-            if (im.type != obj.path.front()) {
-                continue;
-            }
-            const hir::Interface* iface = interfaceNamed(im.interface);
-            if (iface == nullptr) {
-                continue;
-            }
-            for (std::size_t i = 0; i < iface->methods.size() && i < im.methods.size(); ++i) {
-                if (iface->methods[i].name == iface_needed) {
-                    fname = im.methods[i];
-                }
-            }
-        }
-        llvm::Function* f = fname.empty() ? nullptr : functionNamed(fname);
-        if (f == nullptr) {
-            error(e.span, "allocator type has no `alloc` implementation");
+        llvm::Function* alloc = functionNamed(hm_.alloc_function);
+        if (alloc == nullptr) {
+            error(e.span, "`new` has no registered `alloc` function");
             return llvm::Constant::getNullValue(ptrTy());
         }
-        llvm::Value* self = e.lhs->type.kind == TypeKind::Pointer ? genScalar(*e.lhs) : genAddr(*e.lhs);
-        llvm::Type* uty = llvm::Type::getIntNTy(ctx_, ptrBits());
-        mem = B_.CreateCall(f, {self, llvm::ConstantInt::get(uty, size), llvm::ConstantInt::get(uty, align)});
+        mem = B_.CreateCall(alloc, {llvm::ConstantInt::get(uty, size), llvm::ConstantInt::get(uty, align)});
     }
-    (void)i64;
-    // `alloc` may return nil: then `new` yields nil and writes nothing.
+    // A nil pointer (a failed allocation): then `new` yields nil and writes nothing.
     llvm::BasicBlock* init_bb = llvm::BasicBlock::Create(ctx_, "new.init", cur_fn_);
     llvm::BasicBlock* end_bb = llvm::BasicBlock::Create(ctx_, "new.end", cur_fn_);
     llvm::BasicBlock* from_bb = B_.GetInsertBlock();

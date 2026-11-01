@@ -10,6 +10,11 @@ The original plan is implemented except the items below, which are intentionally
   the SHA-256 from the release's `checksums.txt`, which comes from the same GitHub release as the archive
   (integrity against corruption, not a signature). `self-update` never touches a Homebrew-managed binary.
   No release exists until the first `v*` tag is pushed. Options: embed a TLS client, sign releases.
+- **Shell completion setup:** `xlang completions install` appends its block at the end of `~/.zshrc` and
+  `~/.bash_profile`/`~/.bashrc`. If a user's own `compinit` runs after the end of `.zshrc` (rare), the zsh
+  registration can be reset; move the block above it. bash completion needs no `bash-completion` package
+  (it uses plain `complete -F`). Terminal emulators that start non-login bash on macOS read `~/.bashrc`, not
+  `~/.bash_profile`; the block goes to whichever of the two already exists, else `~/.bash_profile`.
 - **macOS raw threads:** `bsdthread_register` returns `EINVAL` in a process that did not come up through
   libSystem, so `bsdthread_create` could not be tried. The scheduler runs cooperatively on one thread
   there; kqueue I/O works. Options: find the registration prerequisite, use Mach `thread_create_running`
@@ -62,10 +67,14 @@ The original plan is implemented except the items below, which are intentionally
 - **Boot and registrations (core-language phase 10).** The generated init entry is `_xl_initAll`, not `$xl$initAll`
   as the plan said: in the raw AT&T entry stub a `$` that starts an operand is an immediate prefix, so
   `call $xl$initAll` would not assemble. The Linux and macOS paths are verified only through the Docker e2e runs.
-  **Allocator replacement is not tracked per block:** after `__builtin_setRegistered("allocator", v)`, `new`, `delete`,
-  `free` and `String` all use `v`, so a block allocated before the replacement and freed afterwards goes to `v.free`. The
-  compiler does not check the pairing. `std/sched` keeps using `Heap` and `sysMap` directly and is not redirected. An
-  A bodyless `@init fn boot();` is the parser's `E0002`; the sema check for a missing body in `E0729` is therefore only a
+  **Allocator replacement is not tracked per block:** the stdlib `alloc`/`free` roles, `free`, `String` and `Vec` all go
+  through `currentAllocator`, so after `currentAllocator = v` a block allocated before the assignment and freed afterwards
+  goes to `v.free`. The compiler does not check the pairing, and a user `register(alloc)` without a matching
+  `register(free)` frees through the stdlib `free`. `std/sched` keeps using `Heap` and `sysMap` directly and is not
+  redirected. **Compiler/runtime split (decision):** the compiler knows no allocator type and no method names; `new T`
+  calls the registered `alloc` function, `delete p` the registered `free` function, and `new(p) T` is placement. The
+  explicit-allocator forms `new(a) T` and `delete(a) p` and the builtin `__builtin_setRegistered` (and `E0728`) were
+  removed. `String` and `Vec` still use the `Allocator` interface in `std/mem` directly. A bodyless `@init fn boot();` is the parser's `E0002`; the sema check for a missing body in `E0729` is therefore only a
   guard.
 - No tuples/multiple return values (not defined by the plan).
 - `Vec<T>` (`std/vec`): the element accessors `get`, `first` and `last` return `*T` rather than a value, so a droppable element is never copied. `vecClone` panics for an element type that needs drop, because a bitwise copy would drop the element twice. The index panic text (`Vec: index I out of range for length L`) is built by `fmtIndexPanic` in `std/fmt`, on the stack and without allocating. `set` drops the old element through a plain `*slot = v` assignment. A drop-counter element type in `test/e2e/collections.xl` checks that `set`, `insert`, `remove`, `swapRemove` and `truncate` drop each element exactly once.
@@ -77,7 +86,7 @@ The original plan is implemented except the items below, which are intentionally
 - Ownership (core-language phase 5): drops are statically dispatched (deleting a derived object through a base pointer runs
   only the base drop). There is no explicit base constructor call: a derived `init` runs the base's argument-less `init`
   automatically. An array whose element needs drop is `E0721` at locals, parameters, fields and globals, because arrays do
-  not drop their elements. `delete(a)` needs an interface allocator value. Temporaries used as receivers are materialized with a drop flag; a droppable temporary inside `&&`/`||`
+  not drop their elements. Temporaries used as receivers are materialized with a drop flag; a droppable temporary inside `&&`/`||`
   or a `?:` branch is dropped only if it was created.
 - Overloading (core-language phase 3): an overloaded function's HIR name is its qualified name plus its mangled parameter
   types (not the link symbol); this is the unique key codegen uses. Overload resolution lowers each non-literal argument

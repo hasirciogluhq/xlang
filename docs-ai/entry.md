@@ -5,8 +5,8 @@ An init function is marked with the attribute init, takes no parameters, returns
 Init functions run in group order, with the stdlib group first and the user group second.
 Within a group a module's imports initialize before the module, and modules run in source order.
 Calling an init function is an error, and an init attribute on a method, a generic item, or a function with parameters or a return type is an error.
-A user registration of the panic or allocator role replaces the stdlib one, and two registrations of one role in the same group are an error.
-Inside an init function a program may replace a registered global with the builtin __builtin_setRegistered, and that builtin is an error anywhere else.
+A user registration of the panic, alloc or free role replaces the stdlib one, and two registrations of one role in the same group are an error.
+A program replaces where memory comes from by assigning the stdlib global currentAllocator, for example inside an init function, or by registering its own alloc and free.
 main is the user program's entry and may be defined freely, and a void main makes the process exit with status 0.
 Without a main no entry stub is emitted.
 Building a file without a main as an executable is a diagnostic reported before code generation, and not a linker failure.

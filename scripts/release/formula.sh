@@ -77,6 +77,7 @@ class Xlang < Formula
 
   def install
     bin.install "xlang"
+    generate_completions_from_executable(bin/"xlang", "completions", shells: [:bash, :zsh, :fish])
   end
 
   test do

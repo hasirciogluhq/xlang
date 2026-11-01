@@ -310,6 +310,10 @@ int selfUpdate(const SelfUpdateOptions& options, const std::string& self) {
                     "); run with sufficient permissions or reinstall with the install script");
     }
 
+    // The new binary knows the new commands: regenerate completion scripts that are installed.
+    // Best effort; a failure here never fails the update.
+    run(quote(target.string()) + " completions install --refresh >/dev/null 2>&1");
+
     std::cout << c.boldGreen() << "updated xlang " << current << " -> " << latest << c.reset() << '\n';
     return 0;
 }

@@ -187,8 +187,11 @@ void dumpModule(std::ostream& out, const Module& m) {
     if (!m.panic_function.empty()) {
         out << "register(panic) " << m.panic_function << '\n';
     }
-    if (!m.allocator_global.empty()) {
-        out << "register(allocator) " << m.allocator_global << '\n';
+    if (!m.alloc_function.empty()) {
+        out << "register(alloc) " << m.alloc_function << '\n';
+    }
+    if (!m.free_function.empty()) {
+        out << "register(free) " << m.free_function << '\n';
     }
     for (const std::string& init : m.init_functions) {
         out << "init " << init << '\n';

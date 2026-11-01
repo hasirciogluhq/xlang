@@ -122,7 +122,7 @@ fn main() -> i32 {
 
     local buf: [ui8; 64]
     local arena: Bump = Bump { base: &buf[0], used: 0 }
-    local p: *Rect = new(&arena) Rect { w: 5, h: 6 }
+    local p: *Rect = new(arena.alloc(sizeOf(Rect), alignOf(Rect))) Rect { w: 5, h: 6 }
     check(p.w * p.h == 30)
     check(arena.used == 8)
 

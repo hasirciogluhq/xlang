@@ -14,8 +14,9 @@
 - No compatibility layers. Language and compiler can change freely.
 - Ignore `examples/`, `test/xlang/`, old `.xlang` files, and `.cursor/`.
 - Maintain only `std/` (`.xl`) and `test/e2e/`.
-- Compiler knows only the language, CPU primitives, and a closed builtin list (`syscall`, `__builtin_` atomics/fence/asm, `__builtin_read`/`__builtin_write`/`__builtin_drop`/`__builtin_needsDrop`/`__builtin_setRegistered`, `sizeOf`-style, `staticAssert`, `nil`, `MemoryOrder`).
-- Roles via `register`: `panic`, `allocator`. Bodies of builtins come from the compiler; everything else from stdlib.
+- Compiler knows only the language, CPU primitives, and a closed builtin list (`syscall`, `__builtin_` atomics/fence/asm, `__builtin_read`/`__builtin_write`/`__builtin_drop`/`__builtin_needsDrop`, `sizeOf`-style, `staticAssert`, `nil`, `MemoryOrder`).
+- Roles via `register`: `panic`, `alloc`, `free` (all functions). Bodies of builtins come from the compiler; everything else from stdlib.
+- **Compiler level vs runtime level (hard rule).** The compiler owns language semantics, types, layout, CPU primitives and compile-time facts (`sizeOf`, `alignOf`, drop glue). Everything that happens at run time (memory acquisition, allocation policy, panic text/abort, I/O, threads, string/format machinery) is stdlib. The compiler must not know a runtime type, interface, struct or method by name (no `Allocator`, no `"alloc"`/`"free"` method lookup). The only compiler↔runtime seam is a `register(role)` function whose signature is checked structurally; a new runtime need becomes a new role function or stdlib code, never a name inside the compiler. Before adding a builtin, a role or a name check, ask whether stdlib can do it; if the compiler does need a hook, record it in `KNOWN-LIMITATIONS.md`.
 - Entry symbols (`_start`, `mainCRTStartup`) and `_xl_initAll` are compiler-owned; user symbols with those names are `E0726`.
 - `memcpy` family, `malloc`/`free`/allocator are **not** builtins. They live in stdlib (`std/memory`, `std/mem`).
 - Compiler loads default stdlib but gives no special treatment to names inside it.
@@ -45,15 +46,14 @@ Object to bad ideas but leave decision to user. Cite real precedents. Do not re-
 - `enum Name: T { ... }` (default `i32`). Access `Name.A`. Explicit `as` for conversions. `MemoryOrder` is builtin enum.
 - Diagnostics: `E` error, `W` warning (e.g. `E0501`, `W0402`).
 - Implicit conversions: same-signedness integer widening only. Signed int → float warns (`W0601`). Unsigned ↔ signed is error (`E0601`). `unsafe` allows some relaxations; narrowing always needs `as`.
-- `register(role) decl`: makes name global + exported. Roles: `panic` (noreturn), `allocator`. One per role per group. Shadowing warns. Group 1 (stdlib) is the default; a group 2 (user) registration of the same role replaces it; a same-group duplicate is `E0502`; `register(start)` is `E0503`.
+- `register(role) decl`: makes name global + exported. Roles: `panic` (`fn(*ui8)`, noreturn), `alloc` (`fn(usize, usize) -> *void`), `free` (`fn(*void)`). One per role per group. Shadowing warns. Group 1 (stdlib) is the default; a group 2 (user) registration of the same role replaces it; a same-group duplicate is `E0502`; `register(start)` is `E0503`.
 - `@init fn name() { }`: module-level boot function, no params, no return. Run order: stdlib group first, then user; per group, imports before importers, source order within a module. Calling it, or using its name as a value, is `E0727`; bad signature or method use is `E0729`.
-- `__builtin_setRegistered("role", value)`: replaces a registered global; only inside an `@init` fn (`E0728`).
 - `__builtin_read(p)` / `__builtin_write(p, v)`: raw move through a pointer, no drop; `__builtin_write` is a statement (`E0709` as a value).
 - Memory: default xlang layout; `@repr(c)` for C layout. `class` (single inheritance + vptr), `interface` (fat pointer).
 - Conditional: `#if/#elif/#else/#endif` (normal expression syntax). Inactive regions only lexed.
 - `type Name = T` (transparent). Macros: `define`, `define f(x: expr) { ... }`, call with `f!(...)`. Hygienic, no stringify.
 - Source: `.xl`. `export` (modules) and `export(c)` (unmangled). Mangling on by default.
-- `new T` / `new(a) T`: allocate via registered `Allocator` or explicit one. `E0501` if no allocator. Stdlib registers default (`default-allocator` feature).
+- `new T`: memory from the registered `alloc` fn; `new(p) T`: placement into pointer `p`, no allocation. `delete p`: drop, then the registered `free` fn (no explicit-allocator form). `E0501` if the needed role is unregistered. Stdlib registers defaults forwarding to `std/mem` `currentAllocator` (`default-allocator` feature).
 - Globals: compile-time constant initializers only. Zero-init if none.
 - Safety: `*T` unchecked, arrays checked by default. No borrow checker.
 - Emit: `--emit=obj|ir|bc|header|exe|static|shared`. Compiler runs full pipeline by default. Links only its own output.
