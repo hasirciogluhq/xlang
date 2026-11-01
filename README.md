@@ -29,7 +29,34 @@
 Full language reference: **[docs/LANGUAGE.md](docs/LANGUAGE.md)** · Linking: **[docs/LINKING.md](docs/LINKING.md)**  
 VS Code extension: **[vscode/README.md](vscode/README.md)**
 
-## Requirements
+## Install
+
+Prebuilt compilers exist for macOS and Linux on arm64 and amd64. The installer picks the archive for your OS and CPU, checks its SHA-256 against the release's `checksums.txt`, and installs the **latest release** by default. Releases are built by pushing a `v*` tag; until the first one exists the installer and `xlang self-update` report that no release is published.
+
+### macOS and Linux
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/hasirciogluhq/xlang/main/scripts/install.sh | bash
+```
+
+`xlang` is placed in `~/.local/bin` (change it with `XLANG_INSTALL_DIR=<dir>`; pin a release with `XLANG_VERSION=<x.y.z>`). If that directory is not on your `PATH`, the installer prints the line to add to your shell profile. Check it with `xlang --version`.
+
+With Homebrew: `brew install hasirciogluhq/tap/xlang`.
+
+### Windows
+
+There is no native Windows build of the compiler yet. Install [WSL](https://learn.microsoft.com/windows/wsl/install) (`wsl --install`), then run the Linux command above inside it. The compiler can still produce Windows executables from there (`--target x86_64-pc-windows-msvc`).
+
+### Update
+
+```bash
+xlang self-update           # also: xlang update, xlang upgrade
+xlang self-update --check   # only report whether a newer release exists
+```
+
+`self-update` downloads the latest release for your OS and CPU, verifies it, and replaces the running binary; when you already have the latest it says so. A Homebrew install is updated with `brew upgrade xlang` instead. Details: **[docs/INSTALL.md](docs/INSTALL.md)**.
+
+## Requirements (building from source)
 
 - [xmake](https://xmake.io) ≥ 2.8
 - **C++23** compiler (Clang or GCC)

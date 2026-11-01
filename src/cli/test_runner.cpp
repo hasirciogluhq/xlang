@@ -1,4 +1,5 @@
 #include "test_runner.h"
+#include "style.h"
 
 #include <algorithm>
 #include <chrono>
@@ -185,19 +186,6 @@ std::vector<std::string> select(const std::string& pattern,
     }
     return out;
 }
-
-struct Palette {
-    bool on;
-    const char* reset() const { return on ? "\x1b[0m" : ""; }
-    const char* bold() const { return on ? "\x1b[1m" : ""; }
-    const char* dim() const { return on ? "\x1b[2m" : ""; }
-    const char* red() const { return on ? "\x1b[31m" : ""; }
-    const char* green() const { return on ? "\x1b[32m" : ""; }
-    const char* cyan() const { return on ? "\x1b[36m" : ""; }
-    const char* inverseGreen() const { return on ? "\x1b[1;30;42m" : ""; }
-    const char* inverseRed() const { return on ? "\x1b[1;37;41m" : ""; }
-    const char* inverseCyan() const { return on ? "\x1b[1;30;46m" : ""; }
-};
 
 /// Runs `argv` and waits; the child inherits stdout/stderr. Returns the exit status (128+signal when
 /// killed by a signal, -1 when the process could not be started).

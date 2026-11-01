@@ -4,8 +4,11 @@ Context folders — each concern owns its tree.
 
 ```
 src/
-  cli/                 # xlang CLI entry (`parse`, `check`, `build`, `layout`, `run`, `test`, `--explain`)
+  cli/                 # xlang CLI entry (`parse`, `check`, `build`, `layout`, `run`, `test`, `self-update`, `--explain`, `--version`, `--color`)
     test_runner.cpp    # `xlang run` and `xlang test`: file/glob/regex selection, build + run per file, colored report
+    update.cpp         # `xlang self-update` (aliases `update`, `upgrade`): latest release, checksum, in-place replace
+    style.h            # ANSI `Palette` and `useColor` (`--color`, `NO_COLOR`, `XLANG_COLOR`) shared by the CLI
+    version.h          # `kVersion`, the `XLANG_VERSION` define from xmake.lua
   lang/
     lexer/             # tokens; `#if` ... directives are lexed here
     preprocess/        # conditional compilation on the token stream

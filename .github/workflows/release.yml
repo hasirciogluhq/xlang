@@ -82,6 +82,20 @@ jobs:
         with:
           ref: ${{ needs.meta.outputs.tag }}
 
+      - name: Check xmake.lua version matches the tag
+        shell: bash
+        env:
+          VERSION: ${{ needs.meta.outputs.version }}
+        run: |
+          set -euo pipefail
+          # `xlang --version` and `xlang self-update` use this value; a mismatch would make a
+          # released compiler think it is out of date.
+          declared="$(sed -n 's/^local xlang_version = "\(.*\)"$/\1/p' xmake.lua)"
+          if [ "$declared" != "$VERSION" ]; then
+            echo "error: xmake.lua declares version '$declared' but the tag is v$VERSION" >&2
+            exit 1
+          fi
+
       - name: Install dependencies (macOS)
         if: matrix.os == 'darwin'
         shell: bash

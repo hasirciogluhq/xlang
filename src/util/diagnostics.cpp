@@ -3,7 +3,9 @@
 #include "xlang/util/error.h"
 
 #include <algorithm>
+#include <cctype>
 #include <format>
+#include <string_view>
 #include <map>
 #include <ostream>
 #include <tuple>
@@ -348,6 +350,102 @@ void appendBlock(std::string& out, std::string_view tag, const std::string& text
     out += '\n';
 }
 
+/// ANSI-colors the plain text `renderText` produces, line by line: the header, the `-->` locations,
+/// the gutter, the `<=======` marker and carets (error red, warning yellow), and the `note:`,
+/// `detail:`, `reason:`, `fix:` tags. The plain text stays the source of truth.
+std::string colorize(const std::string& text, Severity severity) {
+    constexpr std::string_view reset = "\x1b[0m";
+    constexpr std::string_view blue = "\x1b[1;34m";
+    constexpr std::string_view cyan = "\x1b[1;36m";
+    constexpr std::string_view green = "\x1b[1;32m";
+    constexpr std::string_view bold = "\x1b[1m";
+    const std::string_view accent = severity == Severity::Error ? "\x1b[1;31m" : "\x1b[1;33m";
+
+    std::string out;
+    std::size_t start = 0;
+    bool first = true;
+    while (start <= text.size()) {
+        std::size_t end = text.find('\n', start);
+        if (end == std::string::npos) {
+            end = text.size();
+        }
+        const std::string_view line(text.data() + start, end - start);
+        start = end + 1;
+        if (!first) {
+            out += '\n';
+        }
+
+        const std::size_t indent = line.find_first_not_of(' ');
+        const std::string_view body = indent == std::string_view::npos ? std::string_view{} : line.substr(indent);
+        const auto tagged = [&](std::string_view tag, std::string_view color) {
+            if (!body.starts_with(tag)) {
+                return false;
+            }
+            out += line.substr(0, indent);
+            out += color;
+            out += tag;
+            out += reset;
+            out += body.substr(tag.size());
+            return true;
+        };
+
+        if (first) {
+            first = false;
+            const std::size_t close = line.find(']');
+            if (close != std::string_view::npos) {
+                out += accent;
+                out += line.substr(0, close + 1);
+                out += reset;
+                out += bold;
+                out += line.substr(close + 1);
+                out += reset;
+                continue;
+            }
+        }
+        if (tagged("-->", blue) || tagged(":::", blue) || tagged("note:", cyan) ||
+            tagged("detail:", cyan) || tagged("reason:", cyan) || tagged("fix:", green) ||
+            tagged("...", blue)) {
+            continue;
+        }
+
+        // Gutter: optional spaces, optional line number, spaces, then `|`.
+        std::size_t i = 0;
+        while (i < line.size() && line[i] == ' ') {
+            ++i;
+        }
+        while (i < line.size() && std::isdigit(static_cast<unsigned char>(line[i]))) {
+            ++i;
+        }
+        while (i < line.size() && line[i] == ' ') {
+            ++i;
+        }
+        if (i < line.size() && line[i] == '|') {
+            out += blue;
+            out += line.substr(0, i + 1);
+            out += reset;
+            const std::string_view rest = line.substr(i + 1);
+            const std::size_t marker = rest.rfind("<=======");
+            const std::size_t caret = rest.find_first_not_of(' ');
+            if (marker != std::string_view::npos) {
+                out += rest.substr(0, marker);
+                out += accent;
+                out += rest.substr(marker);
+                out += reset;
+            } else if (caret != std::string_view::npos && rest[caret] == '^') {
+                out += rest.substr(0, caret);
+                out += accent;
+                out += rest.substr(caret);
+                out += reset;
+            } else {
+                out += rest;
+            }
+            continue;
+        }
+        out += line;
+    }
+    return out;
+}
+
 }  // namespace
 
 const DiagnosticInfo* findDiagnosticInfo(std::string_view code) {
@@ -458,7 +556,8 @@ void DiagnosticEngine::flush() {
         const std::string text = options_.format == DiagFormat::Json ? renderJson(diagnostic)
                                                                      : renderText(diagnostic);
         if (!diagnostic.suppressed) {
-            out_ << text << "\n";
+            const bool colored = options_.color && options_.format == DiagFormat::Text;
+            out_ << (colored ? colorize(text, diagnostic.severity) : text) << "\n";
         }
         if (!log_) {
             continue;

@@ -3,6 +3,13 @@
 The original plan is implemented except the items below, which are intentionally incomplete or blocked.
 
 ## Platform support
+- **Compiler distribution:** prebuilt compilers (install script, `xlang self-update`, Homebrew tap) exist for
+  macOS and Linux on arm64/amd64 only. There is no native Windows build of the compiler (it uses POSIX
+  process and file APIs); Windows hosts use WSL. `self-update` and `scripts/install.sh` shell out to `curl`,
+  `tar` and `sha256sum`/`shasum` instead of embedding an HTTP/TLS client and an archive reader; they verify
+  the SHA-256 from the release's `checksums.txt`, which comes from the same GitHub release as the archive
+  (integrity against corruption, not a signature). `self-update` never touches a Homebrew-managed binary.
+  No release exists until the first `v*` tag is pushed. Options: embed a TLS client, sign releases.
 - **macOS raw threads:** `bsdthread_register` returns `EINVAL` in a process that did not come up through
   libSystem, so `bsdthread_create` could not be tried. The scheduler runs cooperatively on one thread
   there; kqueue I/O works. Options: find the registration prerequisite, use Mach `thread_create_running`

@@ -64,6 +64,7 @@ struct DiagnosticOptions {
     std::string log_path;            ///< --diag-log=<file>; empty = no log
     DiagFormat format{DiagFormat::Text};
     DiagLogLevel log_level{DiagLogLevel::All};
+    bool color{false};               ///< ANSI colors on the text output; never in `--diag-log` or JSON
 };
 
 class DiagnosticEngine {

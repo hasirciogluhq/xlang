@@ -1,4 +1,7 @@
+#include "style.h"
 #include "test_runner.h"
+#include "update.h"
+#include "version.h"
 #include "xlang/codegen/codegen.h"
 #include "xlang/codegen/link.h"
 #include "xlang/lang/ast.h"
@@ -26,6 +29,19 @@
 #include <vector>
 
 namespace {
+
+/// "N error(s), M warning(s)" on stderr, red when there are errors.
+void printSummary(std::size_t errors, std::size_t warnings) {
+    const xlang::cli::Palette c{xlang::cli::useColor(STDERR_FILENO)};
+    std::cerr << (errors != 0 ? c.boldRed() : c.boldYellow()) << errors << " error(s), " << warnings
+              << " warning(s)" << c.reset() << '\n';
+}
+
+/// "error: message" on stderr with a colored tag.
+void printError(const std::string& message) {
+    const xlang::cli::Palette c{xlang::cli::useColor(STDERR_FILENO)};
+    std::cerr << c.boldRed() << "error:" << c.reset() << ' ' << message << '\n';
+}
 
 /// `@library("x")` imports of the program, for the Windows linker step.
 void collectImports(const xlang::hir::Module& module, xlang::codegen::LinkRequest& req) {
@@ -114,6 +130,7 @@ xlang::DiagnosticOptions toEngineOptions(const CLI::App* cmd, const DiagCliOptio
     out.deny = o.deny;
     out.warn_all = o.warn_all;
     out.allow_all = o.allow_all;
+    out.color = xlang::cli::useColor(STDERR_FILENO);
     out.context_errors = o.context_errors;
     out.context_warnings = o.context_warnings;
     if (cmd->count("--context") != 0) {
@@ -252,6 +269,13 @@ int main(int argc, char** argv) {
 
     CLI::App app{"xlang compiler (frontend)"};
     app.require_subcommand(0, 1);
+    app.set_version_flag("--version", xlang::cli::kVersion);
+
+    std::string color_mode{"auto"};
+    app.add_option("--color",
+                   color_mode,
+                   "Colored output: auto (terminals; NO_COLOR turns it off), always or never")
+        ->check(CLI::IsMember({"auto", "always", "never"}));
 
     std::string explain_code;
     app.add_option("--explain", explain_code, "Print the long explanation of a diagnostic code");
@@ -327,21 +351,42 @@ int main(int argc, char** argv) {
     run->add_option("file", run_input, "Source file (.xl)")->required();
     addBuildOptions(run, run_build_options);
 
+    xlang::cli::SelfUpdateOptions update_options;
+    CLI::App* self_update = app.add_subcommand(
+        "self-update",
+        "Install the latest release for this OS and CPU (reports \"up to date\" when there is none)");
+    self_update->alias("update");
+    self_update->alias("upgrade");
+    self_update->add_flag("--check", update_options.check_only, "Only report whether an update exists");
+    self_update->add_flag("--force", update_options.force, "Reinstall the latest release even if current");
+
     try {
         app.parse(static_cast<int>(raw.size()), raw.data());
     } catch (const CLI::ParseError& e) {
         return app.exit(e);
     }
 
+    // `--color` is passed on to the compiler processes that `run` and `test` start.
+    if (color_mode == "auto") {
+        ::unsetenv("XLANG_COLOR");
+    } else {
+        ::setenv("XLANG_COLOR", color_mode.c_str(), 1);
+    }
+
     try {
         if (!explain_code.empty()) {
             const std::string text = xlang::DiagnosticEngine::explain(explain_code);
             if (text.empty()) {
-                std::cerr << "error: unknown diagnostic code `" << explain_code << "`\n";
+                printError("unknown diagnostic code `" + explain_code + "`");
                 return 1;
             }
             std::cout << text;
             return 0;
+        }
+
+        if (self_update->parsed()) {
+            update_options.color = xlang::cli::useColor(STDOUT_FILENO);
+            return xlang::cli::selfUpdate(update_options, xlang::cli::selfExecutable(argv[0]));
         }
 
         if (run->parsed()) {
@@ -351,9 +396,7 @@ int main(int argc, char** argv) {
         }
 
         if (test->parsed()) {
-            const char* no_color_env = std::getenv("NO_COLOR");
-            test_options.color =
-                !test_no_color && ::isatty(1) != 0 && (no_color_env == nullptr || *no_color_env == '\0');
+            test_options.color = !test_no_color && xlang::cli::useColor(STDOUT_FILENO);
             test_options.build_args = forwardBuildArgs(test, test_build_options);
             return xlang::cli::runTests(test_options, xlang::cli::selfExecutable(argv[0]));
         }
@@ -386,8 +429,7 @@ int main(int argc, char** argv) {
             const xlang::Program program = xlang::parseSource(sources, file, config, diagnostics);
             diagnostics.flush();
             if (diagnostics.hasErrors()) {
-                std::cerr << diagnostics.errorCount() << " error(s), " << diagnostics.warningCount()
-                          << " warning(s)\n";
+                printSummary(diagnostics.errorCount(), diagnostics.warningCount());
                 return 1;
             }
             xlang::dumpProgram(std::cout, program, !ast);
@@ -651,13 +693,12 @@ int main(int argc, char** argv) {
 
         diagnostics.flush();
         if (diagnostics.hasErrors()) {
-            std::cerr << diagnostics.errorCount() << " error(s), " << diagnostics.warningCount()
-                      << " warning(s)\n";
+            printSummary(diagnostics.errorCount(), diagnostics.warningCount());
             return 1;
         }
         return 0;
     } catch (const xlang::XlangError& error) {
-        std::cerr << "error: " << error.what() << '\n';
+        printError(error.what());
         return 1;
     }
 }

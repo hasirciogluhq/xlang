@@ -425,7 +425,7 @@ xlang test [patterns...]
 xlang --explain E0501
 ```
 
-Common flags: `-D`/`-U`, `--target <triple>`, `-O0..3`, `-g`, `--cpu`, `--mangle=xl|none`, `--safety=checked|unchecked`, `--no-std`, `--std <dir>`, `--std-features`, `--allow`/`--deny`/`--warn-all`/`--allow-all`, `--incremental`, `--diag-format=text|json`.
+Common flags: `-D`/`-U`, `--target <triple>`, `-O0..3`, `-g`, `--cpu`, `--mangle=xl|none`, `--safety=checked|unchecked`, `--no-std`, `--std <dir>`, `--std-features`, `--allow`/`--deny`/`--warn-all`/`--allow-all`, `--incremental`, `--diag-format=text|json`. Global: `--version`, `--color auto|always|never` (see [Installing the compiler](INSTALL.md)). `xlang self-update` installs the latest release.
 
 Diagnostics have codes: `E` for errors, `W` for warnings (for example `E0501`, `W0402`); `--explain CODE` prints the long explanation, and warnings are controlled with `--allow`, `--deny` and `@allow`.
 
