@@ -1498,9 +1498,11 @@ Sema::aggregateLayout(const std::string& name, const Item& item, const Span& at)
     const std::vector<FieldDecl>* fields = nullptr;
     const ClassDecl* cls = nullptr;
     bool opaque = false;
+    bool is_union = false;
     if (const auto* s = std::get_if<StructDecl>(&item.decl)) {
         fields = &s->fields;
         opaque = s->opaque;
+        is_union = s->is_union;
     } else {
         cls = &std::get<ClassDecl>(item.decl);
         fields = &cls->fields;
@@ -1682,7 +1684,7 @@ Sema::aggregateLayout(const std::string& name, const Item& item, const Span& at)
     std::vector<FieldLayout> placed(pending.size());
     for (const std::size_t idx : order) {
         const Pending& p = pending[idx];
-        const std::uint64_t off = alignUp(cursor, p.align);
+        const std::uint64_t off = is_union ? 0 : alignUp(cursor, p.align);
         FieldLayout fl;
         fl.name = p.decl->name;
         fl.type = p.decl->type;
@@ -1690,7 +1692,7 @@ Sema::aggregateLayout(const std::string& name, const Item& item, const Span& at)
         fl.size = p.size;
         fl.align = p.align;
         placed[idx] = std::move(fl);
-        cursor = off + p.size;
+        cursor = is_union ? std::max(cursor, p.size) : off + p.size;
         align = std::max(align, p.align);
     }
     for (FieldLayout& f : placed) {

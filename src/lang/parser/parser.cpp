@@ -1,6 +1,8 @@
 #include "xlang/lang/parser.h"
 
+#include <algorithm>
 #include <format>
+#include <ranges>
 #include <string_view>
 #include <utility>
 
@@ -1480,7 +1482,7 @@ class Parser {
             addItem(program, s, parseImpl(s));
             return;
         case TokenKind::Enum:
-            addItem(program, s, parseEnum(s));
+            addEnum(program, s, parseEnum(s));
             return;
         case TokenKind::Type:
             addItem(program, s, parseTypeAlias(s));
@@ -1935,7 +1937,18 @@ class Parser {
             member.attributes = parseAttributes();
             member.span = cur().span;
             member.name = expectIdent("an enum member name");
-            if (match(TokenKind::Assign)) {
+            if (match(TokenKind::LParen)) {
+                member.has_payload = true;
+                ++nl_depth_;
+                while (!at(TokenKind::RParen)) {
+                    member.payload.push_back(parseType());
+                    if (!match(TokenKind::Comma)) {
+                        break;
+                    }
+                }
+                --nl_depth_;
+                expect(TokenKind::RParen, "`)` closing the payload types");
+            } else if (match(TokenKind::Assign)) {
                 member.value = parseExpr();
             }
             member.span = spanFrom(member.span);
@@ -1946,6 +1959,69 @@ class Parser {
         advance(); // '}'
         finishDecl(decl, s, name, name_tok.span);
         return decl;
+    }
+
+    /// A value enum is one item. A payload enum (`Add(A, B)` members) becomes five kinds of
+    /// ordinary items: `Name$Tag` (the tag enum), `Name$Vi` (one struct per variant with data),
+    /// `Name$Data` (their union) and `Name` (`{ tag, data }` plus the variant list).
+    void addEnum(Program& program, DeclStart& s, EnumDecl decl) {
+        if (std::ranges::none_of(decl.members, &EnumMember::has_payload)) {
+            addItem(program, s, std::move(decl));
+            return;
+        }
+        if (decl.has_underlying ||
+            std::ranges::any_of(decl.members, [](const EnumMember& m) { return m.value != nullptr; })) {
+            diag_.error("E0747",
+                        decl.name_span,
+                        std::format("enum `{}` mixes payload variants with constant values", decl.name),
+                        "a payload enum has no `: T` and no `= value`; the tag is numbered by position");
+        }
+        const auto named = [&](std::string name, const Span& span) {
+            Type t = Type::makeNamed({std::move(name)});
+            t.span = span;
+            return t;
+        };
+        const auto base = [&](DeclBase& out, std::string name) {
+            out.name = std::move(name);
+            out.attributes = {};
+            out.span = decl.span;
+            out.name_span = decl.name_span;
+        };
+        const std::string tag_name = decl.name + "$Tag";
+        const std::string data_name = decl.name + "$Data";
+
+        EnumDecl tag;
+        base(tag, tag_name);
+        tag.underlying = Type::makeInt(32, true);
+        StructDecl data;
+        base(data, data_name);
+        data.is_union = true;
+        StructDecl sum;
+        base(sum, decl.name);
+        sum.attributes = decl.attributes;
+        sum.fields.push_back({"tag", named(tag_name, decl.name_span), {}, decl.name_span});
+        sum.fields.push_back({"data", named(data_name, decl.name_span), {}, decl.name_span});
+
+        std::vector<StructDecl> payloads;
+        for (EnumMember& m : decl.members) {
+            tag.members.push_back(EnumMember{.name = m.name, .span = m.span});
+            sum.variants.push_back({m.name, m.payload});
+            if (m.payload.empty()) {
+                continue;
+            }
+            StructDecl& p = payloads.emplace_back();
+            base(p, std::format("{}${}", decl.name, m.name));
+            for (const std::size_t i : std::views::iota(std::size_t{0}, m.payload.size())) {
+                p.fields.push_back({std::format("_{}", i), m.payload[i], {}, m.span});
+            }
+            data.fields.push_back({m.name, named(p.name, m.span), {}, m.span});
+        }
+        addItem(program, s, std::move(tag));
+        for (StructDecl& p : payloads) {
+            addItem(program, s, std::move(p));
+        }
+        addItem(program, s, std::move(data));
+        addItem(program, s, std::move(sum));
     }
 
     TypeAliasDecl parseTypeAlias(const DeclStart& s) {

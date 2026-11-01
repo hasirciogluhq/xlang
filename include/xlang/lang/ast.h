@@ -207,10 +207,20 @@ struct GlobalDecl : DeclBase {
     ExprPtr init;  ///< null = zero-initialized / external
 };
 
+/// One variant of a payload enum (`Add(*Expr, *Expr)`), kept on the struct the enum lowers to.
+struct SumVariant {
+    std::string name;
+    std::vector<Type> payload;  ///< payload types in order; empty = a variant without data
+};
+
 struct StructDecl : DeclBase {
     std::vector<std::string> generic_params;  ///< `struct Pair<A, B>`
     std::vector<FieldDecl> fields;
     bool opaque{false};  ///< `declare struct S` without a body
+    /// Set only on the compiler-made `Name$Data` of a payload enum: all fields share offset 0.
+    bool is_union{false};
+    /// Non-empty on the struct a payload enum lowers to (`{ tag: Name$Tag, data: Name$Data }`).
+    std::vector<SumVariant> variants;
 };
 
 struct ClassDecl : DeclBase {
@@ -239,6 +249,8 @@ struct ImplDecl : DeclBase {
 struct EnumMember {
     std::string name;
     ExprPtr value;  ///< null = auto-numbered
+    bool has_payload{false};  ///< `Add(A, B)`: a payload variant (the enum becomes a sum type)
+    std::vector<Type> payload;
     std::vector<Attribute> attributes;
     Span span;
 };

@@ -12,6 +12,8 @@
 #include <algorithm>
 #include <deque>
 #include <format>
+#include <iterator>
+#include <ranges>
 #include <set>
 
 namespace xlang {
@@ -275,6 +277,30 @@ class Lowerer {
     [[nodiscard]] hir::Stmt leaveCall(hir::LocalId snap, const Span& span);
     std::string base_init_call_;  ///< set for the next `init` lowered: the base constructor it runs
     void lowerEnum(const EnumDecl& e);
+
+    // --- payload enums (sum types): `{ tag, data }` over a union of per-variant structs
+    struct Sum {
+        Sema* owner;
+        const StructDecl* decl;
+    };
+    [[nodiscard]] static const StructDecl* sumDecl(const Item* item);
+    [[nodiscard]] std::optional<Sum> sumOfType(const Type& t);
+    [[nodiscard]] std::optional<Sum> sumOfEntry(const ScopeEntry& head);
+    /// The resolved type of `Name` + `suffix` (`$Tag`, `$Data`, `$Variant`; empty = the enum itself).
+    [[nodiscard]] Type sumPart(const Sum& sum, std::string_view suffix, const Span& span);
+    [[nodiscard]] static std::size_t sumDataIndex(const Sum& sum, std::size_t variant);
+    [[nodiscard]] static std::optional<std::size_t> sumVariantIndex(const Sum& sum,
+                                                                    std::string_view name);
+    EP sumConstruct(const Sum& sum, std::size_t variant, std::vector<EP> values, const Span& span);
+    EP sumVariantValue(const Sum& sum, const Expr& e);
+    EP sumVariantCall(const Sum& sum, const Expr& call);
+    EP sumPayloadRead(const Sum& sum,
+                      hir::LocalId scrutinee,
+                      const Type& self,
+                      std::size_t variant,
+                      std::size_t index,
+                      const Span& span);
+    void lowerSumSwitch(const Stmt& s, EP scrutinee, std::vector<hir::Stmt>& out);
     void lowerAggregate(const Item& item);
     void checkImpl(const ImplInfo& info);
     [[nodiscard]] bool cCompatible(Sema& sema, const Type& t);
@@ -2071,6 +2097,322 @@ void Lowerer::lowerEnum(const EnumDecl& decl) {
     mod_.enums.push_back(std::move(out));
 }
 
+// ---------------------------------------------------------------------------------------------
+// Payload enums. The parser turns `enum E { A(i64), B }` into the struct `E { tag: E$Tag, data:
+// E$Data }`, the tag enum `E$Tag`, the union `E$Data { A: E$A }` and one struct `E$A` per variant
+// with data. Here the variants are built (`E.A(1)`, `E.B`) and matched (`switch`).
+
+const StructDecl* Lowerer::sumDecl(const Item* item) {
+    if (item == nullptr) {
+        return nullptr;
+    }
+    const auto* decl = std::get_if<StructDecl>(&item->decl);
+    return decl != nullptr && !decl->variants.empty() ? decl : nullptr;
+}
+
+std::optional<Lowerer::Sum> Lowerer::sumOfEntry(const ScopeEntry& head) {
+    if (head.kind != ScopeEntry::Kind::Type) {
+        return std::nullopt;
+    }
+    const StructDecl* decl = sumDecl(head.item);
+    if (decl == nullptr) {
+        return std::nullopt;
+    }
+    return Sum{head.owner != nullptr ? head.owner : &s_, decl};
+}
+
+std::optional<Lowerer::Sum> Lowerer::sumOfType(const Type& t) {
+    if (t.kind != TypeKind::Struct) {
+        return std::nullopt;
+    }
+    const auto ref = entityOfType(t);
+    const StructDecl* decl = ref ? sumDecl(ref->sym->item) : nullptr;
+    if (decl == nullptr) {
+        return std::nullopt;
+    }
+    return Sum{ref->owner, decl};
+}
+
+Type Lowerer::sumPart(const Sum& sum, std::string_view suffix, const Span& span) {
+    Type named = Type::makeNamed({sum.decl->name + std::string(suffix)});
+    named.span = span;
+    return resolvedIn(*sum.owner, named);
+}
+
+std::optional<std::size_t> Lowerer::sumVariantIndex(const Sum& sum, std::string_view name) {
+    const auto it = std::ranges::find(sum.decl->variants, name, &SumVariant::name);
+    if (it == sum.decl->variants.end()) {
+        return std::nullopt;
+    }
+    return static_cast<std::size_t>(it - sum.decl->variants.begin());
+}
+
+/// Index of the variant's field inside `E$Data`: only variants with data have one.
+std::size_t Lowerer::sumDataIndex(const Sum& sum, std::size_t variant) {
+    return static_cast<std::size_t>(std::ranges::count_if(
+        sum.decl->variants | std::views::take(variant),
+        [](const SumVariant& v) { return !v.payload.empty(); }));
+}
+
+Lowerer::EP Lowerer::sumConstruct(const Sum& sum,
+                                  std::size_t variant,
+                                  std::vector<EP> values,
+                                  const Span& span) {
+    const SumVariant& v = sum.decl->variants[variant];
+    EP lit = mk(hir::ExprKind::StructLit, sumPart(sum, "", span), span);
+    lit->fields.push_back({"tag", 0, intConst(variant, sumPart(sum, "$Tag", span), span)});
+    if (v.payload.empty()) {
+        return lit;
+    }
+    EP payload = mk(hir::ExprKind::StructLit, sumPart(sum, "$" + v.name, span), span);
+    for (const std::size_t i : std::views::iota(std::size_t{0}, values.size())) {
+        payload->fields.push_back(
+            {std::format("_{}", i), static_cast<std::uint32_t>(i), std::move(values[i])});
+    }
+    EP data = mk(hir::ExprKind::StructLit, sumPart(sum, "$Data", span), span);
+    data->fields.push_back(
+        {v.name, static_cast<std::uint32_t>(sumDataIndex(sum, variant)), std::move(payload)});
+    lit->fields.push_back({"data", 1, std::move(data)});
+    return lit;
+}
+
+/// `E.B` used as a value: only a variant without data can stand alone.
+Lowerer::EP Lowerer::sumVariantValue(const Sum& sum, const Expr& e) {
+    const auto variant = sumVariantIndex(sum, e.text);
+    if (!variant) {
+        err("E0706",
+            e.span,
+            std::format("enum `{}` has no member `{}`", sum.decl->name, e.text),
+            "unknown member");
+        return nullptr;
+    }
+    const SumVariant& v = sum.decl->variants[*variant];
+    if (!v.payload.empty()) {
+        err("E0751",
+            e.span,
+            std::format("variant `{}.{}` carries {} value(s)", sum.decl->name, v.name, v.payload.size()),
+            std::format("write `{}.{}(...)` with its values", sum.decl->name, v.name));
+        return nullptr;
+    }
+    return sumConstruct(sum, *variant, {}, e.span);
+}
+
+/// `E.A(x, y)`: every argument converts to the payload type at its position.
+Lowerer::EP Lowerer::sumVariantCall(const Sum& sum, const Expr& call) {
+    const Expr& callee = *call.lhs;
+    const auto variant = sumVariantIndex(sum, callee.text);
+    if (!variant) {
+        err("E0706",
+            callee.span,
+            std::format("enum `{}` has no member `{}`", sum.decl->name, callee.text),
+            "unknown member");
+        return nullptr;
+    }
+    const SumVariant& v = sum.decl->variants[*variant];
+    if (call.args.size() != v.payload.size()) {
+        err("E0751",
+            call.span,
+            std::format("variant `{}.{}` takes {} value(s), {} given",
+                        sum.decl->name,
+                        v.name,
+                        v.payload.size(),
+                        call.args.size()),
+            "the number of values must match the variant's payload");
+        return nullptr;
+    }
+    std::vector<EP> values;
+    bool ok = true;
+    for (const auto& [arg, type] : std::views::zip(call.args, v.payload)) {
+        const Type want = resolvedIn(*sum.owner, type);
+        EP value = expr(*arg, &want);
+        value = value ? coerce(std::move(value), want, arg->span) : nullptr;
+        ok = ok && value != nullptr;
+        values.push_back(std::move(value));
+    }
+    return ok ? sumConstruct(sum, *variant, std::move(values), call.span) : nullptr;
+}
+
+/// The place `scrutinee.data.<Variant>._<index>`.
+Lowerer::EP Lowerer::sumPayloadRead(const Sum& sum,
+                                    hir::LocalId scrutinee,
+                                    const Type& self,
+                                    std::size_t variant,
+                                    std::size_t index,
+                                    const Span& span) {
+    const SumVariant& v = sum.decl->variants[variant];
+    const auto field = [&](EP base, std::string name, std::uint32_t at, Type type) {
+        EP f = mk(hir::ExprKind::Field, std::move(type), span);
+        f->text = std::move(name);
+        f->index = at;
+        f->lvalue = true;
+        f->lhs = std::move(base);
+        return f;
+    };
+    EP root = mk(hir::ExprKind::LocalRef, self, span);
+    root->local = scrutinee;
+    root->lvalue = true;
+    EP data = field(std::move(root), "data", 1, sumPart(sum, "$Data", span));
+    EP payload = field(std::move(data),
+                       v.name,
+                       static_cast<std::uint32_t>(sumDataIndex(sum, variant)),
+                       sumPart(sum, "$" + v.name, span));
+    return field(std::move(payload),
+                 std::format("_{}", index),
+                 static_cast<std::uint32_t>(index),
+                 resolvedIn(*sum.owner, v.payload[index]));
+}
+
+/// `switch` on a payload enum. A case names variants: `case E.A(x, y) { }` binds the payload,
+/// `case E.A, E.B { }` matches without binding, `E.C` for a variant without data. Without
+/// `default` every variant must be covered (E0750).
+void Lowerer::lowerSumSwitch(const Stmt& s, EP scrutinee, std::vector<hir::Stmt>& out) {
+    const Type boolean = Type::makeBool();
+    const Sum sum = *sumOfType(scrutinee->type);
+    const Type self = scrutinee->type;
+    const Type tag_type = sumPart(sum, "$Tag", s.span);
+    hir::Stmt block;
+    block.kind = hir::StmtKind::Block;
+    block.span = s.span;
+    scopes_.push(ScopeKind::Block);
+    const hir::LocalId id = hiddenLocal("sw", self, s.span);
+    {
+        hir::Stmt d;
+        d.kind = hir::StmtKind::Local;
+        d.span = s.span;
+        d.local = id;
+        d.value = std::move(scrutinee);
+        block.body.push_back(std::move(d));
+    }
+    const auto tagIs = [&](std::size_t variant, const Span& at) {
+        EP tag = mk(hir::ExprKind::Field, tag_type, at);
+        tag->text = "tag";
+        tag->index = 0;
+        tag->lvalue = true;
+        tag->lhs = mk(hir::ExprKind::LocalRef, self, at);
+        tag->lhs->local = id;
+        tag->lhs->lvalue = true;
+        EP eq = mk(hir::ExprKind::Binary, boolean, at);
+        eq->binary_op = BinaryOp::Eq;
+        eq->lhs = std::move(tag);
+        eq->rhs = intConst(variant, tag_type, at);
+        return eq;
+    };
+
+    struct Arm {
+        EP cond;
+        std::vector<hir::Stmt> body;
+    };
+    std::vector<Arm> arms;
+    std::vector<hir::Stmt> default_body;
+    bool has_default = false;
+    std::set<std::size_t> covered;
+    for (const SwitchCase& c : s.cases) {
+        if (c.is_default) {
+            if (std::exchange(has_default, true)) {
+                err("E0709", c.span, "a `switch` has more than one `default`", "remove the duplicate");
+            }
+            lowerBlock(*c.body, default_body, true);
+            continue;
+        }
+        Arm arm;
+        scopes_.push(ScopeKind::Block);
+        for (const ExprPtr& value : c.values) {
+            const bool call = value->kind == Expr::Kind::Call;
+            const Expr& pattern = call ? *value->lhs : *value;
+            const ScopeEntry* head =
+                pattern.kind == Expr::Kind::Field ? chainEntry(*pattern.lhs) : nullptr;
+            const auto named = head != nullptr ? sumOfEntry(*head) : std::nullopt;
+            if (!named || named->decl != sum.decl) {
+                err("E0749",
+                    value->span,
+                    std::format("`case` of a `{}` switch must name one of its variants", sum.decl->name),
+                    std::format("write `{}.Variant` or `{}.Variant(names...)`", sum.decl->name, sum.decl->name));
+                continue;
+            }
+            const auto variant = sumVariantIndex(sum, pattern.text);
+            if (!variant) {
+                err("E0706",
+                    pattern.span,
+                    std::format("enum `{}` has no member `{}`", sum.decl->name, pattern.text),
+                    "unknown member");
+                continue;
+            }
+            if (!covered.insert(*variant).second) {
+                err("E0709", value->span, "duplicate `case` variant", "this variant is already handled by an earlier `case`");
+            }
+            EP cond = tagIs(*variant, value->span);
+            arm.cond = arm.cond ? [&] {
+                EP both = mk(hir::ExprKind::Binary, boolean, value->span);
+                both->binary_op = BinaryOp::Or;
+                both->lhs = std::move(arm.cond);
+                both->rhs = std::move(cond);
+                return both;
+            }() : std::move(cond);
+            if (!call) {
+                continue;
+            }
+            const SumVariant& v = sum.decl->variants[*variant];
+            if (c.values.size() != 1 || value->args.size() != v.payload.size() ||
+                !std::ranges::all_of(value->args, [](const ExprPtr& a) { return a->kind == Expr::Kind::Name; })) {
+                err("E0749",
+                    value->span,
+                    std::format("pattern `{}.{}(...)` needs one name per payload value ({}), alone in its `case`",
+                                sum.decl->name, v.name, v.payload.size()),
+                    "write `case E.A(x, y) { }`; use `_` to ignore a value");
+                continue;
+            }
+            for (const std::size_t i : std::views::iota(std::size_t{0}, v.payload.size())) {
+                const Expr& name = *value->args[i];
+                if (name.text == "_") {
+                    continue;
+                }
+                EP read = sumPayloadRead(sum, id, self, *variant, i, name.span);
+                const Type field_type = read->type;
+                const hir::LocalId local = addLocal(name.text, field_type, false, name.span);
+                hir::Stmt d;
+                d.kind = hir::StmtKind::Local;
+                d.span = name.span;
+                d.local = local;
+                d.value = std::move(read);
+                arm.body.push_back(std::move(d));
+                bindLocal(name.text, local, field_type, name.span);
+            }
+        }
+        lowerBlock(*c.body, arm.body, true);
+        scopes_.pop();
+        if (arm.cond) {
+            arms.push_back(std::move(arm));
+        }
+    }
+    scopes_.pop();
+
+    if (!has_default && covered.size() < sum.decl->variants.size()) {
+        std::string missing;
+        for (const auto& [i, v] : std::views::zip(std::views::iota(std::size_t{0}), sum.decl->variants)) {
+            if (!covered.contains(i)) {
+                missing += std::format("{}`{}.{}`", missing.empty() ? "" : ", ", sum.decl->name, v.name);
+            }
+        }
+        err("E0750",
+            s.span,
+            std::format("`switch` on `{}` does not cover {}", sum.decl->name, missing),
+            "add a `case` for each missing variant, or a `default`");
+    }
+    std::vector<hir::Stmt> chain = std::move(default_body);
+    for (Arm& arm : arms | std::views::reverse) {
+        hir::Stmt ifs;
+        ifs.kind = hir::StmtKind::If;
+        ifs.span = s.span;
+        ifs.value = std::move(arm.cond);
+        ifs.body = std::move(arm.body);
+        ifs.else_body = std::move(chain);
+        chain.clear();
+        chain.push_back(std::move(ifs));
+    }
+    std::ranges::move(chain, std::back_inserter(block.body));
+    out.push_back(std::move(block));
+}
+
 void Lowerer::lowerGlobal(const GlobalDecl& g, const Modifiers& mods) {
     hir::Global out;
     out.name = s_.qualify(g.name);
@@ -3559,6 +3901,10 @@ void Lowerer::lowerForRange(const Stmt& s, std::vector<hir::Stmt>& out) {
 void Lowerer::lowerSwitch(const Stmt& s, std::vector<hir::Stmt>& out) {
     const Type boolean = Type::makeBool();
     EP scrutinee = expr(*s.expr, nullptr);
+    if (scrutinee && sumOfType(scrutinee->type)) {
+        lowerSumSwitch(s, std::move(scrutinee), out);
+        return;
+    }
     const bool usable = scrutinee && (scrutinee->type.kind == TypeKind::Int ||
                                       scrutinee->type.kind == TypeKind::Bool ||
                                       scrutinee->type.kind == TypeKind::Enum);
@@ -4477,6 +4823,9 @@ Lowerer::EP Lowerer::fieldExpr(const Expr& e) {
         if (head->kind == ScopeEntry::Kind::Namespace) {
             const ScopeEntry* member = namespaceMember(*head, e.text, e.span, true);
             return member != nullptr ? fromEntry(*member, e, nullptr) : nullptr;
+        }
+        if (const auto sum = sumOfEntry(*head)) {
+            return sumVariantValue(*sum, e);
         }
         if (head->kind == ScopeEntry::Kind::Type && head->item != nullptr &&
             std::holds_alternative<EnumDecl>(head->item->decl)) {
@@ -5645,7 +5994,12 @@ Lowerer::EP Lowerer::callExpr(const Expr& e, const Type* expected) {
             return c;
         }
     } else if (callee.kind == Expr::Kind::Field) {
-        // `ns.fn(...)` (module namespace) or `value.method(...)`.
+        // `ns.fn(...)` (module namespace), `Enum.Variant(...)` or `value.method(...)`.
+        if (const ScopeEntry* head = chainEntry(*callee.lhs); head != nullptr) {
+            if (const auto sum = sumOfEntry(*head)) {
+                return sumVariantCall(*sum, e);
+            }
+        }
         if (const ScopeEntry* head = chainEntry(*callee.lhs);
             head != nullptr && head->kind == ScopeEntry::Kind::Namespace) {
             const ScopeEntry* member = namespaceMember(*head, callee.text, callee.span, true);

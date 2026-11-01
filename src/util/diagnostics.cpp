@@ -241,6 +241,20 @@ constexpr std::size_t kLeadWidth = 40;
         {"E0746", Severity::Error, "native file missing",
          "A `[[native]]` entry lists a file that does not exist in the package at the installed version. "
          "Fix the `link` list, or commit the file."},
+        {"E0747", Severity::Error, "payload enum mixed with constant values",
+         "An enum with payload variants (`Add(*Expr, *Expr)`) is a sum type: its tag is numbered by "
+         "position. It cannot have an underlying type (`: T`) or `= value` members. Use two enums: "
+         "one with constants, one with payloads."},
+        {"E0749", Severity::Error, "invalid case of a payload enum switch",
+         "A `case` of a `switch` on a payload enum must name variants of that enum: `case E.A(x, y) { }` "
+         "binds the payload (one name per value, `_` to ignore, alone in the case), `case E.A, E.B { }` "
+         "matches without binding."},
+        {"E0750", Severity::Error, "switch does not cover every variant",
+         "A `switch` on a payload enum without `default` must have a `case` for every variant. Add the "
+         "missing cases or a `default`."},
+        {"E0751", Severity::Error, "wrong number of payload values",
+         "A payload variant is built like a call, `E.A(x, y)`, with exactly as many values as its "
+         "payload has; a variant without data is written `E.B`."},
         {"W0701", Severity::Warning, "missing return",
          "Control can fall off the end of a function that returns a value: some path has no "
          "`return` (a loop that ends with `break`, an `if` without `else`, ...). Add a `return`, "
