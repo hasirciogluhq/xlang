@@ -2,9 +2,9 @@
 // (headers, then `Content-Length` bytes), fills a `Context` and hands it to `routerDispatch`.
 // Chunked request bodies are not supported.
 from "../sys" import sysTcpSocket, sysTcpListen, sysTcpAccept, sysClose, sysRead, sysUnmap
-from "../memory" import mapGrow
-from "../io" import eprint
-from "../tls" import TlsConn, TlsCredentials, tlsRead, tlsClose, tlsListen, tlsAccept
+from "../mem/memory" import mapGrow
+from "../io/io" import eprint
+from "../tls/tls" import TlsConn, TlsCredentials, tlsRead, tlsClose, tlsListen, tlsAccept
 from "util" import cstrEq, lower, headerEnd, terminateLines
 from "context" import Context, ctxInit, ctxString
 from "router" import Router, routerDispatch

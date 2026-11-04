@@ -1,6 +1,6 @@
 // std/http/util: string, number and header-block helpers shared by the HTTP server and client.
 // Everything here works on NUL-terminated byte strings and caller-provided buffers.
-from "../memory" import strlen
+from "../mem/memory" import strlen
 
 export fn cstrEq(a: *ui8, b: *ui8) -> bool {
     local i: usize = 0

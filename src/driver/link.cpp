@@ -7,6 +7,8 @@
 #include <llvm/Object/ArchiveWriter.h>
 #include <llvm/Support/Error.h>
 
+#include <array>
+#include <cstdio>
 #include <cstdlib>
 #include <format>
 #include <fstream>
@@ -46,6 +48,25 @@ namespace {
         }
     }
     return {};
+}
+
+/// The macOS SDK root (`xcrun --show-sdk-path`), where ld64 finds `usr/lib/libSystem.tbd`. Empty when
+/// xcrun is missing; the linker then reports the undefined library itself.
+[[nodiscard]] std::string macosSdkRoot() {
+    std::string out;
+    FILE* pipe = popen("xcrun --show-sdk-path 2>/dev/null", "r");
+    if (pipe == nullptr) {
+        return out;
+    }
+    std::array<char, 512> buf{};
+    while (std::fgets(buf.data(), static_cast<int>(buf.size()), pipe) != nullptr) {
+        out += buf.data();
+    }
+    pclose(pipe);
+    while (!out.empty() && (out.back() == '\n' || out.back() == '\r')) {
+        out.pop_back();
+    }
+    return out;
 }
 
 [[nodiscard]] std::string quote(const std::string& s) {
@@ -155,6 +176,24 @@ void link(const LinkRequest& r) {
     }
     for (const std::filesystem::path& o : r.objects) {
         args.push_back(o.string());
+    }
+    // Plan 24: the OS libraries the program imports with `@library`, after pruning, so only what is
+    // reachable is linked. They come after the objects so that static archives resolve.
+    if (t.os == "macos" || t.os == "linux") {
+        std::set<std::string> libs;
+        for (const auto& [lib, sym] : r.imports) {
+            libs.insert(lib);
+        }
+        if (t.os == "macos" && !libs.empty()) {
+            const std::string sdk = macosSdkRoot();
+            if (!sdk.empty()) {
+                args.push_back("-syslibroot");
+                args.push_back(sdk);
+            }
+        }
+        for (const std::string& lib : libs) {
+            args.push_back("-l" + lib);
+        }
     }
     std::string command = quote(tool.string());
     for (const std::string& a : args) {

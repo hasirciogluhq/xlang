@@ -1,0 +1,150 @@
+// std/crypto/kex/x448: X448 Diffie-Hellman (RFC 7748 section 5, https://www.rfc-editor.org/rfc/rfc7748#section-5) on
+// the curve448 Montgomery form, field GF(2^448 - 2^224 - 1), 56-byte little-endian keys and u-coordinates. The ladder
+// is the one of section 5 with a24 = (A - 2) / 4 = 39081. The scalar is clamped: the two low bits of byte 0 are cleared
+// (cofactor 4) and the top bit of byte 55 is set. Field arithmetic is `std/math/bignum` Montgomery with 14 limbs; like
+// the X25519 code it is not constant-time in the Montgomery multiplications and is meant for ephemeral keys.
+// Test vector (RFC 7748 section 6.2): Alice's private key 9a8f4925...c9baf574...; the public key is 9b08f7cc31b7e3e67d22d5aeae121074...
+from "../../math/bignum" import Mont, montInit, montTo, montFrom, montPow, modAdd, modSub, montMul, bnZero, bnCopy, bnSub, bnFromBytes, bnToBytes
+
+define X448_LIMBS = 14
+
+fn cswapN(swap: ui32, a: *ui32, b: *ui32, n: usize) {
+    local mask: ui32 = 0 - swap
+    local i: usize = 0
+    while i < n {
+        local t: ui32 = mask & (a[i] ^ b[i])
+        a[i] = a[i] ^ t
+        b[i] = b[i] ^ t
+        i = i + 1
+    }
+}
+
+/// Little-endian 56 bytes to 14 limbs (the bignum loader takes big-endian bytes).
+fn leToLimbs448(le: *ui8, out: *ui32) {
+    local be: [ui8; 56]
+    local i: usize = 0
+    while i < 56 {
+        be[i] = le[55 - i]
+        i = i + 1
+    }
+    bnFromBytes(out, X448_LIMBS, &be[0], 56)
+}
+
+/// out = X448(scalar, u): 56-byte inputs and output, little-endian. False when the result is all zero (a low-order
+/// input), which the caller must treat as failure.
+export fn x448(out: *ui8, scalar: *ui8, u: *ui8) -> bool {
+    local k: [ui8; 56]
+    local i: usize = 0
+    while i < 56 {
+        k[i] = scalar[i]
+        i = i + 1
+    }
+    k[0] = k[0] & 252
+    k[55] = k[55] | 128
+
+    // p = 2^448 - 2^224 - 1: every limb all ones except limb 7, whose low word is 2^224 cleared
+    local p: [ui32; 14]
+    i = 0
+    while i < 14 {
+        p[i] = 0xffffffff
+        i = i + 1
+    }
+    p[7] = 0xfffffffe
+    local c: Mont
+    montInit(&c, &p[0], X448_LIMBS)
+
+    local ul: [ui32; 14]
+    leToLimbs448(u, &ul[0])
+    local x1: [ui32; 14]
+    local x2: [ui32; 14]
+    local z2: [ui32; 14]
+    local x3: [ui32; 14]
+    local z3: [ui32; 14]
+    montTo(&c, &x1[0], &ul[0])
+    bnCopy(&x2[0], &c.one[0], X448_LIMBS)
+    bnZero(&z2[0], X448_LIMBS)
+    bnCopy(&x3[0], &x1[0], X448_LIMBS)
+    bnCopy(&z3[0], &c.one[0], X448_LIMBS)
+
+    local a24l: [ui32; 14]
+    local a24: [ui32; 14]
+    bnZero(&a24l[0], X448_LIMBS)
+    a24l[0] = 39081
+    montTo(&c, &a24[0], &a24l[0])
+
+    local a: [ui32; 14]
+    local aa: [ui32; 14]
+    local b: [ui32; 14]
+    local bb: [ui32; 14]
+    local e: [ui32; 14]
+    local cc: [ui32; 14]
+    local d: [ui32; 14]
+    local da: [ui32; 14]
+    local cb: [ui32; 14]
+    local t: [ui32; 14]
+    local swap: ui32 = 0
+    local bit: usize = 448
+    while bit > 0 {
+        bit = bit - 1
+        local kt: ui32 = ((k[bit / 8] >> ((bit % 8) as ui8)) & 1) as ui32
+        swap = swap ^ kt
+        cswapN(swap, &x2[0], &x3[0], X448_LIMBS)
+        cswapN(swap, &z2[0], &z3[0], X448_LIMBS)
+        swap = kt
+        modAdd(&c, &a[0], &x2[0], &z2[0])
+        montMul(&c, &aa[0], &a[0], &a[0])
+        modSub(&c, &b[0], &x2[0], &z2[0])
+        montMul(&c, &bb[0], &b[0], &b[0])
+        modSub(&c, &e[0], &aa[0], &bb[0])
+        modAdd(&c, &cc[0], &x3[0], &z3[0])
+        modSub(&c, &d[0], &x3[0], &z3[0])
+        montMul(&c, &da[0], &d[0], &a[0])
+        montMul(&c, &cb[0], &cc[0], &b[0])
+        modAdd(&c, &t[0], &da[0], &cb[0])
+        montMul(&c, &x3[0], &t[0], &t[0])
+        modSub(&c, &t[0], &da[0], &cb[0])
+        montMul(&c, &t[0], &t[0], &t[0])
+        montMul(&c, &z3[0], &x1[0], &t[0])
+        montMul(&c, &x2[0], &aa[0], &bb[0])
+        montMul(&c, &t[0], &a24[0], &e[0])
+        modAdd(&c, &t[0], &aa[0], &t[0])
+        montMul(&c, &z2[0], &e[0], &t[0])
+    }
+    cswapN(swap, &x2[0], &x3[0], X448_LIMBS)
+    cswapN(swap, &z2[0], &z3[0], X448_LIMBS)
+
+    // result = x2 * z2^(p-2)
+    local two: [ui32; 14]
+    local exp: [ui32; 14]
+    bnZero(&two[0], X448_LIMBS)
+    two[0] = 2
+    bnSub(&exp[0], &p[0], &two[0], X448_LIMBS)
+    local zi: [ui32; 14]
+    montPow(&c, &zi[0], &z2[0], &exp[0], X448_LIMBS)
+    montMul(&c, &x2[0], &x2[0], &zi[0])
+    montFrom(&c, &x2[0], &x2[0])
+    i = 0
+    while i < 56 {
+        out[i] = ((x2[i / 4] >> (((i % 4) * 8) as ui32)) & 0xff) as ui8
+        i = i + 1
+    }
+    local nz: ui8 = 0
+    i = 0
+    while i < 56 {
+        nz = nz | out[i]
+        i = i + 1
+    }
+    return nz != 0
+}
+
+/// out = X448(scalar, 5): the public key of a private scalar (RFC 7748 section 6.2 base point u = 5).
+export fn x448Base(out: *ui8, scalar: *ui8) -> bool {
+    local five: [ui8; 56]
+    local i: usize = 0
+    while i < 56 {
+        five[i] = 0
+        i = i + 1
+    }
+    five[0] = 5
+    return x448(out, scalar, &five[0])
+}

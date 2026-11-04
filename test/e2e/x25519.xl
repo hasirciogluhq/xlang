@@ -1,5 +1,5 @@
 // X25519 known-answer tests (RFC 7748 section 5.2 and 6.1).
-from "std/x25519" import x25519, x25519Base
+from "std/crypto/kex/x25519" import x25519, x25519Base
 from "std" import print
 
 fn hexVal(c: ui8) -> ui8 {

@@ -1,6 +1,6 @@
 // AES-128 (FIPS 197 appendix C.1) and AES-128-GCM (the original GCM spec's test cases 1, 2 and 4)
 // known-answer tests, plus a tamper check.
-from "std/aesgcm" import aes128EncryptBlock, aesGcmSeal, aesGcmOpen
+from "std/crypto/cipher/aesgcm" import aes128EncryptBlock, aesGcmSeal, aesGcmOpen
 from "std" import print
 
 fn hexVal(c: ui8) -> ui8 {
@@ -51,14 +51,14 @@ fn gcm(name: *ui8, key: *ui8, iv: *ui8, aad: *ui8, pt: *ui8, ct: *ui8, tag: *ui8
     unhex(tag, &t[0])
     local got: [ui8; 64]
     local gtag: [ui8; 16]
-    aesGcmSeal(&k[0], &n[0], &a[0], alen, &p[0], plen, &got[0], &gtag[0])
+    aesGcmSeal(&k[0], 16, &n[0], &a[0], alen, &p[0], plen, &got[0], &gtag[0])
     check(name, same(&got[0], &c[0], plen) && same(&gtag[0], &t[0], 16))
     local back: [ui8; 64]
-    check(name, aesGcmOpen(&k[0], &n[0], &a[0], alen, &got[0], plen, &t[0], &back[0]))
+    check(name, aesGcmOpen(&k[0], 16, &n[0], &a[0], alen, &got[0], plen, &t[0], &back[0]))
     check(name, same(&back[0], &p[0], plen))
     if plen > 0 {
         got[0] = got[0] ^ 1
-        check(name, !aesGcmOpen(&k[0], &n[0], &a[0], alen, &got[0], plen, &t[0], &back[0]))
+        check(name, !aesGcmOpen(&k[0], 16, &n[0], &a[0], alen, &got[0], plen, &t[0], &back[0]))
     }
 }
 

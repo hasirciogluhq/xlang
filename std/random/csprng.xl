@@ -1,0 +1,90 @@
+// std/random/csprng: the cryptographically secure generator. The keystream is ChaCha20 (RFC 8439 section 2.3;
+// the block function `chacha20Block` lives in std/crypto/cipher). The construction is the fast-key-erasure
+// design of D. J. Bernstein ("Fast-key-erasure random-number generators", https://blog.cr.yp.to/20170723-random.html):
+// after every fill the key is replaced by a keystream block that is never handed out, so a later memory
+// disclosure does not reveal bytes returned earlier. The key is seeded from OS entropy and mixed with fresh
+// OS entropy every CSPRNG_RESEED_BYTES output bytes. The nonce is always zero: each key is used for one
+// fill only, so (key, counter) pairs never repeat.
+// Known limitation: no fork detection. A forked child shares the parent's state until it is reseeded by
+// its own construction; see docs/known-limitations.md.
+from "../crypto/cipher/chacha20poly1305" import chacha20Block
+from "entropy" import randomBytes
+
+/// Output bytes between two OS reseeds. Bounds how long one key mixes before fresh entropy is added.
+export define CSPRNG_RESEED_BYTES = 1048576
+
+export class Csprng {
+    key: [ui8; 32]
+    nonce: [ui8; 12]     // always zero; see the header
+    block: [ui8; 64]     // the current keystream block
+    used: usize          // bytes of `block` already returned; 64 when none is unread
+    counter: ui32        // next block counter for the current key
+    produced: usize      // bytes returned since the last reseed
+
+    fn init(self) {
+        randomBytes(&self.key[0], 32)
+        local i: usize = 0
+        while i < 12 {
+            self.nonce[i] = 0
+            i = i + 1
+        }
+        self.used = 64
+        self.counter = 0
+        self.produced = 0
+    }
+
+    /// XORs fresh OS entropy into the key and restarts the block counter.
+    fn reseed(self) {
+        local fresh: [ui8; 32]
+        randomBytes(&fresh[0], 32)
+        local i: usize = 0
+        while i < 32 {
+            self.key[i] = self.key[i] ^ fresh[i]
+            i = i + 1
+        }
+        self.counter = 0
+        self.produced = 0
+    }
+
+    /// Writes `n` random bytes to `out[0..n]`.
+    fn fill(self, out: *ui8, n: usize) {
+        if self.produced + n > CSPRNG_RESEED_BYTES {
+            self.reseed()
+        }
+        local i: usize = 0
+        while i < n {
+            if self.used == 64 {
+                chacha20Block(&self.key[0], self.counter, &self.nonce[0], &self.block[0])
+                self.counter = self.counter + 1
+                self.used = 0
+            }
+            out[i] = self.block[self.used]
+            self.used = self.used + 1
+            i = i + 1
+        }
+        self.produced = self.produced + n
+        // Fast key erasure: the new key is the first 32 bytes of a keystream block that is never output.
+        // Unread output bytes of the old block are discarded with it (`used = 64`).
+        chacha20Block(&self.key[0], self.counter, &self.nonce[0], &self.block[0])
+        self.counter = self.counter + 1
+        i = 0
+        while i < 32 {
+            self.key[i] = self.block[i]
+            i = i + 1
+        }
+        self.used = 64
+    }
+
+    /// One random 64-bit value, least significant byte first when read as bytes.
+    fn nextU64(self) -> ui64 {
+        local b: [ui8; 8]
+        self.fill(&b[0], 8)
+        local v: ui64 = 0
+        local i: usize = 0
+        while i < 8 {
+            v = v | ((b[i] as ui64) << ((i * 8) as ui64))
+            i = i + 1
+        }
+        return v
+    }
+}

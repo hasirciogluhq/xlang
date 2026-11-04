@@ -13,8 +13,8 @@
 //
 // Snapshot words written by the compiler: 0 = catch address, 1 = sp, 2 = fp, 3.. = callee-saved registers.
 // Words 28 (next record) and 30 (message buffer) belong to this file.
-from "../sync" import Mutex, mutexLock, mutexUnlock
-from "../sys" import sysWrite, sysExit
+from "../thread/sync" import Mutex, mutexLock, mutexUnlock
+from "../sys" import sysWriteFile, sysExit
 
 define WORD_NEXT = 28
 define WORD_MESSAGE = 30
@@ -195,7 +195,7 @@ register(unwind) fn unwindHook(op: i32, snapshot: *usize, message: *ui8) {
     local frame: usize = frameWord(fp, 0)        // the frame whose pad is running
     local target: usize = nearestTry(frame)
     if target == 0 {
-        sysWrite(2, "panic: unwinding lost its handler\n", 34)
+        sysWriteFile(2, "panic: unwinding lost its handler\n", 34)
         sysExit(134)
     }
     unwindTo(frame, target)

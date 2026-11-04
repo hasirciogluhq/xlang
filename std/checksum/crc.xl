@@ -1,0 +1,48 @@
+// std/checksum/crc: CRC-32 (IEEE 802.3, the zlib/PNG/gzip variant) and CRC-32C (Castagnoli, iSCSI, SCTP,
+// ext4, Btrfs). Both are reflected CRCs: bit 0 is processed first, so the polynomial is the bit-reversed one.
+//   CRC-32  polynomial 0xEDB88320 (reflected 0x04C11DB7), RFC 1952 section 8 (gzip) and ISO 3309
+//           https://www.rfc-editor.org/rfc/rfc1952#section-8
+//   CRC-32C polynomial 0x82F63B78 (reflected 0x1EDC6F41), RFC 3720 appendix B.4 (iSCSI)
+//           https://www.rfc-editor.org/rfc/rfc3720#appendix-B.4
+// Both start from 0xFFFFFFFF and complement at the end. The incremental form takes the previous result as
+// `crc` (start with 0), exactly as zlib's crc32(). Bitwise form: no table, so no 1 KiB of static data.
+
+/// One reflected CRC step over `n` bytes. `crc` is the complemented running register.
+fn crcReflected(poly: ui32, crc: ui32, data: *ui8, n: usize) -> ui32 {
+    local c: ui32 = crc
+    local i: usize = 0
+    while i < n {
+        c = c ^ (data[i] as ui32)
+        local bit: i32 = 0
+        while bit < 8 {
+            if c & 1 != 0 {
+                c = (c >> 1) ^ poly
+            } else {
+                c = c >> 1
+            }
+            bit = bit + 1
+        }
+        i = i + 1
+    }
+    return c
+}
+
+/// CRC-32 (IEEE) of `data[0..n]`, continuing from `crc` (0 for a new checksum).
+export fn crc32Update(crc: ui32, data: *ui8, n: usize) -> ui32 {
+    return crcReflected(0xEDB88320, crc ^ 0xffffffff, data, n) ^ 0xffffffff
+}
+
+/// CRC-32 (IEEE) of `data[0..n]`.
+export fn crc32(data: *ui8, n: usize) -> ui32 {
+    return crc32Update(0, data, n)
+}
+
+/// CRC-32C (Castagnoli) of `data[0..n]`, continuing from `crc` (0 for a new checksum).
+export fn crc32cUpdate(crc: ui32, data: *ui8, n: usize) -> ui32 {
+    return crcReflected(0x82F63B78, crc ^ 0xffffffff, data, n) ^ 0xffffffff
+}
+
+/// CRC-32C (Castagnoli) of `data[0..n]`.
+export fn crc32c(data: *ui8, n: usize) -> ui32 {
+    return crc32cUpdate(0, data, n)
+}

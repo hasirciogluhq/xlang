@@ -34,3 +34,7 @@ out
 .xlang-cache/
 # Package cache (xlang.toml / xlang.lock are committed, the downloaded sources are not)
 .xlang/
+# Jekyll build output and cache (the Pages workflow builds in CI; local builds write here)
+_site/
+docs/.jekyll-cache/
+docs/.sass-cache/

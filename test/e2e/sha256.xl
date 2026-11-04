@@ -1,5 +1,5 @@
 // SHA-256 known-answer tests (FIPS 180-4 / NIST vectors).
-from "std/sha256" import sha256
+from "std/crypto/hash/sha256" import sha256
 from "std" import print, strlen
 
 fn hexDigit(v: ui8) -> ui8 {

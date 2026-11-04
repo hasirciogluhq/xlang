@@ -1,6 +1,6 @@
 // ECDSA P-256 verification, RFC 6979 A.2.5 vector (message "sample", SHA-256).
-from "std/ecdsa" import ecdsaVerify
-from "std/sha256" import sha256
+from "std/crypto/sig/ecdsa" import ecdsaVerify
+from "std/crypto/hash/sha256" import sha256
 from "std" import print
 
 fn hexVal(c: ui8) -> ui8 {

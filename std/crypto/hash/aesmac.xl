@@ -1,0 +1,99 @@
+// std/crypto/hash/aesmac: AES-based message authentication codes. CMAC (NIST SP 800-38B; RFC 4493 for AES-128,
+// https://www.rfc-editor.org/rfc/rfc4493) and GMAC (NIST SP 800-38D: GCM with an empty plaintext, the tag is the MAC).
+// Key sizes: 16, 24 or 32 bytes (AES-128, -192, -256), from the shared AES core in std/crypto/cipher/aes.xl.
+//
+// CMAC: L = AES_K(0^128); K1 = L * x in GF(2^128) (shift left one bit; if the top bit was set, xor 0x87 into the
+// last byte); K2 = K1 * x. The message is cut into 16-byte blocks. A complete final block is xored with K1; an empty or
+// partial final block is padded with 0x80 followed by zeros and xored with K2. Then CBC-MAC with AES-K over the blocks.
+// Test vector (RFC 4493 section 4): empty message -> bb1d6929e95937287fa37d129b756746.
+from "../cipher/aes" import aesEncrypt, aesKeyExpand, aesRounds
+from "../cipher/aesgcm" import aesGcmSeal
+
+/// K1 (or K2) = dbl(in): multiplication by x in GF(2^128), big-endian bytes, RFC 4493 section 2.3.
+fn doubleBlock(inb: *ui8, out: *ui8) {
+    local carry: ui8 = inb[0] >> 7
+    local i: usize = 0
+    while i < 15 {
+        out[i] = ((inb[i] << 1) | (inb[i + 1] >> 7)) & 0xff
+        i = i + 1
+    }
+    out[15] = ((inb[15] << 1) & 0xff) ^ (carry * 0x87)
+}
+
+fn xorBlock(dst: *ui8, src: *ui8) {
+    local i: usize = 0
+    while i < 16 {
+        dst[i] = dst[i] ^ src[i]
+        i = i + 1
+    }
+}
+
+/// AES-128-CMAC of `msg[0..mlen)` under `key` into the 16 bytes at `out` (NIST SP 800-38B section 6.1).
+export fn cmacAes(key: *ui8, keyLen: usize, msg: *ui8, mlen: usize, out: *ui8) {
+    local rounds: usize = aesRounds(keyLen)
+    if rounds == 0 { panic("cmacAes: the key must be 16, 24 or 32 bytes") }
+    local rk: [ui8; 240]
+    aesKeyExpand(key, keyLen, &rk[0])
+    local zero: [ui8; 16]
+    local l: [ui8; 16]
+    local k1: [ui8; 16]
+    local k2: [ui8; 16]
+    local i: usize = 0
+    while i < 16 {
+        zero[i] = 0
+        i = i + 1
+    }
+    aesEncrypt(&rk[0], rounds, &zero[0], &l[0])
+    doubleBlock(&l[0], &k1[0])
+    doubleBlock(&k1[0], &k2[0])
+
+    // number of blocks; an empty message is one (padded) block
+    local blocks: usize = (mlen + 15) / 16
+    local complete: bool = blocks > 0 && mlen % 16 == 0
+    if blocks == 0 { blocks = 1 }
+    local c: [ui8; 16]
+    local cur: [ui8; 16]
+    i = 0
+    while i < 16 {
+        c[i] = 0
+        i = i + 1
+    }
+    local b: usize = 0
+    while b + 1 < blocks {
+        local j: usize = 0
+        while j < 16 {
+            cur[j] = c[j] ^ msg[b * 16 + j]
+            j = j + 1
+        }
+        aesEncrypt(&rk[0], rounds, &cur[0], &c[0])
+        b = b + 1
+    }
+    // the final block
+    local last: [ui8; 16]
+    local start: usize = b * 16
+    local rest: usize = mlen - start
+    i = 0
+    while i < 16 {
+        last[i] = 0
+        i = i + 1
+    }
+    i = 0
+    while i < rest {
+        last[i] = msg[start + i]
+        i = i + 1
+    }
+    if complete {
+        xorBlock(&last[0], &k1[0])
+    } else {
+        last[rest] = 0x80
+        xorBlock(&last[0], &k2[0])
+    }
+    xorBlock(&last[0], &c[0])
+    aesEncrypt(&rk[0], rounds, &last[0], out)
+}
+
+/// AES-128-GMAC of the additional data `aad[0..alen)` with a 12-byte `nonce`: the GCM tag with an empty plaintext
+/// (NIST SP 800-38D, section 7.1 with P = empty), written to the 16 bytes at `tag`. Authentication only.
+export fn gmacAes(key: *ui8, keyLen: usize, nonce: *ui8, aad: *ui8, alen: usize, tag: *ui8) {
+    aesGcmSeal(key, keyLen, nonce, aad, alen, nil, 0, nil, tag)
+}

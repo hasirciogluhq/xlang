@@ -1,0 +1,43 @@
+// std/checksum known-answer tests: the CRC-32 and CRC-32C check value of "123456789" (the value every CRC
+// catalogue lists), the Adler-32 example from Wikipedia's Adler-32 article, FNV reference values for "a"
+// (Fowler, Noll, Vo draft), and incremental use.
+from "std/checksum" import crc32, crc32c, crc32Update, crc32cUpdate, adler32, adler32Update, fnv1a32, fnv1_32, fnv1a64
+from "std" import print
+
+global failures: i32 = 0
+
+fn check(ok: bool, what: *ui8) {
+    if !ok {
+        failures = failures + 1
+        print("FAIL ")
+        print(what)
+        print("\n")
+    }
+}
+
+@entry fn main() -> i32 {
+    local nine: *ui8 = "123456789"
+    check(crc32(nine, 9) == 0xCBF43926, "crc32 check value")
+    check(crc32c(nine, 9) == 0xE3069283, "crc32c check value")
+    check(crc32(nine, 0) == 0, "crc32 of empty input is 0")
+    // Incremental use: the split must give the same value as the one-shot call.
+    check(crc32Update(crc32(nine, 5), &nine[5], 4) == 0xCBF43926, "crc32 incremental")
+    check(crc32cUpdate(crc32c(nine, 5), &nine[5], 4) == 0xE3069283, "crc32c incremental")
+
+    local wiki: *ui8 = "Wikipedia"
+    check(adler32(wiki, 9) == 0x11E60398, "adler32 Wikipedia")
+    check(adler32(nine, 0) == 1, "adler32 of empty input is 1")
+    check(adler32Update(adler32(wiki, 4), &wiki[4], 5) == 0x11E60398, "adler32 incremental")
+
+    local a: *ui8 = "a"
+    check(fnv1a32(a, 1) == 0xE40C292C, "fnv1a32 'a'")
+    check(fnv1_32(a, 1) == 0x050C5D7E, "fnv1_32 'a'")
+    check(fnv1a32(a, 0) == 0x811C9DC5, "fnv1a32 empty is the offset basis")
+    check(fnv1a64(a, 1) == 0xAF63DC4C8601EC8C, "fnv1a64 'a'")
+
+    if failures == 0 {
+        print("checksums ok\n")
+        return 0
+    }
+    return 1
+}

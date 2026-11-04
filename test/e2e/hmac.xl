@@ -1,5 +1,5 @@
 // HMAC-SHA256 (RFC 4231 case 1) and HKDF-SHA256 (RFC 5869 test 1).
-from "std/hmac" import hmacSha256, hkdfExtract, hkdfExpand
+from "std/crypto/hash/hmac" import hmacSha256, hkdfExtract, hkdfExpand
 from "std" import print
 
 fn hexDigit(v: ui8) -> ui8 {

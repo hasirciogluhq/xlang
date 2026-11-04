@@ -1,0 +1,8 @@
+// std/crypto/cipher: authenticated encryption (AEAD). AES-GCM is specified in NIST SP 800-38D
+// (https://csrc.nist.gov/pubs/sp/800/38/d/final), ChaCha20-Poly1305 in RFC 8439
+// (https://www.rfc-editor.org/rfc/rfc8439).
+export * from "aesgcm"
+export * from "chacha20poly1305"
+export * from "aes"
+export * from "aesmodes"
+export * from "salsa20"

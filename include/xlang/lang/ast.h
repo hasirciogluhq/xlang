@@ -178,7 +178,7 @@ struct Param {
     std::string name;
     Type type;  ///< unused for `self` and for a pack
     bool is_self{false};
-    bool is_pack{false};  ///< `..args`: the untyped trailing parameter pack (see docs-ai/variadic.md)
+    bool is_pack{false};  ///< `..args`: the untyped trailing parameter pack (see docs/language/variadic.md)
     Span span;
 };
 

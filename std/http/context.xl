@@ -1,8 +1,8 @@
 // std/http/context: the per-request `Context` of the server and everything a handler does with it:
 // read the request (headers, query, route params), write the response (whole or chunked) and steer
 // the handler chain (`ctxNext`, `ctxAbort`), modelled on Gin's `gin.Context`.
-from "../memory" import strlen
-from "../tls" import TlsConn, tlsWrite
+from "../mem/memory" import strlen
+from "../tls/tls" import TlsConn, tlsWrite
 from "../sys" import sysWrite
 from "util" import cstrEq, formatUInt, formatHex, append, headerLookup
 

@@ -1,0 +1,170 @@
+// std/time/date: calendar dates and times in UTC (RFC 3339, https://www.rfc-editor.org/rfc/rfc3339, the profile of ISO 8601).
+// Day counts use the proleptic Gregorian calendar and the civil-from-days algorithm (Howard Hinnant, "chrono-Compatible
+// Low-Level Date Algorithms"), which is exact for all years in the 64-bit range of days. Leap seconds are not represented:
+// a time is seconds since 1970-01-01T00:00:00Z, as POSIX time counts them.
+
+/// A calendar date and time in UTC.
+export struct DateTime {
+    year: i64
+    month: i32
+    day: i32
+    hour: i32
+    minute: i32
+    second: i32
+}
+
+/// Days since 1970-01-01 of the civil date year-month-day (Hinnant's days_from_civil).
+export fn daysFromCivil(year: i64, month: i32, day: i32) -> i64 {
+    local y: i64 = year
+    if month <= 2 { y = y - 1 }
+    local era: i64 = y / 400
+    if y < 0 && y % 400 != 0 { era = (y - 399) / 400 }
+    local yoe: i64 = y - era * 400
+    local mp: i64 = (month + 9) % 12
+    local doy: i64 = (153 * mp + 2) / 5 + (day as i64) - 1
+    local doe: i64 = yoe * 365 + yoe / 4 - yoe / 100 + doy
+    return era * 146097 + doe - 719468
+}
+
+/// The civil date of `days` since 1970-01-01 (Hinnant's civil_from_days). The result has year, month and day set; the time
+/// of day is 00:00:00.
+export fn civilFromDays(days: i64) -> DateTime {
+    local z: i64 = days + 719468
+    local era: i64 = z / 146097
+    if z < 0 && z % 146097 != 0 { era = (z - 146096) / 146097 }
+    local doe: i64 = z - era * 146097
+    local yoe: i64 = (doe - doe / 1460 + doe / 36524 - doe / 146096) / 365
+    local y: i64 = yoe + era * 400
+    local doy: i64 = doe - (365 * yoe + yoe / 4 - yoe / 100)
+    local mp: i64 = (5 * doy + 2) / 153
+    local d: DateTime
+    d.day = (doy - (153 * mp + 2) / 5 + 1) as i32
+    if mp < 10 {
+        d.month = (mp + 3) as i32
+    } else {
+        d.month = (mp - 9) as i32
+    }
+    if d.month <= 2 { y = y + 1 }
+    d.year = y
+    return d
+}
+
+/// Seconds since the Unix epoch for a UTC date and time. The fields are not range checked here (see `validDate`).
+export fn unixSeconds(d: DateTime) -> i64 {
+    return daysFromCivil(d.year, d.month, d.day) * 86400 + (d.hour as i64) * 3600 + (d.minute as i64) * 60 + (d.second as i64)
+}
+
+/// The UTC date and time of `t` seconds since the epoch.
+export fn fromUnixSeconds(t: i64) -> DateTime {
+    local days: i64 = t / 86400
+    local rem: i64 = t % 86400
+    if rem < 0 {
+        rem = rem + 86400
+        days = days - 1
+    }
+    local d: DateTime = civilFromDays(days)
+    d.hour = (rem / 3600) as i32
+    d.minute = ((rem % 3600) / 60) as i32
+    d.second = (rem % 60) as i32
+    return d
+}
+
+/// True for a leap year in the proleptic Gregorian calendar.
+export fn isLeapYear(y: i64) -> bool {
+    return (y % 4 == 0 && y % 100 != 0) || y % 400 == 0
+}
+
+/// The number of days in `month` (1 to 12) of `year`.
+export fn daysInMonth(year: i64, month: i32) -> i32 {
+    if month == 2 {
+        if isLeapYear(year) { return 29 }
+        return 28
+    }
+    if month == 4 || month == 6 || month == 9 || month == 11 { return 30 }
+    return 31
+}
+
+/// True when every field is in its range (month 1 to 12, day within the month, hour 0 to 23, minute 0 to 59, second 0 to 59;
+/// a leap second is not accepted).
+export fn validDate(d: DateTime) -> bool {
+    if d.month < 1 || d.month > 12 { return false }
+    if d.day < 1 || d.day > daysInMonth(d.year, d.month) { return false }
+    if d.hour < 0 || d.hour > 23 || d.minute < 0 || d.minute > 59 || d.second < 0 || d.second > 59 { return false }
+    return true
+}
+
+/// Writes the RFC 3339 UTC form `YYYY-MM-DDTHH:MM:SSZ` of `d` (20 bytes for years 1000 to 9999) into `out` and returns 20,
+/// or 0 when the date is invalid or the year is outside 0 to 9999.
+export fn formatRfc3339(d: DateTime, out: *ui8) -> usize {
+    if !validDate(d) || d.year < 0 || d.year > 9999 { return 0 }
+    putDigits(out, 0, d.year, 4)
+    out[4] = 45
+    putDigits(out, 5, d.month as i64, 2)
+    out[7] = 45
+    putDigits(out, 8, d.day as i64, 2)
+    out[10] = 84
+    putDigits(out, 11, d.hour as i64, 2)
+    out[13] = 58
+    putDigits(out, 14, d.minute as i64, 2)
+    out[16] = 58
+    putDigits(out, 17, d.second as i64, 2)
+    out[19] = 90
+    return 20
+}
+
+fn putDigits(out: *ui8, at: usize, v: i64, width: usize) {
+    local x: i64 = v
+    local i: usize = width
+    while i > 0 {
+        i = i - 1
+        out[at + i] = (48 + (x % 10)) as ui8
+        x = x / 10
+    }
+}
+
+/// The result of `parseRfc3339`: `ok` is false when the text is not a valid timestamp, and then `value` is not meaningful.
+export struct ParsedTime {
+    value: DateTime
+    ok: bool
+}
+
+/// Parses an RFC 3339 date-time with a `Z` offset, `YYYY-MM-DDTHH:MM:SSZ` (the `T` may be a space, as RFC 3339 section 5.6
+/// allows). Fractional seconds are skipped.
+export fn parseRfc3339(s: *ui8, n: usize) -> ParsedTime {
+    local r: ParsedTime
+    if n < 20 { return r }
+    if s[4] != 45 || s[7] != 45 || (s[10] != 84 && s[10] != 116 && s[10] != 32) || s[13] != 58 || s[16] != 58 { return r }
+    local d: DateTime
+    d.year = digitsAt(s, 0, 4)
+    d.month = digitsAt(s, 5, 2) as i32
+    d.day = digitsAt(s, 8, 2) as i32
+    d.hour = digitsAt(s, 11, 2) as i32
+    d.minute = digitsAt(s, 14, 2) as i32
+    d.second = digitsAt(s, 17, 2) as i32
+    if d.year < 0 || d.month < 0 || d.day < 0 || d.hour < 0 || d.minute < 0 || d.second < 0 { return r }
+    // optional fraction, then the Z
+    local p: usize = 19
+    if p < n && s[p] == 46 {
+        p = p + 1
+        if p >= n || s[p] < 48 || s[p] > 57 { return r }
+        while p < n && s[p] >= 48 && s[p] <= 57 { p = p + 1 }
+    }
+    if p + 1 != n || (s[p] != 90 && s[p] != 122) { return r }
+    if !validDate(d) { return r }
+    r.value = d
+    r.ok = true
+    return r
+}
+
+/// The value of `width` ASCII digits at `at`, or -1 when one of them is not a digit.
+fn digitsAt(s: *ui8, at: usize, width: usize) -> i64 {
+    local x: i64 = 0
+    local i: usize = 0
+    while i < width {
+        local c: ui8 = s[at + i]
+        if c < 48 || c > 57 { return -1 }
+        x = x * 10 + ((c - 48) as i64)
+        i = i + 1
+    }
+    return x
+}

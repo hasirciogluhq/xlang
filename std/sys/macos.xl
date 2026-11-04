@@ -5,7 +5,6 @@ define SYS_READ = 3
 define SYS_WRITE = 4
 define SYS_MUNMAP = 73
 define SYS_MMAP = 197
-define SYS_SCHED_YIELD = 331
 define SYS_BSDTHREAD_CREATE = 360
 define SYS_BSDTHREAD_TERMINATE = 361
 define SYS_BSDTHREAD_REGISTER = 366
@@ -14,27 +13,20 @@ define SYS_OPEN = 5
 define SYS_CLOSE = 6
 define SYS_UNLINK = 10
 define SYS_LSEEK = 199
-define SYS_ACCEPT = 30
-define SYS_SOCKET = 97
-define SYS_CONNECT = 98
-define SYS_BIND = 104
-define SYS_SETSOCKOPT = 105
-define SYS_LISTEN = 106
 define O_RDONLY = 0
 define O_WRONLY_CREAT_TRUNC = 1537     // O_WRONLY | O_CREAT | O_TRUNC
 define O_WRONLY_CREAT_APPEND = 521     // O_WRONLY | O_CREAT | O_APPEND
-define AF_INET = 2
-define SOCK_STREAM = 1
-define SOCK_DGRAM = 2
-define SO_RCVTIMEO = 4102
-define SOL_SOCKET = 65535
-define SO_REUSEADDR = 4
 
 define PROT_READ_WRITE = 3
 define MAP_PRIVATE_ANON = 4098      // MAP_PRIVATE | MAP_ANON
 
 export fn sysWrite(fd: i32, buf: *ui8, n: usize) -> isize {
     return syscall(SYS_WRITE, fd, buf, n) as isize
+}
+
+/// Writes to a file descriptor; on macOS the same call as `sysWrite` (Windows separates the two).
+export fn sysWriteFile(fd: i32, buf: *ui8, n: usize) -> isize {
+    return sysWrite(fd, buf, n)
 }
 
 export fn sysRead(fd: i32, buf: *ui8, n: usize) -> isize {
@@ -55,8 +47,9 @@ export fn sysUnmap(p: *void, size: usize) {
     syscall(SYS_MUNMAP, p, size)
 }
 
+// No yield call yet: the XNU table read for this work has no `sched_yield` entry, and the number once
+// used here (331) was not verified against `bsd/kern/syscalls.master`. Callers spin instead (see docs/syscalls/macos-xnu.md).
 export fn sysYield() {
-    syscall(SYS_SCHED_YIELD)
 }
 
 export fn sysThreadId() -> i64 {
@@ -67,7 +60,6 @@ export fn sysThreadId() -> i64 {
 export fn sysWait(addr: *ui32, expected: ui32) {
     local spins: i32 = 0
     while __builtin_atomicLoad(addr, MemoryOrder.acquire) == expected && spins < 64 {
-        syscall(SYS_SCHED_YIELD)
         spins = spins + 1
     }
 }
@@ -218,78 +210,6 @@ export fn sysFileSize(fd: i32) -> i64 {
     local n: i64 = syscall(SYS_LSEEK, fd, 0, 2)
     syscall(SYS_LSEEK, fd, 0, 0)
     return n
-}
-
-// ---- TCP over IPv4 -----------------------------------------------------------------------------
-
-/// A TCP socket; negative errno on failure.
-export fn sysTcpSocket() -> i32 {
-    local fd: i32 = syscall(SYS_SOCKET, AF_INET, SOCK_STREAM, 0) as i32
-    noSigpipe(fd)
-    return fd
-}
-
-/// SO_NOSIGPIPE: a write to a socket whose peer is gone fails with EPIPE instead of killing the
-/// process (a server meets this on every client that aborts a handshake).
-fn noSigpipe(fd: i32) {
-    if fd < 0 { return }
-    local one: i32 = 1
-    syscall(SYS_SETSOCKOPT, fd, SOL_SOCKET, 4130, &one, 4)
-}
-
-/// A UDP socket; negative errno on failure. After `sysTcpConnect` (which only fixes the peer for UDP)
-/// plain `sysWrite`/`sysRead` send and receive datagrams.
-export fn sysUdpSocket() -> i32 {
-    return syscall(SYS_SOCKET, AF_INET, SOCK_DGRAM, 0) as i32
-}
-
-/// Receive timeout in milliseconds (0 = none); 0 on success.
-export fn sysSetRecvTimeout(fd: i32, ms: i32) -> i32 {
-    local tv: [i64; 2]
-    tv[0] = (ms / 1000) as i64
-    tv[1] = ((ms % 1000) * 1000) as i64
-    return syscall(SYS_SETSOCKOPT, fd, SOL_SOCKET, SO_RCVTIMEO, &tv[0], 16) as i32
-}
-
-/// `ip` is host order (`127.0.0.1` = 2130706433).
-fn fillAddr(addr: *ui8, ip: ui32, port: ui16) {
-    local i: usize = 0
-    while i < 16 {
-        addr[i] = 0
-        i = i + 1
-    }
-    addr[0] = 16                // BSD sockaddr: sin_len, then sin_family
-    addr[1] = AF_INET
-    addr[2] = (port / 256) as ui8
-    addr[3] = (port % 256) as ui8
-    addr[4] = (ip / 16777216) as ui8
-    addr[5] = ((ip / 65536) % 256) as ui8
-    addr[6] = ((ip / 256) % 256) as ui8
-    addr[7] = (ip % 256) as ui8
-}
-
-export fn sysTcpConnect(fd: i32, ip: ui32, port: ui16) -> i32 {
-    local addr: [ui8; 16]
-    fillAddr(&addr[0], ip, port)
-    return syscall(SYS_CONNECT, fd, &addr[0], 16) as i32
-}
-
-/// SO_REUSEADDR, bind and listen. 0 on success.
-export fn sysTcpListen(fd: i32, ip: ui32, port: ui16) -> i32 {
-    local one: i32 = 1
-    syscall(SYS_SETSOCKOPT, fd, SOL_SOCKET, SO_REUSEADDR, &one, 4)
-    local addr: [ui8; 16]
-    fillAddr(&addr[0], ip, port)
-    if syscall(SYS_BIND, fd, &addr[0], 16) < 0 { return -1 }
-    if syscall(SYS_LISTEN, fd, 128) < 0 { return -1 }
-    return 0
-}
-
-/// Blocks for a connection; negative errno on failure.
-export fn sysTcpAccept(fd: i32) -> i32 {
-    local conn: i32 = syscall(SYS_ACCEPT, fd, 0, 0) as i32
-    noSigpipe(conn)
-    return conn
 }
 
 // ---- entropy and wall clock --------------------------------------------------------------------

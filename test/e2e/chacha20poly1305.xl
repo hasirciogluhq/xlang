@@ -1,5 +1,5 @@
 // ChaCha20-Poly1305 known-answer test (RFC 8439 section 2.8.2) plus tamper / round-trip checks.
-from "std/chacha20poly1305" import aeadSeal, aeadOpen
+from "std/crypto/cipher/chacha20poly1305" import aeadSeal, aeadOpen
 from "std" import print, strlen
 
 fn hexDigit(v: ui8) -> ui8 {

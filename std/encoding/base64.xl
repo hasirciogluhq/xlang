@@ -1,0 +1,185 @@
+// std/encoding/base64: base64 (RFC 4648 section 4) and base64url (section 5), both padded with `=`.
+// Each 3-byte group becomes 4 characters; a final group of 1 or 2 bytes is padded to 4 characters.
+// Decoding is strict: the length must be a multiple of 4, `=` may appear only as the last one or two
+// characters, and the unused low bits of the final group must be zero (RFC 4648 section 3.5 allows
+// rejecting them; this decoder does). Whitespace and line breaks are errors; strip them first.
+// Decoders return the bytes written, or -1 on invalid input. Nothing allocates.
+// https://www.rfc-editor.org/rfc/rfc4648#section-4
+
+/// Characters written by `base64Encode` / `base64UrlEncode` for `n` bytes: `4 * ceil(n / 3)`.
+export fn base64EncodedLen(n: usize) -> usize {
+    return (n + 2) / 3 * 4
+}
+
+/// Encodes `data[0..n]` with the 64-character `alpha` table into `out`. Returns the characters written.
+fn encodeWith(alpha: *ui8, data: *ui8, n: usize, out: *ui8) -> usize {
+    local i: usize = 0
+    local o: usize = 0
+    while i < n {
+        local rem: usize = n - i
+        local b1: ui32 = 0
+        local b2: ui32 = 0
+        if rem > 1 {
+            b1 = data[i + 1] as ui32
+        }
+        if rem > 2 {
+            b2 = data[i + 2] as ui32
+        }
+        local v: ui32 = ((data[i] as ui32) << 16) | (b1 << 8) | b2
+        out[o] = alpha[((v >> 18) & 63) as usize]
+        out[o + 1] = alpha[((v >> 12) & 63) as usize]
+        out[o + 2] = 61
+        out[o + 3] = 61
+        if rem > 1 {
+            out[o + 2] = alpha[((v >> 6) & 63) as usize]
+        }
+        if rem > 2 {
+            out[o + 3] = alpha[(v & 63) as usize]
+        }
+        o = o + 4
+        if rem > 3 {
+            i = i + 3
+        } else {
+            i = n
+        }
+    }
+    return o
+}
+
+/// Value 0..63 of `c` in `alpha`, -1 when `c` is not in the table (padding included).
+fn alphaValue(alpha: *ui8, c: ui8) -> i32 {
+    local k: usize = 0
+    while k < 64 {
+        if alpha[k] == c {
+            return k as i32
+        }
+        k = k + 1
+    }
+    return -1
+}
+
+fn decodeWith(alpha: *ui8, text: *ui8, n: usize, out: *ui8) -> isize {
+    if n % 4 != 0 {
+        return -1
+    }
+    local i: usize = 0
+    local o: usize = 0
+    while i < n {
+        local last: bool = i + 4 == n
+        local pads: usize = 0
+        // "xx==" leaves one byte, "xxx=" two bytes; a `=` anywhere else is invalid.
+        if text[i + 2] == 61 {
+            if !last || text[i + 3] != 61 {
+                return -1
+            }
+            pads = 2
+        } else if text[i + 3] == 61 {
+            if !last {
+                return -1
+            }
+            pads = 1
+        }
+        local v0: i32 = alphaValue(alpha, text[i])
+        local v1: i32 = alphaValue(alpha, text[i + 1])
+        local v2: i32 = 0
+        local v3: i32 = 0
+        if pads < 2 {
+            v2 = alphaValue(alpha, text[i + 2])
+        }
+        if pads == 0 {
+            v3 = alphaValue(alpha, text[i + 3])
+        }
+        if v0 < 0 || v1 < 0 || v2 < 0 || v3 < 0 {
+            return -1
+        }
+        // Unused trailing bits must be zero: 4 bits after `xx==`, 2 bits after `xxx=`.
+        if pads == 2 && (v1 & 15) != 0 {
+            return -1
+        }
+        if pads == 1 && (v2 & 3) != 0 {
+            return -1
+        }
+        local v: ui32 = ((v0 as ui32) << 18) | ((v1 as ui32) << 12) | ((v2 as ui32) << 6) | (v3 as ui32)
+        out[o] = ((v >> 16) & 255) as ui8
+        o = o + 1
+        if pads < 2 {
+            out[o] = ((v >> 8) & 255) as ui8
+            o = o + 1
+        }
+        if pads < 1 {
+            out[o] = (v & 255) as ui8
+            o = o + 1
+        }
+        i = i + 4
+    }
+    return o as isize
+}
+
+/// RFC 4648 table: `A-Z`, `a-z`, `0-9`, `+`, `/`.
+global STD_ALPHA: [ui8; 64] = [
+    65, 66, 67, 68, 69, 70, 71, 72, 73, 74, 75, 76, 77, 78, 79, 80,
+    81, 82, 83, 84, 85, 86, 87, 88, 89, 90, 97, 98, 99, 100, 101, 102,
+    103, 104, 105, 106, 107, 108, 109, 110, 111, 112, 113, 114, 115, 116, 117, 118,
+    119, 120, 121, 122, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 43, 47
+]
+
+/// RFC 4648 section 5 table: `-` and `_` replace `+` and `/`.
+global URL_ALPHA: [ui8; 64] = [
+    65, 66, 67, 68, 69, 70, 71, 72, 73, 74, 75, 76, 77, 78, 79, 80,
+    81, 82, 83, 84, 85, 86, 87, 88, 89, 90, 97, 98, 99, 100, 101, 102,
+    103, 104, 105, 106, 107, 108, 109, 110, 111, 112, 113, 114, 115, 116, 117, 118,
+    119, 120, 121, 122, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 45, 95
+]
+
+/// Standard base64 of `data[0..n]` into `out` (`base64EncodedLen(n)` bytes). Returns the characters written.
+export fn base64Encode(data: *ui8, n: usize, out: *ui8) -> usize {
+    return encodeWith(&STD_ALPHA[0], data, n, out)
+}
+
+/// Standard base64 decode of `n` characters into `out`. Returns the bytes written, or -1.
+export fn base64Decode(text: *ui8, n: usize, out: *ui8) -> isize {
+    return decodeWith(&STD_ALPHA[0], text, n, out)
+}
+
+/// base64url (`-`, `_`, padded) of `data[0..n]` into `out` (`base64EncodedLen(n)` bytes).
+export fn base64UrlEncode(data: *ui8, n: usize, out: *ui8) -> usize {
+    return encodeWith(&URL_ALPHA[0], data, n, out)
+}
+
+/// base64url decode of `n` characters into `out`. Returns the bytes written, or -1.
+export fn base64UrlDecode(text: *ui8, n: usize, out: *ui8) -> isize {
+    return decodeWith(&URL_ALPHA[0], text, n, out)
+}
+
+/// base64url without padding (RFC 7515 section 2, JOSE): the text of `data[0..n)` with the trailing '=' removed. Writes
+/// (4n + 2) / 3 bytes to `out` and returns that length.
+export fn base64UrlEncodeRaw(data: *ui8, n: usize, out: *ui8) -> usize {
+    local len: usize = encodeWith(&URL_ALPHA[0], data, n, out)
+    while len > 0 && out[len - 1] == 61 {
+        len = len - 1
+    }
+    return len
+}
+
+/// base64url decode of unpadded text (RFC 7515 section 2): `n` characters, padded with '=' to a multiple of 4 before the
+/// padded decoder runs. A length of 1 modulo 4 is invalid. Returns the bytes written, or -1.
+export fn base64UrlDecodeRaw(text: *ui8, n: usize, out: *ui8) -> isize {
+    if n % 4 == 1 {
+        return -1
+    }
+    local padded: usize = n + (4 - n % 4) % 4
+    local tmp: [ui8; 4096]
+    if padded > 4096 {
+        return -1
+    }
+    local i: usize = 0
+    while i < n {
+        tmp[i] = text[i]
+        i = i + 1
+    }
+    while i < padded {
+        tmp[i] = 61
+        i = i + 1
+    }
+    return decodeWith(&URL_ALPHA[0], &tmp[0], padded, out)
+}

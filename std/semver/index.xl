@@ -1,0 +1,2 @@
+// std/semver: Semantic Versioning 2.0.0 parsing and precedence (https://semver.org/spec/v2.0.0.html).
+export * from "semver"

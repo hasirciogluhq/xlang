@@ -1,0 +1,87 @@
+// std/crypto/x509/names: accessors and checks over a parsed Cert (RFC 5280, https://www.rfc-editor.org/rfc/rfc5280).
+// Byte fields (names, keys, signatures) are returned as views of the certificate DER, which the Cert keeps alive; they are
+// not copied. Booleans and integers are plain values. Subject Alternative Name checks follow RFC 5280 section 4.2.1.6
+// (rfc822Name is tag 0x81, iPAddress is tag 0x87; the comparison here is exact on the bytes, so the caller normalizes).
+from "x509" import Cert, Tlv, derRead, x509CheckSignedBy
+from "../../str/str" import fromParts, eq
+from "../hash/sha256" import sha256
+from "../hash/sha1" import sha1
+
+/// The issuer distinguished name as DER (the whole Name TLV).
+export fn x509IssuerDer(c: *Cert) -> str {
+    return fromParts(c.issuer, c.issuerLen)
+}
+
+/// The subject distinguished name as DER (the whole Name TLV).
+export fn x509SubjectDer(c: *Cert) -> str {
+    return fromParts(c.subject, c.subjectLen)
+}
+
+/// The signature bytes (the BIT STRING content without the unused-bits byte).
+export fn x509SignatureBytes(c: *Cert) -> str {
+    return fromParts(c.sig, c.sigLen)
+}
+
+/// The RSA modulus and public exponent as stored in the key (empty views when the key is not RSA).
+export fn x509RsaModulus(c: *Cert) -> str {
+    return fromParts(c.rsaN, c.rsaNLen)
+}
+
+export fn x509RsaExponent(c: *Cert) -> str {
+    return fromParts(c.rsaE, c.rsaELen)
+}
+
+/// The EC point 04 || X || Y of an EC key (empty view when the key is not EC).
+export fn x509EcPoint(c: *Cert) -> str {
+    return fromParts(c.ecPoint, c.ecPointLen)
+}
+
+/// True when the basicConstraints extension says the subject is a CA (RFC 5280 section 4.2.1.9).
+export fn x509IsCa(c: *Cert) -> bool {
+    return c.hasBasic && c.isCa
+}
+
+/// The pathLenConstraint, or -1 when absent.
+export fn x509PathLen(c: *Cert) -> i32 {
+    return c.pathLen
+}
+
+/// True when the issuer and subject names are equal and the certificate's signature verifies with its own key
+/// (RFC 5280 section 3.2, self-issued). A self-signed certificate is a root only when it is also a trust anchor.
+export fn x509SelfSigned(c: *Cert) -> bool {
+    if c.issuerLen != c.subjectLen { return false }
+    if !eq(fromParts(c.issuer, c.issuerLen), fromParts(c.subject, c.subjectLen)) { return false }
+    return x509CheckSignedBy(c, c)
+}
+
+/// True when the Subject Alternative Name list holds an rfc822Name equal to `email[0..len)`.
+export fn x509CheckEmail(c: *Cert, email: *ui8, len: usize) -> bool {
+    return sanHasTag(c, 0x81, email, len)
+}
+
+/// True when the Subject Alternative Name list holds an iPAddress equal to `ip[0..len)` (4 bytes for IPv4, 16 for IPv6).
+export fn x509CheckIp(c: *Cert, ip: *ui8, len: usize) -> bool {
+    return sanHasTag(c, 0x87, ip, len)
+}
+
+fn sanHasTag(c: *Cert, tag: ui8, want: *ui8, n: usize) -> bool {
+    if c.san == nil { return false }
+    local pos: usize = 0
+    while pos < c.sanLen {
+        local e: Tlv
+        if !derRead(&c.san[pos], c.sanLen - pos, &e) { return false }
+        pos = pos + e.total
+        if e.tag == tag && e.len == n && eq(fromParts(e.body, e.len), fromParts(want, n)) { return true }
+    }
+    return false
+}
+
+/// SHA-256 of the certificate DER, written to the 32 bytes at `out`.
+export fn x509FingerprintSha256(c: *Cert, out: *ui8) {
+    sha256(c.der, c.derLen, out)
+}
+
+/// SHA-1 of the certificate DER, written to the 20 bytes at `out` (legacy fingerprints only).
+export fn x509FingerprintSha1(c: *Cert, out: *ui8) {
+    sha1(c.der, c.derLen, out)
+}

@@ -1,4 +1,4 @@
-// std/fs + std/json: write a JSON file, read it back, parse members, remove it.
+// std/io/fs + std/encoding/json: write a JSON file, read it back, parse members, remove it.
 from "std" import print, assert, fsWrite, fsAppend, fsReadAll, fsExists, fsSize, fsRemove
 from "std" import jsonInt, jsonString, jsonBool, jsonHas
 

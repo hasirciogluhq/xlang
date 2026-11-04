@@ -1,5 +1,5 @@
 // SHA-512 / SHA-384 known-answer tests.
-from "std/sha512" import sha512, sha384
+from "std/crypto/hash/sha512" import sha512, sha384
 from "std" import print, strlen
 
 fn hexDigit(v: ui8) -> ui8 {

@@ -1,0 +1,68 @@
+// std/encoding/der: DER writing (ITU-T X.690, https://www.itu.int/rec/T-REC-X.690; the definite-length rules of
+// section 8.1 and the minimal INTEGER of section 8.3). The reader is `derRead` in std/crypto/x509.
+// A length below 128 is one byte; otherwise one byte 0x80 | k followed by the k big-endian length bytes, with the
+// shortest k (section 8.1.3). The writer writes into a caller buffer of `derTlvLen` bytes.
+
+/// The number of bytes of the length field for a body of `n` bytes.
+export fn derLengthLen(n: usize) -> usize {
+    if n < 128 { return 1 }
+    local k: usize = 0
+    local v: usize = n
+    while v > 0 {
+        k = k + 1
+        v = v >> 8
+    }
+    return 1 + k
+}
+
+/// The total encoded size of a TLV with a body of `n` bytes: tag, length field and body.
+export fn derTlvLen(n: usize) -> usize {
+    return 1 + derLengthLen(n) + n
+}
+
+/// Writes tag, definite length and body into `out` (derTlvLen(n) bytes); returns the number of bytes written.
+export fn derWriteTlv(tag: ui8, body: *ui8, n: usize, out: *ui8) -> usize {
+    out[0] = tag
+    local lenLen: usize = derLengthLen(n)
+    if n < 128 {
+        out[1] = n as ui8
+    } else {
+        local k: usize = lenLen - 1
+        out[1] = (0x80 | k) as ui8
+        local i: usize = 0
+        while i < k {
+            out[2 + i] = ((n >> (((k - 1 - i) * 8) as ui64)) & 0xff) as ui8
+            i = i + 1
+        }
+    }
+    local i: usize = 0
+    while i < n {
+        out[1 + lenLen + i] = body[i]
+        i = i + 1
+    }
+    return 1 + lenLen + n
+}
+
+/// The minimal two's-complement INTEGER body for the big-endian unsigned magnitude `v[0..n)` (section 8.3.2): leading
+/// zero bytes are removed, and one 0x00 is added when the top bit would otherwise make the value negative. Writes the
+/// body into `out` (at most n + 1 bytes) and returns its length.
+export fn derIntegerBody(v: *ui8, n: usize, out: *ui8) -> usize {
+    local start: usize = 0
+    while start + 1 < n && v[start] == 0 { start = start + 1 }
+    local len: usize = n - start
+    local o: usize = 0
+    if len == 0 {
+        out[0] = 0
+        return 1
+    }
+    if (v[start] & 0x80) != 0 {
+        out[0] = 0
+        o = 1
+    }
+    local i: usize = 0
+    while i < len {
+        out[o + i] = v[start + i]
+        i = i + 1
+    }
+    return o + len
+}

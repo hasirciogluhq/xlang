@@ -2,7 +2,7 @@
 // (shared prefix and middleware); patterns may contain `:name` (one segment) and `*name` (the rest of
 // the path, including its leading `/`). Static routes win over parameterized ones, HEAD falls back to
 // GET, a missing or extra trailing slash is redirected, a known path with another method gets 405.
-from "../memory" import strlen, mapGrow
+from "../mem/memory" import strlen, mapGrow
 from "context" import Context, ctxAddParam, ctxNext, ctxString, ctxRedirect, ctxSetHeader, ctxInit
 
 export define HTTP_MAX_PATH = 128

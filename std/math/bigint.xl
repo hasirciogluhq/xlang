@@ -1,0 +1,225 @@
+// std/math/bigint: arithmetic on unsigned integers held as little-endian arrays of 32-bit limbs (the representation of
+// std/math/bignum). Every function writes its full result. Sizes are explicit; an overflow is reported (false), not wrapped.
+//   Add and subtract: carry and borrow propagation (Knuth TAOCP vol. 2, section 4.3.1).
+//   Multiply and divide: schoolbook multiplication and Knuth's Algorithm D (bigdiv.xl).
+//   Power: repeated squaring. gcd: Euclid's algorithm (Knuth 4.5.2, Algorithm E) with bigDivMod.
+//   Modular power: Montgomery exponentiation of std/math/bignum (odd modulus only).
+//   Modular inverse: extended Euclid with the Bezout coefficients kept modulo m, so no sign is needed (Knuth 4.5.2).
+//   Probable primes: Miller-Rabin with 8 random bases (FIPS 186-5 Appendix B.3.1); used by the RSA key generator.
+// Not constant-time.
+from "bignum" import Mont, montInit, montMul, montTo, montFrom, montPow, bnZero, bnCopy, bnCmp, bnAdd, bnSub, modSub
+from "bigdiv" import bigMul, bigDivMod, bigLen
+from "../random/entropy" import randomBytes
+
+/// out = a + b for n limbs; returns the carry out of the top limb (0 or 1).
+export fn bigintAdd(a: *ui32, b: *ui32, n: usize, out: *ui32) -> ui32 {
+    return bnAdd(out, a, b, n)
+}
+
+/// out = a - b for n limbs; returns the borrow (1 when a < b, then out holds the wrapped value).
+export fn bigintSub(a: *ui32, b: *ui32, n: usize, out: *ui32) -> ui32 {
+    return bnSub(out, a, b, n)
+}
+
+/// out = a * b; out has na + nb limbs.
+export fn bigintMul(a: *ui32, na: usize, b: *ui32, nb: usize, out: *ui32) {
+    bigMul(a, na, b, nb, out)
+}
+
+/// Quotient and remainder of a (na limbs) by b (nb limbs); q gets na limbs, r gets nb limbs. False when b is zero.
+export fn bigintDivMod(a: *ui32, na: usize, b: *ui32, nb: usize, q: *ui32, r: *ui32) -> bool {
+    return bigDivMod(a, na, b, nb, q, r)
+}
+
+/// a^e for a 64-bit exponent into `out` (`cap` limbs, cap at most 130). False when the result does not fit.
+export fn bigintPow(a: *ui32, na: usize, e: ui64, out: *ui32, cap: usize) -> bool {
+    if na > 130 || cap > 130 { return false }
+    local acc: [ui32; 260]
+    local base: [ui32; 260]
+    local tmp: [ui32; 260]
+    bnZero(&acc[0], 260)
+    acc[0] = 1
+    bnZero(&base[0], 260)
+    bnCopy(&base[0], a, na)
+    local x: ui64 = e
+    while x != 0 {
+        if (x & 1) != 0 {
+            bigMul(&acc[0], 130, &base[0], 130, &tmp[0])
+            if bigLen(&tmp[cap], 260 - cap) != 0 { return false }
+            bnZero(&acc[0], 260)
+            bnCopy(&acc[0], &tmp[0], cap)
+        }
+        x = x >> 1
+        if x != 0 {
+            bigMul(&base[0], 130, &base[0], 130, &tmp[0])
+            if bigLen(&tmp[130], 130) != 0 { return false }
+            bnZero(&base[0], 260)
+            bnCopy(&base[0], &tmp[0], 130)
+        }
+    }
+    bnCopy(out, &acc[0], cap)
+    return true
+}
+
+/// gcd(a, b) into `out` (n limbs; n must hold the result, which is at most the smaller input). gcd(0, 0) = 0.
+export fn bigintGcd(a: *ui32, na: usize, b: *ui32, nb: usize, out: *ui32, n: usize) {
+    local x: [ui32; 130]
+    local y: [ui32; 130]
+    local q: [ui32; 130]
+    local r: [ui32; 130]
+    bnZero(&x[0], 130)
+    bnZero(&y[0], 130)
+    bnCopy(&x[0], a, na)
+    bnCopy(&y[0], b, nb)
+    while bigLen(&y[0], 130) != 0 {
+        bigDivMod(&x[0], 130, &y[0], 130, &q[0], &r[0])
+        bnCopy(&x[0], &y[0], 130)
+        bnCopy(&y[0], &r[0], 130)
+    }
+    bnCopy(out, &x[0], n)
+}
+
+/// base^e mod m for an odd modulus m of n limbs; base has nb limbs and e has en limbs. False for an even modulus.
+export fn bigintModPow(base: *ui32, nb: usize, e: *ui32, en: usize, m: *ui32, n: usize, out: *ui32) -> bool {
+    if (m[0] & 1) == 0 { return false }
+    local c: Mont
+    montInit(&c, m, n)
+    local b: [ui32; 130]
+    bnZero(&b[0], 130)
+    bnCopy(&b[0], base, nb)
+    local bred: [ui32; 130]
+    local q: [ui32; 130]
+    bigDivMod(&b[0], 130, m, n, &q[0], &bred[0])
+    local bm: [ui32; 130]
+    local rm: [ui32; 130]
+    montTo(&c, &bm[0], &bred[0])
+    montPow(&c, &rm[0], &bm[0], e, en)
+    montFrom(&c, out, &rm[0])
+    return true
+}
+
+/// The inverse of a modulo m (n limbs), into `out` (n limbs). False when gcd(a, m) != 1. The coefficient of a stays in
+/// [0, m) by subtracting modulo m, so no negative number is ever formed.
+export fn bigintModInverse(a: *ui32, na: usize, m: *ui32, n: usize, out: *ui32) -> bool {
+    local r0: [ui32; 130]
+    local r1: [ui32; 130]
+    local t0: [ui32; 130]
+    local t1: [ui32; 130]
+    local q: [ui32; 130]
+    local rem: [ui32; 130]
+    local prod: [ui32; 260]
+    local qbig: [ui32; 260]
+    local tmp: [ui32; 130]
+    local nt: [ui32; 130]
+    local ar: [ui32; 130]
+    bnZero(&r0[0], 130)
+    bnZero(&r1[0], 130)
+    bnZero(&t0[0], 130)
+    bnZero(&t1[0], 130)
+    bnZero(&ar[0], 130)
+    bnCopy(&r0[0], m, n)
+    bnCopy(&ar[0], a, na)
+    bigDivMod(&ar[0], 130, m, n, &q[0], &r1[0])
+    t1[0] = 1
+    while bigLen(&r1[0], 130) != 0 {
+        bigDivMod(&r0[0], 130, &r1[0], 130, &q[0], &rem[0])
+        bnCopy(&r0[0], &r1[0], 130)
+        bnCopy(&r1[0], &rem[0], 130)
+        // t_new = t0 - q * t1 (mod m)
+        bigMul(&q[0], 130, &t1[0], 130, &prod[0])
+        bigDivMod(&prod[0], 260, m, n, &qbig[0], &tmp[0])
+        if bnCmp(&t0[0], &tmp[0], n) >= 0 {
+            bnSub(&nt[0], &t0[0], &tmp[0], n)
+        } else {
+            bnAdd(&nt[0], &t0[0], m, n)
+            bnSub(&nt[0], &nt[0], &tmp[0], n)
+        }
+        bnCopy(&t0[0], &t1[0], 130)
+        bnCopy(&t1[0], &nt[0], 130)
+    }
+    // r0 is gcd(a, m); the inverse is only defined when it is 1
+    if bigLen(&r0[0], 130) != 1 || r0[0] != 1 { return false }
+    bnCopy(out, &t0[0], n)
+    return true
+}
+
+/// Miller-Rabin probable-prime test of the odd candidate `p` (n limbs) with 8 random bases in [2, 2^32 + 1]
+/// (FIPS 186-5 Appendix B.3.1). True when p is probably prime; the error probability is at most 4^-8 for each
+/// composite under this base choice in the worst case, and far smaller for random candidates.
+export fn bigintIsProbablePrime(p: *ui32, n: usize) -> bool {
+    local c: Mont
+    montInit(&c, p, n)
+    // p - 1 = 2^s * r
+    local pm1: [ui32; 130]
+    local one: [ui32; 130]
+    bnZero(&one[0], 130)
+    one[0] = 1
+    bnSub(&pm1[0], p, &one[0], n)
+    local r: [ui32; 130]
+    bnCopy(&r[0], &pm1[0], n)
+    local s: usize = 0
+    while (r[0] & 1) == 0 {
+        local i: usize = 0
+        while i < n {
+            local hi: ui32 = 0
+            if i + 1 < n { hi = r[i + 1] & 1 }
+            r[i] = (r[i] >> 1) | (hi << 31)
+            i = i + 1
+        }
+        s = s + 1
+    }
+    local mone: [ui32; 130]
+    local zero: [ui32; 130]
+    local mo: [ui32; 130]
+    bnZero(&mone[0], 130)
+    bnZero(&zero[0], 130)
+    montTo(&c, &mo[0], &one[0])
+    modSub(&c, &mone[0], &zero[0], &mo[0])
+    local round: usize = 0
+    while round < 8 {
+        local rb: [ui8; 4]
+        randomBytes(&rb[0], 4)
+        local base: [ui32; 130]
+        bnZero(&base[0], 130)
+        base[0] = (((rb[0] as ui32) << 24) | ((rb[1] as ui32) << 16) | ((rb[2] as ui32) << 8) | (rb[3] as ui32)) | 2
+        local am: [ui32; 130]
+        montTo(&c, &am[0], &base[0])
+        local x: [ui32; 130]
+        montPow(&c, &x[0], &am[0], &r[0], n)
+        local pass: bool = bnCmp(&x[0], &mo[0], n) == 0 || bnCmp(&x[0], &mone[0], n) == 0
+        local j: usize = 1
+        while !pass && j < s {
+            local t: [ui32; 130]
+            montMul(&c, &t[0], &x[0], &x[0])
+            bnCopy(&x[0], &t[0], n)
+            if bnCmp(&x[0], &mone[0], n) == 0 { pass = true }
+            j = j + 1
+        }
+        if !pass { return false }
+        round = round + 1
+    }
+    return true
+}
+
+/// lcm(a, b) = (a / gcd(a, b)) * b into `out` (n limbs). Returns false when the result does not fit in n limbs. The working
+/// values are 130 limbs (the same bound as bigintGcd); lcm of 0 with anything is 0. Division first keeps the product small.
+export fn bigintLcm(a: *ui32, na: usize, b: *ui32, nb: usize, out: *ui32, n: usize) -> bool {
+    if bigLen(a, na) == 0 || bigLen(b, nb) == 0 {
+        bnZero(out, n)
+        return true
+    }
+    local aa: [ui32; 130]
+    local g: [ui32; 130]
+    local q: [ui32; 130]
+    local r: [ui32; 130]
+    local p: [ui32; 260]
+    bnZero(&aa[0], 130)
+    bnCopy(&aa[0], a, na)
+    bigintGcd(a, na, b, nb, &g[0], 130)
+    bigDivMod(&aa[0], 130, &g[0], 130, &q[0], &r[0])
+    bigMul(&q[0], 130, b, nb, &p[0])
+    if bigLen(&p[0], 260) > n { return false }
+    bnZero(out, n)
+    bnCopy(out, &p[0], n)
+    return true
+}

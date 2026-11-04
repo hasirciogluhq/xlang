@@ -1,0 +1,292 @@
+// std/crypto/sig/rsaenc: RSA encryption and decryption (RFC 8017, https://www.rfc-editor.org/rfc/rfc8017): PKCS#1 v1.5
+// (section 7.2) and OAEP (section 7.1) with MGF1 (appendix B.2.1). Moduli of 512 to 4096 bits. Keys are big-endian
+// bytes: the modulus n, the public exponent e and the private exponent d. The modular exponentiation is
+// `std/math/bignum` Montgomery arithmetic; it is not constant-time, so decryption with a secret key is exposed to
+// timing observation by a local attacker. Padding checks are done in one pass with no early exit on the data, but
+// the Bleichenbacher-style oracles of PKCS#1 v1.5 are the caller's problem: prefer OAEP.
+from "../../math/bignum" import Mont, montInit, montTo, montFrom, montPow, bnZero, bnFromBytes, bnToBytes, bnCmp
+from "../hash/digest" import digest, digestLen
+from "../../random/entropy" import randomBytes
+from "../../mem/mem" import currentAllocator
+
+define RSAENC_MAX_BYTES = 512
+
+/// x^e mod n for a modulus of `nlen` bytes (leading zero bytes allowed) and an exponent of `elen` bytes. Writes the
+/// result into `out` (k bytes, k the modulus length without leading zeros) and returns k, or 0 for an invalid key or
+/// an input that is not below n.
+fn modexp(n: *ui8, nlen: usize, ex: *ui8, elen: usize, x: *ui8, xlen: usize, out: *ui8) -> usize {
+    local off: usize = 0
+    while off < nlen && n[off] == 0 { off = off + 1 }
+    local mod: *ui8 = &n[off]
+    local k: usize = nlen - off
+    if k < 64 || k > RSAENC_MAX_BYTES || (mod[k - 1] & 1) == 0 { return 0 }
+    if xlen != k || elen == 0 || elen > RSAENC_MAX_BYTES { return 0 }
+    local limbs: usize = (k + 3) / 4
+    local m: [ui32; 130]
+    local v: [ui32; 130]
+    local e: [ui32; 130]
+    if !bnFromBytes(&m[0], limbs, mod, k) { return 0 }
+    if !bnFromBytes(&v[0], limbs, x, k) { return 0 }
+    if bnCmp(&v[0], &m[0], limbs) >= 0 { return 0 }
+    local elimbs: usize = (elen + 3) / 4
+    bnZero(&e[0], 130)
+    if !bnFromBytes(&e[0], elimbs, ex, elen) { return 0 }
+    local c: Mont
+    montInit(&c, &m[0], limbs)
+    local vm: [ui32; 130]
+    local rm: [ui32; 130]
+    montTo(&c, &vm[0], &v[0])
+    montPow(&c, &rm[0], &vm[0], &e[0], elimbs)
+    montFrom(&c, &rm[0], &rm[0])
+    bnToBytes(&rm[0], limbs, out, k)
+    return k
+}
+
+/// MGF1 (RFC 8017 appendix B.2.1) of any seed length: `out[0..len)` = concatenated digests of seed || counter.
+export fn mgf1(alg: i32, seed: *ui8, slen: usize, out: *ui8, len: usize) {
+    local hl: usize = digestLen(alg)
+    local buf: *ui8 = currentAllocator.alloc(slen + 4, 1) as *ui8
+    if buf == nil { panic("mgf1: out of memory") }
+    local i: usize = 0
+    while i < slen {
+        buf[i] = seed[i]
+        i = i + 1
+    }
+    local h: [ui8; 64]
+    local counter: ui32 = 0
+    local done: usize = 0
+    while done < len {
+        buf[slen] = ((counter >> 24) & 0xff) as ui8
+        buf[slen + 1] = ((counter >> 16) & 0xff) as ui8
+        buf[slen + 2] = ((counter >> 8) & 0xff) as ui8
+        buf[slen + 3] = (counter & 0xff) as ui8
+        digest(alg, buf, slen + 4, &h[0])
+        local take: usize = len - done
+        if take > hl { take = hl }
+        local j: usize = 0
+        while j < take {
+            out[done + j] = h[j]
+            j = j + 1
+        }
+        done = done + take
+        counter = counter + 1
+    }
+    currentAllocator.free(buf as *void)
+}
+
+/// The modulus length in bytes, leading zeros removed.
+fn trimmedLen(n: *ui8, nlen: usize) -> usize {
+    local off: usize = 0
+    while off < nlen && n[off] == 0 { off = off + 1 }
+    return nlen - off
+}
+
+/// PKCS#1 v1.5 encryption (RFC 8017 section 7.2.1): `out` receives k bytes. Returns k, or 0 when the message is too
+/// long (mlen > k - 11) or the key is invalid. The padding string is random and nonzero.
+export fn rsaEncryptPkcs1(n: *ui8, nlen: usize, e: *ui8, elen: usize, msg: *ui8, mlen: usize, out: *ui8) -> usize {
+    local k: usize = trimmedLen(n, nlen)
+    if k < 11 || mlen > k - 11 { return 0 }
+    local em: *ui8 = currentAllocator.alloc(k, 1) as *ui8
+    if em == nil { panic("rsaEncryptPkcs1: out of memory") }
+    em[0] = 0
+    em[1] = 2
+    local ps: usize = k - mlen - 3
+    local i: usize = 0
+    while i < ps {
+        local b: [ui8; 1]
+        randomBytes(&b[0], 1)
+        while b[0] == 0 {
+            randomBytes(&b[0], 1)
+        }
+        em[2 + i] = b[0]
+        i = i + 1
+    }
+    em[2 + ps] = 0
+    i = 0
+    while i < mlen {
+        em[3 + ps + i] = msg[i]
+        i = i + 1
+    }
+    local r: usize = modexp(n, nlen, e, elen, em, k, out)
+    currentAllocator.free(em as *void)
+    return r
+}
+
+/// PKCS#1 v1.5 decryption (section 7.2.2). Writes the message to `out` (capacity `cap`) and returns its length, or -1
+/// when the padding is invalid, the message does not fit, or the key is invalid.
+export fn rsaDecryptPkcs1(n: *ui8, nlen: usize, d: *ui8, dlen: usize, c: *ui8, clen: usize, out: *ui8, cap: usize) -> isize {
+    local k: usize = trimmedLen(n, nlen)
+    if clen != k { return -1 }
+    local em: *ui8 = currentAllocator.alloc(k, 1) as *ui8
+    if em == nil { panic("rsaDecryptPkcs1: out of memory") }
+    if modexp(n, nlen, d, dlen, c, clen, em) != k {
+        currentAllocator.free(em as *void)
+        return -1
+    }
+    local ok: bool = em[0] == 0 && em[1] == 2
+    local sep: usize = 0
+    local i: usize = 2
+    while i < k {
+        if em[i] == 0 {
+            if sep == 0 { sep = i }
+        }
+        i = i + 1
+    }
+    // the separator must exist, come after at least 8 padding bytes
+    if sep == 0 || sep < 10 { ok = false }
+    local mlen: usize = 0
+    if ok {
+        mlen = k - sep - 1
+        if mlen > cap {
+            ok = false
+        } else {
+            i = 0
+            while i < mlen {
+                out[i] = em[sep + 1 + i]
+                i = i + 1
+            }
+        }
+    }
+    currentAllocator.free(em as *void)
+    if !ok { return -1 }
+    return mlen as isize
+}
+
+/// OAEP encryption (RFC 8017 section 7.1.1) with hash `alg` and MGF1 of the same hash. `label` may be empty. Returns k
+/// (the output length) or 0 when the message is too long (mlen > k - 2 hLen - 2) or the key is invalid.
+export fn rsaEncryptOaep(n: *ui8, nlen: usize, e: *ui8, elen: usize, alg: i32, label: *ui8, llen: usize,
+                         msg: *ui8, mlen: usize, out: *ui8) -> usize {
+    local k: usize = trimmedLen(n, nlen)
+    local hl: usize = digestLen(alg)
+    if hl == 0 || k < 2 * hl + 2 || mlen > k - 2 * hl - 2 { return 0 }
+    local em: *ui8 = currentAllocator.alloc(k, 1) as *ui8
+    if em == nil { panic("rsaEncryptOaep: out of memory") }
+    local lhash: [ui8; 64]
+    digest(alg, label, llen, &lhash[0])
+    local dbLen: usize = k - hl - 1
+    local db: *ui8 = currentAllocator.alloc(dbLen, 1) as *ui8
+    if db == nil { panic("rsaEncryptOaep: out of memory") }
+    local i: usize = 0
+    while i < dbLen {
+        db[i] = 0
+        i = i + 1
+    }
+    i = 0
+    while i < hl {
+        db[i] = lhash[i]
+        i = i + 1
+    }
+    db[dbLen - mlen - 1] = 1
+    i = 0
+    while i < mlen {
+        db[dbLen - mlen + i] = msg[i]
+        i = i + 1
+    }
+    local seed: [ui8; 64]
+    randomBytes(&seed[0], hl)
+    local dbMask: *ui8 = currentAllocator.alloc(dbLen, 1) as *ui8
+    if dbMask == nil { panic("rsaEncryptOaep: out of memory") }
+    mgf1(alg, &seed[0], hl, dbMask, dbLen)
+    i = 0
+    while i < dbLen {
+        db[i] = db[i] ^ dbMask[i]
+        i = i + 1
+    }
+    local seedMask: [ui8; 64]
+    mgf1(alg, db, dbLen, &seedMask[0], hl)
+    em[0] = 0
+    i = 0
+    while i < hl {
+        em[1 + i] = seed[i] ^ seedMask[i]
+        i = i + 1
+    }
+    i = 0
+    while i < dbLen {
+        em[1 + hl + i] = db[i]
+        i = i + 1
+    }
+    currentAllocator.free(dbMask as *void)
+    currentAllocator.free(db as *void)
+    local r: usize = modexp(n, nlen, e, elen, em, k, out)
+    currentAllocator.free(em as *void)
+    return r
+}
+
+/// OAEP decryption (section 7.1.2). Writes the message to `out` (capacity `cap`) and returns its length, or -1 when the
+/// OAEP check fails for any reason (one error, so the caller learns nothing more).
+export fn rsaDecryptOaep(n: *ui8, nlen: usize, d: *ui8, dlen: usize, alg: i32, label: *ui8, llen: usize,
+                         c: *ui8, clen: usize, out: *ui8, cap: usize) -> isize {
+    local k: usize = trimmedLen(n, nlen)
+    local hl: usize = digestLen(alg)
+    if hl == 0 || k < 2 * hl + 2 || clen != k { return -1 }
+    local em: *ui8 = currentAllocator.alloc(k, 1) as *ui8
+    if em == nil { panic("rsaDecryptOaep: out of memory") }
+    if modexp(n, nlen, d, dlen, c, clen, em) != k {
+        currentAllocator.free(em as *void)
+        return -1
+    }
+    local dbLen: usize = k - hl - 1
+    local lhash: [ui8; 64]
+    digest(alg, label, llen, &lhash[0])
+    local maskedSeed: [ui8; 64]
+    local i: usize = 0
+    while i < hl {
+        maskedSeed[i] = em[1 + i]
+        i = i + 1
+    }
+    local db: *ui8 = currentAllocator.alloc(dbLen, 1) as *ui8
+    if db == nil { panic("rsaDecryptOaep: out of memory") }
+    i = 0
+    while i < dbLen {
+        db[i] = em[1 + hl + i]
+        i = i + 1
+    }
+    local seedMask: [ui8; 64]
+    mgf1(alg, db, dbLen, &seedMask[0], hl)
+    local seed: [ui8; 64]
+    i = 0
+    while i < hl {
+        seed[i] = maskedSeed[i] ^ seedMask[i]
+        i = i + 1
+    }
+    local dbMask: *ui8 = currentAllocator.alloc(dbLen, 1) as *ui8
+    if dbMask == nil { panic("rsaDecryptOaep: out of memory") }
+    mgf1(alg, &seed[0], hl, dbMask, dbLen)
+    i = 0
+    while i < dbLen {
+        db[i] = db[i] ^ dbMask[i]
+        i = i + 1
+    }
+    local ok: bool = em[0] == 0
+    local diff: ui8 = 0
+    i = 0
+    while i < hl {
+        diff = diff | (db[i] ^ lhash[i])
+        i = i + 1
+    }
+    if diff != 0 { ok = false }
+    // skip the zero padding; the next nonzero byte must be 1
+    local idx: usize = hl
+    while idx < dbLen && db[idx] == 0 {
+        idx = idx + 1
+    }
+    if idx >= dbLen || db[idx] != 1 { ok = false }
+    local mlen: usize = 0
+    if ok {
+        mlen = dbLen - idx - 1
+        if mlen > cap {
+            ok = false
+        } else {
+            i = 0
+            while i < mlen {
+                out[i] = db[idx + 1 + i]
+                i = i + 1
+            }
+        }
+    }
+    currentAllocator.free(dbMask as *void)
+    currentAllocator.free(db as *void)
+    currentAllocator.free(em as *void)
+    if !ok { return -1 }
+    return mlen as isize
+}

@@ -6,6 +6,7 @@
 #include "version.h"
 #include "xlang/codegen/codegen.h"
 #include "xlang/codegen/link.h"
+#include "xlang/hir/prune.h"
 #include "xlang/lang/ast.h"
 #include "xlang/lang/config.h"
 #include "xlang/lang/frontend.h"
@@ -527,6 +528,9 @@ int main(int argc, char** argv) {
         if (build->parsed() && !diagnostics.hasErrors()) {
             xlang::hir::Module module = compilation.lowerAll();
             if (!diagnostics.hasErrors()) {
+                // Plan 24: only what the roots reach is code-generated and linked. Executables keep
+                // no exports; libraries and objects keep every `export` as part of their interface.
+                xlang::hir::pruneUnreachable(module, emit != "exe");
                 xlang::Sema& root = sema;
                 const std::string stem = path.stem().string();
                 const auto layoutOf = [&root](const xlang::Type& t) {

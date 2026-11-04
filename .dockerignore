@@ -1,6 +1,5 @@
 .git
 .gitignore
-.cursor
 build
 outputs
 **/node_modules

@@ -1,7 +1,7 @@
 # xlang — notes for Claude
 
 ## Platforms (hard rule)
-- Write code for Linux, macOS and Windows (x86-64 and arm64 where the OS supports it). Every std feature is written for all three; where one OS cannot support a feature, it is a clear compile-time error or a documented gap in `KNOWN-LIMITATIONS.md`, not a half-written port.
+- Write code for Linux, macOS and Windows (x86-64 and arm64 where the OS supports it). Every std feature is written for all three; where one OS cannot support a feature, it is a clear compile-time error or a documented gap in `docs/known-limitations.md`, not a half-written port.
 - Windows e2e entries are verified under Wine/CrossOver or on real Windows; a Windows column of `0` means not yet verified, not out of scope.
 
 ## Native OS code (hard rule)
@@ -10,6 +10,8 @@
 - Use one function for all OSes when the arguments and result are the same; split into per-OS functions only when the argument or result differs, and route with `#if` at the smallest possible scope.
 - **Syscalls are docs-first (hard rule).** Before writing or changing any syscall or OS API call, read the official documentation for every target OS (Linux man-pages and kernel headers, macOS/XNU syscall headers, Windows API and ntdll docs) and record the chosen numbers, struct layouts and error behavior in `docs/` first. Never guess a number, a flag or a layout.
 - A Windows shared library gets a `DllMain`: `DLL_PROCESS_ATTACH` runs `_xl_initAll` and `DLL_PROCESS_DETACH` runs `_xl_finiAll`; the module handle is obtained through a `std/sys` helper, not hard-coded.
+- **OS setup is hidden (hard rule).** Per-OS one-time state (WSAStartup on Windows, the process-wide SIGPIPE disposition on Linux, anything similar) never reaches the user API. Each area has one internal `…Up()`-style function that routes with `#if os` and is called by every public creator (e.g. `sockUp` in `std/sys/sock.xl`). A user program opens, listens and connects without naming any OS call.
+- **Stdlib comments (hard rule).** Stdlib comments are English and dense: explain each non-obvious layout, flag, errno and OS difference, and cite the specification or official page for every protocol or ABI rule (RFC number as `https://www.rfc-editor.org/rfc/rfcNNNN`, man-page or vendor docs as a URL).
 
 ## Language
 - Repo content is English (code, comments, docs, commits, diagnostics). User chat is Turkish.
@@ -29,28 +31,31 @@
 - A split is a pure move: no behavior change, no renames beyond what the move needs. Update `src/README.md` and the build file (`xmake.lua`) in the same change.
 - New code goes into the matching part file, or a new part when none fits. Never append to a large catch-all file.
 
-## Docs
-- `KNOWN-LIMITATIONS.md`: open decisions and intentional incompleteness.
+## Docs (single source, hard rule)
+- `docs/` is the only documentation. It is published as the GitHub Pages site (`docs/_config.yml`, `docs/_data/nav.yml` for the sidebar). People and AI tools read the same pages; there is no separate AI docs folder.
+- `docs/language/`: the language. `docs/compiler/`: install, linking, packages, runtime. `docs/std/`: the standard library, system call numbers. `docs/known-limitations.md`: open decisions and intentional incompleteness.
+- Human pages are professional Markdown and readable without heavy formatting. Pages about the compiler are plain English prose.
+- A new page is added to `docs/_data/nav.yml` (sidebar) and linked from `docs/index.md` in the same change.
 - `src/README.md`: layout. `std/`: stdlib. `test/e2e/`: end-to-end programs.
-- `docs/`: human docs (English, accurate to implementation).
-- `docs-ai/`: AI docs (matching topics). Format: title + 5–10 plain one-line sentences. Prose only. No code, examples, tables, lists, quotes, backticks, filler. Every sentence is a rule or behavior. Update both `docs/` and `docs-ai/` together.
-- **Every code change must update the affected docs in the same change** (`docs/`, `docs-ai/`, `KNOWN-LIMITATIONS.md`, `src/README.md`, doc comments). A code update is not done until the docs match it.
+- **Every code change must update the affected docs in the same change** (`docs/`, `src/README.md`, doc comments). A code update is not done until the docs match it.
 
 ## Core rules
 - No compatibility layers. Language and compiler can change freely.
 - **No BC for the development branch (hard rule).** The `development` branch carries no backward compatibility: when behavior changes, the superseded form is removed completely from code, tests, examples and docs, with no note about the old form.
-- Ignore `examples/`, `test/xlang/`, old `.xlang` files, and `.cursor/`.
+- Old `.xlang` files, `examples/` and `.cursor/` no longer exist and must not be recreated; the only examples are the programs in `test/e2e/`.
 - Maintain only `std/` (`.xl`) and `test/e2e/`.
 - Compiler knows only the language, CPU primitives, and a closed builtin list (`syscall`, `__builtin_` atomics/fence/asm, `__builtin_read`/`__builtin_write`/`__builtin_drop`/`__builtin_needsDrop`, `__builtin_unwindPads`/`__builtin_unwindPadCount`, `sizeOf`-style, `staticAssert`, `nil`, `MemoryOrder`).
 - Roles via `register`: `panic`, `alloc`, `free`, `unwind` (all functions). Bodies of builtins come from the compiler; everything else from stdlib.
-- **Compiler level vs runtime level (hard rule).** The compiler owns language semantics, types, layout, CPU primitives and compile-time facts (`sizeOf`, `alignOf`, drop glue). Everything that happens at run time (memory acquisition, allocation policy, panic text/abort, I/O, threads, string/format machinery) is stdlib. The compiler must not know a runtime type, interface, struct or method by name (no `Allocator`, no `"alloc"`/`"free"` method lookup). The only compiler↔runtime seam is a `register(role)` function whose signature is checked structurally; a new runtime need becomes a new role function or stdlib code, never a name inside the compiler. Before adding a builtin, a role or a name check, ask whether stdlib can do it; if the compiler does need a hook, record it in `KNOWN-LIMITATIONS.md`.
+- **Compiler level vs runtime level (hard rule).** The compiler owns language semantics, types, layout, CPU primitives and compile-time facts (`sizeOf`, `alignOf`, drop glue). Everything that happens at run time (memory acquisition, allocation policy, panic text/abort, I/O, threads, string/format machinery) is stdlib. The compiler must not know a runtime type, interface, struct or method by name (no `Allocator`, no `"alloc"`/`"free"` method lookup). The only compiler↔runtime seam is a `register(role)` function whose signature is checked structurally; a new runtime need becomes a new role function or stdlib code, never a name inside the compiler. Before adding a builtin, a role or a name check, ask whether stdlib can do it; if the compiler does need a hook, record it in `docs/known-limitations.md`.
 - Entry symbols (`_start`, `mainCRTStartup`) and `_xl_initAll` are compiler-owned; user symbols with those names are `E0726`.
 - `memcpy` family, `malloc`/`free`/allocator are **not** builtins. They live in stdlib (`std/memory`, `std/mem`).
 - Compiler loads default stdlib but gives no special treatment to names inside it.
-- **libc is forbidden.** Never use, call, imitate, or suggest it (or any OS C runtime).
-- Native OS libraries allowed only when necessary, via `@library("name") declare fn`. Prefer raw `syscall`. Imports stay in `std/sys/<os>.xl` behind `#if os`. No shared C runtime across OSes.
-- Do not invent features. Record decisions in `KNOWN-LIMITATIONS.md` or ask.
-- File changes only with Read/Edit/Write tools. Bash is for build/run/inspect only.
+- **OS runtime libraries may be linked** (libSystem on macOS, ucrt/ws2_32/ntdll on Windows, a static or dynamic library on Linux), via `@library("name") declare fn`, on all three OSes the same way.
+- **User code never calls them directly.** Any stdlib area may declare and call OS runtime functions (`@library`, behind `#if os` where the OS differs); user programs reach them only through stdlib functions. Example: `std/thread` may create a thread through a library call. `std/sys` holds the shared OS wrappers, but it is not the only place such calls live.
+- **Only reachable code is linked.** The whole stdlib is available; after compilation, functions and imports that no reachable code uses are dropped, and only the rest is linked.
+- Prefer raw `syscall` where the kernel number is documented and stable for the target; use `@library` where the OS promises the interface through its library (for example macOS `kevent`).
+- Do not invent features. Record decisions in `docs/known-limitations.md` or ask.
+- File content changes use the Read/Edit/Write tools. Bash is for build/run/inspect, and for moving or deleting whole files (`mv`, `git mv`, `rm`) when a reorganization needs it.
 
 ## Feature assessment
 When user adds a feature, give honest assessment (no praise):
@@ -88,7 +93,7 @@ Object to bad ideas but leave decision to user. Cite real precedents. Do not re-
 - Global namespace: closed builtins + `register`d names. `print`/`alloc`/`memcpy`/`assert` come from stdlib via import.
 - `declare`: single prefix for external things. Same attributes as normal decls.
 - Stdlib optional (`--no-std`, `--std=<dir|host/user/repo[@tag]>`, `[std]` in `xlang.toml`). Features become `featureXxx` constants for `#if`.
-- Packages: git repositories of `.xl` source (`docs/PACKAGE_MANAGER.md`). `xlang.toml` + `xlang.lock` + `.xlang/cache`; `xlang package install|update|remove|list|clean`; builds never use the network. Release tags `v?X.Y.Z`; `latest` = highest stable tag only (no fallback); `-suffix`/`-test` tags install only when named (`repo@v1.2.0-test`). No registry, no required layout, no solver. The compiler knows only "import path under a dependency path -> directory" and `[[native]]` link inputs.
+- Packages: git repositories of `.xl` source (`docs/compiler/packages.md`). `xlang.toml` + `xlang.lock` + `.xlang/cache`; `xlang package install|update|remove|list|clean`; builds never use the network. Release tags `v?X.Y.Z`; `latest` = highest stable tag only (no fallback); `-suffix`/`-test` tags install only when named (`repo@v1.2.0-test`). No registry, no required layout, no solver. The compiler knows only "import path under a dependency path -> directory" and `[[native]]` link inputs.
 - Two exports/imports of same name = error. Same entity via two paths = warning `W0401`.
 - Layout: `@repr(c)` not required on `declare`. Versioned layout records.
 - Diagnostics: warn with code + how to fix. `--allow`/`--deny`/`@allow`/`--explain`. Context lines configurable.
@@ -102,6 +107,12 @@ Object to bad ideas but leave decision to user. Cite real precedents. Do not re-
 - Stdlib embedded at build time. `xmake build std` type-checks it.
 - Tests: `xmake build xlang-tests && xmake run xlang-tests` (frontend/sema/HIR) and `xmake run e2e` (native + Docker + CrossOver for Windows).
 - **Test order (hard rule).** The full suites take over a minute. While working, run only the tests of what changed, one by one (`xlang run test/e2e/<name>.xl`, a single e2e entry). Run each full suite once at the very end; fix what it finds, otherwise finish. Write and modernize tests to be fast (small inputs, no sleeps, no needless Docker/network).
+
+## Std API types (hard rule)
+- Stdlib functions take and return typed values: `String` for owned text, `struct`/`class` for records, `Vec<T>` for lists. Raw `*T` pointers and the `str` view appear only where the value is a byte buffer at a boundary (syscalls, FFI, the internals of a type), never as the public return type of text.
+- Names carry no module prefix. A function imported from `std/str` is `slice`, `eq`, `split`, `replace`, not `strSlice`; the import already names the module. Overloads and methods use the same rule.
+- Where a conversion between the built-in `str` view and a typed form is needed, the compiler may perform it; until it does, the stdlib provides one conversion function per direction, not one API per representation.
+- A new public function that takes text takes `String` or `str`, and a new one that returns text returns `String`, unless a byte buffer is the honest type.
 
 ## Std layout (hard rule)
 - `std/` is nested by area: `std/<area>/<file>.xl` with `std/<area>/index.xl` re-exporting the area (`"runtime"` -> `std/runtime/index.xl`; siblings import as `"name"`, parents as `"../name"`). Deeper nesting is allowed when an area grows.

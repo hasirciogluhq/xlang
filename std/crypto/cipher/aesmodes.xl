@@ -1,0 +1,395 @@
+// std/crypto/cipher/aesmodes: AES modes of operation for 128-, 192- and 256-bit keys. All keys are passed with their
+// length (16, 24 or 32 bytes); any other length panics.
+//   ECB: NIST SP 800-38A section 6.1. Blocks are independent, so it leaks equal blocks. Kept for test vectors and
+//        block-only protocols; the length must be a multiple of 16.
+//   CBC: NIST SP 800-38A section 6.2. The length must be a multiple of 16 (no padding is added here: PKCS#7 padding is the
+//        caller's choice, section 5.3 leaves it out).
+//   CTR: NIST SP 800-38A section 6.5. The counter block is the 16-byte IV, incremented as a 128-bit big-endian
+//        integer (Appendix B.1). Any length.
+//   CCM: NIST SP 800-38C and RFC 3610. Nonce 7 to 13 bytes, tag 4, 6, 8, 10, 12, 14 or 16 bytes, additional data up to
+//        2^16 - 2^8 bytes (the two-byte length encoding of RFC 3610 section 2.2).
+//   XTS: IEEE 1619-2007 and NIST SP 800-38E, for AES-128-XTS (two 16-byte keys) and AES-256-XTS (two 32-byte keys).
+//        The data unit must be a multiple of 16 bytes: ciphertext stealing (IEEE 1619 section 5.3.2) is not implemented.
+// Table lookups in the AES core depend on the data, so these functions are not constant-time.
+from "aes" import aesEncrypt, aesDecrypt, aesKeyExpand, aesRounds
+
+/// Expanded round keys of a `keyLen`-byte key: the rounds and the key schedule buffer (240 bytes at most).
+fn schedule(key: *ui8, keyLen: usize, rk: *ui8) -> usize {
+    local rounds: usize = aesRounds(keyLen)
+    if rounds == 0 { panic("aes: the key must be 16, 24 or 32 bytes") }
+    aesKeyExpand(key, keyLen, rk)
+    return rounds
+}
+
+/// ECB encryption of `n` bytes (a multiple of 16) from `in` into `out`.
+export fn aesEcbEncrypt(key: *ui8, keyLen: usize, in: *ui8, n: usize, out: *ui8) {
+    if n % 16 != 0 { panic("aesEcbEncrypt: the length must be a multiple of 16") }
+    local rk: [ui8; 240]
+    local rounds: usize = schedule(key, keyLen, &rk[0])
+    local i: usize = 0
+    while i < n {
+        aesEncrypt(&rk[0], rounds, &in[i], &out[i])
+        i = i + 16
+    }
+}
+
+/// ECB decryption of `n` bytes (a multiple of 16).
+export fn aesEcbDecrypt(key: *ui8, keyLen: usize, in: *ui8, n: usize, out: *ui8) {
+    if n % 16 != 0 { panic("aesEcbDecrypt: the length must be a multiple of 16") }
+    local rk: [ui8; 240]
+    local rounds: usize = schedule(key, keyLen, &rk[0])
+    local i: usize = 0
+    while i < n {
+        aesDecrypt(&rk[0], rounds, &in[i], &out[i])
+        i = i + 16
+    }
+}
+
+/// CBC encryption of `n` bytes (a multiple of 16) with the 16-byte `iv`.
+export fn aesCbcEncrypt(key: *ui8, keyLen: usize, iv: *ui8, in: *ui8, n: usize, out: *ui8) {
+    if n % 16 != 0 { panic("aesCbcEncrypt: the length must be a multiple of 16") }
+    local rk: [ui8; 240]
+    local rounds: usize = schedule(key, keyLen, &rk[0])
+    local prev: [ui8; 16]
+    local i: usize = 0
+    while i < 16 {
+        prev[i] = iv[i]
+        i = i + 1
+    }
+    local blk: [ui8; 16]
+    local b: usize = 0
+    while b < n {
+        i = 0
+        while i < 16 {
+            blk[i] = in[b + i] ^ prev[i]
+            i = i + 1
+        }
+        aesEncrypt(&rk[0], rounds, &blk[0], &out[b])
+        i = 0
+        while i < 16 {
+            prev[i] = out[b + i]
+            i = i + 1
+        }
+        b = b + 16
+    }
+}
+
+/// CBC decryption of `n` bytes (a multiple of 16) with the 16-byte `iv`.
+export fn aesCbcDecrypt(key: *ui8, keyLen: usize, iv: *ui8, in: *ui8, n: usize, out: *ui8) {
+    if n % 16 != 0 { panic("aesCbcDecrypt: the length must be a multiple of 16") }
+    local rk: [ui8; 240]
+    local rounds: usize = schedule(key, keyLen, &rk[0])
+    local prev: [ui8; 16]
+    local i: usize = 0
+    while i < 16 {
+        prev[i] = iv[i]
+        i = i + 1
+    }
+    local blk: [ui8; 16]
+    local b: usize = 0
+    while b < n {
+        aesDecrypt(&rk[0], rounds, &in[b], &blk[0])
+        i = 0
+        while i < 16 {
+            out[b + i] = blk[i] ^ prev[i]
+            prev[i] = in[b + i]
+            i = i + 1
+        }
+        b = b + 16
+    }
+}
+
+/// Increments the 16-byte big-endian counter block `ctr` by one (SP 800-38A Appendix B.1).
+fn incrementCounter(ctr: *ui8) {
+    local i: i32 = 15
+    while i >= 0 {
+        ctr[i as usize] = ctr[i as usize] + 1
+        if ctr[i as usize] != 0 { return }
+        i = i - 1
+    }
+}
+
+/// CTR keystream XOR: `out[i] = in[i] xor AES(counter blocks)`, for any length. Encryption and decryption are the same.
+export fn aesCtrXor(key: *ui8, keyLen: usize, iv: *ui8, in: *ui8, n: usize, out: *ui8) {
+    local rk: [ui8; 240]
+    local rounds: usize = schedule(key, keyLen, &rk[0])
+    local ctr: [ui8; 16]
+    local i: usize = 0
+    while i < 16 {
+        ctr[i] = iv[i]
+        i = i + 1
+    }
+    local ks: [ui8; 16]
+    local b: usize = 0
+    while b < n {
+        aesEncrypt(&rk[0], rounds, &ctr[0], &ks[0])
+        local j: usize = 0
+        while j < 16 && b + j < n {
+            out[b + j] = in[b + j] ^ ks[j]
+            j = j + 1
+        }
+        incrementCounter(&ctr[0])
+        b = b + 16
+    }
+}
+
+/// Length-field encoding of RFC 3610 section 2.2: writes the additional-data length and returns its size in bytes.
+fn encodeAadLength(alen: usize, out: *ui8) -> usize {
+    if alen < 65280 {
+        out[0] = ((alen >> 8) & 0xff) as ui8
+        out[1] = (alen & 0xff) as ui8
+        return 2
+    }
+    out[0] = 0xff
+    out[1] = 0xfe
+    out[2] = ((alen >> 24) & 0xff) as ui8
+    out[3] = ((alen >> 16) & 0xff) as ui8
+    out[4] = ((alen >> 8) & 0xff) as ui8
+    out[5] = (alen & 0xff) as ui8
+    return 6
+}
+
+/// CBC-MAC of the CCM input (SP 800-38C section 6.1): B0, the encoded additional data padded to 16 bytes, then the
+/// payload padded to 16 bytes. Writes the full 16-byte MAC to `mac`.
+fn ccmMac(rk: *ui8, rounds: usize, nonce: *ui8, nlen: usize, aad: *ui8, alen: usize, pt: *ui8, n: usize,
+          tlen: usize, mac: *ui8) {
+    local L: usize = 15 - nlen
+    local b0: [ui8; 16]
+    local i: usize = 0
+    while i < 16 {
+        b0[i] = 0
+        i = i + 1
+    }
+    local flags: ui8 = ((L - 1) as ui8)
+    if alen > 0 { flags = flags | 0x40 }
+    flags = flags | ((((tlen - 2) / 2) as ui8) << 3)
+    b0[0] = flags
+    i = 0
+    while i < nlen {
+        b0[1 + i] = nonce[i]
+        i = i + 1
+    }
+    // the payload length, big-endian, in the last L bytes of B0
+    local q: usize = n
+    i = 0
+    while i < L {
+        b0[15 - i] = (q & 0xff) as ui8
+        q = q >> 8
+        i = i + 1
+    }
+    local x: [ui8; 16]
+    aesEncrypt(rk, rounds, &b0[0], &x[0])
+    local blk: [ui8; 16]
+    // additional data: encoded length followed by the data, in blocks
+    if alen > 0 {
+        local enc: [ui8; 6]
+        local encLen: usize = encodeAadLength(alen, &enc[0])
+        local total: usize = encLen + alen
+        local done: usize = 0
+        local k: usize = 0
+        while done < total {
+            i = 0
+            while i < 16 {
+                blk[i] = 0
+                i = i + 1
+            }
+            i = 0
+            while i < 16 && done + i < total {
+                local src: usize = done + i
+                if src < encLen {
+                    blk[i] = enc[src]
+                } else {
+                    blk[i] = aad[src - encLen]
+                }
+                i = i + 1
+            }
+            i = 0
+            while i < 16 {
+                x[i] = x[i] ^ blk[i]
+                i = i + 1
+            }
+            aesEncrypt(rk, rounds, &x[0], &x[0])
+            done = done + 16
+            k = k + 1
+        }
+    }
+    // payload blocks
+    local off: usize = 0
+    while off < n {
+        i = 0
+        while i < 16 {
+            blk[i] = 0
+            i = i + 1
+        }
+        i = 0
+        while i < 16 && off + i < n {
+            blk[i] = pt[off + i]
+            i = i + 1
+        }
+        i = 0
+        while i < 16 {
+            x[i] = x[i] ^ blk[i]
+            i = i + 1
+        }
+        aesEncrypt(rk, rounds, &x[0], &x[0])
+        off = off + 16
+    }
+    i = 0
+    while i < 16 {
+        mac[i] = x[i]
+        i = i + 1
+    }
+}
+
+/// The counter block A_i of CCM (SP 800-38C section 6.3): flags L-1, the nonce, then the counter in the last L bytes.
+fn ccmCounter(nonce: *ui8, nlen: usize, counter: usize, ctr: *ui8) {
+    local L: usize = 15 - nlen
+    ctr[0] = (L - 1) as ui8
+    local i: usize = 0
+    while i < nlen {
+        ctr[1 + i] = nonce[i]
+        i = i + 1
+    }
+    local c: usize = counter
+    i = 0
+    while i < L {
+        ctr[15 - i] = (c & 0xff) as ui8
+        c = c >> 8
+        i = i + 1
+    }
+}
+
+/// CCM encryption (SP 800-38C section 6.3): `ct` receives `n` bytes and `tag` receives `tlen` bytes.
+/// `nlen` is 7 to 13 bytes and `tlen` is 4 to 16 bytes, even. Panics on other parameters.
+export fn aesCcmSeal(key: *ui8, keyLen: usize, nonce: *ui8, nlen: usize, aad: *ui8, alen: usize, pt: *ui8, n: usize,
+                     ct: *ui8, tlen: usize, tag: *ui8) {
+    ccmCheck(nlen, tlen)
+    local rk: [ui8; 240]
+    local rounds: usize = schedule(key, keyLen, &rk[0])
+    local mac: [ui8; 16]
+    ccmMac(&rk[0], rounds, nonce, nlen, aad, alen, pt, n, tlen, &mac[0])
+    local ctr: [ui8; 16]
+    ccmCounter(nonce, nlen, 0, &ctr[0])
+    local s0: [ui8; 16]
+    aesEncrypt(&rk[0], rounds, &ctr[0], &s0[0])
+    local i: usize = 0
+    while i < tlen {
+        tag[i] = mac[i] ^ s0[i]
+        i = i + 1
+    }
+    local ks: [ui8; 16]
+    local b: usize = 0
+    local counter: usize = 1
+    while b < n {
+        ccmCounter(nonce, nlen, counter, &ctr[0])
+        aesEncrypt(&rk[0], rounds, &ctr[0], &ks[0])
+        local j: usize = 0
+        while j < 16 && b + j < n {
+            ct[b + j] = pt[b + j] ^ ks[j]
+            j = j + 1
+        }
+        b = b + 16
+        counter = counter + 1
+    }
+}
+
+/// CCM decryption with tag verification (SP 800-38C section 6.2). Writes the plaintext only when the tag matches.
+export fn aesCcmOpen(key: *ui8, keyLen: usize, nonce: *ui8, nlen: usize, aad: *ui8, alen: usize, ct: *ui8, n: usize,
+                     tag: *ui8, tlen: usize, pt: *ui8) -> bool {
+    ccmCheck(nlen, tlen)
+    local rk: [ui8; 240]
+    local rounds: usize = schedule(key, keyLen, &rk[0])
+    local ctr: [ui8; 16]
+    local ks: [ui8; 16]
+    local b: usize = 0
+    local counter: usize = 1
+    local plain: [ui8; 16]
+    // decrypt into `pt` first, then check the tag over the recovered plaintext (the MAC is over the plaintext)
+    while b < n {
+        ccmCounter(nonce, nlen, counter, &ctr[0])
+        aesEncrypt(&rk[0], rounds, &ctr[0], &ks[0])
+        local j: usize = 0
+        while j < 16 && b + j < n {
+            pt[b + j] = ct[b + j] ^ ks[j]
+            j = j + 1
+        }
+        b = b + 16
+        counter = counter + 1
+    }
+    local mac: [ui8; 16]
+    ccmMac(&rk[0], rounds, nonce, nlen, aad, alen, pt, n, tlen, &mac[0])
+    ccmCounter(nonce, nlen, 0, &ctr[0])
+    aesEncrypt(&rk[0], rounds, &ctr[0], &plain[0])
+    local diff: ui8 = 0
+    local i: usize = 0
+    while i < tlen {
+        diff = diff | ((mac[i] ^ plain[i]) ^ tag[i])
+        i = i + 1
+    }
+    return diff == 0
+}
+
+fn ccmCheck(nlen: usize, tlen: usize) {
+    if nlen < 7 || nlen > 13 { panic("aesCcm: the nonce is 7 to 13 bytes") }
+    if tlen < 4 || tlen > 16 || tlen % 2 != 0 { panic("aesCcm: the tag is 4, 6, 8, 10, 12, 14 or 16 bytes") }
+}
+
+/// Multiplies the 16-byte tweak by x in GF(2^128) in the little-endian convention of IEEE 1619 section 5.2.
+fn xtsNext(t: *ui8) {
+    local carry: ui8 = t[15] >> 7
+    local i: i32 = 15
+    while i > 0 {
+        t[i as usize] = ((t[i as usize] << 1) | (t[(i - 1) as usize] >> 7)) & 0xff
+        i = i - 1
+    }
+    t[0] = ((t[0] << 1) & 0xff) ^ (carry * 0x87)
+}
+
+/// XTS over `n` bytes (a multiple of 16). `key1` encrypts the data; `key2` encrypts the sector number `dataUnit`
+/// (16 bytes) into the first tweak. Both keys have `keyLen` bytes; the total key is 2 * keyLen.
+fn xtsRun(key1: *ui8, key2: *ui8, keyLen: usize, dataUnit: *ui8, in: *ui8, n: usize, out: *ui8, decrypt: bool) {
+    if n % 16 != 0 { panic("aesXts: the data unit must be a multiple of 16 bytes (no ciphertext stealing)") }
+    local rk1: [ui8; 240]
+    local rk2: [ui8; 240]
+    local rounds: usize = schedule(key1, keyLen, &rk1[0])
+    local rounds2: usize = schedule(key2, keyLen, &rk2[0])
+    local t: [ui8; 16]
+    local i: usize = 0
+    while i < 16 {
+        t[i] = dataUnit[i]
+        i = i + 1
+    }
+    aesEncrypt(&rk2[0], rounds2, &t[0], &t[0])
+    local blk: [ui8; 16]
+    local b: usize = 0
+    while b < n {
+        i = 0
+        while i < 16 {
+            blk[i] = in[b + i] ^ t[i]
+            i = i + 1
+        }
+        if decrypt {
+            aesDecrypt(&rk1[0], rounds, &blk[0], &blk[0])
+        } else {
+            aesEncrypt(&rk1[0], rounds, &blk[0], &blk[0])
+        }
+        i = 0
+        while i < 16 {
+            out[b + i] = blk[i] ^ t[i]
+            i = i + 1
+        }
+        xtsNext(&t[0])
+        b = b + 16
+    }
+}
+
+/// AES-XTS encryption of `n` bytes (a multiple of 16) of one data unit. `key` is the two keys back to back: `keyLen`
+/// bytes of data key and `keyLen` bytes of tweak key (keyLen 16 for AES-128-XTS, 32 for AES-256-XTS).
+export fn aesXtsEncrypt(key: *ui8, keyLen: usize, dataUnit: *ui8, in: *ui8, n: usize, out: *ui8) {
+    xtsRun(key, &key[keyLen], keyLen, dataUnit, in, n, out, false)
+}
+
+/// AES-XTS decryption (see `aesXtsEncrypt`).
+export fn aesXtsDecrypt(key: *ui8, keyLen: usize, dataUnit: *ui8, in: *ui8, n: usize, out: *ui8) {
+    xtsRun(key, &key[keyLen], keyLen, dataUnit, in, n, out, true)
+}

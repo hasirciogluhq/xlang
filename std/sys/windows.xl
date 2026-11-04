@@ -1,11 +1,12 @@
 // Windows: the NT native API. Windows has no stable system call numbers (they change between builds),
 // so the stable boundary is ntdll.dll's `Nt*` exports, which are the system calls themselves; they are
-// imported with `@library`. Where the OS offers no stable kernel interface (sockets, entropy) the
-// documented user-mode library is used instead: ws2_32 and bcrypt. No C runtime is involved.
+// imported with `@library`. Where the OS offers no stable kernel interface (sockets are in `sock.xl`,
+// entropy here) the documented user-mode library is used instead: ws2_32 and bcrypt. No C runtime is involved.
 //
-// A file/socket "fd" is the kernel handle's low 32 bits (kernel handle values are 32-bit safe). Socket
-// fds carry bit 30 so `sysRead`/`sysWrite`/`sysClose` can tell them from file handles without a table.
-define SOCKET_TAG = 1073741824
+// A file "fd" is the kernel handle's low 32 bits (kernel handle values are 32-bit safe). Socket fds are
+// told apart by `isSocket` in `sock.xl`, so `sysRead`/`sysWrite`/`sysClose` need no table.
+from "sock" import isSocket, socketOf, sockSend, sockRecv, sockClose
+
 define CURRENT_PROCESS = -1
 define STATUS_PENDING = 0x103
 define STATUS_END_OF_FILE = 0xC0000011
@@ -27,35 +28,15 @@ define STATUS_PIPE_BROKEN = 0xC000014B
 
 @library("kernel32") declare fn GetStdHandle(which: i32) -> i64
 
-@library("ws2_32") declare fn WSAStartup(version: ui16, data: *ui8) -> i32
-@library("ws2_32") declare fn socket(af: i32, kind: i32, proto: i32) -> ui64
-@library("ws2_32") declare fn connect(s: ui64, addr: *ui8, len: i32) -> i32
-@library("ws2_32") declare fn bind(s: ui64, addr: *ui8, len: i32) -> i32
-@library("ws2_32") declare fn listen(s: ui64, backlog: i32) -> i32
-@library("ws2_32") declare fn accept(s: ui64, addr: *ui8, len: *i32) -> ui64
-@library("ws2_32") declare fn recv(s: ui64, buf: *ui8, len: i32, flags: i32) -> i32
-@library("ws2_32") declare fn send(s: ui64, buf: *ui8, len: i32, flags: i32) -> i32
-@library("ws2_32") declare fn closesocket(s: ui64) -> i32
-@library("ws2_32") declare fn setsockopt(s: ui64, level: i32, name: i32, value: *ui8, len: i32) -> i32
-
 @library("bcrypt") declare fn BCryptGenRandom(alg: *void, buf: *ui8, len: ui32, flags: ui32) -> i32
 
 global ioStatus: [i64; 2]
-global wsaReady: bool
 
 fn stdHandle(fd: i32) -> i64 {
     if fd == 0 { return GetStdHandle(-10) }
     if fd == 1 { return GetStdHandle(-11) }
     if fd == 2 { return GetStdHandle(-12) }
     return fd as i64
-}
-
-fn isSocket(fd: i32) -> bool {
-    return fd >= 0 && (fd & SOCKET_TAG) != 0
-}
-
-fn socketOf(fd: i32) -> ui64 {
-    return (fd & (SOCKET_TAG - 1)) as ui64
 }
 
 /// Waits for a pending synchronous request and returns the final status.
@@ -67,14 +48,16 @@ fn finish(h: i64, status: i32, iosb: *i64) -> i32 {
     return status
 }
 
+// Writes to a socket or a file handle. Code that writes only to files (the panic message) calls
+// `sysWriteFile` instead, so the socket branch and ws2_32 are not linked into programs that never use sockets
+// (plan 24, reachability pruning).
 export fn sysWrite(fd: i32, buf: *ui8, n: usize) -> isize {
-    if isSocket(fd) {
-        local len: i32 = n as i32
-        if n > 1073741824 { len = 1073741824 }
-        local w: i32 = send(socketOf(fd), buf, len, 0)
-        if w < 0 { return -1 }
-        return w as isize
-    }
+    if isSocket(fd) { return sockSend(fd, buf, n) }
+    return sysWriteFile(fd, buf, n)
+}
+
+/// Writes to a file handle through NtWriteFile. A socket fd is not valid here.
+export fn sysWriteFile(fd: i32, buf: *ui8, n: usize) -> isize {
     local h: i64 = stdHandle(fd)
     local io: [i64; 2]
     local len: ui32 = n as ui32
@@ -85,13 +68,7 @@ export fn sysWrite(fd: i32, buf: *ui8, n: usize) -> isize {
 }
 
 export fn sysRead(fd: i32, buf: *ui8, n: usize) -> isize {
-    if isSocket(fd) {
-        local len: i32 = n as i32
-        if n > 1073741824 { len = 1073741824 }
-        local r: i32 = recv(socketOf(fd), buf, len, 0)
-        if r < 0 { return -1 }
-        return r as isize
-    }
+    if isSocket(fd) { return sockRecv(fd, buf, n) }
     local h: i64 = stdHandle(fd)
     local io: [i64; 2]
     local len: ui32 = n as ui32
@@ -140,7 +117,7 @@ export fn sysWake(addr: *ui32, count: i32) {
 }
 
 // Threads need `NtCreateThreadEx` plus a futex-like wait (WaitOnAddress); not done yet, the scheduler
-// stays on one thread like macOS (see KNOWN-LIMITATIONS.md).
+// stays on one thread like macOS (see docs/known-limitations.md).
 export fn sysThreadCreate(entry: fn(*void), arg: *void, stack: *void, size: usize, ctid: *ui32) -> i64 {
     return -1
 }
@@ -149,17 +126,103 @@ export fn sysThreadRelease(stack: *void, size: usize) {
     sysUnmap(stack, size)
 }
 
-// Readiness polling (IOCP / AFD poll) is not available yet.
+// ---- readiness polling: WSAPoll ------------------------------------------------------------------
+// WSAPoll reports readiness of sockets only (https://learn.microsoft.com/en-us/windows/win32/api/winsock2/nf-winsock2-wsapoll).
+// It is the readiness backend; IOCP is a completion model and needs a different API, so it is not used here.
+// Constants and layout from winsock2.h (public header copy: https://raw.githubusercontent.com/wine-mirror/wine/master/include/winsock2.h):
+//   POLLERR 0x0001, POLLHUP 0x0002, POLLNVAL 0x0004, POLLRDNORM 0x0100, POLLRDBAND 0x0200, POLLWRNORM 0x0010.
+//   POLLIN = POLLRDNORM|POLLRDBAND = 0x0300, POLLOUT = POLLWRNORM = 0x0010.
+// WSAPOLLFD = { SOCKET fd (8 bytes); SHORT events (offset 8); SHORT revents (offset 10) } = 16 bytes with padding.
+define WSA_POLL_IN = 768          // 0x0300
+define WSA_POLL_OUT = 16          // 0x0010
+define WSA_POLLFD_SIZE = 16
+define WATCH_CAP = 256            // watches held by the process, shared by every poll set
+
+@library("ws2_32") declare fn WSAPoll(fds: *ui8, n: ui32, timeout: i32) -> i32
+
+/// One interest: a socket watched by poll set `owner`. `used` false means the slot is free.
+struct PollWatch {
+    owner: i32
+    sock: ui64
+    events: i16
+    token: usize
+    used: bool
+}
+
+global pollWatches: [PollWatch; 256]
+global pollOwnerNext: i32
+
+/// A new poll set. Sets are identified by a process-wide counter; `pfd` is that id.
 export fn sysPollCreate() -> i32 {
-    return -1
+    pollOwnerNext = pollOwnerNext + 1
+    return pollOwnerNext
 }
 
+/// Adds or updates a one-shot read or write interest in socket `fd` (a tagged socket fd from `sock.xl`).
+/// Like epoll's EPOLLONESHOT, the interest is removed when it fires. Returns 0, or -1 for a file handle
+/// or when the process-wide table is full.
 export fn sysPollWatch(pfd: i32, fd: i32, write: bool, token: usize) -> i32 {
-    return -1
+    if !isSocket(fd) { return -1 }
+    local sock: ui64 = socketOf(fd)
+    local ev: i16 = WSA_POLL_IN as i16
+    if write { ev = WSA_POLL_OUT as i16 }
+    local free: i32 = -1
+    local i: usize = 0
+    while i < WATCH_CAP {
+        if pollWatches[i].used && pollWatches[i].owner == pfd && pollWatches[i].sock == sock {
+            pollWatches[i].events = ev
+            pollWatches[i].token = token
+            return 0
+        }
+        if !pollWatches[i].used && free < 0 { free = i as i32 }
+        i = i + 1
+    }
+    if free < 0 { return -1 }
+    pollWatches[free as usize].owner = pfd
+    pollWatches[free as usize].sock = sock
+    pollWatches[free as usize].events = ev
+    pollWatches[free as usize].token = token
+    pollWatches[free as usize].used = true
+    return 0
 }
 
+/// Waits up to `timeoutMs` (-1 = forever) for the watches of set `pfd` and stores the tokens of the ready
+/// ones (at most `max`); returns how many. Fired watches are removed. An empty set returns 0 at once
+/// (WSAPoll rejects an empty array), so it does not sleep for `timeoutMs`.
 export fn sysPollWait(pfd: i32, tokens: *usize, max: i32, timeoutMs: i32) -> i32 {
-    return 0
+    local buf: [ui8; 4096]          // WATCH_CAP WSAPOLLFD entries of 16 bytes
+    local slotOf: [usize; 256]      // the pollWatches index behind each WSAPOLLFD entry
+    local n: usize = 0
+    local i: usize = 0
+    while i < WATCH_CAP {
+        if pollWatches[i].used && pollWatches[i].owner == pfd {
+            local base: usize = &buf[0] as usize + n * WSA_POLLFD_SIZE
+            local fdp: *ui64 = base as *ui64
+            fdp[0] = pollWatches[i].sock
+            local evp: *i16 = (base + 8) as *i16
+            evp[0] = pollWatches[i].events
+            evp[1] = 0
+            slotOf[n] = i
+            n = n + 1
+        }
+        i = i + 1
+    }
+    if n == 0 { return 0 }
+    local r: i32 = WSAPoll(&buf[0], n as ui32, timeoutMs)
+    if r <= 0 { return 0 }
+    local out: i32 = 0
+    local k: usize = 0
+    while k < n && out < max {
+        local revents: *i16 = (&buf[0] as usize + k * WSA_POLLFD_SIZE + 10) as *i16
+        if revents[0] != 0 {
+            local w: usize = slotOf[k]
+            tokens[out as usize] = pollWatches[w].token
+            pollWatches[w].used = false
+            out = out + 1
+        }
+        k = k + 1
+    }
+    return out
 }
 
 export fn sysPipe(fds: *i32, nonblocking: bool) -> i32 {
@@ -222,9 +285,7 @@ export fn sysOpenWrite(path: *ui8, append: bool) -> i32 {
 }
 
 export fn sysClose(fd: i32) -> i32 {
-    if isSocket(fd) {
-        return closesocket(socketOf(fd))
-    }
+    if isSocket(fd) { return sockClose(fd) }
     if NtClose(fd as i64) < 0 { return -1 }
     return 0
 }
@@ -252,77 +313,6 @@ export fn sysFileSize(fd: i32) -> i64 {
     local io: [i64; 2]
     if NtQueryInformationFile(fd as i64, &io[0], &info[0] as *void, 24, 5) < 0 { return -1 }
     return info[1]
-}
-
-// ---- TCP over IPv4 (ws2_32) -----------------------------------------------------------------------
-
-fn wsaInit() -> bool {
-    if wsaReady { return true }
-    local data: [ui8; 512]
-    if WSAStartup(514, &data[0]) != 0 { return false }     // 2.2
-    wsaReady = true
-    return true
-}
-
-fn newSocket(kind: i32, proto: i32) -> i32 {
-    if !wsaInit() { return -1 }
-    local s: ui64 = socket(2, kind, proto)
-    if s == 18446744073709551615 { return -1 }
-    return (s as i32) | SOCKET_TAG
-}
-
-export fn sysTcpSocket() -> i32 {
-    return newSocket(1, 6)
-}
-
-export fn sysUdpSocket() -> i32 {
-    return newSocket(2, 17)
-}
-
-/// Receive timeout in milliseconds (0 = none); 0 on success. Windows takes a DWORD of milliseconds.
-export fn sysSetRecvTimeout(fd: i32, ms: i32) -> i32 {
-    local v: i32 = ms
-    // SOL_SOCKET = 0xffff, SO_RCVTIMEO = 0x1006
-    return setsockopt(socketOf(fd), 65535, 4102, &v as *ui8, 4)
-}
-
-/// `ip` is host order (`127.0.0.1` = 2130706433): sockaddr_in = family (u16), port and address in
-/// network order, 8 zero bytes.
-fn fillAddr(addr: *ui8, ip: ui32, port: ui16) {
-    local i: usize = 0
-    while i < 16 {
-        addr[i] = 0
-        i = i + 1
-    }
-    addr[0] = 2
-    addr[2] = (port / 256) as ui8
-    addr[3] = (port % 256) as ui8
-    addr[4] = (ip / 16777216) as ui8
-    addr[5] = ((ip / 65536) % 256) as ui8
-    addr[6] = ((ip / 256) % 256) as ui8
-    addr[7] = (ip % 256) as ui8
-}
-
-export fn sysTcpConnect(fd: i32, ip: ui32, port: ui16) -> i32 {
-    local addr: [ui8; 16]
-    fillAddr(&addr[0], ip, port)
-    if connect(socketOf(fd), &addr[0], 16) != 0 { return -1 }
-    return 0
-}
-
-/// bind + listen (no SO_REUSEADDR: on Windows it would let another process steal the port). 0 on success.
-export fn sysTcpListen(fd: i32, ip: ui32, port: ui16) -> i32 {
-    local addr: [ui8; 16]
-    fillAddr(&addr[0], ip, port)
-    if bind(socketOf(fd), &addr[0], 16) != 0 { return -1 }
-    if listen(socketOf(fd), 128) != 0 { return -1 }
-    return 0
-}
-
-export fn sysTcpAccept(fd: i32) -> i32 {
-    local s: ui64 = accept(socketOf(fd), nil, nil)
-    if s == 18446744073709551615 { return -1 }
-    return (s as i32) | SOCKET_TAG
 }
 
 // ---- entropy and wall clock --------------------------------------------------------------------

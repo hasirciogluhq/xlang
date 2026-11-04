@@ -1,4 +1,4 @@
-// std/runtime/context: the stack-switching primitive used by the scheduler (std/sched).
+// std/runtime/context: the stack-switching primitive used by the scheduler (std/thread/sched).
 // The compiler knows nothing of this: it is `__builtin_asm`.
 
 /// Saves the callee-saved registers on the current stack and its pointer in `*save`, then either

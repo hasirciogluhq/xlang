@@ -1,4 +1,4 @@
-// Collections: the owned, growable String (std/string), the growable Vec<T> (std/vec) and the file
+// Collections: the owned, growable String (std/str/string), the growable Vec<T> (std/collections/vec) and the file
 // round trip through String.
 from "std" import print, String, Vec, vecClone, fsWrite, fsReadAllString, fsRemove
 

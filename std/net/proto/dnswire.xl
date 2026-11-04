@@ -1,0 +1,156 @@
+// std/net/proto/dnswire: DNS messages on the wire (RFC 1035, https://www.rfc-editor.org/rfc/rfc1035, sections 4.1 and 4.1.4).
+// A message is a 12-byte header (ID, flags, and four 16-bit counts: questions, answers, authority, additional; section 4.1.1)
+// followed by the sections. A domain name is a sequence of labels, each a length byte (at most 63) then the bytes, ended by a
+// zero length byte; the whole name is at most 255 bytes (section 2.3.4). A label length byte of 0xC0 or more is a pointer
+// (section 4.1.4): the low 14 bits are an offset from the start of the message. Pointers can form loops, so the reader stops
+// after 16 pointers. This module builds a query (RD set, class IN) and reads names and the header; it does not send queries
+// (see std/net/dns for the resolver).
+
+define DNS_MAX_NAME = 255
+define DNS_MAX_POINTERS = 16
+
+/// The 12-byte header fields.
+export struct DnsHeader {
+    id: ui16
+    flags: ui16
+    questions: ui16
+    answers: ui16
+    authority: ui16
+    additional: ui16
+    ok: bool
+}
+
+/// A name read from a message: its dotted text (without the final dot) in the caller's buffer, and the offset after the name
+/// as it sits in the message (after the pointer, when the name ends in one).
+export struct DnsName {
+    length: usize
+    next: usize
+    ok: bool
+}
+
+/// Writes the wire form of the dotted name `name[0..n)` (for example "example.com") into `out` (capacity `cap`); returns its
+/// length, or -1 when a label is empty or longer than 63, the name is longer than 255 bytes, or `cap` is too small.
+export fn dnsWriteName(name: *ui8, n: usize, out: *ui8, cap: usize) -> isize {
+    local o: usize = 0
+    local start: usize = 0
+    local i: usize = 0
+    // a trailing dot is allowed and means the same name
+    local end: usize = n
+    if n > 0 && name[n - 1] == 46 { end = n - 1 }
+    while i <= end {
+        if i == end || name[i] == 46 {
+            local len: usize = i - start
+            if len == 0 || len > 63 { return -1 }
+            if o + 1 + len > cap { return -1 }
+            out[o] = len as ui8
+            o = o + 1
+            local k: usize = 0
+            while k < len {
+                out[o + k] = name[start + k]
+                k = k + 1
+            }
+            o = o + len
+            start = i + 1
+        }
+        i = i + 1
+    }
+    if end == 0 {
+        if cap < 1 { return -1 }
+        out[0] = 0
+        return 1
+    }
+    if o + 1 > cap || o + 1 > DNS_MAX_NAME { return -1 }
+    out[o] = 0
+    return (o + 1) as isize
+}
+
+/// Writes a standard query with one question (QTYPE `qtype`, QCLASS IN) and RD set. Returns the message length, or -1 on error.
+export fn dnsBuildQuery(id: ui16, name: *ui8, n: usize, qtype: ui16, out: *ui8, cap: usize) -> isize {
+    if cap < 12 { return -1 }
+    out[0] = (id >> 8) as ui8
+    out[1] = (id & 0xff) as ui8
+    out[2] = 0x01
+    out[3] = 0x00
+    out[4] = 0
+    out[5] = 1
+    out[6] = 0
+    out[7] = 0
+    out[8] = 0
+    out[9] = 0
+    out[10] = 0
+    out[11] = 0
+    local w: isize = dnsWriteName(name, n, &out[12], cap - 12)
+    if w < 0 { return -1 }
+    local at: usize = 12 + (w as usize)
+    if at + 4 > cap { return -1 }
+    out[at] = (qtype >> 8) as ui8
+    out[at + 1] = (qtype & 0xff) as ui8
+    out[at + 2] = 0
+    out[at + 3] = 1
+    return (at + 4) as isize
+}
+
+/// Reads the 12-byte header at the start of `msg`.
+export fn dnsParseHeader(msg: *ui8, n: usize) -> DnsHeader {
+    local h: DnsHeader
+    if n < 12 { return h }
+    h.id = ((msg[0] as ui16) << 8) | (msg[1] as ui16)
+    h.flags = ((msg[2] as ui16) << 8) | (msg[3] as ui16)
+    h.questions = ((msg[4] as ui16) << 8) | (msg[5] as ui16)
+    h.answers = ((msg[6] as ui16) << 8) | (msg[7] as ui16)
+    h.authority = ((msg[8] as ui16) << 8) | (msg[9] as ui16)
+    h.additional = ((msg[10] as ui16) << 8) | (msg[11] as ui16)
+    h.ok = true
+    return h
+}
+
+/// Reads the name at `pos` of `msg[0..n)`, following compression pointers. The dotted text is written to `out` (capacity
+/// `cap`, at least 255 bytes is always enough). `ok` is false for a malformed name, a forward or looping pointer, or a name
+/// that does not fit.
+export fn dnsReadName(msg: *ui8, n: usize, pos: usize, out: *ui8, cap: usize) -> DnsName {
+    local r: DnsName
+    local p: usize = pos
+    local next: usize = 0
+    local jumped: bool = false
+    local pointers: usize = 0
+    local o: usize = 0
+    while true {
+        if p >= n { return r }
+        local len: ui8 = msg[p]
+        if len == 0 {
+            if !jumped { next = p + 1 }
+            break
+        }
+        if len >= 0xc0 {
+            // pointer: the offset must point backwards to be a valid name start
+            if p + 1 >= n { return r }
+            pointers = pointers + 1
+            if pointers > DNS_MAX_POINTERS { return r }
+            local target: usize = (((len & 0x3f) as usize) << 8) | (msg[p + 1] as usize)
+            if target >= p { return r }
+            if !jumped { next = p + 2 }
+            jumped = true
+            p = target
+            continue
+        }
+        if len > 63 { return r }
+        if p + 1 + (len as usize) > n { return r }
+        if o > 0 {
+            if o + 1 > cap { return r }
+            out[o] = 46
+            o = o + 1
+        }
+        if o + (len as usize) > cap { return r }
+        local k: usize = 0
+        while k < (len as usize) {
+            out[o + k] = msg[p + 1 + k]
+            k = k + 1
+        }
+        o = o + (len as usize)
+        p = p + 1 + (len as usize)
+    }
+    r.length = o
+    r.next = next
+    r.ok = true
+    return r
+}

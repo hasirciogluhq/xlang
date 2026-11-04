@@ -1,0 +1,2 @@
+// std/collections: growable containers. `vec` is the element array `Vec<T>`.
+export * from "vec"

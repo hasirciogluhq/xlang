@@ -1,5 +1,5 @@
 // Strings: the str helpers, String additions and format / fmtAppend.
-from "std" import print, format, fmtAppend, String, Vec, strFind, strContains, strStartsWith, strEndsWith, strTrim, strSplit, strToI64, strToU64, strEq
+from "std" import print, format, fmtAppend, String, Vec, find, contains, startsWith, endsWith, trim, split, toI64, toU64, eq
 
 global failures: i32 = 0
 
@@ -13,37 +13,33 @@ fn check(name: *ui8, ok: bool) {
 }
 
 @entry fn main() -> i32 {
-    check("find", strFind("hello world", "o w") == 4)
-    check("find absent", strFind("hello", "xyz") == -1)
-    check("find empty needle", strFind("abc", "") == 0)
-    check("contains", strContains("abcdef", "cde") && !strContains("abc", "d"))
-    check("starts with", strStartsWith("prefix-x", "prefix") && !strStartsWith("pre", "prefix"))
-    check("ends with", strEndsWith("file.xl", ".xl") && !strEndsWith("xl", "file.xl"))
+    check("find", find("hello world", "o w") == 4)
+    check("find absent", find("hello", "xyz") == -1)
+    check("find empty needle", find("abc", "") == 0)
+    check("contains", contains("abcdef", "cde") && !contains("abc", "d"))
+    check("starts with", startsWith("prefix-x", "prefix") && !startsWith("pre", "prefix"))
+    check("ends with", endsWith("file.xl", ".xl") && !endsWith("xl", "file.xl"))
 
-    local trimmed: str = strTrim("  \t hi there \n")
-    check("trim", strEq(trimmed, "hi there"))
-    check("trim all blanks", strTrim(" \r\n ").len == 0)
+    local trimmed: String = trim("  \t hi there \n")
+    check("trim", trimmed.equals("hi there"))
+    check("trim all blanks", trim(" \r\n ").len == 0)
 
-    local parts: Vec<str> = strSplit("a,,bc,", ",")
+    local parts: Vec<String> = split("a,,bc,", ",")
     check("split count keeps empty pieces", parts.length() == 4)
-    local p0: str = *parts.get(0)
-    local p1: str = *parts.get(1)
-    local p2: str = *parts.get(2)
-    local p3: str = *parts.get(3)
-    check("split pieces", strEq(p0, "a") && p1.len == 0 && strEq(p2, "bc") && p3.len == 0)
+    check("split pieces", parts.get(0).equals("a") && parts.get(1).len == 0 && parts.get(2).equals("bc") && parts.get(3).len == 0)
 
     local n: i64 = 0
-    check("i64 positive", strToI64("12345", &n) && n == 12345)
-    check("i64 negative", strToI64("-42", &n) && n == -42)
-    check("i64 minimum", strToI64("-9223372036854775808", &n) && n == (0 - 9223372036854775807) - 1)
-    check("i64 overflow", !strToI64("9223372036854775808", &n))
-    check("i64 lone sign", !strToI64("-", &n))
-    check("i64 junk", !strToI64("12a", &n))
+    check("i64 positive", toI64("12345", &n) && n == 12345)
+    check("i64 negative", toI64("-42", &n) && n == -42)
+    check("i64 minimum", toI64("-9223372036854775808", &n) && n == (0 - 9223372036854775807) - 1)
+    check("i64 overflow", !toI64("9223372036854775808", &n))
+    check("i64 lone sign", !toI64("-", &n))
+    check("i64 junk", !toI64("12a", &n))
 
     local u: ui64 = 0
-    check("u64 maximum", strToU64("18446744073709551615", &u) && u + 1 == 0)
-    check("u64 overflow", !strToU64("18446744073709551616", &u))
-    check("u64 empty", !strToU64("", &u))
+    check("u64 maximum", toU64("18446744073709551615", &u) && u + 1 == 0)
+    check("u64 overflow", !toU64("18446744073709551616", &u))
+    check("u64 empty", !toU64("", &u))
 
     local src: String = String("MiXeD 1")
     local low: String = src.toLowerAscii()
@@ -51,7 +47,7 @@ fn check(name: *ui8, ok: bool) {
     check("lower", low.equals("mixed 1"))
     check("upper", up.equals("MIXED 1") && src.equals("MiXeD 1"))
     check("String find, starts, ends", src.find("X") == 2 && src.startsWith("Mi") && src.endsWith(" 1"))
-    check("String slice", strEq(src.slice(0, 2), "Mi"))
+    check("String slice", src.slice(0, 2).equals("Mi"))
     local filled: String = String(3, 65)
     check("String filled with a byte", filled.equals("AAA") && filled.cstr()[3] == 0)
 

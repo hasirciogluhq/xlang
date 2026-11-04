@@ -1,7 +1,7 @@
 // std/http/fetch: whole-response requests. `fetch` reads status, headers and body into one caller
 // buffer and follows redirects; `fetchGet`/`fetchPost`/`fetchPut`/`fetchPatch`/`fetchDelete`/
 // `fetchHead`/`fetchOptions` cover every common method, `fetchMethod` any token.
-from "../memory" import strlen
+from "../mem/memory" import strlen
 from "util" import cstrEq, eqCI, startsCI, memMove, append, headerLookup
 from "url" import Url, FetchOptions, urlParse, urlParsePath, fetchInit, FETCH_OK, FETCH_ERR_URL, FETCH_ERR_TOO_LARGE, FETCH_ERR_REDIRECT, FETCH_ERR_BODY
 from "stream" import HttpStream, streamOpen, streamRead, streamClose

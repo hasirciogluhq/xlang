@@ -3,9 +3,9 @@
 // Request bodies come from a buffer or, chunked, from a `source` callback. Every request sends
 // `Connection: close`.
 from "../sys" import sysTcpSocket, sysTcpConnect, sysClose, sysRead, sysWrite, sysUnmap, sysSetRecvTimeout
-from "../memory" import strlen, mapGrow
-from "../dns" import dnsResolve
-from "../tls" import TlsConn, TLS_ERR_DNS, tlsConnectHost, tlsWrite, tlsRead, tlsClose
+from "../mem/memory" import strlen, mapGrow
+from "../net/dns" import dnsResolve
+from "../tls/tls" import TlsConn, TLS_ERR_DNS, tlsConnectHost, tlsWrite, tlsRead, tlsClose
 from "util" import cstrEq, startsCI, memMove, formatUInt, formatHex, append, hexDigit, headerEnd, terminateLines, headerLookup, hasHeader
 from "url" import Url, FetchOptions, urlParse, FETCH_OK, FETCH_ERR_URL, FETCH_ERR_DNS, FETCH_ERR_CONNECT, FETCH_ERR_TLS, FETCH_ERR_IO, FETCH_ERR_TOO_LARGE, FETCH_ERR_BODY
 

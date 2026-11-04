@@ -83,6 +83,7 @@ target("xlang-frontend")
         "$(projectdir)/src/pkg/git.cpp",
         "$(projectdir)/src/pkg/project.cpp",
         "$(projectdir)/src/hir/hir.cpp",
+        "$(projectdir)/src/hir/prune.cpp",
         "$(projectdir)/src/util/source.cpp",
         "$(projectdir)/src/util/diagnostics.cpp"
     )

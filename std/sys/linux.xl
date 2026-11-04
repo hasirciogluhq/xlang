@@ -14,7 +14,6 @@ define SYS_GETTID = 186
 define SYS_EPOLL_CREATE1 = 291
 define SYS_EPOLL_CTL = 233
 define SYS_EPOLL_WAIT = 232
-define SYS_RT_SIGACTION = 13
 #elif arch == "aarch64"
 define SYS_READ = 63
 define SYS_WRITE = 64
@@ -30,7 +29,6 @@ define SYS_GETTID = 178
 define SYS_EPOLL_CREATE1 = 20
 define SYS_EPOLL_CTL = 21
 define SYS_EPOLL_WAIT = 22
-define SYS_RT_SIGACTION = 134
 #endif
 
 #if arch == "x86_64"
@@ -63,34 +61,16 @@ define SYS_OPEN = 2
 define SYS_CLOSE = 3
 define SYS_LSEEK = 8
 define SYS_UNLINK = 87
-define SYS_SOCKET = 41
-define SYS_CONNECT = 42
-define SYS_ACCEPT = 43
-define SYS_BIND = 49
-define SYS_LISTEN = 50
-define SYS_SETSOCKOPT = 54
 #elif arch == "aarch64"
 define SYS_OPENAT = 56
 define SYS_CLOSE = 57
 define SYS_LSEEK = 62
 define SYS_UNLINKAT = 35
-define SYS_SOCKET = 198
-define SYS_CONNECT = 203
-define SYS_ACCEPT = 202
-define SYS_BIND = 200
-define SYS_LISTEN = 201
-define SYS_SETSOCKOPT = 208
 #endif
 define AT_FDCWD = -100
 define O_RDONLY = 0
 define O_WRONLY_CREAT_TRUNC = 577      // O_WRONLY | O_CREAT | O_TRUNC
 define O_WRONLY_CREAT_APPEND = 1089    // O_WRONLY | O_CREAT | O_APPEND
-define AF_INET = 2
-define SOCK_STREAM = 1
-define SOCK_DGRAM = 2
-define SO_RCVTIMEO = 20
-define SOL_SOCKET = 1
-define SO_REUSEADDR = 2
 
 define PROT_READ_WRITE = 3
 define MAP_PRIVATE_ANON = 34        // MAP_PRIVATE | MAP_ANONYMOUS
@@ -101,6 +81,11 @@ define FUTEX_WAKE = 1
 
 export fn sysWrite(fd: i32, buf: *ui8, n: usize) -> isize {
     return syscall(SYS_WRITE, fd, buf, n) as isize
+}
+
+/// Writes to a file descriptor; on Linux the same call as `sysWrite` (Windows separates the two).
+export fn sysWriteFile(fd: i32, buf: *ui8, n: usize) -> isize {
+    return sysWrite(fd, buf, n)
 }
 
 export fn sysRead(fd: i32, buf: *ui8, n: usize) -> isize {
@@ -257,83 +242,6 @@ export fn sysFileSize(fd: i32) -> i64 {
     local n: i64 = syscall(SYS_LSEEK, fd, 0, 2)
     syscall(SYS_LSEEK, fd, 0, 0)
     return n
-}
-
-// ---- TCP over IPv4 -----------------------------------------------------------------------------
-
-global sigpipeIgnored: bool
-
-/// A write to a socket whose peer is gone must fail with EPIPE instead of killing the process (a
-/// server meets this on every client that aborts a handshake): SIGPIPE is ignored, once, the first
-/// time a socket is created or accepted.
-fn noSigpipe() {
-    if sigpipeIgnored { return }
-    sigpipeIgnored = true
-    local act: [i64; 4]         // kernel sigaction: handler, flags, (restorer,) mask: all zero but SIG_IGN
-    act[0] = 1
-    act[1] = 0
-    act[2] = 0
-    act[3] = 0
-    syscall(SYS_RT_SIGACTION, 13, &act[0], 0, 8)
-}
-
-/// A TCP socket; negative errno on failure.
-export fn sysTcpSocket() -> i32 {
-    noSigpipe()
-    return syscall(SYS_SOCKET, AF_INET, SOCK_STREAM, 0) as i32
-}
-
-/// A UDP socket; negative errno on failure. After `sysTcpConnect` (which only fixes the peer for UDP)
-/// plain `sysWrite`/`sysRead` send and receive datagrams.
-export fn sysUdpSocket() -> i32 {
-    return syscall(SYS_SOCKET, AF_INET, SOCK_DGRAM, 0) as i32
-}
-
-/// Receive timeout in milliseconds (0 = none); 0 on success.
-export fn sysSetRecvTimeout(fd: i32, ms: i32) -> i32 {
-    local tv: [i64; 2]
-    tv[0] = (ms / 1000) as i64
-    tv[1] = ((ms % 1000) * 1000) as i64
-    return syscall(SYS_SETSOCKOPT, fd, SOL_SOCKET, SO_RCVTIMEO, &tv[0], 16) as i32
-}
-
-/// `ip` is host order (`127.0.0.1` = 2130706433).
-fn fillAddr(addr: *ui8, ip: ui32, port: ui16) {
-    local i: usize = 0
-    while i < 16 {
-        addr[i] = 0
-        i = i + 1
-    }
-    addr[0] = AF_INET
-    addr[2] = (port / 256) as ui8
-    addr[3] = (port % 256) as ui8
-    addr[4] = (ip / 16777216) as ui8
-    addr[5] = ((ip / 65536) % 256) as ui8
-    addr[6] = ((ip / 256) % 256) as ui8
-    addr[7] = (ip % 256) as ui8
-}
-
-export fn sysTcpConnect(fd: i32, ip: ui32, port: ui16) -> i32 {
-    local addr: [ui8; 16]
-    fillAddr(&addr[0], ip, port)
-    return syscall(SYS_CONNECT, fd, &addr[0], 16) as i32
-}
-
-/// SO_REUSEADDR, bind and listen. 0 on success.
-export fn sysTcpListen(fd: i32, ip: ui32, port: ui16) -> i32 {
-    local one: i32 = 1
-    syscall(SYS_SETSOCKOPT, fd, SOL_SOCKET, SO_REUSEADDR, &one, 4)
-    local addr: [ui8; 16]
-    fillAddr(&addr[0], ip, port)
-    if syscall(SYS_BIND, fd, &addr[0], 16) < 0 { return -1 }
-    if syscall(SYS_LISTEN, fd, 128) < 0 { return -1 }
-    return 0
-}
-
-/// Blocks for a connection; negative errno on failure.
-export fn sysTcpAccept(fd: i32) -> i32 {
-    noSigpipe()
-    return syscall(SYS_ACCEPT, fd, 0, 0) as i32
 }
 
 // ---- entropy and wall clock --------------------------------------------------------------------

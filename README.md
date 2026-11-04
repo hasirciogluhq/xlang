@@ -1,5 +1,7 @@
 # xlang
 
+Documentation: <https://hasirciogluhq.github.io/xlang/> (built from `docs/` by the `pages` workflow).
+
 **xlang** is an extremely low-level, LLVM-based programming language. Optional high-level APIs (`net`/`http`, and similar) are importable packages — not the language core. The `xlang` CLI compiles `.xlang` to native objects / executables / static libraries. C++ owns the compiler, host tooling, and LLVM codegen.
 
 ```
@@ -35,9 +37,9 @@ xlang package install github.com/user/repo      # newest stable tag (v1.2.0 or 1
 xlang run main.xl                               # from "github.com/user/repo" import ...
 ```
 
-`xlang.toml` lists dependencies, `xlang.lock` pins their commits, `.xlang/cache` holds the sources. Builds never touch the network. The standard library is a package too: the compiler embeds a default and any project may use a local directory or a repository at another version. Packages may also ship prebuilt files per platform (`[[native]]`), which the compiler links. Details: **[docs/PACKAGE_MANAGER.md](docs/PACKAGE_MANAGER.md)**.
+`xlang.toml` lists dependencies, `xlang.lock` pins their commits, `.xlang/cache` holds the sources. Builds never touch the network. The standard library is a package too: the compiler embeds a default and any project may use a local directory or a repository at another version. Packages may also ship prebuilt files per platform (`[[native]]`), which the compiler links. Details: **[docs/compiler/packages.md](docs/compiler/packages.md)**.
 
-Full language reference: **[docs/LANGUAGE.md](docs/LANGUAGE.md)** · Linking: **[docs/LINKING.md](docs/LINKING.md)**  
+Full language reference: **[docs/language/index.md](docs/language/index.md)** · Linking: **[docs/compiler/linking.md](docs/compiler/linking.md)**  
 VS Code extension: **[vscode/README.md](vscode/README.md)**
 
 ## Install
@@ -65,7 +67,7 @@ xlang self-update           # also: xlang update, xlang upgrade
 xlang self-update --check   # only report whether a newer release exists
 ```
 
-`self-update` downloads the latest release for your OS and CPU, verifies it, and replaces the running binary; when you already have the latest it says so. A Homebrew install is updated with `brew upgrade xlang` instead. Details: **[docs/INSTALL.md](docs/INSTALL.md)**.
+`self-update` downloads the latest release for your OS and CPU, verifies it, and replaces the running binary; when you already have the latest it says so. A Homebrew install is updated with `brew upgrade xlang` instead. Details: **[docs/compiler/install.md](docs/compiler/install.md)**.
 
 ### Shell completion
 
@@ -100,13 +102,9 @@ xmake builds the C/C++ compiler and host tooling only.
 ## Quick start
 
 ```bash
-./outputs/xlang run examples/strings.xl
-./outputs/xlang run examples/hello.xl
-./outputs/xlang run examples/types.xl
-./outputs/xlang run examples/scheduler.xl
-./outputs/xlang run examples/pointers.xl
-./outputs/xlang run examples/filesystem.xl
-./outputs/xlang run examples/http_server.xl
+./outputs/xlang run test/e2e/strings.xl
+./outputs/xlang run test/e2e/print.xl
+./outputs/xlang run test/e2e/sched.xl
 ```
 
 ## CLI
@@ -139,9 +137,8 @@ xlang run program.xlang --keep-artifacts
 ### `xlang parse` / `xlang test`
 
 ```bash
-xlang parse examples/hello.xlang
-xlang test                         # default: test/xlang/
-xlang test http
+xlang check test/e2e/print.xl
+xlang test test/e2e/strings.xl
 xlang test --parallel
 ```
 
@@ -167,8 +164,6 @@ xlang/
 │   ├── platform/            # linux | macosx | windows
 │   ├── util/
 ├── include/xlang/
-├── examples/
-├── test/xlang/
 ├── vscode/
 ├── xmake.lua
 ├── xmake/
@@ -195,7 +190,7 @@ Kernel entry is only via `declare syscall` / `@syscall`; ordinary `declare` name
 
 ## Status
 
-Early-stage (v0.1). APIs and syntax may change. See [docs/LANGUAGE.md](docs/LANGUAGE.md) limitations.
+Early-stage (v0.1). APIs and syntax may change. See [docs/language/index.md](docs/language/index.md) limitations.
 
 ## License
 
