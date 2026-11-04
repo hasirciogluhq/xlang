@@ -312,3 +312,8 @@ Decisions taken when the package system was added (`docs/PACKAGE_MANAGER.md` is 
 - **Ed448 and the other Edwards curves use the slow path:** the scalar reductions go through the integer routines (`bigintDivMod`), not Montgomery form, so an Ed448 signature takes far longer than an Ed25519 one.
 - **Ed448ph (the pre-hashed variant) and contexts are not implemented:** only the pure Ed448 signature with an empty context (RFC 8032 section 5.2.6, phflag 0).
 - **secp256k1 uses the same non-constant-time arithmetic as P-256:** a public key, a signature and a shared secret match openssl, but a secret scalar is processed with data-dependent branches.
+
+## Std HTTP router (`std/http/router`)
+- **No RedirectFixedPath and no internal redirect:** the router redirects a missing or extra trailing slash (`redirectSlash`), but it does not fix a case-insensitive path, and `HandleContext`-style forwarding of a request to another route is not implemented. A handler that needs another route calls the handler directly.
+- **Fixed sizes:** a route pattern is at most 128 bytes, a group prefix at most 128 bytes, and a chain at most 8 handlers (middleware included). A longer pattern stops the program.
+- **Form and body binding:** `c.body` is the raw body; there is no `PostForm`, multipart or `ShouldBindJSON` equivalent yet.
