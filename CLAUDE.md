@@ -1,8 +1,15 @@
 # xlang — notes for Claude
 
 ## Platforms (hard rule)
-- Write new code for Linux and macOS only (x86-64 and arm64). Do not write Windows code or Windows-specific branches for now; where a feature has no Windows support, it is a clear compile-time error or a documented gap in `KNOWN-LIMITATIONS.md`, not a half-written port.
-- Windows support (verified under Wine/CrossOver or real Windows) comes later as its own step. Existing Windows code stays as is; do not extend it, and new e2e entries get Windows column `0`.
+- Write code for Linux, macOS and Windows (x86-64 and arm64 where the OS supports it). Every std feature is written for all three; where one OS cannot support a feature, it is a clear compile-time error or a documented gap in `KNOWN-LIMITATIONS.md`, not a half-written port.
+- Windows e2e entries are verified under Wine/CrossOver or on real Windows; a Windows column of `0` means not yet verified, not out of scope.
+
+## Native OS code (hard rule)
+- Native OS code (syscalls, ntdll/kernel32/ws2_32 imports, module and process handles) lives in `std/sys/`. Do not create one file per OS by default: a file holds one area (socket, process, file, memory, entropy) and routes between OSes with `#if os`.
+- Split an area per OS only when the bodies share nothing, and then keep the shared signature in one place.
+- Use one function for all OSes when the arguments and result are the same; split into per-OS functions only when the argument or result differs, and route with `#if` at the smallest possible scope.
+- **Syscalls are docs-first (hard rule).** Before writing or changing any syscall or OS API call, read the official documentation for every target OS (Linux man-pages and kernel headers, macOS/XNU syscall headers, Windows API and ntdll docs) and record the chosen numbers, struct layouts and error behavior in `docs/` first. Never guess a number, a flag or a layout.
+- A Windows shared library gets a `DllMain`: `DLL_PROCESS_ATTACH` runs `_xl_initAll` and `DLL_PROCESS_DETACH` runs `_xl_finiAll`; the module handle is obtained through a `std/sys` helper, not hard-coded.
 
 ## Language
 - Repo content is English (code, comments, docs, commits, diagnostics). User chat is Turkish.
@@ -99,3 +106,4 @@ Object to bad ideas but leave decision to user. Cite real precedents. Do not re-
 ## Std layout (hard rule)
 - `std/` is nested by area: `std/<area>/<file>.xl` with `std/<area>/index.xl` re-exporting the area (`"runtime"` -> `std/runtime/index.xl`; siblings import as `"name"`, parents as `"../name"`). Deeper nesting is allowed when an area grows.
 - New stdlib code goes into the matching area directory; a new top-level file is only for a new area. `std/runtime/`: `panic`, `unwind` (panic unwinding, `register(unwind)`), `context` (stack switching).
+- Network area (planned layout): `std/sys/` (native OS layer, see Native OS code), `std/net/` (IPv4 and IPv6 address types, sockets, DNS, all network primitives; `std/dns` moves here), `std/tls/` (TLS 1.0 to 1.3 and SSL 3 as separate, versioned parts), `std/http/` (HTTP/1.1 on `std/net`; HTTPS uses `std/tls`), `std/crypto/` (hashes, MACs, ciphers, key exchange). Each area has an `index.xl`.
