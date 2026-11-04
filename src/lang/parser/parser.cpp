@@ -59,6 +59,10 @@ class Parser {
                 syncItem(start);
             }
         }
+        for (auto& lifted : lambdas_) {
+            program.items.push_back(std::move(lifted));
+        }
+        lambdas_.clear();
         return program;
     }
 
@@ -356,11 +360,23 @@ class Parser {
     void closeAngle() {
         Token& t = tokens_[pos_];
         switch (t.kind) {
-        case TokenKind::Gt: advance(); return;
-        case TokenKind::Shr: t.kind = TokenKind::Gt; t.text = ">"; return;
-        case TokenKind::Ge: t.kind = TokenKind::Assign; t.text = "="; return;
-        case TokenKind::ShrAssign: t.kind = TokenKind::Ge; t.text = ">="; return;
-        default: expected("`>` closing the type arguments");
+        case TokenKind::Gt:
+            advance();
+            return;
+        case TokenKind::Shr:
+            t.kind = TokenKind::Gt;
+            t.text = ">";
+            return;
+        case TokenKind::Ge:
+            t.kind = TokenKind::Assign;
+            t.text = "=";
+            return;
+        case TokenKind::ShrAssign:
+            t.kind = TokenKind::Ge;
+            t.text = ">=";
+            return;
+        default:
+            expected("`>` closing the type arguments");
         }
     }
 
@@ -371,9 +387,15 @@ class Parser {
         int depth = 0;
         for (std::size_t i = pos_; i < tokens_.size(); ++i) {
             switch (tokens_[i].kind) {
-            case TokenKind::Lt: ++depth; break;
-            case TokenKind::Gt: --depth; break;
-            case TokenKind::Shr: depth -= 2; break;
+            case TokenKind::Lt:
+                ++depth;
+                break;
+            case TokenKind::Gt:
+                --depth;
+                break;
+            case TokenKind::Shr:
+                depth -= 2;
+                break;
             case TokenKind::Ident:
             case TokenKind::PrimType:
             case TokenKind::Star:
@@ -382,8 +404,10 @@ class Parser {
             case TokenKind::LBracket:
             case TokenKind::RBracket:
             case TokenKind::Int:
-            case TokenKind::Semicolon: break;
-            default: return false;
+            case TokenKind::Semicolon:
+                break;
+            default:
+                return false;
             }
             if (depth < 0) {
                 return false;
@@ -392,7 +416,8 @@ class Parser {
                 // A `>` that ends a comparison needs a right operand, so after it these tokens
                 // can only close type arguments of a generic function value or call.
                 const bool ends_here = i + 1 >= tokens_.size() || tokens_[i + 1].newline_before;
-                const TokenKind next = i + 1 < tokens_.size() ? tokens_[i + 1].kind : TokenKind::End;
+                const TokenKind next =
+                    i + 1 < tokens_.size() ? tokens_[i + 1].kind : TokenKind::End;
                 return ends_here || next == TokenKind::LParen || next == TokenKind::LBrace ||
                        next == TokenKind::RParen || next == TokenKind::RBracket ||
                        next == TokenKind::Comma || next == TokenKind::Semicolon;
@@ -769,7 +794,7 @@ class Parser {
     /// A call argument. Inline-asm operands are written `in(reg) x`, `out("rax") y`,
     /// `inout(reg) z`: a register spec in parentheses followed by the operand expression.
     ExprPtr parseCallArg() {
-        if (at(TokenKind::DotDot)) {  // `..args`: spreads a parameter pack into the call
+        if (at(TokenKind::DotDot)) { // `..args`: spreads a parameter pack into the call
             ExprPtr spread = makeExpr(Expr::Kind::Spread, cur().span);
             advance();
             spread->text = expectIdent("a parameter pack name after `..`");
@@ -833,7 +858,7 @@ class Parser {
                 ExprPtr field = makeExpr(Expr::Kind::Field, expr->span);
                 field->text = advance().text;
                 if (at(TokenKind::Lt) && genericArgsAhead()) {
-                    field->generic_args = parseTypeArgs();  // `obj.m<T>(...)`
+                    field->generic_args = parseTypeArgs(); // `obj.m<T>(...)`
                 }
                 field->span = spanFrom(expr->span);
                 field->lhs = std::move(expr);
@@ -862,6 +887,26 @@ class Parser {
             }
         }
         return expr;
+    }
+
+    /// `fn(params) -> R { body }` as an expression: the body becomes a module-level function with a
+    /// generated name, and the expression is a reference to it. A literal captures nothing; an
+    /// outer local used inside it is an unknown name.
+    ExprPtr parseFnLiteral() {
+        const Span start = cur().span;
+        expect(TokenKind::Fn, "`fn`");
+        FnDecl fn;
+        const std::string name = "__lambda" + std::to_string(lambda_count_++);
+        parseFnTail(fn, name, false, true);
+        fn.name = name;
+        fn.name_span = start;
+        fn.span = spanFrom(start);
+        Item item;
+        item.decl = std::move(fn);
+        lambdas_.push_back(std::move(item));
+        ExprPtr e = makeExpr(Expr::Kind::Name, start);
+        e->text = name;
+        return e;
     }
 
     ExprPtr parsePrimary() {
@@ -927,6 +972,8 @@ class Parser {
             inner->span = spanFrom(start);
             return inner;
         }
+        case TokenKind::Fn:
+            return parseFnLiteral();
         case TokenKind::LBracket:
             return parseArrayLiteral();
         case TokenKind::New:
@@ -1003,7 +1050,8 @@ class Parser {
         } else if (at(TokenKind::LBrace)) {
             e->fields = parseFieldInits();
         } else {
-            expected("`(` with the constructor arguments or `{` with the field initializers after the type of `new`");
+            expected("`(` with the constructor arguments or `{` with the field initializers after "
+                     "the type of `new`");
         }
         e->span = spanFrom(start);
         return e;
@@ -1052,7 +1100,7 @@ class Parser {
             return;
         }
         if (for_header_ && (at(TokenKind::Semicolon) || at(TokenKind::LBrace))) {
-            return;  // `for init; cond; step {`
+            return; // `for init; cond; step {`
         }
         failAt(cur(),
                std::format("unexpected {} after the end of a statement", describeToken(cur())),
@@ -1079,7 +1127,7 @@ class Parser {
             (peekKind(2) == TokenKind::While || peekKind(2) == TokenKind::Do ||
              peekKind(2) == TokenKind::For)) {
             std::string label = advance().text;
-            advance();  // ':'
+            advance(); // ':'
             Stmt loop = parseStatementBody();
             loop.label = std::move(label);
             return loop;
@@ -1174,7 +1222,8 @@ class Parser {
         }
         case TokenKind::Continue:
         case TokenKind::Break: {
-            stmt.kind = advance().kind == TokenKind::Break ? Stmt::Kind::Break : Stmt::Kind::Continue;
+            stmt.kind =
+                advance().kind == TokenKind::Break ? Stmt::Kind::Break : Stmt::Kind::Continue;
             if (at(TokenKind::Ident) && !cur().newline_before) {
                 stmt.name = advance().text;
             }
@@ -1208,16 +1257,36 @@ class Parser {
         bool incdec = false;
         if (continues()) {
             switch (cur().kind) {
-            case TokenKind::PlusAssign: compound = BinaryOp::Add; break;
-            case TokenKind::MinusAssign: compound = BinaryOp::Sub; break;
-            case TokenKind::StarAssign: compound = BinaryOp::Mul; break;
-            case TokenKind::SlashAssign: compound = BinaryOp::Div; break;
-            case TokenKind::PercentAssign: compound = BinaryOp::Mod; break;
-            case TokenKind::AmpAssign: compound = BinaryOp::BitAnd; break;
-            case TokenKind::PipeAssign: compound = BinaryOp::BitOr; break;
-            case TokenKind::CaretAssign: compound = BinaryOp::BitXor; break;
-            case TokenKind::ShlAssign: compound = BinaryOp::Shl; break;
-            case TokenKind::ShrAssign: compound = BinaryOp::Shr; break;
+            case TokenKind::PlusAssign:
+                compound = BinaryOp::Add;
+                break;
+            case TokenKind::MinusAssign:
+                compound = BinaryOp::Sub;
+                break;
+            case TokenKind::StarAssign:
+                compound = BinaryOp::Mul;
+                break;
+            case TokenKind::SlashAssign:
+                compound = BinaryOp::Div;
+                break;
+            case TokenKind::PercentAssign:
+                compound = BinaryOp::Mod;
+                break;
+            case TokenKind::AmpAssign:
+                compound = BinaryOp::BitAnd;
+                break;
+            case TokenKind::PipeAssign:
+                compound = BinaryOp::BitOr;
+                break;
+            case TokenKind::CaretAssign:
+                compound = BinaryOp::BitXor;
+                break;
+            case TokenKind::ShlAssign:
+                compound = BinaryOp::Shl;
+                break;
+            case TokenKind::ShrAssign:
+                compound = BinaryOp::Shr;
+                break;
             case TokenKind::PlusPlus:
                 compound = BinaryOp::Add;
                 incdec = true;
@@ -1226,7 +1295,8 @@ class Parser {
                 compound = BinaryOp::Sub;
                 incdec = true;
                 break;
-            default: break;
+            default:
+                break;
             }
         }
         if ((at(TokenKind::Assign) && continues()) || compound) {
@@ -1271,15 +1341,15 @@ class Parser {
     /// `for init; cond; step { body }` (every part optional) or `for i in lo..hi { body }`.
     Stmt parseFor() {
         Stmt stmt;
-        advance();  // 'for'
+        advance(); // 'for'
         const bool saved_no_struct = no_struct_;
         const bool saved_header = for_header_;
         no_struct_ = true;
         if (at(TokenKind::Ident) && peekKind(1) == TokenKind::Ident && peek(1).text == "in") {
             stmt.name = advance().text;
-            advance();  // 'in'
+            advance(); // 'in'
             stmt.expr = parseExpr();
-            if (at(TokenKind::LBrace)) {  // `for a in args { }` iterates a parameter pack
+            if (at(TokenKind::LBrace)) { // `for a in args { }` iterates a parameter pack
                 stmt.kind = Stmt::Kind::ForPack;
                 no_struct_ = saved_no_struct;
                 stmt.body = parseBlockPtr();
@@ -1336,7 +1406,7 @@ class Parser {
     Stmt parseSwitch() {
         Stmt stmt;
         stmt.kind = Stmt::Kind::Switch;
-        advance();  // 'switch'
+        advance(); // 'switch'
         stmt.expr = parseCondition();
         expect(TokenKind::LBrace, "`{` opening the `switch` body");
         const int saved_depth = nl_depth_;
@@ -1349,7 +1419,9 @@ class Parser {
         while (!at(TokenKind::RBrace)) {
             if (at(TokenKind::End)) {
                 restore();
-                failAt(cur(), "unexpected end of file in a `switch`", "the `switch` opened here is never closed");
+                failAt(cur(),
+                       "unexpected end of file in a `switch`",
+                       "the `switch` opened here is never closed");
             }
             SwitchCase arm;
             arm.span = cur().span;
@@ -1370,7 +1442,7 @@ class Parser {
             stmt.cases.push_back(std::move(arm));
         }
         restore();
-        advance();  // '}'
+        advance(); // '}'
         return stmt;
     }
 
@@ -1598,20 +1670,9 @@ class Parser {
 
     // --- fn ----------------------------------------------------------------------------------
 
-    FnDecl parseFn(const DeclStart& s, bool member) {
-        FnDecl fn;
-        Span fn_start = cur().span;
-        expect(TokenKind::Fn, "`fn`");
-        const Token& name_tok = cur();
-        if (!at(TokenKind::Ident)) {
-            expected("a function name");
-        }
-        const std::string name = advance().text;
-        const Span name_span = name_tok.span;
-        if (at(TokenKind::Lt)) {
-            fn.generic_params = parseGenericParams();
-        }
-
+    /// The parameter list, the optional return type and the body of a function (after its name):
+    /// shared by named functions and function literals. `needs_body` makes a missing body an error.
+    void parseFnTail(FnDecl& fn, const std::string& name, bool member, bool needs_body) {
         expect(TokenKind::LParen, "`(` starting the parameter list");
         ++nl_depth_;
         while (!at(TokenKind::RParen)) {
@@ -1621,7 +1682,7 @@ class Parser {
                 advance();
                 param.name = "self";
                 param.is_self = true;
-            } else if (at(TokenKind::DotDot)) {  // `..args`: the untyped trailing pack
+            } else if (at(TokenKind::DotDot)) { // `..args`: the untyped trailing pack
                 advance();
                 param.name = expectIdent("a parameter pack name after `..`");
                 param.is_pack = true;
@@ -1649,8 +1710,8 @@ class Parser {
         if (at(TokenKind::LBrace)) {
             fn.has_body = true;
             fn.body = parseBlock();
-        } else if (!member && !s.modifiers.declared) {
-            // A free function needs a body unless it is `declare`d.
+        } else if (needs_body) {
+            // A function that needs a body has none here.
             failAt(cur(),
                    std::format("expected `{{` starting the body of `{}`, found {}",
                                name,
@@ -1661,6 +1722,23 @@ class Parser {
         } else {
             endOfItemLine();
         }
+        (void)member;
+    }
+
+    FnDecl parseFn(const DeclStart& s, bool member) {
+        FnDecl fn;
+        Span fn_start = cur().span;
+        expect(TokenKind::Fn, "`fn`");
+        const Token& name_tok = cur();
+        if (!at(TokenKind::Ident)) {
+            expected("a function name");
+        }
+        const std::string name = advance().text;
+        const Span name_span = name_tok.span;
+        if (at(TokenKind::Lt)) {
+            fn.generic_params = parseGenericParams();
+        }
+        parseFnTail(fn, name, member, !member && !s.modifiers.declared);
         finishDecl(fn, s, name, name_span);
         if (member) {
             fn.span = spanFrom(fn_start);
@@ -1969,12 +2047,14 @@ class Parser {
             addItem(program, s, std::move(decl));
             return;
         }
-        if (decl.has_underlying ||
-            std::ranges::any_of(decl.members, [](const EnumMember& m) { return m.value != nullptr; })) {
-            diag_.error("E0747",
-                        decl.name_span,
-                        std::format("enum `{}` mixes payload variants with constant values", decl.name),
-                        "a payload enum has no `: T` and no `= value`; the tag is numbered by position");
+        if (decl.has_underlying || std::ranges::any_of(decl.members, [](const EnumMember& m) {
+                return m.value != nullptr;
+            })) {
+            diag_.error(
+                "E0747",
+                decl.name_span,
+                std::format("enum `{}` mixes payload variants with constant values", decl.name),
+                "a payload enum has no `: T` and no `= value`; the tag is numbered by position");
         }
         const auto named = [&](std::string name, const Span& span) {
             Type t = Type::makeNamed({std::move(name)});
@@ -2272,7 +2352,10 @@ class Parser {
     std::size_t pos_{0};
     int nl_depth_{0};
     bool no_struct_{false};
-    bool for_header_{false};  ///< parsing the init/step statements of a `for` header
+    bool for_header_{false}; ///< parsing the init/step statements of a `for` header
+    std::vector<Item>
+        lambdas_; // function literals lifted out of expressions, appended to the program at the end
+    int lambda_count_{0};
 };
 
 } // namespace
