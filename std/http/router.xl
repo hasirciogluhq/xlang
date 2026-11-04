@@ -139,6 +139,13 @@ export fn groupHandle(g: *Group, method: *ui8, path: *ui8, handler: fn(*Context)
         if rt.path[i] == 58 || rt.path[i] == 42 { rt.isStatic = false }
         i = i + 1
     }
+    // Gin panics at startup when two routes of one method differ only in parameter names (`/user/:id` and `/user/:name`).
+    local k: usize = 0
+    while k < r.count {
+        local other: *Route = &r.routes[k]
+        if eq(&other.method[0], method) && sameShape(&other.path[0], &rt.path[0]) { panic("ambiguous route: conflicts with an existing route with the same shape") }
+        k = k + 1
+    }
     local m: i32 = 0
     while m < g.mwCount {
         rt.chain[m] = g.mw[m]
@@ -177,6 +184,28 @@ export fn routerPatch(r: *Router, path: *ui8, h: fn(*Context)) { groupHandle(&r.
 export fn routerHead(r: *Router, path: *ui8, h: fn(*Context)) { groupHandle(&r.root, "HEAD", path, h) }
 export fn routerOptions(r: *Router, path: *ui8, h: fn(*Context)) { groupHandle(&r.root, "OPTIONS", path, h) }
 export fn routerAny(r: *Router, path: *ui8, h: fn(*Context)) { groupAny(&r.root, path, h) }
+
+/// True when two patterns have the same shape: equal text except that parameter names (`:x`) and wildcard names (`*x`) may differ.
+fn sameShape(a: *ui8, b: *ui8) -> bool {
+    local i: usize = 0
+    local j: usize = 0
+    while true {
+        if a[i] == 58 && b[j] == 58 {
+            while a[i] != 0 && a[i] != 47 { i = i + 1 }
+            while b[j] != 0 && b[j] != 47 { j = j + 1 }
+        } else if a[i] == 42 && b[j] == 42 {
+            return true
+        } else if a[i] != b[j] {
+            return false
+        } else if a[i] == 0 {
+            return true
+        } else {
+            i = i + 1
+            j = j + 1
+        }
+    }
+    return false
+}
 
 fn eq(a: *ui8, b: *ui8) -> bool {
     local i: usize = 0

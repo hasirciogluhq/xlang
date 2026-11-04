@@ -141,6 +141,29 @@ target("std")
         os.execv(exe, {"check", path.join(os.projectdir(), "std", "index.xl"), "--no-std"})
     end)
 
+-- Examples: `docs/examples/*.xl` (short programs that the documentation pages include) and `examples/<name>/main.xl` (complete
+-- programs). Every build copies both sets into `build/examples/` (docs/ and project/) and type-checks each program with the
+-- freshly built compiler, so an example cannot silently rot.
+target("examples")
+    set_kind("phony")
+    set_default(not cross)
+    set_enabled(not cross)
+    add_deps("xlang")
+    after_build(function (target)
+        local root = os.projectdir()
+        local exe = path.join(root, "outputs", "xlang")
+        local out = path.join(root, "build", "examples")
+        os.tryrm(out)
+        os.cp(path.join(root, "docs", "examples"), path.join(out, "docs"))
+        os.cp(path.join(root, "examples"), path.join(out, "project"))
+        for _, f in ipairs(os.files(path.join(out, "docs", "*.xl"))) do
+            os.execv(exe, {"check", f})
+        end
+        for _, d in ipairs(os.dirs(path.join(out, "project", "*"))) do
+            os.execv(exe, {"check", path.join(d, "main.xl")})
+        end
+    end)
+
 -- End-to-end tests: `xmake run e2e` builds and runs the programs of test/e2e (natively, and on
 -- Linux aarch64/x86_64 through Docker when it is available).
 target("e2e")

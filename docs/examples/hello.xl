@@ -1,0 +1,17 @@
+// A route and a server on 127.0.0.1:8080. Run with `xlang run hello.xl`, then `curl http://127.0.0.1:8080/`.
+from "std" import print, Router, Context, routerInit, routerGet, routerServe, ctxString
+
+fn home(c: *Context) {
+    ctxString(c, 200, "Hello from xlang")
+}
+
+fn listening() {
+    print("listening on http://127.0.0.1:8080\n")
+}
+
+@entry fn main() -> i32 {
+    local r: Router
+    routerInit(&r)
+    routerGet(&r, "/", home)
+    return routerServe(&r, 2130706433, 8080, listening)
+}

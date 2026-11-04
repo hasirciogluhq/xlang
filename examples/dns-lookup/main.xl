@@ -1,0 +1,48 @@
+// dns-lookup: prints the IPv4 addresses of a host name with the system resolver, and the RFC 1035 query that a DNS client
+// would send for it (std/net/proto/dnswire builds the bytes; std/net/dns does the lookup).
+//   dns-lookup <host>
+from "std" import print, fromC, dnsResolveAll, dnsBuildQuery
+
+define MAX_ADDRS = 16
+
+/// Prints `v` as a dotted-quad IPv4 address (the value holds the four octets, most significant first).
+fn printAddress(v: ui32) {
+    print((v >> 24) & 0xff)
+    print(".")
+    print((v >> 16) & 0xff)
+    print(".")
+    print((v >> 8) & 0xff)
+    print(".")
+    print(v & 0xff)
+}
+
+@entry fn main(argc: i32, argv: **ui8) -> i32 {
+    if argc != 2 {
+        print("usage: dns-lookup <host>\n")
+        return 2
+    }
+    local host: *ui8 = argv[1]
+    local addrs: [ui32; MAX_ADDRS]
+    local count: usize = dnsResolveAll(host, &addrs[0], MAX_ADDRS)
+    if count == 0 {
+        print("no IPv4 address found\n")
+        return 1
+    }
+    local i: usize = 0
+    while i < count {
+        printAddress(addrs[i])
+        print("\n")
+        i = i + 1
+    }
+    local query: [ui8; 512]
+    local name: str = fromC(host)
+    local n: isize = dnsBuildQuery(0x2a2a, host, name.len, 1, &query[0], 512)
+    if n < 0 {
+        print("the name is not a valid DNS name\n")
+        return 1
+    }
+    print("query: ")
+    print(n)
+    print(" bytes, id 0x2a2a, type A\n")
+    return 0
+}

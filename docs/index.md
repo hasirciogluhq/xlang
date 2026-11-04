@@ -18,6 +18,7 @@ Use the sidebar to move between pages.
 
 - Language reference: [Language](language/)
 - Build and install: [Install](compiler/install.html)
+- Examples: [Examples](examples.html), short routing and web programs and complete programs
 - Standard library overview: [Standard library](std/)
 - Open decisions and deferred work: [Known limitations](known-limitations.html)
 

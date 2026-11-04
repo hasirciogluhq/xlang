@@ -32,6 +32,13 @@ routerServe(&r, 2130706433, 8080, listening)      // or routerServeTls(&r, ip, p
   Chunked: `ctxBeginStream`, `ctxWriteChunk`, `ctxEndStream`.
 - Per-request data: `ctxSetUser` / `ctxUser`.
 
+## Routing
+
+The router is Gin-style: `:name` and `*name` parameters, route groups with their own middleware, redirects, and
+405 for a known path with another method. Registering two routes of one method that differ only in parameter names
+(`/user/:id` and `/user/:name`) stops the program, as Gin does at startup. The examples are on the [Examples](../examples.html)
+page, which includes them from `docs/examples/`.
+
 ## Client
 
 - `fetch(url, &opts, buf, cap, &resp)` reads the whole response into `buf`, follows redirects and sets
