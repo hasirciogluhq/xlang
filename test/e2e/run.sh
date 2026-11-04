@@ -14,7 +14,7 @@ work=$(mktemp -d)
 trap 'rm -rf "$work"; [ -n "${spid:-}" ] && kill "$spid" 2>/dev/null' EXIT
 pass=0; fail=0; skip=0
 
-# name | expected exit code | expected stdout (a `grep -F` substring) | needs raw OS threads | runs on Windows
+# name | expected exit code | expected stdout (a `grep -F` substring) | uses OS threads | runs on Windows
 tests=(
   "language|0||0|1"
   "controlflow|0|controlflow ok|0|1"
@@ -124,10 +124,8 @@ docker_run() {  # platform binary
 for t in "${tests[@]}"; do
   IFS='|' read -r name want text threads win <<<"$t"
   src=$here/$name.xl
-  # native (macOS has no raw thread creation yet: the scheduler falls back to one thread)
-  if [ "$threads" = 1 ] && [ "$host_os" = Darwin ]; then
-    echo "skip [$host_os/$name] raw OS threads are not available on macOS"; skip=$((skip+1))
-  elif "$xlang" build "$src" -o "$work/$name" 2>"$work/$name.err"; then
+  # native (threads come from libSystem pthreads on macOS and from clone on Linux)
+  if "$xlang" build "$src" -o "$work/$name" 2>"$work/$name.err"; then
     run_one "$host_os/$name" "$work/$name" "$want" "$text" env
   else
     echo "FAIL [$host_os/$name] build"; head -8 "$work/$name.err"; fail=$((fail+1))

@@ -66,14 +66,14 @@ export fn sysWake(addr: *ui32, count: i32) {
 
 // ---- threads: libSystem pthreads (decision D1, option A in docs/known-limitations.md) ------------
 //
-// pthread_create, pthread_attr_setstack and pthread_detach are the documented interface of libSystem (Apple, pthread(3)). The raw
+// pthread_create, pthread_attr_setstacksize and pthread_detach are the documented interface of libSystem (Apple, pthread(3)). The raw
 // bsdthread_* system calls are not used: the kernel refuses bsdthread_register in a process that did not start through libSystem.
 // The thread module keeps its own stack (sysMap) and its own exit word (`ctid`, cleared when the entry returns), so the pthread
 // attribute only points at that stack; the thread is detached at creation.
 
 @library("System") declare fn pthread_create(th: *ui64, attr: *void, start: fn(*void) -> *void, arg: *void) -> i32
 @library("System") declare fn pthread_attr_init(attr: *void) -> i32
-@library("System") declare fn pthread_attr_setstack(attr: *void, stack: *void, size: usize) -> i32
+@library("System") declare fn pthread_attr_setstacksize(attr: *void, size: usize) -> i32
 @library("System") declare fn pthread_attr_destroy(attr: *void) -> i32
 @library("System") declare fn pthread_detach(th: ui64) -> i32
 
@@ -98,7 +98,8 @@ export fn sysThreadCreate(entry: fn(*void), arg: *void, stack: *void, size: usiz
     local attr: [ui64; 16]
     if pthread_attr_init(&attr[0] as *void) != 0 { return -1 }
     // Darwin takes the TOP (highest address) of a caller-provided stack: stacks grow down from it
-    if pthread_attr_setstack(&attr[0] as *void, (stack as usize + size) as *void, size) != 0 {
+    // pthread allocates the thread stack itself; the caller region only carries the argument block until the join
+    if pthread_attr_setstacksize(&attr[0] as *void, size) != 0 {
         pthread_attr_destroy(&attr[0] as *void)
         return -1
     }
@@ -110,8 +111,9 @@ export fn sysThreadCreate(entry: fn(*void), arg: *void, stack: *void, size: usiz
     return tid as i64
 }
 
-/// The stack belongs to the thread module (sysMap / sysUnmap); nothing to release here.
+/// Releases the caller region once the thread has been joined (std/thread calls this from its reap step).
 export fn sysThreadRelease(stack: *void, size: usize) {
+    sysUnmap(stack, size)
 }
 
 // ---- readiness polling (kqueue) ----------------------------------------------------------
