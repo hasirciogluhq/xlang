@@ -108,27 +108,3 @@ export fn urlParse(s: *ui8, u: *Url) -> bool {
 }
 
 /// Request description for `fetch` and `httpOpen`; initialize with `fetchInit`.
-export struct FetchOptions {
-    method: *ui8          // nil means GET; any token (`POST`, `PUT`, `DELETE`, `HEAD`, ...)
-    headers: *ui8         // raw lines `Name: value\r\n`, each ending in CRLF; nil for none
-    body: *ui8            // request body bytes, or nil
-    bodyLen: usize
-    hasSource: bool       // true: the body comes from `source` and is sent chunked
-    source: fn(*void, *ui8, usize) -> usize   // fills the buffer, returns the byte count, 0 ends the body
-    sourceCtx: *void
-    timeoutMs: i32        // receive timeout after connecting; 0 blocks (TLS handshake keeps its own 20 s)
-    followRedirects: bool
-    maxRedirects: i32
-}
-
-export fn fetchInit(o: *FetchOptions) {
-    o.method = nil
-    o.headers = nil
-    o.body = nil
-    o.bodyLen = 0
-    o.hasSource = false
-    o.sourceCtx = nil
-    o.timeoutMs = 0
-    o.followRedirects = true
-    o.maxRedirects = 5
-}

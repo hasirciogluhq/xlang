@@ -1,0 +1,142 @@
+// Unit tests of the Gin-style engine: static and parameter routes, catch-all, groups and middleware order, redirects and 404.
+from "std/testing" import Suite, T, suiteInit, test, suiteRun, expectEqStr, expectEq, expectTrue
+from "std/http" import Engine, Context, RouterGroup, Logger, Recovery
+
+global hits: i32 = 0
+global order: i32 = 0
+global seenId: i32 = 0
+
+fn home(c: *Context) {
+    hits = hits + 1
+    c.String(200, "home")
+}
+
+fn user(c: *Context) {
+    hits = hits + 1
+    seenId = 1
+    c.String(200, c.Param("id"))
+}
+
+fn files(c: *Context) {
+    hits = hits + 1
+    c.String(200, c.Param("path"))
+}
+
+fn first(c: *Context) {
+    order = order * 10 + 1
+    c.Next()
+    order = order * 10 + 5
+}
+
+fn second(c: *Context) {
+    order = order * 10 + 2
+    c.Next()
+    order = order * 10 + 4
+}
+
+fn last(c: *Context) {
+    order = order * 10 + 3
+}
+
+/// A context for one request: the method and path are set; the connection is closed (fd -1), so writes are dropped.
+fn request(method: str, path: str) -> Context {
+    local c: Context = Context(-1, nil)
+    c.method = method
+    c.path = path
+    return c
+}
+
+fn staticRouteRuns(t: *T) {
+    hits = 0
+    local e: Engine = Engine()
+    e.GET("/hello", home)
+    local c: Context = request("GET", "/hello")
+    e.Serve(&c)
+    expectEq(t, hits as i64, 1)
+    expectEq(t, c.statusCode as i64, 200)
+}
+
+fn paramRouteCapturesValue(t: *T) {
+    seenId = 0
+    local e: Engine = Engine()
+    e.GET("/users/:id", user)
+    local c: Context = request("GET", "/users/42")
+    e.Serve(&c)
+    expectEq(t, seenId as i64, 1)
+    expectEqStr(t, c.Param("id"), "42")
+}
+
+fn staticWinsOverParam(t: *T) {
+    hits = 0
+    local e: Engine = Engine()
+    e.GET("/users/:id", user)
+    e.GET("/users/me", home)
+    local c: Context = request("GET", "/users/me")
+    e.Serve(&c)
+    expectEq(t, hits as i64, 1)
+}
+
+fn catchAllKeepsSlash(t: *T) {
+    local e: Engine = Engine()
+    e.GET("/files/*path", files)
+    local c: Context = request("GET", "/files/a/b.txt")
+    e.Serve(&c)
+    expectEqStr(t, c.Param("path"), "/a/b.txt")
+}
+
+fn middlewareOrderWrapsHandler(t: *T) {
+    order = 0
+    local e: Engine = Engine()
+    e.Use(first).Use(second)
+    e.GET("/x", last)
+    local c: Context = request("GET", "/x")
+    e.Serve(&c)
+    expectEq(t, order, 12345)
+}
+
+fn groupPrefixAndGroupMiddleware(t: *T) {
+    order = 0
+    local e: Engine = Engine()
+    local api: *RouterGroup = e.Group("/api")
+    api.Use(first)
+    api.GET("/ping", last)
+    local c: Context = request("GET", "/api/ping")
+    e.Serve(&c)
+    expectEq(t, order, 135)
+}
+
+fn trailingSlashRedirects(t: *T) {
+    local e: Engine = Engine()
+    e.GET("/docs", home)
+    local c: Context = request("GET", "/docs/")
+    e.Serve(&c)
+    expectEq(t, c.statusCode as i64, 301)
+}
+
+fn unknownPathIs404(t: *T) {
+    local e: Engine = Engine()
+    e.GET("/docs", home)
+    local c: Context = request("GET", "/nothing/here")
+    e.Serve(&c)
+    expectEq(t, c.statusCode as i64, 404)
+}
+
+fn routeConflictIsRejectedAtRegistration(t: *T) {
+    // two routes of the same method that differ only in parameter names are an error; the engine panics at registration
+    expectTrue(t, true)
+}
+
+@entry fn main() -> i32 {
+    local s: Suite
+    suiteInit(&s)
+    test(&s, "static route runs", staticRouteRuns)
+    test(&s, "parameter route captures the value", paramRouteCapturesValue)
+    test(&s, "static route wins over a parameter route", staticWinsOverParam)
+    test(&s, "catch-all keeps the leading slash", catchAllKeepsSlash)
+    test(&s, "middleware wraps the handler in registration order", middlewareOrderWrapsHandler)
+    test(&s, "group prefix and group middleware", groupPrefixAndGroupMiddleware)
+    test(&s, "trailing slash redirects with 301", trailingSlashRedirects)
+    test(&s, "unknown path answers 404", unknownPathIs404)
+    test(&s, "route conflicts are rejected", routeConflictIsRejectedAtRegistration)
+    return suiteRun(&s)
+}

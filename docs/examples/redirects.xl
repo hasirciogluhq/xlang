@@ -1,28 +1,16 @@
-// Redirects. A GET to /old goes to https://example.com/ with 301; a POST to /submit answers 307 so the client repeats the POST
-// at /result (a 301 after a POST can make browsers switch to GET, so POST handlers use 302 or 307).
-from "std" import print, Router, Context, routerInit, routerGet, routerPost, routerServe, ctxRedirect, ctxString
-
-fn old(c: *Context) {
-    ctxRedirect(c, 301, "https://example.com/")
-}
-
-fn submit(c: *Context) {
-    ctxRedirect(c, 307, "/result")
-}
-
-fn result(c: *Context) {
-    ctxString(c, 200, "result page")
-}
-
-fn listening() {
-    print("listening on http://127.0.0.1:8080\n")
-}
+// Redirects. GET /old goes to https://example.com/ with 301; POST /submit answers 307 so the client repeats the POST at /result.
+from "std" import Engine, Context
 
 @entry fn main() -> i32 {
-    local r: Router
-    routerInit(&r)
-    routerGet(&r, "/old", old)
-    routerPost(&r, "/submit", submit)
-    routerGet(&r, "/result", result)
-    return routerServe(&r, 2130706433, 8080, listening)
+    local router: Engine = Engine()
+    router.GET("/old", fn(c: *Context) {
+        c.Redirect(301, "https://example.com/")
+    })
+    router.POST("/submit", fn(c: *Context) {
+        c.Redirect(307, "/result")
+    })
+    router.GET("/result", fn(c: *Context) {
+        c.String(200, "result page")
+    })
+    return router.Run(8080)
 }

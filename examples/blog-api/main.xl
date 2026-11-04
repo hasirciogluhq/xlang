@@ -11,9 +11,8 @@
 //
 // The store holds 64 posts of at most 120 bytes of title and 480 bytes of body. Strings are rejected when they contain a quote,
 // a backslash or a control character, so the JSON answers stay valid without an escaper.
-from "std" import print, String, sprintf, fromC, fromParts, eq, strlen, Router, Group, Context, routerInit, routerGet, routerGroup, groupUse, groupPost, groupPut, groupDelete, routerServe, ctxString, ctxJSON, ctxParam, ctxHeader, ctxNext, ctxAbortWithStatus, ctxStatus, jwtSignHs256, jwtVerifyHs256, jsonString, toU64
+from "std" import print, String, sprintf, fromC, fromParts, eq, strlen, Engine, Context, RouterGroup, jwtSignHs256, jwtVerifyHs256, jsonString, toU64
 from "std/sys" import sysClockSeconds
-from "std/mem" import currentAllocator
 
 define MAX_POSTS = 64
 define TITLE_MAX = 120
@@ -76,10 +75,12 @@ fn store(dst: *ui8, cap: usize, s: *ui8, n: usize) -> usize {
 
 /// The title and body of a request body, or false when a field is missing, too long or not plain text.
 fn readPost(c: *Context, title: *ui8, body: *ui8) -> bool {
+    local text: String = String()
+    text.append(c.Body())
     local t: [ui8; 128]
     local b: [ui8; 512]
-    if !jsonString(c.body, "title", &t[0], 128) { return false }
-    if !jsonString(c.body, "body", &b[0], 512) { return false }
+    if !jsonString(text.cstr(), "title", &t[0], 128) { return false }
+    if !jsonString(text.cstr(), "body", &b[0], 512) { return false }
     local tl: usize = strlen(&t[0])
     local bl: usize = strlen(&b[0])
     if tl == 0 || tl > TITLE_MAX || bl > BODY_MAX { return false }
@@ -108,33 +109,33 @@ fn listPosts(c: *Context) {
         i = i + 1
     }
     out.append("]")
-    ctxJSON(c, 200, out.cstr())
+    c.JSON(200, out.asStr())
 }
 
 fn showPost(c: *Context) {
     local id: i64 = 0
-    if !toId(ctxParam(c, "id"), &id) {
-        ctxString(c, 404, "not found")
+    if !toId(c.Param("id"), &id) {
+        c.String(404, "not found")
         return
     }
     local slot: i32 = slotOf(id)
     if slot < 0 {
-        ctxString(c, 404, "not found")
+        c.String(404, "not found")
         return
     }
-    ctxJSON(c, 200, postJson(slot).cstr())
+    c.JSON(200, postJson(slot).asStr())
 }
 
 fn createPost(c: *Context) {
     local t: [ui8; 120]
     local b: [ui8; 480]
     if !readPost(c, &t[0], &b[0]) {
-        ctxString(c, 400, "a title and a body of plain text are required")
+        c.String(400, "a title and a body of plain text are required")
         return
     }
     local slot: i32 = freeSlot()
     if slot < 0 {
-        ctxString(c, 507, "the store is full")
+        c.String(507, "the store is full")
         return
     }
     posts[slot].used = true
@@ -143,53 +144,52 @@ fn createPost(c: *Context) {
     posts[slot].titleLen = store(&posts[slot].title[0], TITLE_MAX, &t[0], strlen(&t[0]))
     posts[slot].textLen = store(&posts[slot].text[0], BODY_MAX, &b[0], strlen(&b[0]))
     local body: String = sprintf("{\"id\":{}}", posts[slot].id)
-    ctxJSON(c, 201, body.cstr())
+    c.JSON(201, body.asStr())
 }
 
 fn updatePost(c: *Context) {
     local id: i64 = 0
-    if !toId(ctxParam(c, "id"), &id) {
-        ctxString(c, 404, "not found")
+    if !toId(c.Param("id"), &id) {
+        c.String(404, "not found")
         return
     }
     local slot: i32 = slotOf(id)
     if slot < 0 {
-        ctxString(c, 404, "not found")
+        c.String(404, "not found")
         return
     }
     local t: [ui8; 120]
     local b: [ui8; 480]
     if !readPost(c, &t[0], &b[0]) {
-        ctxString(c, 400, "a title and a body of plain text are required")
+        c.String(400, "a title and a body of plain text are required")
         return
     }
     posts[slot].titleLen = store(&posts[slot].title[0], TITLE_MAX, &t[0], strlen(&t[0]))
     posts[slot].textLen = store(&posts[slot].text[0], BODY_MAX, &b[0], strlen(&b[0]))
-    ctxJSON(c, 200, postJson(slot).cstr())
+    c.JSON(200, postJson(slot).asStr())
 }
 
 fn deletePost(c: *Context) {
     local id: i64 = 0
-    if !toId(ctxParam(c, "id"), &id) {
-        ctxString(c, 404, "not found")
+    if !toId(c.Param("id"), &id) {
+        c.String(404, "not found")
         return
     }
     local slot: i32 = slotOf(id)
     if slot < 0 {
-        ctxString(c, 404, "not found")
+        c.String(404, "not found")
         return
     }
     posts[slot].used = false
-    ctxStatus(c, 204)
+    c.Status(204)
 }
 
-/// Parses a decimal id from the path; false when it is not a number.
-fn toId(s: *ui8, out: *i64) -> bool {
-    if s == nil { return false }
+/// Parses a decimal id from the path; false when it is empty or not a number.
+fn toId(s: str, out: *i64) -> bool {
+    if s.len == 0 { return false }
     local v: i64 = 0
     local i: usize = 0
-    if s[0] == 0 { return false }
-    while s[i] != 0 {
+    while i < s.len {
         if s[i] < 48 || s[i] > 57 { return false }
         v = v * 10 + ((s[i] - 48) as i64)
         i = i + 1
@@ -200,17 +200,16 @@ fn toId(s: *ui8, out: *i64) -> bool {
 
 /// The group middleware: the bearer token in Authorization must verify with the server secret (HS256).
 fn requireToken(c: *Context) {
-    local auth: *ui8 = ctxHeader(c, "Authorization")
-    if auth == nil || strlen(auth) < 8 {
-        ctxAbortWithStatus(c, 401)
+    local auth: str = c.GetHeader("Authorization")
+    if auth.len < 8 {
+        c.AbortWithStatus(401)
         return
     }
-    local token: str = fromC(&auth[7])
-    if !jwtVerifyHs256(token, secret, secretLen) {
-        ctxAbortWithStatus(c, 401)
+    if !jwtVerifyHs256(fromParts(&auth.ptr[7], auth.len - 7), secret, secretLen) {
+        c.AbortWithStatus(401)
         return
     }
-    ctxNext(c)
+    c.Next()
 }
 
 fn listening() {
@@ -240,15 +239,13 @@ fn listening() {
         }
         port = v as ui16
     }
-    local r: Router
-    routerInit(&r)
-    routerGet(&r, "/posts", listPosts)
-    routerGet(&r, "/posts/:id", showPost)
-    local api: Group
-    routerGroup(&r, "/api", &api)
-    groupUse(&api, requireToken)
-    groupPost(&api, "/posts", createPost)
-    groupPut(&api, "/posts/:id", updatePost)
-    groupDelete(&api, "/posts/:id", deletePost)
-    return routerServe(&r, 2130706433, port, listening)
+    local router: Engine = Engine()
+    router.GET("/posts", listPosts)
+    router.GET("/posts/:id", showPost)
+    local api: *RouterGroup = router.Group("/api")
+    api.Use(requireToken)
+    api.POST("/posts", createPost)
+    api.PUT("/posts/:id", updatePost)
+    api.DELETE("/posts/:id", deletePost)
+    return router.Run(port)
 }

@@ -1,0 +1,56 @@
+// Unit tests of the HTTP client's header list: case-insensitive lookup, replacement, removal and the response helpers.
+from "std/testing" import Suite, T, suiteInit, test, suiteRun, expectEqStr, expectTrue, expectFalse, expectEq
+from "std/http" import Headers, Response, CLIENT_OK, clientErrorText
+
+fn lookupIsCaseInsensitive(t: *T) {
+    local h: Headers = Headers()
+    h.Add("Content-Type", "text/plain")
+    expectEqStr(t, h.Get("content-type"), "text/plain")
+    expectEqStr(t, h.Get("CONTENT-TYPE"), "text/plain")
+}
+
+fn setReplacesEveryValue(t: *T) {
+    local h: Headers = Headers()
+    h.Add("X-A", "1")
+    h.Add("x-a", "2")
+    h.Set("X-A", "3")
+    expectEqStr(t, h.Get("x-a"), "3")
+    expectEq(t, h.Length() as i64, 1)
+}
+
+fn removeDropsTheField(t: *T) {
+    local h: Headers = Headers()
+    h.Add("Host", "example.com")
+    h.Remove("host")
+    expectFalse(t, h.Has("Host"))
+}
+
+fn absentFieldIsEmpty(t: *T) {
+    local h: Headers = Headers()
+    expectEqStr(t, h.Get("Missing"), "")
+    expectFalse(t, h.Has("Missing"))
+}
+
+fn responseOkNeedsSuccessStatus(t: *T) {
+    local r: Response = Response()
+    r.status = 204
+    expectTrue(t, r.Ok())
+    r.status = 404
+    expectFalse(t, r.Ok())
+}
+
+fn errorTextIsNamed(t: *T) {
+    expectEqStr(t, clientErrorText(CLIENT_OK), "ok")
+}
+
+@entry fn main() -> i32 {
+    local s: Suite
+    suiteInit(&s)
+    test(&s, "header lookup is case-insensitive", lookupIsCaseInsensitive)
+    test(&s, "set replaces every value", setReplacesEveryValue)
+    test(&s, "remove drops the field", removeDropsTheField)
+    test(&s, "absent field is empty", absentFieldIsEmpty)
+    test(&s, "2xx is ok", responseOkNeedsSuccessStatus)
+    test(&s, "error text names success", errorTextIsNamed)
+    return suiteRun(&s)
+}

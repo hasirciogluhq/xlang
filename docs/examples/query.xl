@@ -1,25 +1,16 @@
-// Query string parameters. `curl "http://127.0.0.1:8080/welcome?firstname=Jane&lastname=Doe"` answers "Hello Jane Doe";
-// a missing parameter takes its default ("Guest" and "Doe" here, as in the Gin page this follows).
-from "std" import print, String, Router, Context, routerInit, routerGet, routerServe, ctxString, ctxDefaultQuery, fromC
-
-fn welcome(c: *Context) {
-    local first: *ui8 = ctxDefaultQuery(c, "firstname", "Guest")
-    local last: *ui8 = ctxDefaultQuery(c, "lastname", "Doe")
-    local body: String = String()
-    body.append("Hello ")
-    body.append(fromC(first))
-    body.append(" ")
-    body.append(fromC(last))
-    ctxString(c, 200, body.cstr())
-}
-
-fn listening() {
-    print("listening on http://127.0.0.1:8080\n")
-}
+// Query string parameters. curl "http://127.0.0.1:8080/welcome?firstname=Jane&lastname=Doe" answers "Hello Jane Doe"; a missing
+// parameter takes its default ("Guest" and "Doe" here).
+from "std" import Engine, Context, String
 
 @entry fn main() -> i32 {
-    local r: Router
-    routerInit(&r)
-    routerGet(&r, "/welcome", welcome)
-    return routerServe(&r, 2130706433, 8080, listening)
+    local router: Engine = Engine()
+    router.GET("/welcome", fn(c: *Context) {
+        local body: String = String()
+        body.append("Hello ")
+        body.append(c.DefaultQuery("firstname", "Guest"))
+        body.append(" ")
+        body.append(c.DefaultQuery("lastname", "Doe"))
+        c.String(200, body.asStr())
+    })
+    return router.Run(8080)
 }

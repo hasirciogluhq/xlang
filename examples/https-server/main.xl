@@ -1,38 +1,13 @@
-// https-server: a TLS 1.3 server (RFC 8446) with a router, serving on 127.0.0.1.
+// https-server: a TLS 1.3 server (RFC 8446) with a router, serving on all interfaces.
 //   https-server <cert.pem> <key.pem> [port]
 // Routes: GET /              text
 //         GET /hello/:name   text, the name from the path
 //         GET /time          JSON with the Unix time (seconds)
-// The certificate and key are PEM files (RSA or ECDSA P-256/P-384). Try it with
-//   curl --cacert <ca.pem> https://127.0.0.1:8443/time
-from "std" import print, String, sprintf, Router, Context, routerInit, routerGet, routerServeTls, ctxString, ctxJSON, ctxParam, fromC, toU64, TlsCredentials, tlsLoadCredentials, TLS_OK, tlsErrorText
+// The certificate and key are PEM files (RSA or ECDSA P-256/P-384). Try it with: curl --cacert ca.crt https://127.0.0.1:8443/time
+from "std" import print, Engine, Context, String, sprintf, TlsCredentials, tlsLoadCredentials, TLS_OK, tlsErrorText, fromC, toU64
 from "std/sys" import sysClockSeconds
 
-global cred: TlsCredentials
-global router: Router
-
 define DEFAULT_PORT = 8443
-
-fn index(c: *Context) {
-    ctxString(c, 200, "xlang https server\n")
-}
-
-fn hello(c: *Context) {
-    local body: String = String()
-    body.append("hello ")
-    body.append(fromC(ctxParam(c, "name")))
-    body.append("\n")
-    ctxString(c, 200, body.cstr())
-}
-
-fn time(c: *Context) {
-    local body: String = sprintf("{\"unix\":{}}", sysClockSeconds())
-    ctxJSON(c, 200, body.cstr())
-}
-
-fn listening() {
-    print("https listening on https://127.0.0.1\n")
-}
 
 @entry fn main(argc: i32, argv: **ui8) -> i32 {
     if argc < 3 {
@@ -48,6 +23,7 @@ fn listening() {
         }
         port = v as ui16
     }
+    local cred: TlsCredentials
     local rc: i32 = tlsLoadCredentials(&cred, argv[1], argv[2])
     if rc != TLS_OK {
         print("cannot load the certificate or key: ")
@@ -55,9 +31,18 @@ fn listening() {
         print("\n")
         return 1
     }
-    routerInit(&router)
-    routerGet(&router, "/", index)
-    routerGet(&router, "/hello/:name", hello)
-    routerGet(&router, "/time", time)
-    return routerServeTls(&router, 2130706433, port, &cred, listening)
+    local router: Engine = Engine()
+    router.GET("/", fn(c: *Context) {
+        c.String(200, "xlang https server\n")
+    }).GET("/hello/:name", fn(c: *Context) {
+        local body: String = String()
+        body.append("hello ")
+        body.append(c.Param("name"))
+        body.append("\n")
+        c.String(200, body.asStr())
+    }).GET("/time", fn(c: *Context) {
+        local body: String = sprintf("{\"unix\":{}}", sysClockSeconds())
+        c.JSON(200, body.asStr())
+    })
+    return router.RunTLS(port, &cred)
 }

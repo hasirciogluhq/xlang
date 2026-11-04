@@ -6,8 +6,8 @@ from "../mem/memory" import mapGrow, strlen
 from "../io/io" import eprint
 from "../tls/tls" import TlsConn, TlsCredentials, tlsRead, tlsWrite, tlsClose, tlsListen, tlsAccept
 from "util" import cstrEq, lower, headerEnd, terminateLines
-from "context" import Context, ctxInit, ctxString
-from "router" import Router, routerDispatch
+from "context" import Context
+from "../str/str" import fromParts, fromC, eq
 
 /// Reads from the plain socket or the TLS session.
 fn connRead(fd: i32, tls: *TlsConn, buf: *ui8, n: usize) -> isize {
@@ -66,11 +66,10 @@ fn isHttp11(s: *ui8, end: usize) -> bool {
     return true
 }
 
-/// Answers a request that is rejected before parsing (header or body too large).
+/// Answers a request that is rejected before routing (bad framing, too large): the connection is closed afterwards.
 fn rejectEarly(fd: i32, tls: *TlsConn, status: i32, text: *ui8) {
-    local c: Context
-    ctxInit(&c, fd, tls)
-    ctxString(&c, status, text)
+    local c: Context = Context(fd, tls)
+    c.String(status, fromC(text))
 }
 
 /// True when two Content-Length header lines of the first `end` bytes carry different values (a framing error, RFC 9112 6.3).
@@ -124,58 +123,62 @@ fn keepAliveWanted(s: *ui8, end: usize) -> bool {
     return conn >= 0
 }
 
-/// Routes one request: `buf[0..n)` is exactly the request (headers and body). Returns true when the connection may stay open:
-/// the handler answered and the request allows persistence.
-fn dispatch(r: *Router, fd: i32, tls: *TlsConn, buf: *ui8, n: usize, keep: bool) -> bool {
+/// Routes one request: `buf[0..n)` is exactly the request (headers and body). The request line is split in place: the target is
+/// percent-decoded there, and the query string and the header block are kept as views. Returns true when the connection may stay
+/// open: the handler answered and the request allows persistence.
+fn dispatch(r: *void, serve: fn(*void, *Context), fd: i32, tls: *TlsConn, buf: *ui8, n: usize, keep: bool) -> bool {
     local he: usize = headerEnd(buf, n) as usize
-    terminateLines(buf, he)
-    // "METHOD PATH?QUERY HTTP/1.1\0\n...": split in place at the spaces.
-    local c: Context
-    ctxInit(&c, fd, tls)
-    c.headers = &buf[0]
-    c.method = &buf[0]
+    local lineEnd: usize = 0
+    while lineEnd + 1 < he && !(buf[lineEnd] == 13 && buf[lineEnd + 1] == 10) { lineEnd = lineEnd + 1 }
+    local c: Context = Context(fd, tls)
     c.keepAlive = keep
-    local i: usize = 0
-    while buf[i] != 0 && buf[i] != 32 { i = i + 1 }
-    if buf[i] == 0 { return false }
-    buf[i] = 0
-    i = i + 1
-    c.path = &buf[i]
-    // absolute form: the path starts after the authority
-    local h: *ui8 = "http"
-    if buf[i] == 104 && buf[i + 1] == 116 && buf[i + 2] == 116 && buf[i + 3] == 112 {
-        local k: usize = i
-        while buf[k] != 0 && buf[k] != 32 && !(buf[k] == 47 && buf[k - 1] == 47) { k = k + 1 }
-        local slash: usize = k
-        while buf[slash] != 0 && buf[slash] != 32 && buf[slash] != 47 { slash = slash + 1 }
-        if buf[slash] == 47 { c.path = &buf[slash] } else { return false }
-        i = slash
+    // method SP target SP version
+    local m: usize = 0
+    while m < lineEnd && buf[m] != 32 { m = m + 1 }
+    c.method = fromParts(buf, m)
+    local t: usize = m + 1
+    local p0: usize = t
+    if t + 4 < lineEnd && buf[t] == 104 && buf[t + 1] == 116 && buf[t + 2] == 116 && buf[t + 3] == 112 {
+        // absolute form: the path starts at the first '/' after "://"
+        local k: usize = t
+        while k + 2 < lineEnd && !(buf[k] == 58 && buf[k + 1] == 47 && buf[k + 2] == 47) { k = k + 1 }
+        k = k + 3
+        while k < lineEnd && buf[k] != 47 && buf[k] != 32 && buf[k] != 63 { k = k + 1 }
+        p0 = k
     }
-    while buf[i] != 0 && buf[i] != 32 && buf[i] != 63 { i = i + 1 }
-    if buf[i] == 63 {
-        buf[i] = 0
-        i = i + 1
-        c.query = &buf[i]
-        local q: usize = i
-        while buf[i] != 0 && buf[i] != 32 {
-            if buf[i] == 38 { buf[i] = 0 }
-            i = i + 1
-        }
-        c.queryLen = i - q
+    local q: usize = p0
+    while q < lineEnd && buf[q] != 32 && buf[q] != 63 { q = q + 1 }
+    local pathEnd: usize = q
+    local queryStart: usize = 0
+    local queryEnd: usize = 0
+    if q < lineEnd && buf[q] == 63 {
+        queryStart = q + 1
+        queryEnd = queryStart
+        while queryEnd < lineEnd && buf[queryEnd] != 32 { queryEnd = queryEnd + 1 }
+        c.rawQuery = fromParts(&buf[queryStart], queryEnd - queryStart)
     }
-    buf[i] = 0
-    decodePercent(c.path)
-    c.body = &buf[he + 4]
-    c.bodyLen = n - (he + 4)
-    c.isHead = cstrEq(c.method, "HEAD")
-    routerDispatch(r, &c)
+    // decode the path in place: a NUL after it makes it a C string for the decoder, then its length is taken
+    local saved: ui8 = buf[pathEnd]
+    buf[pathEnd] = 0
+    decodePercent(&buf[p0])
+    local pl: usize = strlen(&buf[p0])
+    buf[pathEnd] = saved
+    c.path = fromParts(&buf[p0], pl)
+    c.isHead = eq(c.method, "HEAD")
+    // headers: the lines after the request line, up to the blank line
+    c.headerBlock = fromParts(&buf[lineEnd + 2], he - lineEnd - 2)
+    c.body = fromParts(&buf[he + 4], n - (he + 4))
+    serve(r, &c)
     return keep && c.responded && !c.streaming
 }
+
+define MAX_HEADER_BYTES = 16384
+define MAX_BODY_BYTES = 1048576
 
 /// Reads one request from the connection into `*buf` (which grows as needed; `*total` bytes are valid, and bytes after a complete
 /// request are kept for the next one). Returns 1 with `*dispEnd` (the request's end for the router) and `*rawEnd` (where the next
 /// request starts) set, 0 when the connection closed without a request, or 2 when the request was refused (the answer is sent).
-fn readRequest(r: *Router, fd: i32, tls: *TlsConn, buf: **ui8, cap: *usize, total: *usize, dispEnd: *usize, rawEnd: *usize, keep: *bool) -> i32 {
+fn readRequest(r: *void, fd: i32, tls: *TlsConn, buf: **ui8, cap: *usize, total: *usize, dispEnd: *usize, rawEnd: *usize, keep: *bool) -> i32 {
     local gotHeaders: bool = false
     local he: usize = 0
     local bodyStart: usize = 0
@@ -213,17 +216,17 @@ fn readRequest(r: *Router, fd: i32, tls: *TlsConn, buf: **ui8, cap: *usize, tota
                     rejectEarly(fd, tls, 400, "HTTP/1.1 requests need a Host header")
                     return 2
                 }
-                if bodyStart > r.maxHeaderBytes {
+                if bodyStart > MAX_HEADER_BYTES {
                     rejectEarly(fd, tls, 431, "request header too large")
                     return 2
                 }
-                if bodyLen > r.maxBodyBytes {
+                if bodyLen > MAX_BODY_BYTES {
                     rejectEarly(fd, tls, 413, "request body too large")
                     return 2
                 }
                 want = bodyStart + bodyLen
                 *keep = keepAliveWanted(*buf, he)
-            } else if *total > r.maxHeaderBytes {
+            } else if *total > MAX_HEADER_BYTES {
                 rejectEarly(fd, tls, 431, "request header too large")
                 return 2
             }
@@ -261,7 +264,7 @@ fn readRequest(r: *Router, fd: i32, tls: *TlsConn, buf: **ui8, cap: *usize, tota
     return 0
 }
 
-fn serveConnection(r: *Router, fd: i32, tls: *TlsConn) {
+fn serveConnection(r: *void, serve: fn(*void, *Context), fd: i32, tls: *TlsConn) {
     // One connection serves requests until one of them asks to close, the peer closes, or a request is refused. Bytes that arrive
     // after a request belong to the next one (pipelining) and are moved to the front of the buffer.
     local cap: usize = 4096
@@ -277,7 +280,7 @@ fn serveConnection(r: *Router, fd: i32, tls: *TlsConn) {
         if status != 1 {
             open = false
         } else {
-            local again: bool = dispatch(r, fd, tls, buf, dispEnd, keep)
+            local again: bool = dispatch(r, serve, fd, tls, buf, dispEnd, keep)
             local k: usize = 0
             while rawEnd + k < total {
                 buf[k] = buf[rawEnd + k]
@@ -315,7 +318,7 @@ fn chunkedEnd(buf: *ui8, total: usize, start: usize) -> usize {
 
 /// Binds `ip:port` (host-order IPv4, `127.0.0.1` = 2130706433), calls `onListen` once, then serves
 /// forever. Returns -1 when the socket could not be set up.
-export fn routerServe(r: *Router, ip: ui32, port: ui16, onListen: fn()) -> i32 {
+export fn routerServe(r: *void, serve: fn(*void, *Context), ip: ui32, port: ui16, onListen: fn()) -> i32 {
     local fd: i32 = sysTcpSocket()
     if fd < 0 {
         eprint("routerServe: cannot create socket\n")
@@ -330,7 +333,7 @@ export fn routerServe(r: *Router, ip: ui32, port: ui16, onListen: fn()) -> i32 {
     while true {
         local conn: i32 = sysTcpAccept(fd)
         if conn >= 0 {
-            serveConnection(r, conn, nil)
+            serveConnection(r, serve, conn, nil)
             sysClose(conn)
         }
     }
@@ -339,7 +342,7 @@ export fn routerServe(r: *Router, ip: ui32, port: ui16, onListen: fn()) -> i32 {
 
 /// `routerServe` over TLS 1.3 (HTTPS): `cr` comes from `tlsLoadCredentials`. A connection whose
 /// handshake fails is dropped and the loop continues. Returns -1 when the socket could not be set up.
-export fn routerServeTls(r: *Router, ip: ui32, port: ui16, cr: *TlsCredentials, onListen: fn()) -> i32 {
+export fn routerServeTls(r: *void, serve: fn(*void, *Context), ip: ui32, port: ui16, cr: *TlsCredentials, onListen: fn()) -> i32 {
     local fd: i32 = tlsListen(ip, port)
     if fd < 0 {
         eprint("routerServeTls: cannot bind/listen (port already in use?)\n")
@@ -349,7 +352,7 @@ export fn routerServeTls(r: *Router, ip: ui32, port: ui16, cr: *TlsCredentials, 
     while true {
         local c: TlsConn
         if tlsAccept(fd, cr, &c) == 0 {
-            serveConnection(r, c.fd, &c)
+            serveConnection(r, serve, c.fd, &c)
             tlsClose(&c)
         }
     }

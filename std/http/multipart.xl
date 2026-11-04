@@ -1,0 +1,142 @@
+// std/http/multipart: multipart/form-data request bodies (RFC 7578 on RFC 7578 section 4 and RFC 2046 section 5.1), the encoding of
+// HTML forms with file inputs. The body is a sequence of parts separated by "--" + boundary; each part has headers (Content-Disposition
+// with name and optional filename, optional Content-Type) and then its content. The boundary comes from the Content-Type header of the
+// request (RFC 2046 section 5.1.1: a quoted or unquoted value). The result views point into the request body.
+from "../str/str" import fromParts, eq
+from "../str/string" import String
+
+export class MultipartPart {
+    found: bool
+    name: str
+    filename: str       // "" for a plain field
+    contentType: str    // "" when the part gives none
+    data: str           // the content, without the CRLF that precedes the next boundary
+}
+
+/// The boundary parameter of a Content-Type value ("multipart/form-data; boundary=..."), or "" when absent.
+export fn multipartBoundary(contentType: str) -> str {
+    local i: usize = 0
+    while i + 9 <= contentType.len {
+        if lowerAt(contentType, i) == 98 && eq(fromParts(&contentType.ptr[i], 9), "boundary=") {
+            local s: usize = i + 9
+            if s < contentType.len && contentType[s] == 34 {
+                s = s + 1
+                local e: usize = s
+                while e < contentType.len && contentType[e] != 34 { e = e + 1 }
+                return fromParts(&contentType.ptr[s], e - s)
+            }
+            local e: usize = s
+            while e < contentType.len && contentType[e] != 59 && contentType[e] != 32 { e = e + 1 }
+            return fromParts(&contentType.ptr[s], e - s)
+        }
+        i = i + 1
+    }
+    return ""
+}
+
+fn lowerAt(s: str, i: usize) -> ui8 {
+    local c: ui8 = s[i]
+    if c >= 65 && c <= 90 { return c + 32 }
+    return c
+}
+
+/// Finds the part of `body` whose Content-Disposition name is `name`. `found` is false when no part has that name.
+export fn multipartFind(body: str, boundary: str, name: str) -> MultipartPart {
+    local r: MultipartPart = MultipartPart()
+    if boundary.len == 0 { return r }
+    local delim: String = String()
+    delim.append("--")
+    delim.append(boundary)
+    local pos: usize = 0
+    while true {
+        local start: isize = indexOf(body, delim.asStr(), pos)
+        if start < 0 { return r }
+        local p: usize = (start as usize) + delim.length()
+        // the closing delimiter is "--" after the boundary
+        if p + 1 < body.len && body[p] == 45 && body[p + 1] == 45 { return r }
+        // the headers of the part end at the blank line
+        if p + 2 > body.len { return r }
+        p = p + 2
+        local hend: isize = indexOf(body, "\r\n\r\n", p)
+        if hend < 0 { return r }
+        local headers: str = fromParts(&body.ptr[p], (hend as usize) - p)
+        local content: usize = (hend as usize) + 4
+        local next: isize = indexOf(body, delim.asStr(), content)
+        if next < 0 { return r }
+        local dataEnd: usize = (next as usize)
+        if dataEnd >= 2 && body[dataEnd - 2] == 13 && body[dataEnd - 1] == 10 { dataEnd = dataEnd - 2 }
+        local partName: str = dispositionParam(headers, "name")
+        if eq(partName, name) {
+            r.found = true
+            r.name = partName
+            r.filename = dispositionParam(headers, "filename")
+            r.contentType = headerLine(headers, "content-type")
+            r.data = fromParts(&body.ptr[content], dataEnd - content)
+            return r
+        }
+        pos = dataEnd
+    }
+    return r
+}
+
+/// The first occurrence of `needle` in `hay` at or after `begin`, or -1.
+fn indexOf(hay: str, needle: str, begin: usize) -> isize {
+    if needle.len == 0 || hay.len < needle.len { return -1 }
+    local i: usize = begin
+    while i + needle.len <= hay.len {
+        if hay[i] == needle[0] && eq(fromParts(&hay.ptr[i], needle.len), needle) { return i as isize }
+        i = i + 1
+    }
+    return -1
+}
+
+/// The value of a header line in a part's header block, or "" (names compare in lower case).
+fn headerLine(headers: str, lowerName: str) -> str {
+    local i: usize = 0
+    while i < headers.len {
+        local eol: usize = i
+        while eol < headers.len && headers[eol] != 13 { eol = eol + 1 }
+        local colon: usize = i
+        while colon < eol && headers[colon] != 58 { colon = colon + 1 }
+        if colon - i == lowerName.len && lowerEq(fromParts(&headers.ptr[i], colon - i), lowerName) {
+            local s: usize = colon + 1
+            while s < eol && headers[s] == 32 { s = s + 1 }
+            return fromParts(&headers.ptr[s], eol - s)
+        }
+        i = eol + 2
+    }
+    return ""
+}
+
+/// The value of a parameter of Content-Disposition ("form-data; name=\"x\"; filename=\"y\""), or "".
+fn dispositionParam(headers: str, param: str) -> str {
+    local disp: str = headerLine(headers, "content-disposition")
+    local i: usize = 0
+    while i + param.len + 1 <= disp.len {
+        local startsHere: bool = (i == 0 || disp[i - 1] == 32 || disp[i - 1] == 59) && eq(fromParts(&disp.ptr[i], param.len), param) && disp[i + param.len] == 61
+        if startsHere {
+            local s: usize = i + param.len + 1
+            if s < disp.len && disp[s] == 34 {
+                s = s + 1
+                local e: usize = s
+                while e < disp.len && disp[e] != 34 { e = e + 1 }
+                return fromParts(&disp.ptr[s], e - s)
+            }
+            local e: usize = s
+            while e < disp.len && disp[e] != 59 && disp[e] != 32 { e = e + 1 }
+            return fromParts(&disp.ptr[s], e - s)
+        }
+        i = i + 1
+    }
+    return ""
+}
+
+fn lowerEq(a: str, b: str) -> bool {
+    if a.len != b.len { return false }
+    local i: usize = 0
+    while i < a.len {
+        if lowerAt(a, i) != lowerAt(b, i) { return false }
+        i = i + 1
+    }
+    return true
+}

@@ -1,24 +1,77 @@
-// std/http/middleware: ready-made middleware for `routerUse` / `groupUse`.
-from "../io/io" import eprint
-from "../str/str" import fromC
-from "context" import Context, ctxNext, ctxSetHeader, ctxAbortWithStatus
-from "util" import cstrEq
+// std/http/middleware: the middleware that Gin ships (gin.Logger, gin.Recovery) and a CORS handler, as handlers of type Handler. A
+// middleware calls c.Next() to run the rest of the chain, and returns after it so it can see the response.
+// Recovery runs the rest of the chain inside a try block: a panic in a handler unwinds to it, and the client gets 500.
+from "../io/io" import print
+from "../sys" import sysClockSeconds
+from "../str/str" import fromParts
+from "context" import Context, Handler
+from "../str/string" import String
 
-/// Runs the rest of the chain, then logs `METHOD PATH` to stderr.
-export fn mwLogger(c: *Context) {
-    ctxNext(c)
-    eprint(fromC(c.method))
-    eprint(" ")
-    eprint(fromC(c.path))
-    eprint("\n")
+/// Prints one line per request after it is answered: "[xlang] METHOD PATH STATUS SECONDS" (gin.Logger's shape).
+export fn Logger(c: *Context) {
+    local start: i64 = sysClockSeconds()
+    c.Next()
+    local line: String = String()
+    line.append("[xlang] ")
+    line.append(c.method)
+    line.append(" ")
+    line.append(c.path)
+    line.append(" ")
+    line.append(statusDigits(c.statusCode).asStr())
+    line.append(" ")
+    line.append(secondsDigits(sysClockSeconds() - start).asStr())
+    line.append("s\n")
+    print(line.asStr())
 }
 
-/// Adds permissive CORS headers and answers preflight `OPTIONS` requests with 204.
-export fn mwCors(c: *Context) {
-    ctxSetHeader(c, "Access-Control-Allow-Origin", "*")
-    ctxSetHeader(c, "Access-Control-Allow-Methods", "GET, POST, PUT, PATCH, DELETE, HEAD, OPTIONS")
-    ctxSetHeader(c, "Access-Control-Allow-Headers", "Content-Type, Authorization")
-    if cstrEq(c.method, "OPTIONS") {
-        ctxAbortWithStatus(c, 204)
+/// Turns a panic inside the rest of the chain into a 500 answer instead of ending the process (gin.Recovery).
+export fn Recovery(c: *Context) {
+    try {
+        c.Next()
+    } catch msg {
+        if !c.responded {
+            c.AbortWithStatus(500)
+        }
     }
+}
+
+/// Permissive CORS for simple requests: any origin, the common methods, and the preflight answered with 204.
+export fn Cors(c: *Context) {
+    c.SetHeader("Access-Control-Allow-Origin", "*")
+    c.SetHeader("Access-Control-Allow-Methods", "GET, POST, PUT, PATCH, DELETE, HEAD, OPTIONS")
+    c.SetHeader("Access-Control-Allow-Headers", "Origin, Content-Type, Authorization")
+    if c.method.len == 7 && c.method[0] == 79 {
+        c.Status(204)
+        c.Abort()
+        return
+    }
+    c.Next()
+}
+
+fn statusDigits(v: i32) -> String {
+    return numberText(v as i64)
+}
+
+fn secondsDigits(v: i64) -> String {
+    return numberText(v)
+}
+
+/// Decimal text of a non-negative number (0 for a negative one).
+fn numberText(v: i64) -> String {
+    local out: String = String()
+    local x: i64 = v
+    if x < 0 { x = 0 }
+    local digits: [ui8; 20]
+    local n: usize = 0
+    while true {
+        digits[n] = (48 + (x % 10)) as ui8
+        n = n + 1
+        x = x / 10
+        if x == 0 { break }
+    }
+    while n > 0 {
+        n = n - 1
+        out.append(fromParts(&digits[n], 1))
+    }
+    return out
 }
