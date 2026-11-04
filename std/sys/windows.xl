@@ -349,3 +349,30 @@ export fn sysClockSeconds() -> i64 {
     }
     return -1
 }
+
+// ---- memory and environment (kernel32; Microsoft Learn: GlobalMemoryStatusEx, GetEnvironmentVariableW) ---------------------
+
+/// MEMORYSTATUSEX (memoryapi.h): dwLength ui32 at 0 (set to 64), dwMemoryLoad ui32 at 4, ullTotalPhys ui64 at 8.
+@library("kernel32") declare fn GlobalMemoryStatusEx(buf: *void) -> i32
+
+/// The installed physical memory in bytes, or -1.
+export fn sysMemoryTotal() -> i64 {
+    local buf: [ui8; 64]
+    buf[0] = 64
+    if GlobalMemoryStatusEx(&buf[0] as *void) == 0 { return -1 }
+    local total: ui64 = 0
+    local k: usize = 0
+    while k < 8 {
+        total = total | ((buf[8 + k] as ui64) << ((k * 8) as ui64))
+        k = k + 1
+    }
+    return total as i64
+}
+
+/// GetEnvironmentVariableW: the length of the value (without the terminating NUL) when it fits `size` UTF-16 units, the length
+/// needed when it does not, or 0 when the variable is not set.
+@library("kernel32") declare fn GetEnvironmentVariableW(name: *ui16, buf: *ui16, size: ui32) -> ui32
+
+export fn sysGetEnvW(name: *ui16, buf: *ui16, size: ui32) -> ui32 {
+    return GetEnvironmentVariableW(name, buf, size)
+}

@@ -1,0 +1,96 @@
+// std/io/stat: file metadata. Linux: statx (x86-64 332, arm64 291; include/uapi/linux/stat.h): stx_mode ui16 at 28, stx_size ui64 at
+// 40, stx_mtime.tv_sec i64 at 112 (struct statx_timestamp is tv_sec i64 then tv_nsec ui32 and a reserved ui32). The call follows
+// symbolic links (AT_SYMLINK_NOFOLLOW is not set). macOS: stat from libSystem; 64-bit layout (sys/stat.h): st_mode ui16 at 4,
+// st_size i64 at 96, st_mtimespec.tv_sec i64 at 48. Windows: not implemented.
+
+#if os == "linux"
+
+#if arch == "x86_64"
+define STAT_STATX = 332
+#elif arch == "aarch64"
+define STAT_STATX = 291
+#endif
+define STAT_AT_FDCWD = -100
+define STAT_MASK_BASIC = 2047
+
+/// The file kind bits of st_mode (S_IFMT, mode 0170000) and the directory value (S_IFDIR, 0040000).
+export define FILE_MODE_TYPE = 61440
+export define FILE_MODE_DIR = 16384
+
+export struct FileStat {
+    mode: ui32
+    size: i64
+    mtimeSec: i64
+    ok: bool
+}
+
+export fn fsStat(path: *ui8) -> FileStat {
+    local r: FileStat
+    local buf: [ui8; 256]
+    if syscall(STAT_STATX, STAT_AT_FDCWD, path, 0, STAT_MASK_BASIC, &buf[0]) < 0 { return r }
+    r.mode = (buf[28] as ui32) | ((buf[29] as ui32) << 8)
+    local s: ui64 = 0
+    local t: ui64 = 0
+    local k: usize = 0
+    while k < 8 {
+        s = s | ((buf[40 + k] as ui64) << ((k * 8) as ui64))
+        t = t | ((buf[112 + k] as ui64) << ((k * 8) as ui64))
+        k = k + 1
+    }
+    r.size = s as i64
+    r.mtimeSec = t as i64
+    r.ok = true
+    return r
+}
+
+#elif os == "macos"
+
+@library("System") declare fn stat(path: *ui8, buf: *void) -> i32
+
+export define FILE_MODE_TYPE = 61440
+export define FILE_MODE_DIR = 16384
+
+export struct FileStat {
+    mode: ui32
+    size: i64
+    mtimeSec: i64
+    ok: bool
+}
+
+export fn fsStat(path: *ui8) -> FileStat {
+    local r: FileStat
+    local buf: [ui8; 256]
+    if stat(path, &buf[0] as *void) != 0 { return r }
+    r.mode = (buf[4] as ui32) | ((buf[5] as ui32) << 8)
+    local s: ui64 = 0
+    local t: ui64 = 0
+    local k: usize = 0
+    while k < 8 {
+        s = s | ((buf[96 + k] as ui64) << ((k * 8) as ui64))
+        t = t | ((buf[48 + k] as ui64) << ((k * 8) as ui64))
+        k = k + 1
+    }
+    r.size = s as i64
+    r.mtimeSec = t as i64
+    r.ok = true
+    return r
+}
+
+#else
+
+export define FILE_MODE_TYPE = 61440
+export define FILE_MODE_DIR = 16384
+
+export struct FileStat {
+    mode: ui32
+    size: i64
+    mtimeSec: i64
+    ok: bool
+}
+
+export fn fsStat(path: *ui8) -> FileStat {
+    local r: FileStat
+    return r
+}
+
+#endif

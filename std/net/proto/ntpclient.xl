@@ -1,0 +1,50 @@
+// std/net/proto/ntpclient: an NTP client query over UDP (RFC 5905 section 8 for the four timestamps and the offset and delay).
+// The request is the packet of ntp.xl; the transmit time is sent as the origin timestamp of the exchange (t1). The reply gives
+// t2 (receive) and t3 (transmit); t4 is the local time of arrival. The local clock has whole-second resolution here (sysClockSeconds),
+// so the offset and delay are accurate to about one second; a sub-second clock is a later change. The socket is connected to the
+// server with connect(2) (UDP), which fixes the peer; the reply timeout is given in milliseconds.
+from "ntp" import ntpClientRequest, ntpParse, ntpOffsetDelay, NtpOffsetDelay, NtpPacket
+
+// seconds from 1900-01-01 to 1970-01-01 (RFC 5905 section 6)
+define NTP_UNIX_OFFSET = 2208988800
+from "../../sys" import sysUdpSocket, sysTcpConnect, sysWrite, sysRead, sysClose, sysSetRecvTimeout, sysClockSeconds
+
+/// The result of one query: the clock offset and round-trip delay in NTP 32.32 units (seconds times 2^32), `ok` on success.
+export struct NtpResult {
+    offset: i64
+    delay: i64
+    stratum: ui8
+    ok: bool
+}
+
+/// Queries the server at `ip` (host order IPv4) and `port` (123 for NTP). Returns ok = false on any failure or timeout.
+export fn ntpQuery(ip: ui32, port: ui16, timeoutMs: i32) -> NtpResult {
+    local r: NtpResult
+    local fd: i32 = sysUdpSocket()
+    if fd < 0 { return r }
+    sysSetRecvTimeout(fd, timeoutMs)
+    if sysTcpConnect(fd, ip, port) != 0 {
+        sysClose(fd)
+        return r
+    }
+    local t1: ui64 = ((sysClockSeconds() as ui64) + (NTP_UNIX_OFFSET as ui64)) << 32
+    local req: [ui8; 48]
+    ntpClientRequest(t1, &req[0])
+    if sysWrite(fd, &req[0], 48) != 48 {
+        sysClose(fd)
+        return r
+    }
+    local buf: [ui8; 128]
+    local got: isize = sysRead(fd, &buf[0], 128)
+    sysClose(fd)
+    if got < 48 { return r }
+    local p: NtpPacket = ntpParse(&buf[0], got as usize)
+    if !p.ok || p.mode != 4 { return r }
+    local t4: ui64 = ((sysClockSeconds() as ui64) + (NTP_UNIX_OFFSET as ui64)) << 32
+    local od: NtpOffsetDelay = ntpOffsetDelay(t1, p.receive, p.transmit, t4)
+    r.offset = od.offset
+    r.delay = od.delay
+    r.stratum = p.stratum
+    r.ok = true
+    return r
+}

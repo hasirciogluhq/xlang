@@ -5,9 +5,6 @@ define SYS_READ = 3
 define SYS_WRITE = 4
 define SYS_MUNMAP = 73
 define SYS_MMAP = 197
-define SYS_BSDTHREAD_CREATE = 360
-define SYS_BSDTHREAD_TERMINATE = 361
-define SYS_BSDTHREAD_REGISTER = 366
 
 define SYS_OPEN = 5
 define SYS_CLOSE = 6
@@ -67,52 +64,53 @@ export fn sysWait(addr: *ui32, expected: ui32) {
 export fn sysWake(addr: *ui32, count: i32) {
 }
 
-// ---- threads: raw bsdthread_create (no libpthread) ----------------------------------------
+// ---- threads: libSystem pthreads (decision D1, option A in docs/known-limitations.md) ------------
+//
+// pthread_create, pthread_attr_setstack and pthread_detach are the documented interface of libSystem (Apple, pthread(3)). The raw
+// bsdthread_* system calls are not used: the kernel refuses bsdthread_register in a process that did not start through libSystem.
+// The thread module keeps its own stack (sysMap) and its own exit word (`ctid`, cleared when the entry returns), so the pthread
+// attribute only points at that stack; the thread is detached at creation.
 
-global threadRegistered: ui32
+@library("System") declare fn pthread_create(th: *ui64, attr: *void, start: fn(*void) -> *void, arg: *void) -> i32
+@library("System") declare fn pthread_attr_init(attr: *void) -> i32
+@library("System") declare fn pthread_attr_setstack(attr: *void, stack: *void, size: usize) -> i32
+@library("System") declare fn pthread_attr_destroy(attr: *void) -> i32
+@library("System") declare fn pthread_detach(th: ui64) -> i32
 
-/// Entered by the kernel on the new thread: the registered `threadstart`. Registers on arm64:
-/// x0 pthread, x1 mach port, x2 func, x3 arg, x4 stack, x5 flags (x86_64: rdi rsi rdx rcx r8 r9).
-/// Runs `func(arg)` and terminates the thread, letting the kernel release its stack.
-fn threadStub() {
-#if arch == "aarch64"
-    __builtin_asm("mov x29, xzr\nmov x19, x1\nmov x20, x3\nmov x9, x2\nmov x0, x3\nblr x9\nldr x0, [x20, #24]\nldr x1, [x20, #32]\nmov x2, x19\nmov x3, #0\nmov x16, #361\nsvc #0x80\nbrk #1")
-#elif arch == "x86_64"
-    __builtin_asm("xor ebp, ebp\nmov r12, rsi\nmov r13, rcx\nmov rdi, rcx\ncall rdx\nmov rdi, [r13 + 24]\nmov rsi, [r13 + 32]\nmov rdx, r12\nxor ecx, ecx\nmov eax, 0x2000169\nsyscall\nud2")
-#endif
-}
-
-/// Runs on the new thread: the user entry, then the "exited" word is cleared.
-fn threadBody(block: *void) {
-    local words: *usize = block as *usize
+/// Runs on the new pthread: the user entry, then the exit word is cleared (the join protocol of std/thread).
+fn threadTrampoline(p: *void) -> *void {
+    local words: *usize = p as *usize
     local entry: fn(*void) = words[0] as fn(*void)
     local arg: *void = words[1] as *void
     local ctid: *ui32 = words[2] as *ui32
     entry(arg)
     __builtin_atomicStore(ctid, 0, MemoryOrder.release)
+    return nil
 }
 
 export fn sysThreadCreate(entry: fn(*void), arg: *void, stack: *void, size: usize, ctid: *ui32) -> i64 {
-    if __builtin_atomicLoad(&threadRegistered, MemoryOrder.acquire) == 0 {
-        // bsdthread_register(threadstart, wqthread, pthsize, init data, targetconc, dispatch offset)
-        // The kernel refuses the registration of a process that did not come up through libSystem
-        // (EINVAL): no raw thread creation until that is understood (see plan "decisions pending").
-        local r: i64 = syscall(SYS_BSDTHREAD_REGISTER, threadStub as usize, 0, 0, 0, 0, 0)
-        if r < 0 { return -1 }
-        __builtin_atomicStore(&threadRegistered, 1, MemoryOrder.release)
-    }
-    local top: usize = (stack as usize) + size
-    local block: *usize = (top - 64) as *usize
+    // The argument block sits at the bottom of the region: Darwin keeps its own thread structure at the top of a custom stack.
+    local block: *usize = stack as *usize
     block[0] = entry as usize
     block[1] = arg as usize
     block[2] = ctid as usize
-    block[3] = stack as usize
-    block[4] = size
-    // bsdthread_create(func, func_arg, stack, pthread, flags): the kernel starts `threadstart`.
-    return syscall(SYS_BSDTHREAD_CREATE, threadBody as usize, block, block, block, 16777216)   // PTHREAD_START_CUSTOM
+    // pthread_attr_t is 64 bytes on arm64 and x86-64 macOS; 128 bytes of ui64 leave room for the opaque layout
+    local attr: [ui64; 16]
+    if pthread_attr_init(&attr[0] as *void) != 0 { return -1 }
+    // Darwin takes the TOP (highest address) of a caller-provided stack: stacks grow down from it
+    if pthread_attr_setstack(&attr[0] as *void, (stack as usize + size) as *void, size) != 0 {
+        pthread_attr_destroy(&attr[0] as *void)
+        return -1
+    }
+    local tid: ui64 = 0
+    local r: i32 = pthread_create(&tid, &attr[0] as *void, threadTrampoline, block as *void)
+    pthread_attr_destroy(&attr[0] as *void)
+    if r != 0 { return -1 }
+    pthread_detach(tid)
+    return tid as i64
 }
 
-/// The kernel releases the thread's own stack at termination; nothing to do here.
+/// The stack belongs to the thread module (sysMap / sysUnmap); nothing to release here.
 export fn sysThreadRelease(stack: *void, size: usize) {
 }
 
@@ -129,7 +127,7 @@ export fn sysPollCreate() -> i32 {
 }
 
 export fn sysPollWatch(pfd: i32, fd: i32, write: bool, token: usize) -> i32 {
-    // struct kevent: ident u64, filter i16, flags u16, fflags u32, data i64, udata u64 (32 bytes)
+    // struct kevent: ident ui64, filter i16, flags ui16, fflags ui32, data i64, udata ui64 (32 bytes)
     local ev: [usize; 4]
     ev[0] = fd as usize
     ev[1] = 0
@@ -242,4 +240,19 @@ export fn sysClockSeconds() -> i64 {
 
 export fn sysSysctl(name: *ui8, oldp: *void, oldlen: *usize) -> bool {
     return sysctlbyname(name, oldp, oldlen, nil, 0) == 0
+}
+
+/// Maps `size` bytes with a PROT_NONE guard page below them; see the Linux variant. macOS mprotect is BSD number 74.
+export fn sysMapGuarded(size: usize) -> *void {
+    local base: *void = sysMap(size + 4096)
+    if base == nil { return nil }
+    if syscall(74, base, 4096, 0) < 0 {
+        sysUnmap(base, size + 4096)
+        return nil
+    }
+    return ((base as usize) + 4096) as *void
+}
+
+export fn sysUnmapGuarded(p: *void, size: usize) {
+    sysUnmap(((p as usize) - 4096) as *void, size + 4096)
 }

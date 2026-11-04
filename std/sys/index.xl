@@ -6,3 +6,4 @@
 #if os == "windows" export * from "windows"
 export * from "sock"
 export * from "env"
+export * from "uring"

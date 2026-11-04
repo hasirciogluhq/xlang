@@ -15,9 +15,7 @@ The original plan is implemented except the items below, which are intentionally
   registration can be reset; move the block above it. bash completion needs no `bash-completion` package
   (it uses plain `complete -F`). Terminal emulators that start non-login bash on macOS read `~/.bashrc`, not
   `~/.bash_profile`; the block goes to whichever of the two already exists, else `~/.bash_profile`.
-- **macOS raw threads:** `bsdthread_register` returns `EINVAL` in a process that did not come up through
-  libSystem, so `bsdthread_create` could not be tried. The scheduler runs cooperatively on one thread
-  there; kqueue I/O works. Options: find the registration prerequisite, use Mach `thread_create_running`
+- **macOS threads (D1, option A):** pthread_create from libSystem is the creation primitive now (attribute stack is the top of the caller region, argument block at its bottom). The threads and scheduler e2e programs are being verified; see the e2e result before trusting this line.
   (MIG message), or keep the single-thread mode.
 - **Windows:** `std/sys/windows.xl` imports ntdll `Nt*`, bcrypt (RNG) and `GetStdHandle`, and `std/sys/sock.xl`
   imports ws2_32 (sockets), each with `@library("...") declare fn`; the clock is read from `KUSER_SHARED_DATA`. A program cross-compiles and
@@ -328,3 +326,12 @@ Decisions taken when the package system was added (`docs/PACKAGE_MANAGER.md` is 
 
 ## Std MQTT (`std/net/proto/mqtt`)
 - **Packets only:** the builders write CONNECT, PUBLISH, SUBSCRIBE, PINGREQ and DISCONNECT, and the reader parses CONNACK. The connection loop, the QoS 1 and 2 acknowledgements, will messages, credentials and AUTH are not implemented.
+
+## Batch: process, stat, io_uring, protocols, DER and hardware (this change)
+- **io_uring is a standalone backend:** `std/sys/uring` sets up a ring and does a NOP round trip. The event loop (`std/sys/event`) still uses epoll; wiring the completion backend in with the epoll fallback is open. Docker's default seccomp profile refuses io_uring, so the fallback path is what runs in containers.
+- **Process spawn has no environment:** `processSpawn` starts the child with an empty environment; passing one is open. There are no signal handlers (rt_sigaction, sigaction).
+- **Fiber scheduler is not built:** `sysMapGuarded` gives the guard page; the fiber scheduler on top of it is open.
+- **JSON Patch (RFC 6902) and Merge Patch (RFC 7396) are not implemented.**
+- **DHCPv6, SLAAC and DHCPv4 state machine are not implemented.**
+- **NTP client clock:** the local clock has whole-second resolution.
+- **Windows:** CPU feature flags (IsProcessorFeaturePresent), directory listing and file stat are empty.

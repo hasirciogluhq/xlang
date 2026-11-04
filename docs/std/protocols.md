@@ -35,3 +35,19 @@ on the host: CONNECT gets CONNACK with reason 0, SUBSCRIBE gets SUBACK, a PUBLIS
 PINGREQ gets PINGRESP, and DISCONNECT is accepted.
 
 Not implemented: will messages, username and password, AUTH, user properties, topic aliases, and the QoS 1 and QoS 2 acknowledgements (PUBACK, PUBREC, PUBREL, PUBCOMP).
+
+## Further protocol messages
+
+| Module | Functions | Specification |
+|---|---|---|
+| `std/net/proto/ntpclient` | `ntpQuery(ip, port, timeoutMs)` returns the offset and delay | RFC 5905 sections 7.3 and 8 (UDP, the clock has whole-second resolution) |
+| `std/net/proto/dnswire` | `dnsBuildQueryEdns` | RFC 6891 section 6.1.2 (OPT record in the additional section) |
+| `std/net/proto/dnstransport` | `dnsFrameTcp`, `dnsUnframeTcp`, `dohRequestTarget` | RFC 1035 section 4.2.2 (DNS over TCP framing, used by DNS over TLS, RFC 7858), RFC 8484 section 4.1 (GET with `dns=` base64url) |
+| `std/net/proto/stun` | `stunBindingRequest`, `stunMappedAddress` | RFC 8489 sections 6 and 14.2 (IPv4 XOR-MAPPED-ADDRESS, MAPPED-ADDRESS fallback) |
+| `std/net/proto/dhcp` | `dhcpDiscover`, `dhcpParseReply` | RFC 2131 sections 2 and 3, RFC 2132 options 1, 3, 51, 53, 54, 55 |
+
+The DNS over TLS and DNS over HTTPS transports are the caller's TLS and HTTP clients; this module frames and encodes only. The STUN and DHCP messages are built and parsed; nothing here sends them on a socket.
+
+## Base91
+
+`std/encoding/base91` implements Joachim Henke's base91 (base91.sourceforge.net): 91 printable characters, 13 or 14 bits per pair, no padding.

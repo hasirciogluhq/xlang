@@ -269,7 +269,7 @@ export fn sysClockSeconds() -> i64 {
 }
 
 /// getdents64 (`linux_dirent64` records into `buf`): the number of bytes read, 0 at the end of the directory, or -errno.
-/// The record layout is in include/uapi/linux/dirent.h: inode u64, offset i64, record length u16, type u8, then the NUL-terminated name.
+/// The record layout is in include/uapi/linux/dirent.h: inode ui64, offset i64, record length ui16, type ui8, then the NUL-terminated name.
 export fn sysGetdents(fd: i32, buf: *ui8, n: usize) -> isize {
     return syscall(SYS_GETDENTS64, fd, buf, n) as isize
 }
@@ -277,4 +277,26 @@ export fn sysGetdents(fd: i32, buf: *ui8, n: usize) -> isize {
 /// ioctl(fd, request, arg): 0 on success, -errno on failure.
 export fn sysIoctl(fd: i32, request: ui64, arg: *void) -> i32 {
     return syscall(SYS_IOCTL, fd, request, arg) as i32
+}
+
+/// Maps `size` bytes with a PROT_NONE guard page below them (the lowest page faults on access, so a stack overflow stops the
+/// program instead of writing into the neighbouring memory). Returns the usable base, or nil. Release it with sysUnmapGuarded.
+#if arch == "x86_64"
+define SYS_MPROTECT = 10
+#elif arch == "aarch64"
+define SYS_MPROTECT = 226
+#endif
+export fn sysMapGuarded(size: usize) -> *void {
+    local base: *void = sysMap(size + 4096)
+    if base == nil { return nil }
+    if syscall(SYS_MPROTECT, base, 4096, 0) < 0 {
+        sysUnmap(base, size + 4096)
+        return nil
+    }
+    return ((base as usize) + 4096) as *void
+}
+
+/// Releases a region made by sysMapGuarded (`p` is the usable base it returned).
+export fn sysUnmapGuarded(p: *void, size: usize) {
+    sysUnmap(((p as usize) - 4096) as *void, size + 4096)
 }

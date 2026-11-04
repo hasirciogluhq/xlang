@@ -1,5 +1,5 @@
 // std/io/dir: directory listing. Linux: getdents64 (x86-64 217, arm64 61; docs/std/syscalls). Each linux_dirent64 record
-// (include/uapi/linux/dirent.h) is inode u64, offset i64, record length u16, type u8, then the NUL-terminated name.
+// (include/uapi/linux/dirent.h) is inode ui64, offset i64, record length ui16, type ui8, then the NUL-terminated name.
 // macOS: not implemented yet (getdirentries is not verified against the XNU table; see docs/std/syscalls/macos-xnu.md).
 // Names "." and ".." are skipped.
 #if os == "linux"
@@ -46,6 +46,45 @@ export fn fsListDir(path: *ui8, out: *DirEntry, max: usize) -> usize {
     return count
 }
 
+#elif os == "macos"
+
+// macOS: opendir, readdir and closedir from libSystem. struct dirent (sys/dirent.h, 64-bit inode layout): d_ino ui64 at 0,
+// d_seekoff ui64 at 8, d_reclen ui16 at 16, d_namlen ui16 at 18, d_type ui8 at 20, d_name from 21 (NUL terminated).
+@library("System") declare fn opendir(path: *ui8) -> *void
+@library("System") declare fn readdir(dir: *void) -> *void
+@library("System") declare fn closedir(dir: *void) -> i32
+
+export struct DirEntry {
+    name: [ui8; 256]
+    kind: ui8
+}
+
+export fn fsListDir(path: *ui8, out: *DirEntry, max: usize) -> usize {
+    local dir: *void = opendir(path)
+    if dir == nil { return 0 }
+    local count: usize = 0
+    while count < max {
+        local ent: *ui8 = readdir(dir) as *ui8
+        if ent == nil { break }
+        local nameAt: usize = 21
+        local dot: bool = ent[nameAt] == 46 && (ent[nameAt + 1] == 0 || (ent[nameAt + 1] == 46 && ent[nameAt + 2] == 0))
+        if !dot {
+            local e: DirEntry
+            local k: usize = 0
+            while ent[nameAt + k] != 0 && k + 1 < 256 {
+                e.name[k] = ent[nameAt + k]
+                k = k + 1
+            }
+            e.name[k] = 0
+            e.kind = ent[20]
+            out[count] = e
+            count = count + 1
+        }
+    }
+    closedir(dir)
+    return count
+}
+
 #else
 
 export struct DirEntry {
@@ -58,3 +97,4 @@ export fn fsListDir(path: *ui8, out: *DirEntry, max: usize) -> usize {
 }
 
 #endif
+

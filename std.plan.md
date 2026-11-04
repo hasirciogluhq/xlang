@@ -56,7 +56,7 @@ Q10. Final: write the Turkish feature assessments for every `defer` item in docs
 - D6 `print` on Windows keeps ws2_32 linked (its socket branch is reachable). Recommendation: accept; a file-only print would need a separate stdout API.
 
 ## Deferred (no code now; reasons in docs/known-limitations.md)
-xxhash, highwayhash and other non-standard hashes; blake3; ripemd, whirlpool, tiger, sm3, gost, streebog; legacy ciphers (DES, RC4, Blowfish, Twofish, Camellia, SM4, ARIA, SEED, CAST5, IDEA, RC2, RC5, RC6, Serpent, Kuznyechik); OCB and CFB/OFB; DSA and SM2; Argon2 and bcrypt; OCSP request and response; PKCS#8 and PKCS#12 encryption; QUIC and DTLS; Vulkan, CUDA, OpenCL, ROCm; SPIR-V; IOKit and Metal; OpenID Connect; gRPC; CoAP; SSH; LDAP, Kerberos, SNMP; zstd, brotli, LZ4, Snappy; YAML; zlib-style Huffman tables beyond inflate and fixed-table deflate.
+xxhash, highwayhash and other non-standard hashes; blake3; ripemd, whirlpool, tiger, sm3, gost, streebog; legacy ciphers (DES, RC4, Blowfish, Twofish, Camellia, SM4, ARIA, SEED, CAST5, IDEA, RC2, RC5, RC6, Serpent, Kuznyechik); OCB and CFB/OFB; DSA and SM2; Argon2 and bcrypt; OCSP request and response; PKCS#8 and PKCS#12 encryption; QUIC and DTLS; Vulkan, CUDA, OpenCL, ROCm; SPIR-V; IOKit and Metal; gRPC; CoAP; LDAP, Kerberos, SNMP; zstd, brotli, LZ4, Snappy; YAML; zlib-style Huffman tables beyond inflate and fixed-table deflate.
 
 ## 1. Checksums (`std/checksum`)
 - crc32, crc32Update (IEEE, reflected): wip
@@ -409,9 +409,8 @@ Rule: every number goes into `docs/syscalls/<os>-<arch>.md` before code uses it 
 - Server cloud API surface: health, metrics (Prometheus text exposition format, https://prometheus.io/docs/instrumenting/exposition_formats/): todo.
 
 ## 21. Cloud, APIs and auth (`std/cloud`, `std/auth`, new)
-- JWT: RFC 7519; JWS: RFC 7515; JWE: RFC 7516; JWK: RFC 7517; JWA algorithms: RFC 7518 (HS256 uses hmac; RS256 uses rsaVerifyPkcs1; ES256 uses ecdsaVerify; EdDSA uses RFC 8037): todo.
+- JWT: RFC 7519; JWS: RFC 7515; JWK: RFC 7517; JWA algorithms: RFC 7518 (HS256 uses hmac; RS256 uses rsaVerifyPkcs1; ES256 uses ecdsaVerify; EdDSA uses RFC 8037): todo.
 - OAuth 2.0: RFC 6749; bearer tokens RFC 6750; PKCE RFC 7636; token introspection RFC 7662: todo (client side, plain HTTP requests).
-- OpenID Connect core spec (https://openid.net/specs/openid-connect-core-1_0.html): defer until JWT and JWKS are done.
 - AWS Signature Version 4 (https://docs.aws.amazon.com/IAM/latest/UserGuide/reference_aws-signing.html): canonical request, HMAC-SHA-256 signing key chain; needs hmac and sha256 (done): todo. This is a documented public algorithm; use only the spec.
 - Google Cloud and Azure request signing: defer (vendor SDK territory); record the reason.
 - Instance metadata: link-local endpoints (169.254.169.254, the metadata address documented by each vendor): todo, behind a configurable base.
@@ -419,8 +418,6 @@ Rule: every number goes into `docs/syscalls/<os>-<arch>.md` before code uses it 
 - Protocol Buffers wire format (https://protobuf.dev/programming-guides/encoding/): varint, zigzag, length-delimited, fixed32/64: todo.
 - Docker Engine API, Kubernetes API: defer; both are plain HTTP+JSON, so they follow from http and json.
 - MQTT 5.0 (OASIS MQTT-5.0): todo after TCP and TLS. CoAP RFC 7252: defer.
-- SMTP RFC 5321, IMAP RFC 9051, POP3 RFC 1939: todo after TLS, lower priority.
-- SSH transport RFC 4253, userauth RFC 4252, connection RFC 4254: defer (large).
 - LDAP RFC 4511, Kerberos RFC 4120, SNMP RFC 3416, syslog RFC 5424: defer.
 - Logging: structured output with RFC 5424 field rules: todo.
 

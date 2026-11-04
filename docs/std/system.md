@@ -34,3 +34,18 @@ AMX and the AVX-512 subsets beyond F, CD, DQ, BW and VL are not reported). Sysfs
 Environment variables: `envGet` reads the process environment (Linux from `/proc/self/environ`, which is the environment the
 process started with; macOS through `getenv`). Checked with a variable set in a container and on macOS. Windows is not
 implemented.
+
+## Processes, file metadata, guarded stacks and io_uring
+
+| Module | Functions | Source |
+|---|---|---|
+| `std/os/process` | `processId`, `processKill`, `processWait`, `processSpawn` | Linux: getpid 39/172, kill 62/129, wait4 61/260, clone 56/220 (SIGCHLD), execve 59/221, exit 60/93; macOS: libSystem getpid, kill, wait4, posix_spawn |
+| `std/io/stat` | `fsStat` (mode, size, mtime) | Linux: statx 332/291 (stx_mode 28, stx_size 40, stx_mtime 112); macOS: libSystem stat (st_mode 4, st_size 96, st_mtime 48) |
+| `std/io/dir` | `fsListDir` (macOS now too) | macOS: libSystem opendir, readdir, closedir (struct dirent: d_type 20, d_name 21) |
+| `std/sys` | `sysMapGuarded`, `sysUnmapGuarded` | mprotect 10/226 (Linux), BSD 74 (macOS): a PROT_NONE page below the region |
+| `std/sys/uring` | `uringAvailable`, `uringSetup`, `uringNop`, `uringClose` (Linux) | io_uring_setup 425, io_uring_enter 426; structure layouts from include/uapi/linux/io_uring.h |
+| `std/hw` | `hwCacheLineSize` | Linux: sysfs coherency_line_size; macOS: hw.cachelinesize; Windows: 64 |
+
+Windows: memory (`GlobalMemoryStatusEx`) and environment (`GetEnvironmentVariableW`, ASCII names and values) are wired through kernel32.
+
+The process module starts children with an empty environment on both systems. The io_uring module exposes a ring and a NOP round trip; the event loop does not use it yet (epoll stays the default).

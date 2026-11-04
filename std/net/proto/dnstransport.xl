@@ -1,0 +1,66 @@
+// std/net/proto/dnstransport: DNS over TCP framing (RFC 1035 section 4.2.2: a 2-byte big-endian length, then the message), used by
+// DNS over TLS (RFC 7858, port 853, carried by the TLS client of std/tls) and by DNS over HTTPS (RFC 8484, section 4.1: the query
+// message is base64url-encoded without padding into the `dns` parameter of a GET request). EDNS0 (RFC 6891, section 6.1.2): the
+// query carries one OPT record in the additional section, with the requester's UDP payload size in its CLASS field.
+from "../../encoding/base64" import base64UrlEncodeRaw
+from "dnswire" import dnsBuildQuery
+from "../../str/string" import String
+from "../../str/str" import fromParts
+
+/// Writes the length prefix and the message `msg[0..n)` into `out` (capacity `cap`); returns the total length, or 0 when it does not
+/// fit or the message is longer than 65535 bytes.
+export fn dnsFrameTcp(msg: *ui8, n: usize, out: *ui8, cap: usize) -> usize {
+    if n > 65535 || n + 2 > cap { return 0 }
+    out[0] = ((n >> 8) & 0xff) as ui8
+    out[1] = (n & 0xff) as ui8
+    local i: usize = 0
+    while i < n {
+        out[2 + i] = msg[i]
+        i = i + 1
+    }
+    return n + 2
+}
+
+/// Reads the length prefix of a framed message at the start of `buf[0..n)`; returns the message length, or -1 when the frame is
+/// incomplete.
+export fn dnsUnframeTcp(buf: *ui8, n: usize) -> isize {
+    if n < 2 { return -1 }
+    local len: usize = ((buf[0] as usize) << 8) | (buf[1] as usize)
+    if n < 2 + len { return -1 }
+    return len as isize
+}
+
+/// The EDNS0 query (RFC 6891): the standard query of dnsBuildQuery with one OPT pseudo-record (root name, type 41, CLASS = the
+/// UDP payload size, TTL 0 for version 0 and no flags, empty RDATA) in the additional section. Returns the length, or -1.
+export fn dnsBuildQueryEdns(id: ui16, name: *ui8, n: usize, qtype: ui16, udpSize: ui16, out: *ui8, cap: usize) -> isize {
+    local len: isize = dnsBuildQuery(id, name, n, qtype, out, cap)
+    if len < 0 { return -1 }
+    local at: usize = len as usize
+    if at + 11 > cap { return -1 }
+    // ARCOUNT becomes 1
+    out[10] = 0
+    out[11] = 1
+    out[at] = 0
+    out[at + 1] = 0
+    out[at + 2] = 41
+    out[at + 3] = ((udpSize >> 8) & 0xff) as ui8
+    out[at + 4] = (udpSize & 0xff) as ui8
+    out[at + 5] = 0
+    out[at + 6] = 0
+    out[at + 7] = 0
+    out[at + 8] = 0
+    out[at + 9] = 0
+    out[at + 10] = 0
+    return (at + 11) as isize
+}
+
+/// The request target of a DNS over HTTPS GET (RFC 8484 section 4.1): `path` followed by "?dns=" and the base64url of the query.
+export fn dohRequestTarget(path: str, msg: *ui8, n: usize) -> String {
+    local enc: [ui8; 2048]
+    local m: usize = base64UrlEncodeRaw(msg, n, &enc[0])
+    local out: String = String()
+    out.append(path)
+    out.append("?dns=")
+    out.append(fromParts(&enc[0], m))
+    return out
+}

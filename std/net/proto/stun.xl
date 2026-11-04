@@ -1,0 +1,77 @@
+// std/net/proto/stun: STUN messages (RFC 8489, https://www.rfc-editor.org/rfc/rfc8489). A message is a 20-byte header (message type
+// 2 bytes, length 2 bytes excluding the header, magic cookie 0x2112A442 in 4 bytes, transaction ID 12 bytes; section 6) and attributes
+// (type 2, length 2, value padded to 4 bytes; section 14). A Binding request has type 0x0001; its success response is 0x0101. The
+// address of the requester is in XOR-MAPPED-ADDRESS (0x0020, section 14.2): the port is XORed with the top 16 bits of the cookie and
+// an IPv4 address with the cookie; the older MAPPED-ADDRESS (0x0001) is read when XOR-MAPPED-ADDRESS is absent. Only IPv4 is parsed.
+// Authentication, the other attributes and the TURN relay (RFC 8656) are not implemented here.
+
+define STUN_COOKIE = 0x2112A442
+define STUN_BINDING_REQUEST = 1
+define STUN_BINDING_SUCCESS = 257
+define STUN_ATTR_MAPPED = 1
+define STUN_ATTR_XOR_MAPPED = 32
+
+/// Writes a Binding request with the 12-byte transaction ID `txid` into `out` (20 bytes); returns 20.
+export fn stunBindingRequest(txid: *ui8, out: *ui8) -> usize {
+    out[0] = 0
+    out[1] = 1
+    out[2] = 0
+    out[3] = 0
+    out[4] = 0x21
+    out[5] = 0x12
+    out[6] = 0xa4
+    out[7] = 0x42
+    local i: usize = 0
+    while i < 12 {
+        out[8 + i] = txid[i]
+        i = i + 1
+    }
+    return 20
+}
+
+/// The mapped IPv4 address of a Binding success response (host order address, port in host order), or ok = false.
+export struct StunAddress {
+    ip: ui32
+    port: ui16
+    ok: bool
+}
+
+/// Reads the address from a Binding success response to the request with transaction ID `txid`.
+export fn stunMappedAddress(buf: *ui8, n: usize, txid: *ui8) -> StunAddress {
+    local r: StunAddress
+    if n < 20 { return r }
+    local mtype: ui16 = ((buf[0] as ui16) << 8) | (buf[1] as ui16)
+    local mlen: usize = ((buf[2] as usize) << 8) | (buf[3] as usize)
+    if mtype != 257 || 20 + mlen > n { return r }
+    if buf[4] != 0x21 || buf[5] != 0x12 || buf[6] != 0xa4 || buf[7] != 0x42 { return r }
+    local i: usize = 0
+    while i < 12 {
+        if buf[8 + i] != txid[i] { return r }
+        i = i + 1
+    }
+    local at: usize = 20
+    local end: usize = 20 + mlen
+    local found: bool = false
+    while at + 4 <= end {
+        local atype: ui16 = ((buf[at] as ui16) << 8) | (buf[at + 1] as ui16)
+        local alen: usize = ((buf[at + 2] as usize) << 8) | (buf[at + 3] as usize)
+        local v: usize = at + 4
+        if v + alen > end { return r }
+        if atype == 32 && alen >= 8 && buf[v + 1] == 1 {
+            local port: ui32 = (((buf[v + 2] as ui32) << 8) | (buf[v + 3] as ui32)) ^ 0x2112
+            local ip: ui32 = ((buf[v + 4] as ui32) << 24) | ((buf[v + 5] as ui32) << 16) | ((buf[v + 6] as ui32) << 8) | (buf[v + 7] as ui32)
+            r.ip = ip ^ 0x2112a442
+            r.port = port as ui16
+            r.ok = true
+            return r
+        }
+        if atype == 1 && alen >= 8 && buf[v + 1] == 1 && !found {
+            r.port = (((buf[v + 2] as ui16) << 8) | (buf[v + 3] as ui16))
+            r.ip = ((buf[v + 4] as ui32) << 24) | ((buf[v + 5] as ui32) << 16) | ((buf[v + 6] as ui32) << 8) | (buf[v + 7] as ui32)
+            found = true
+        }
+        at = v + ((alen + 3) & ~3)
+    }
+    r.ok = found
+    return r
+}

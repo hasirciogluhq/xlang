@@ -22,6 +22,7 @@ export struct Context {
     responded: bool
     streaming: bool       // a chunked response was started with `ctxBeginStream`
     isHead: bool
+    keepAlive: bool      // the connection stays open after this response (set by the server from the request)
     headers: *ui8         // the request header block, read with `ctxHeader`
     query: *ui8           // raw `a=1\0b=2` pairs, read with `ctxQuery`; nil without a query string
     queryLen: usize
@@ -140,7 +141,7 @@ export fn ctxRespond(c: *Context, status: i32, contentType: *ui8, body: *ui8) {
     sendStr(c, "Content-Length: ")
     local len: usize = formatUInt(strlen(body), &num[0])
     sendAll(c, &num[0], len)
-    sendStr(c, "\r\nConnection: close\r\n\r\n")
+    sendConnection(c)
     if !c.isHead { sendStr(c, body) }
     c.responded = true
 }
@@ -168,9 +169,11 @@ export fn ctxBeginStream(c: *Context, status: i32, contentType: *ui8) {
     if c.responded { return }
     sendHead(c, status, contentType)
     if c.isHead {
-        sendStr(c, "Content-Length: 0\r\nConnection: close\r\n\r\n")
+        sendStr(c, "Content-Length: 0\r\n")
+        sendConnection(c)
     } else {
-        sendStr(c, "Transfer-Encoding: chunked\r\nConnection: close\r\n\r\n")
+        sendStr(c, "Transfer-Encoding: chunked\r\n")
+        sendConnection(c)
     }
     c.responded = true
     c.streaming = true
@@ -385,5 +388,14 @@ fn putPadded(out: *ui8, at: usize, v: i64, width: usize) {
         i = i - 1
         out[at + i] = (48 + (x % 10)) as ui8
         x = x / 10
+    }
+}
+
+/// The Connection header line and the blank line that ends the head (RFC 9112 section 9.3, 9.6).
+fn sendConnection(c: *Context) {
+    if c.keepAlive {
+        sendStr(c, "Connection: keep-alive\r\n\r\n")
+    } else {
+        sendStr(c, "Connection: close\r\n\r\n")
     }
 }

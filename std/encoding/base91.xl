@@ -1,0 +1,89 @@
+// std/encoding/base91: the base91 encoding by Joachim Henke (http://base91.sourceforge.net/, the encoder and decoder described
+// there). Each output pair of characters carries 13 or 14 bits: a value below 8192 whose first digit is 91 characters wide. The
+// alphabet is 91 printable ASCII characters: the letters, the digits and "!#$%&()*+,./:;<=>?@[]^_`{|}~" and the double quote (the
+// characters '-', '\' and the single quote are left out). Output length is not padded; the caller knows the length from the input.
+
+define BASE91_ALPHABET = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789!#$%&()*+,./:;<=>?@[]^_`{|}~\""
+
+/// Encodes `src[0..n)` into `out`; returns the length. `out` needs at most 2 * n + 2 bytes.
+export fn base91Encode(src: *ui8, n: usize, out: *ui8) -> usize {
+    local alpha: str = BASE91_ALPHABET
+    local b: ui32 = 0
+    local bits: ui32 = 0
+    local o: usize = 0
+    local i: usize = 0
+    while i < n {
+        b = b | ((src[i] as ui32) << bits)
+        bits = bits + 8
+        i = i + 1
+        if bits > 13 {
+            local v: ui32 = b & 8191
+            if v > 88 {
+                b = b >> 13
+                bits = bits - 13
+            } else {
+                v = b & 16383
+                b = b >> 14
+                bits = bits - 14
+            }
+            out[o] = alpha[(v % 91) as usize]
+            out[o + 1] = alpha[(v / 91) as usize]
+            o = o + 2
+        }
+    }
+    if bits > 0 {
+        out[o] = alpha[(b % 91) as usize]
+        o = o + 1
+        if bits > 7 || b > 90 {
+            out[o] = alpha[(b / 91) as usize]
+            o = o + 1
+        }
+    }
+    return o
+}
+
+/// Decodes `src[0..n)` into `out`; returns the byte count, or -1 for a character outside the alphabet. `out` needs at most n bytes.
+export fn base91Decode(src: *ui8, n: usize, out: *ui8) -> isize {
+    local alpha: str = BASE91_ALPHABET
+    local v: i32 = -1
+    local b: ui32 = 0
+    local bits: ui32 = 0
+    local o: usize = 0
+    local i: usize = 0
+    while i < n {
+        local d: i32 = -1
+        local k: usize = 0
+        while k < 91 {
+            if alpha[k] == src[i] {
+                d = k as i32
+                break
+            }
+            k = k + 1
+        }
+        if d < 0 { return -1 }
+        i = i + 1
+        if v < 0 {
+            v = d
+        } else {
+            v = v + d * 91
+            b = b | ((v as ui32) << bits)
+            if (v & 8191) > 88 {
+                bits = bits + 13
+            } else {
+                bits = bits + 14
+            }
+            while bits > 7 {
+                out[o] = (b & 255) as ui8
+                o = o + 1
+                b = b >> 8
+                bits = bits - 8
+            }
+            v = -1
+        }
+    }
+    if v >= 0 {
+        out[o] = ((b | ((v as ui32) << bits)) & 255) as ui8
+        o = o + 1
+    }
+    return o as isize
+}
