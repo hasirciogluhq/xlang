@@ -191,6 +191,11 @@ export class S3Client {
         return self.send("PUT", bucket, key, "", "", contentType, body)
     }
 
+    /// Creates a bucket (PUT /bucket). Regions other than us-east-1 need a LocationConstraint body on AWS; providers that take none ignore it.
+    fn CreateBucket(self, bucket: str) -> S3Result {
+        return self.send("PUT", bucket, "", "", "", "", "")
+    }
+
     fn GetObject(self, bucket: str, key: str) -> S3Result {
         return self.send("GET", bucket, key, "", "", "", "")
     }

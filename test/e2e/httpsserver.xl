@@ -1,40 +1,29 @@
-// HTTPS server e2e: `routerServeTls` on 127.0.0.1:tlsPort with the embedded test certificate.
-// `/hello` answers, `/quit` answers and ends the process (exit 0). Peer: `httpsclient.xl`, curl or
-// openssl s_client. Build with `-D tlsPort=14435` (and `-D tlsEc=1` for the ECDSA certificate).
-from "std" import print, Router, routerInit, routerGet, routerServeTls, Context, ctxString
-from "std" import tlsLoadCredentialsPem, TlsCredentials, tlsErrorText, TLS_OK, strlen
+// HTTPS server e2e: `RunTLS` on 127.0.0.1:tlsPort with the embedded test certificate. `/hello` answers, `/quit` answers and ends the
+// process (exit 0). Peer: `httpsclient.xl`, curl or openssl s_client. Build with `-D tlsPort=14435` (and `-D tlsEc=1` for ECDSA).
+from "std" import print, Engine, Context, TlsCredentials, tlsLoadCredentialsPem, tlsErrorText, TLS_OK, strlen
 from "std/sys" import sysExit
 from "tls/fixture" import rsaCert, rsaKey, ecCert, ecKey
 
-global cred: TlsCredentials
-global router: Router
-
-fn hello(c: *Context) {
-    ctxString(c, 200, "hello https")
-}
-
-fn quit(c: *Context) {
-    ctxString(c, 200, "bye")
-    sysExit(0)
-}
-
-fn listening() {
-    print("server: listening\n")
-}
-
 @entry fn main() -> i32 {
+    local cred: TlsCredentials
 #ifdef tlsEc
     local r: i32 = tlsLoadCredentialsPem(&cred, ecCert, strlen(ecCert), ecKey, strlen(ecKey))
 #else
     local r: i32 = tlsLoadCredentialsPem(&cred, rsaCert, strlen(rsaCert), rsaKey, strlen(rsaKey))
 #endif
     if r != TLS_OK {
+        print("cannot load the test certificate: ")
         print(tlsErrorText(r))
         print("\n")
         return 1
     }
-    routerInit(&router)
-    routerGet(&router, "/hello", hello)
-    routerGet(&router, "/quit", quit)
-    return routerServeTls(&router, 2130706433, tlsPort as ui16, &cred, listening)
+    local router: Engine = Engine()
+    router.GET("/hello", fn(c: *Context) {
+        c.String(200, "hello https")
+    }).GET("/quit", fn(c: *Context) {
+        c.String(200, "bye")
+        sysExit(0)
+    })
+    print("server: listening\n")
+    return router.RunTLS(tlsPort as ui16, &cred)
 }

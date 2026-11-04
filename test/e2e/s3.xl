@@ -1,0 +1,76 @@
+// S3 client e2e against an S3-compatible server (SeaweedFS in the e2e runner, started with an access key). Defines: s3Port (the
+// server's port on 127.0.0.1), s3Key, s3Secret. Covers bucket creation, PutObject, GetObject, HeadObject, ListObjectsV2, a presigned
+// GET fetched with the HTTP client, a two-part multipart upload (5 MiB parts), DeleteObject, and the NoSuchKey answer afterwards.
+// Prints "s3 ok" and exits 0 on success.
+from "std" import print, String, Client, Response, S3Client, S3Result, S3List, s3ProfileGeneric, sprintf
+
+fn check(name: *ui8, ok: bool) -> i32 {
+    if !ok {
+        print("FAIL ")
+        print(name)
+        print("\n")
+        return 1
+    }
+    return 0
+}
+
+@entry fn main() -> i32 {
+    local profile = s3ProfileGeneric("127.0.0.1:" + "" + s3Port, "us-east-1", false)
+    local s3: S3Client = S3Client(profile, s3Key, s3Secret)
+    local failures: i32 = 0
+    local bucket: str = "xlang-e2e"
+    local made: S3Result = s3.CreateBucket(bucket)
+    failures += check("create bucket", made.ok)
+
+    local put: S3Result = s3.PutObject(bucket, "hello.txt", "text/plain", "hello s3")
+    failures += check("put", put.ok)
+
+    local got: S3Result = s3.GetObject(bucket, "hello.txt")
+    failures += check("get", got.ok && got.body.asStr().len == 8)
+
+    local head: S3Result = s3.HeadObject(bucket, "hello.txt")
+    failures += check("head", head.ok)
+
+    local list: S3List = s3.ListObjectsV2(bucket, "", "", 100)
+    failures += check("list has the object", list.result.ok && list.objects.length() == 1)
+
+    local url: String = s3.PresignGet(bucket, "hello.txt", 300)
+    local client: Client = Client()
+    local viaUrl: Response = client.Get(url.asStr())
+    failures += check("presigned get", viaUrl.error == 0 && viaUrl.status == 200 && viaUrl.body.asStr().len == 8)
+
+    // multipart: two 5 MiB parts, the second one the last part (the minimum size applies to all but the last part)
+    local big: String = String()
+    local chunk: String = String()
+    local i: usize = 0
+    while i < 5 * 1024 * 1024 {
+        chunk.append("a")
+        i = i + 1
+    }
+    local start: S3Result = s3.CreateMultipartUpload(bucket, "big.bin", "application/octet-stream")
+    failures += check("create multipart", start.ok)
+    local uploadId: str = xmlTagValue(start.body.asStr(), "UploadId")
+    local p1: S3Result = s3.UploadPart(bucket, "big.bin", uploadId, 1, chunk.asStr())
+    local p2: S3Result = s3.UploadPart(bucket, "big.bin", uploadId, 2, "tail")
+    failures += check("upload parts", p1.ok && p2.ok)
+    local parts: String = String()
+    parts.append("<Part><PartNumber>1</PartNumber><ETag>")
+    parts.append(p1.etag.asStr())
+    parts.append("</ETag></Part><Part><PartNumber>2</PartNumber><ETag>")
+    parts.append(p2.etag.asStr())
+    parts.append("</ETag></Part>")
+    local done: S3Result = s3.CompleteMultipartUpload(bucket, "big.bin", uploadId, parts.asStr())
+    failures += check("complete multipart", done.ok)
+    local big2: S3Result = s3.GetObject(bucket, "big.bin")
+    failures += check("multipart size", big2.ok && big2.body.asStr().len == 5 * 1024 * 1024 + 4)
+
+    local del: S3Result = s3.DeleteObject(bucket, "hello.txt")
+    failures += check("delete", del.ok)
+    local gone: S3Result = s3.GetObject(bucket, "hello.txt")
+    failures += check("NoSuchKey after delete", !gone.ok && gone.status == 404)
+
+    if failures == 0 {
+        print("s3 ok\n")
+    }
+    return failures
+}
