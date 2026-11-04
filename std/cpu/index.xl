@@ -1,2 +1,3 @@
 // std/cpu: CPU-level helpers (spin hints, stack pointer, CPU count).
 export * from "cpu"
+export * from "features"
