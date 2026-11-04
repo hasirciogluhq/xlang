@@ -1,0 +1,60 @@
+// std/io/dir: directory listing. Linux: getdents64 (x86-64 217, arm64 61; docs/std/syscalls). Each linux_dirent64 record
+// (include/uapi/linux/dirent.h) is inode u64, offset i64, record length u16, type u8, then the NUL-terminated name.
+// macOS: not implemented yet (getdirentries is not verified against the XNU table; see docs/std/syscalls/macos-xnu.md).
+// Names "." and ".." are skipped.
+#if os == "linux"
+
+from "../sys/linux" import sysOpenRead, sysClose, sysGetdents
+
+/// One directory entry: its name (NUL terminated) and the d_type code (4 = directory, 8 = regular file, 10 = symlink, 0 = unknown).
+export struct DirEntry {
+    name: [ui8; 256]
+    kind: ui8
+}
+
+/// Lists the entries of `path` into `out` (at most `max`); returns how many were written, or 0 when the directory cannot be opened.
+export fn fsListDir(path: *ui8, out: *DirEntry, max: usize) -> usize {
+    local fd: i32 = sysOpenRead(path)
+    if fd < 0 { return 0 }
+    local buf: [ui8; 4096]
+    local count: usize = 0
+    while count < max {
+        local got: isize = sysGetdents(fd, &buf[0], 4096)
+        if got <= 0 { break }
+        local at: usize = 0
+        while at < (got as usize) && count < max {
+            local reclen: usize = (buf[at + 16] as usize) | ((buf[at + 17] as usize) << 8)
+            if reclen == 0 { break }
+            local nameAt: usize = at + 19
+            local dot: bool = buf[nameAt] == 46 && (buf[nameAt + 1] == 0 || (buf[nameAt + 1] == 46 && buf[nameAt + 2] == 0))
+            if !dot {
+                local e: DirEntry
+                local k: usize = 0
+                while buf[nameAt + k] != 0 && k + 1 < 256 {
+                    e.name[k] = buf[nameAt + k]
+                    k = k + 1
+                }
+                e.name[k] = 0
+                e.kind = buf[at + 18]
+                out[count] = e
+                count = count + 1
+            }
+            at = at + reclen
+        }
+    }
+    sysClose(fd)
+    return count
+}
+
+#else
+
+export struct DirEntry {
+    name: [ui8; 256]
+    kind: ui8
+}
+
+export fn fsListDir(path: *ui8, out: *DirEntry, max: usize) -> usize {
+    return 0
+}
+
+#endif

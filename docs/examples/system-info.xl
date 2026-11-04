@@ -1,0 +1,26 @@
+// Prints the CPU model, the installed memory, the CPU features the program may use, and the GPU render nodes found.
+from "std" import print
+from "std/cpu" import cpuFeatures, CpuFeatures
+from "std/hw" import hwCpuModel, hwMemoryBytes
+from "std/gpu" import gpuDrmDevices, GpuDevice
+
+@entry fn main() -> i32 {
+    local buf: [ui8; 256]
+    hwCpuModel(&buf[0], 256)
+    print("cpu: ")
+    print(&buf[0])
+    print("\nmemory: ")
+    print(hwMemoryBytes())
+    print(" bytes\n")
+    local f: CpuFeatures = cpuFeatures()
+    print("simd: ")
+    print(f.sse2 || f.neon)
+    print(" avx2: ")
+    print(f.avx2)
+    print("\n")
+    local gpus: [GpuDevice; 4]
+    print("gpu render nodes: ")
+    print(gpuDrmDevices(&gpus[0], 4))
+    print("\n")
+    return 0
+}

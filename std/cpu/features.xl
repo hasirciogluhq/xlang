@@ -185,14 +185,13 @@ fn detectPlatform(f: *CpuFeatures) {
 }
 
 #elif os == "macos" && arch == "aarch64"
-
-@library("System") declare fn sysctlbyname(name: *ui8, oldp: *void, oldlenp: *usize, newp: *void, newlen: usize) -> i32
+from "../sys" import sysSysctl
 
 /// 1 when the Apple sysctl `name` reports the feature, 0 otherwise (also when the name does not exist on this macOS).
 fn sysctlFlag(name: *ui8) -> bool {
     local v: i32 = 0
     local len: usize = 4
-    if sysctlbyname(name, &v as *void, &len, nil, 0) != 0 { return false }
+    if !sysSysctl(name, &v as *void, &len) { return false }
     return v != 0
 }
 

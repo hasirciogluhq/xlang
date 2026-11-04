@@ -70,10 +70,11 @@ fn startsWith(p: *ui8, prefix: str) -> bool {
 
 /// Writes `DRM_DIR "/" name` (NUL-terminated) into `out` (capacity `cap`); false when it does not fit.
 fn buildPath(out: *ui8, cap: usize, name: *ui8) -> bool {
+    local dir: str = DRM_DIR
     local i: usize = 0
-    while DRM_DIR[i] != 0 {
+    while i < dir.len {
         if i + 2 >= cap { return false }
-        out[i] = DRM_DIR[i]
+        out[i] = dir[i]
         i = i + 1
     }
     out[i] = 47

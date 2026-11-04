@@ -50,6 +50,8 @@
       url: /std/encoding.html
     - title: CPU features
       url: /std/cpu.html
+    - title: System information
+      url: /std/system.html
     - title: Date and time
       url: /std/time.html
     - title: Versions (SemVer)
@@ -62,6 +64,8 @@
       url: /std/event-loop.html
     - title: HTTP
       url: /std/http.html
+    - title: HTTP audit (RFC 9110, 9112)
+      url: /std/http-audit.html
     - title: System calls
       url: /std/syscalls/
     - title: Linux x86-64 numbers

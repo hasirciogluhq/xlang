@@ -5,3 +5,4 @@
 #if os == "macos" export * from "macos"
 #if os == "windows" export * from "windows"
 export * from "sock"
+export * from "env"

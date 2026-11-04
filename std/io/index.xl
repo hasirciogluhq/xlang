@@ -1,3 +1,4 @@
 // std/io: the print family (`io`) and whole-file / streaming file access (`fs`).
 export * from "io"
 export * from "fs"
+export * from "dir"

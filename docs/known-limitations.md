@@ -317,3 +317,14 @@ Decisions taken when the package system was added (`docs/PACKAGE_MANAGER.md` is 
 - **No RedirectFixedPath and no internal redirect:** the router redirects a missing or extra trailing slash (`redirectSlash`), but it does not fix a case-insensitive path, and `HandleContext`-style forwarding of a request to another route is not implemented. A handler that needs another route calls the handler directly.
 - **Fixed sizes:** a route pattern is at most 128 bytes, a group prefix at most 128 bytes, and a chain at most 8 handlers (middleware included). A longer pattern stops the program.
 - **Form and body binding:** `c.body` is the raw body; there is no `PostForm`, multipart or `ShouldBindJSON` equivalent yet.
+
+## Std system information (`std/cpu`, `std/hw`, `std/gpu`, `std/io/dir`)
+- **Windows is empty:** `cpuFeatures`, `hwCpuModel`, `gpuDrmDevices` and the others return false or 0 there (IsProcessorFeaturePresent, GlobalMemoryStatusEx and DXGI are planned).
+- **macOS has no directory listing and no GPU enumeration yet:** `getdirentries` is not in the verified XNU table; Metal and IOKit are deferred.
+- **The DRM success path is untested:** no DRM driver exists in the available containers, so `DRM_IOCTL_VERSION` is only exercised on a missing or non-DRM node.
+
+## Std HTTP conformance (`std/http`)
+- **Open HTTP rules:** keep-alive (every response says `Connection: close`), several differing `Content-Length` values (the first is used), and target-form validation (absolute URI and `*` forms are routed as paths). See docs/std/http-audit.md.
+
+## Std MQTT (`std/net/proto/mqtt`)
+- **Packets only:** the builders write CONNECT, PUBLISH, SUBSCRIBE, PINGREQ and DISCONNECT, and the reader parses CONNACK. The connection loop, the QoS 1 and 2 acknowledgements, will messages, credentials and AUTH are not implemented.

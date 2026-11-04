@@ -1,10 +1,10 @@
 // std/http/server: the connection loop of the HTTP/HTTPS server. It reads one request per connection
 // (headers, then `Content-Length` bytes), fills a `Context` and hands it to `routerDispatch`.
 // Chunked request bodies are not supported.
-from "../sys" import sysTcpSocket, sysTcpListen, sysTcpAccept, sysClose, sysRead, sysUnmap
-from "../mem/memory" import mapGrow
+from "../sys" import sysTcpSocket, sysTcpListen, sysTcpAccept, sysClose, sysRead, sysWrite, sysUnmap
+from "../mem/memory" import mapGrow, strlen
 from "../io/io" import eprint
-from "../tls/tls" import TlsConn, TlsCredentials, tlsRead, tlsClose, tlsListen, tlsAccept
+from "../tls/tls" import TlsConn, TlsCredentials, tlsRead, tlsWrite, tlsClose, tlsListen, tlsAccept
 from "util" import cstrEq, lower, headerEnd, terminateLines
 from "context" import Context, ctxInit, ctxString
 from "router" import Router, routerDispatch
@@ -15,26 +15,55 @@ fn connRead(fd: i32, tls: *TlsConn, buf: *ui8, n: usize) -> isize {
     return sysRead(fd, buf, n)
 }
 
-/// Value of the `Content-Length` header found in the first `end` bytes, 0 when absent.
-fn contentLength(s: *ui8, end: usize) -> usize {
-    local name: *ui8 = "content-length:"
+/// Index of the value of header `name` (lower case, including the colon) when a header line of the first `end` bytes starts
+/// with it (RFC 9110 section 5.1: names are case-insensitive, and only the start of a line counts, so a value that contains the
+/// name does not match); -1 when absent.
+fn headerAt(s: *ui8, end: usize, name: *ui8) -> isize {
+    local nlen: usize = strlen(name)
     local i: usize = 0
-    while i + 15 < end {
+    // the first line is the request line; headers start after its CRLF
+    while !(s[i] == 13 && s[i + 1] == 10) { i = i + 1 }
+    i = i + 2
+    while i + nlen <= end {
         local k: usize = 0
-        while k < 15 && lower(s[i + k]) == name[k] { k = k + 1 }
-        if k == 15 {
-            local p: usize = i + 15
-            while s[p] == 32 { p = p + 1 }
-            local v: usize = 0
-            while s[p] >= 48 && s[p] <= 57 {
-                v = v * 10 + ((s[p] - 48) as usize)
-                p = p + 1
-            }
-            return v
+        while k < nlen && lower(s[i + k]) == name[k] { k = k + 1 }
+        if k == nlen {
+            local p: usize = i + nlen
+            while p < end && (s[p] == 32 || s[p] == 9) { p = p + 1 }
+            return p as isize
         }
-        i = i + 1
+        while i + 1 < end && !(s[i] == 13 && s[i + 1] == 10) { i = i + 1 }
+        i = i + 2
     }
-    return 0
+    return -1
+}
+
+/// Value of the `Content-Length` header in the first `end` bytes, 0 when absent or not a number. Several different values
+/// are a framing error (RFC 9112 section 6.3); the caller refuses them through `contentLengthValid`.
+fn contentLength(s: *ui8, end: usize) -> usize {
+    local p: isize = headerAt(s, end, "content-length:")
+    if p < 0 { return 0 }
+    local v: usize = 0
+    local q: usize = p as usize
+    while q < end && s[q] >= 48 && s[q] <= 57 {
+        v = v * 10 + ((s[q] - 48) as usize)
+        q = q + 1
+    }
+    return v
+}
+
+/// True when the request line of the first `end` bytes ends with HTTP/1.1.
+fn isHttp11(s: *ui8, end: usize) -> bool {
+    local i: usize = 0
+    while !(s[i] == 13 && s[i + 1] == 10) { i = i + 1 }
+    if i < 8 { return false }
+    local v: *ui8 = "HTTP/1.1"
+    local k: usize = 0
+    while k < 8 {
+        if s[i - 8 + k] != v[k] { return false }
+        k = k + 1
+    }
+    return true
 }
 
 /// Answers a request that is rejected before parsing (header or body too large).
@@ -71,23 +100,94 @@ fn dispatch(r: *Router, fd: i32, tls: *TlsConn, buf: *ui8, n: usize) {
         c.queryLen = i - q
     }
     buf[i] = 0
+    decodePercent(c.path)
     c.body = &buf[he + 4]
     c.bodyLen = n - (he + 4)
     c.isHead = cstrEq(c.method, "HEAD")
     routerDispatch(r, &c)
 }
 
+/// Parses the chunk-size line starting at `p` (hex digits, optional ";extension", ended by CRLF). Returns the size and sets
+/// `*next` to the position after the CRLF; returns -1 when the line is not complete or not a hex size (RFC 9112 section 7.1).
+fn chunkSize(buf: *ui8, total: usize, p: usize, next: *usize) -> isize {
+    local i: usize = p
+    local v: usize = 0
+    local digits: usize = 0
+    while i < total && hexDigit(buf[i]) >= 0 {
+        if digits >= 15 { return -1 }
+        v = v * 16 + (hexDigit(buf[i]) as usize)
+        digits = digits + 1
+        i = i + 1
+    }
+    if digits == 0 { return -1 }
+    while i < total && buf[i] != 13 && buf[i] != 59 { i = i + 1 }
+    if i >= total { return -1 }
+    while i < total && buf[i] != 13 { i = i + 1 }
+    if i + 1 >= total { return -1 }
+    *next = i + 2
+    return v as isize
+}
+
+/// True when the chunked body that starts at `start` is complete in the first `total` bytes (the last chunk and its trailer
+/// section have arrived).
+fn chunkedComplete(buf: *ui8, total: usize, start: usize) -> bool {
+    local p: usize = start
+    while true {
+        local next: usize = 0
+        local size: isize = chunkSize(buf, total, p, &next)
+        if size < 0 { return false }
+        if size == 0 {
+            // the trailer section ends with an empty line
+            if next + 1 < total && buf[next] == 13 && buf[next + 1] == 10 { return true }
+            local k: usize = next
+            while k + 3 < total {
+                if buf[k] == 13 && buf[k + 1] == 10 && buf[k + 2] == 13 && buf[k + 3] == 10 { return true }
+                k = k + 1
+            }
+            return false
+        }
+        p = next + (size as usize) + 2
+        if p > total { return false }
+    }
+    return false
+}
+
+/// Decodes the chunked body that starts at `start` in place (the decoded body is never longer than the encoded one). Returns
+/// its length, or -1 for a malformed body.
+fn decodeChunkedInPlace(buf: *ui8, total: usize, start: usize) -> isize {
+    local r: usize = start
+    local w: usize = start
+    while true {
+        local next: usize = 0
+        local size: isize = chunkSize(buf, total, r, &next)
+        if size < 0 { return -1 }
+        if size == 0 { break }
+        local k: usize = 0
+        while k < (size as usize) {
+            buf[w + k] = buf[next + k]
+            k = k + 1
+        }
+        w = w + (size as usize)
+        r = next + (size as usize) + 2
+        if r > total { return -1 }
+    }
+    return (w - start) as isize
+}
+
 fn serveConnection(r: *Router, fd: i32, tls: *TlsConn) {
-    // The buffer doubles as needed; the request is read in full (headers, then Content-Length bytes).
+    // The buffer doubles as needed; the request is read in full (headers, then Content-Length bytes, or the chunks of a
+    // chunked body up to its last chunk and trailer section).
     local cap: usize = 4096
     local buf: *ui8 = mapGrow(nil, 0, cap) as *ui8
     if buf == nil { return }
     local total: usize = 0
-    local want: usize = 0          // total bytes expected once the headers are known
+    local want: usize = 0          // total bytes expected once the headers are known (Content-Length)
     local gotHeaders: bool = false
     local alive: bool = true
     local rejected: bool = false
-    while alive && (!gotHeaders || total < want) {
+    local chunked: bool = false
+    local bodyStart: usize = 0     // first byte of the body once the headers are known
+    while alive && (!gotHeaders || (!chunked && total < want) || (chunked && !chunkedComplete(buf, total, bodyStart))) {
         if total + 1 >= cap {
             local bigger: *ui8 = mapGrow(buf as *void, cap, cap * 2) as *ui8
             if bigger == nil {
@@ -107,8 +207,31 @@ fn serveConnection(r: *Router, fd: i32, tls: *TlsConn) {
                 local he: isize = headerEnd(buf, total)
                 if he >= 0 {
                     gotHeaders = true
+                    bodyStart = (he as usize) + 4
                     local bodyLen: usize = contentLength(buf, he as usize)
-                    if (he as usize) + 4 > r.maxHeaderBytes {
+                    if expectsContinue(buf, he as usize) && bodyLen > 0 && total < bodyStart + bodyLen {
+                        local cont: *ui8 = "HTTP/1.1 100 Continue\r\n\r\n"
+                        if tls != nil {
+                            tlsWrite(tls, cont, 25)
+                        } else {
+                            sysWrite(fd, cont, 25)
+                        }
+                    }
+                    local te: isize = headerAt(buf, he as usize, "transfer-encoding:")
+                    if te >= 0 {
+                        if transferIsChunked(buf, te as usize) {
+                            chunked = true
+                        } else {
+                            rejectEarly(fd, tls, 501, "only the chunked transfer coding is supported")
+                            rejected = true
+                            alive = false
+                        }
+                    } else if isHttp11(buf, he as usize) && headerAt(buf, he as usize, "host:") < 0 {
+                        rejectEarly(fd, tls, 400, "HTTP/1.1 requests need a Host header")
+                        rejected = true
+                        alive = false
+                    }
+                    if bodyStart > r.maxHeaderBytes {
                         rejectEarly(fd, tls, 431, "request header too large")
                         rejected = true
                         alive = false
@@ -119,7 +242,7 @@ fn serveConnection(r: *Router, fd: i32, tls: *TlsConn) {
                             alive = false
                         }
                     }
-                    want = (he as usize) + 4 + bodyLen
+                    want = bodyStart + bodyLen
                 } else {
                     if total > r.maxHeaderBytes {
                         rejectEarly(fd, tls, 431, "request header too large")
@@ -130,8 +253,32 @@ fn serveConnection(r: *Router, fd: i32, tls: *TlsConn) {
             }
         }
     }
-    if gotHeaders && !rejected { dispatch(r, fd, tls, buf, total) }
+    if gotHeaders && !rejected {
+        if chunked {
+            local n: isize = decodeChunkedInPlace(buf, total, bodyStart)
+            if n < 0 {
+                rejectEarly(fd, tls, 400, "malformed chunked request body")
+            } else {
+                total = bodyStart + (n as usize)
+                buf[total] = 0
+                dispatch(r, fd, tls, buf, total)
+            }
+        } else {
+            dispatch(r, fd, tls, buf, total)
+        }
+    }
     sysUnmap(buf as *void, cap)
+}
+
+/// True when the Transfer-Encoding value at `p` is exactly "chunked" (case-insensitive, optional blanks at the end).
+fn transferIsChunked(buf: *ui8, p: usize) -> bool {
+    local v: *ui8 = "chunked"
+    local k: usize = 0
+    while k < 7 {
+        if lower(buf[p + k]) != v[k] { return false }
+        k = k + 1
+    }
+    return buf[p + 7] == 13 || buf[p + 7] == 10 || buf[p + 7] == 32 || buf[p + 7] == 9
 }
 
 /// Binds `ip:port` (host-order IPv4, `127.0.0.1` = 2130706433), calls `onListen` once, then serves
@@ -175,4 +322,44 @@ export fn routerServeTls(r: *Router, ip: ui32, port: ui16, cr: *TlsCredentials, 
         }
     }
     return 0
+}
+
+/// Hex digit value, or -1.
+fn hexDigit(c: ui8) -> i32 {
+    if c >= 48 && c <= 57 { return (c - 48) as i32 }
+    if c >= 65 && c <= 70 { return (c - 55) as i32 }
+    if c >= 97 && c <= 102 { return (c - 87) as i32 }
+    return -1
+}
+
+/// Decodes the percent-encoded octets of a request target in place (RFC 3986 section 2.1 and 2.4): "%XX" becomes the byte
+/// XX; a '%' that is not followed by two hex digits is kept as it is. The text ends at the NUL that ends the target.
+/// The decoded text is never longer than the encoded one, so the write position never passes the read position.
+fn decodePercent(p: *ui8) {
+    local r: usize = 0
+    local w: usize = 0
+    while p[r] != 0 {
+        if p[r] == 37 && hexDigit(p[r + 1]) >= 0 && hexDigit(p[r + 2]) >= 0 {
+            p[w] = ((hexDigit(p[r + 1]) * 16) + hexDigit(p[r + 2])) as ui8
+            r = r + 3
+        } else {
+            p[w] = p[r]
+            r = r + 1
+        }
+        w = w + 1
+    }
+    p[w] = 0
+}
+
+/// True when the header block of the first `end` bytes carries `Expect: 100-continue` (RFC 9110 section 10.1.1).
+fn expectsContinue(buf: *ui8, end: usize) -> bool {
+    local p: isize = headerAt(buf, end, "expect:")
+    if p < 0 { return false }
+    local v: *ui8 = "100-continue"
+    local k: usize = 0
+    while k < 12 {
+        if lower(buf[(p as usize) + k]) != v[k] { return false }
+        k = k + 1
+    }
+    return true
 }

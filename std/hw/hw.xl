@@ -1,0 +1,158 @@
+// std/hw: hardware facts that the operating system publishes as text or as sysctl values. No device is opened.
+//   Linux: /proc/cpuinfo ("model name", or "Hardware" on some arm64 kernels), /proc/meminfo ("MemTotal"), and the DMI
+//          product name in /sys/class/dmi/id/product_name (the dmi driver's sysfs file; the kernel documents its fields in
+//          Documentation/ABI/testing/sysfs-firmware-dmi).
+//   macOS: sysctlbyname("machdep.cpu.brand_string"), "hw.memsize" (bytes, int64) and "hw.model" (the Mac model identifier).
+//   Windows: not implemented; the functions return false or 0.
+// Every value is read at call time. The text is copied into the caller's buffer, NUL terminated, and the length is returned.
+
+#if os == "linux"
+
+from "../sys/linux" import sysOpenRead, sysRead, sysClose
+
+/// Reads the whole file at `path` into `buf` (capacity `cap`); returns the byte count (0 when the file cannot be read).
+fn readFile(path: *ui8, buf: *ui8, cap: usize) -> usize {
+    local fd: i32 = sysOpenRead(path)
+    if fd < 0 { return 0 }
+    local n: usize = 0
+    while n + 1 < cap {
+        local got: isize = sysRead(fd, &buf[n], cap - 1 - n)
+        if got <= 0 { break }
+        n = n + (got as usize)
+    }
+    sysClose(fd)
+    buf[n] = 0
+    return n
+}
+
+/// The value of the first `key<TAB or space>...: value` line of `text[0..n)`, trimmed, copied into `out`; its length, or 0.
+fn lineValue(text: *ui8, n: usize, key: *ui8, out: *ui8, cap: usize) -> usize {
+    local klen: usize = 0
+    while key[klen] != 0 { klen = klen + 1 }
+    local at: usize = 0
+    while at < n {
+        local eol: usize = at
+        while eol < n && text[eol] != 10 { eol = eol + 1 }
+        local match: bool = eol - at >= klen
+        local i: usize = 0
+        while match && i < klen {
+            if text[at + i] != key[i] { match = false }
+            i = i + 1
+        }
+        if match {
+            // a key that ends with ":" (MemTotal:) already has its colon; otherwise the value follows the first colon
+            local colon: usize = at + klen
+            if key[klen - 1] != 58 {
+                while colon < eol && text[colon] != 58 { colon = colon + 1 }
+            }
+            if colon < eol {
+                local s: usize = colon + 1
+                if key[klen - 1] == 58 { s = at + klen }
+                while s < eol && (text[s] == 32 || text[s] == 9) { s = s + 1 }
+                local e: usize = eol
+                while e > s && (text[e - 1] == 32 || text[e - 1] == 9 || text[e - 1] == 13) { e = e - 1 }
+                local len: usize = 0
+                while s + len < e && len + 1 < cap {
+                    out[len] = text[s + len]
+                    len = len + 1
+                }
+                out[len] = 0
+                return len
+            }
+        }
+        at = eol + 1
+    }
+    return 0
+}
+
+/// Copies `src[0..n)` into `out` without trailing newlines, NUL terminated; returns the length.
+fn trimmedCopy(src: *ui8, n: usize, out: *ui8, cap: usize) -> usize {
+    local e: usize = n
+    while e > 0 && (src[e - 1] == 10 || src[e - 1] == 13 || src[e - 1] == 32) { e = e - 1 }
+    local len: usize = 0
+    while len < e && len + 1 < cap {
+        out[len] = src[len]
+        len = len + 1
+    }
+    out[len] = 0
+    return len
+}
+
+/// The CPU model name into `out`; its length, or 0 when the kernel does not report one.
+export fn hwCpuModel(out: *ui8, cap: usize) -> usize {
+    local text: [ui8; 16384]
+    local n: usize = readFile("/proc/cpuinfo", &text[0], 16384)
+    local len: usize = lineValue(&text[0], n, "model name", out, cap)
+    if len > 0 { return len }
+    return lineValue(&text[0], n, "Hardware", out, cap)
+}
+
+/// The installed memory in bytes (MemTotal of /proc/meminfo, given in kibibytes), or -1.
+export fn hwMemoryBytes() -> i64 {
+    local text: [ui8; 4096]
+    local n: usize = readFile("/proc/meminfo", &text[0], 4096)
+    local digits: [ui8; 32]
+    if lineValue(&text[0], n, "MemTotal:", &digits[0], 32) == 0 { return -1 }
+    local kb: i64 = 0
+    local i: usize = 0
+    while digits[i] >= 48 && digits[i] <= 57 {
+        kb = kb * 10 + ((digits[i] - 48) as i64)
+        i = i + 1
+    }
+    return kb * 1024
+}
+
+/// The product name from DMI (for example "ThinkPad X1 Carbon"), or 0 when /sys/class/dmi is not readable.
+export fn hwProductName(out: *ui8, cap: usize) -> usize {
+    local buf: [ui8; 256]
+    local n: usize = readFile("/sys/class/dmi/id/product_name", &buf[0], 256)
+    if n == 0 { return 0 }
+    return trimmedCopy(&buf[0], n, out, cap)
+}
+
+#elif os == "macos"
+
+from "../sys/macos" import sysSysctl
+
+/// A string sysctl into `out`; its length (without the NUL), or 0.
+fn stringSysctl(name: *ui8, out: *ui8, cap: usize) -> usize {
+    local len: usize = cap
+    if !sysSysctl(name, out as *void, &len) || len == 0 { return 0 }
+    local n: usize = len
+    if n > 0 && out[n - 1] == 0 { n = n - 1 }
+    return n
+}
+
+/// The CPU brand string (for example "Apple M3") into `out`; its length, or 0.
+export fn hwCpuModel(out: *ui8, cap: usize) -> usize {
+    return stringSysctl("machdep.cpu.brand_string", out, cap)
+}
+
+/// The installed memory in bytes (hw.memsize), or -1.
+export fn hwMemoryBytes() -> i64 {
+    local v: i64 = 0
+    local len: usize = 8
+    if !sysSysctl("hw.memsize", &v as *void, &len) { return -1 }
+    return v
+}
+
+/// The Mac model identifier (for example "Mac15,3") into `out`; its length, or 0.
+export fn hwProductName(out: *ui8, cap: usize) -> usize {
+    return stringSysctl("hw.model", out, cap)
+}
+
+#else
+
+export fn hwCpuModel(out: *ui8, cap: usize) -> usize {
+    return 0
+}
+
+export fn hwMemoryBytes() -> i64 {
+    return -1
+}
+
+export fn hwProductName(out: *ui8, cap: usize) -> usize {
+    return 0
+}
+
+#endif
