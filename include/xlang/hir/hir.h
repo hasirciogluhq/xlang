@@ -164,7 +164,9 @@ struct Function {
     std::string import_library;  ///< `@library("name")` on a `declare fn`: the OS library it is imported from
     bool registered{false};
     std::string register_role;
-    bool is_init{false};  ///< `@init`: called by `_xl_initAll` before `main`
+    bool is_init{false};   ///< `@init`: called by `_xl_initAll` before the entry
+    bool is_fini{false};   ///< `@fini`: called by `_xl_finiAll` after the entry, in reverse order
+    bool is_entry{false};  ///< `@entry`: the program's entry, called by the generated start code
     bool is_virtual{false};
     bool is_override{false};
     Span span;
@@ -250,6 +252,7 @@ struct Module {
     std::string free_function;      ///< `register(free)` function, empty = none (`delete p` is E0501)
     std::string unwind_function;    ///< `register(unwind)` function, empty = none (no landing pads, `try` is E0501)
     std::vector<std::string> init_functions;  ///< `@init` functions in run order (stdlib group first)
+    std::vector<std::string> fini_functions;  ///< `@fini` functions in the order they were declared; teardown runs them reversed
 };
 
 void dumpModule(std::ostream& out, const Module& module);

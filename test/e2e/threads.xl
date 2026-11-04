@@ -16,7 +16,7 @@ fn worker(arg: *void) {
     }
 }
 
-fn main() -> i32 {
+@entry fn main() -> i32 {
     local t0: Thread = threadStart(worker, nil)
     local t1: Thread = threadStart(worker, nil)
     local t2: Thread = threadStart(worker, nil)

@@ -14,7 +14,7 @@ fn check(name: *ui8, ok: bool) {
     }
 }
 
-fn main() -> i32 {
+@entry fn main() -> i32 {
     print("str\n")
     local p: *ui8 = "ptr\n"
     print(p)

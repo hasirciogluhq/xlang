@@ -30,7 +30,7 @@ The original plan is implemented except the items below, which are intentionally
   `sched`/`threads`/`panics` e2e programs are not run there. The entry stub (`mainCRTStartup`) exits through
   `NtTerminateProcess` and provides `__chkstk`/`_fltused` itself. Not done: threads (`NtCreateThreadEx` +
   `WaitOnAddress`), readiness polling (IOCP/AFD), pipes; UTF-8 paths are widened as Latin-1; the fd is the
-  handle's low 32 bits (socket fds carry bit 30); `-D ssn...` no longer exists. Entry stubs exist for linux and macos on x86_64 and aarch64 and for windows on x86_64 only; the Windows stub is x86_64 assembly with no aarch64 variant. Every stub calls `_xl_initAll` (the `@init` functions) before `main`.
+  handle's low 32 bits (socket fds carry bit 30); `-D ssn...` no longer exists. Entry stubs exist for linux and macos on x86_64 and aarch64 and for windows on x86_64 only; the Windows stub is x86_64 assembly with no aarch64 variant. Every executable stub calls `_xl_initAll` (the `@init` functions) before the `@entry` function and `_xl_finiAll` (the `@fini` functions) after it.
 - **Linux/macOS sockets ignore SIGPIPE** (`std/sys`: process-wide on Linux, `SO_NOSIGPIPE` on macOS), so a
   write to a vanished peer is an error return, never a crash.
 
@@ -76,6 +76,11 @@ The original plan is implemented except the items below, which are intentionally
   explicit-allocator forms `new(a) T` and `delete(a) p` and the builtin `__builtin_setRegistered` (and `E0728`) were
   removed. `String` and `Vec` still use the `Allocator` interface in `std/mem` directly. A bodyless `@init fn boot();` is the parser's `E0002`; the sema check for a missing body in `E0729` is therefore only a
   guard.
+- **Static libraries and objects own no entry:** `--emit=static` and `--emit=obj` export weak `_xl_initAll` and `_xl_finiAll` that run only the `@init` and `@fini` functions of that build. A linking executable keeps its own strong `_xl_initAll`, which runs the init functions of the program it was compiled as, so a prebuilt archive's init functions run only when the host calls that archive's `_xl_initAll` itself. Open decision: one init table per archive, or generated per-object init sections.
+- **Shared libraries on Windows (open decision, needs confirmation):** `--emit=shared` builds a DLL with neither hook, so its `@init` functions do not run on load, its `@fini` functions do not run on unload, and its `@entry` never runs by itself; the host must call `_xl_initAll` and `_xl_finiAll`. A `DllMain` hook (DLL_PROCESS_ATTACH runs `_xl_initAll` and then `@entry`; DLL_PROCESS_DETACH runs `_xl_finiAll`) is not implemented, because Windows work is deferred by the project rules. Whether the Windows hook is in scope now is the open decision.
+- **Entry arguments on Windows and in shared libraries:** the `@entry` argument form (`argc: i32`, `argv: **ui8`) is accepted only for executables on Linux and macOS (`E0755` otherwise). The Windows command line (`GetCommandLineW`) is not read yet. Open decisions: parse `lpCmdLine` in the stub or in `std/sys/windows.xl` and record the quoting rules; and whether a stdlib wrapper gives programs a typed view over the raw `argc`/`argv` form.
+- **macOS unload hook does not run:** `_xl_finiAll` sits in `__DATA,__mod_term_func`, which dyld runs when an image is unloaded. A process exit does not unload a dylib, and `dlclose` would need libc, which is forbidden, so `@fini` of a shared library does not run on macOS unless the host unloads it. This path is not verified at runtime.
+- **Linux runtime of the entry stub and the shared hooks is checked only through Docker:** the Linux `_start` stub and the `.init_array`/`.fini_array` hooks are emitted and cross-built here, but they run only in the Docker e2e legs. The shared-library load test (`shared_hook`) runs on macOS only, through `DYLD_INSERT_LIBRARIES`.
 - No tuples/multiple return values (not defined by the plan).
 - Payload enums (sum types): the parser turns `enum E { A(T), B }` into ordinary items: the struct `E` (`tag`, `data`), the
   value enum `E$Tag`, the union struct `E$Data` and one struct `E$A` per variant with data. The union is not a language

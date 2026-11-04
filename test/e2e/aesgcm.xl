@@ -62,7 +62,7 @@ fn gcm(name: *ui8, key: *ui8, iv: *ui8, aad: *ui8, pt: *ui8, ct: *ui8, tag: *ui8
     }
 }
 
-fn main() -> i32 {
+@entry fn main() -> i32 {
     local key: [ui8; 16]
     local pt: [ui8; 16]
     local want: [ui8; 16]

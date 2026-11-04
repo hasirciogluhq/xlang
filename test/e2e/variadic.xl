@@ -40,7 +40,7 @@ fn expect(name: str, ok: bool) -> i32 {
     return 1
 }
 
-fn main() -> i32 {
+@entry fn main() -> i32 {
     local failures: i32 = 0
     local owned: String = String("owned")
 

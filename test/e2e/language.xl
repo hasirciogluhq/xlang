@@ -80,7 +80,7 @@ fn sumOdd(n: i32) -> i32 {
 fn describe(s: Shape) -> i32 { return s.area() }
 fn sound(a: *Animal) -> i32 { return a.sound() }
 
-fn main() -> i32 {
+@entry fn main() -> i32 {
     check(fib(10) == 55)
     check(apply(twice, 21) == 42)
     check(sumOdd(10) == 25)

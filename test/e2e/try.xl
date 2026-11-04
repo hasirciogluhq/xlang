@@ -57,7 +57,7 @@ fn early(boom: bool) -> i32 {
     return 0
 }
 
-fn main() -> i32 {
+@entry fn main() -> i32 {
     // 1. no panic: the body runs, the handler does not
     local a: i32 = 0
     try {

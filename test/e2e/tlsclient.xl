@@ -44,7 +44,7 @@ fn fetch(host: *ui8, request: *ui8) -> isize {
     return total
 }
 
-fn main() -> i32 {
+@entry fn main() -> i32 {
 #ifdef tlsEc
     local good: *ui8 = ecCert
     local other: *ui8 = rsaCert

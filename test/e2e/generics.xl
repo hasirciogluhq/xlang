@@ -80,7 +80,7 @@ fn identity<T>(x: T) -> T { return x }
 
 fn firstOfPair<A>(p: *Pair<A, str>) -> A { return p.a }
 
-fn main() -> i32 {
+@entry fn main() -> i32 {
     check("inferred i32", max(3, 9) == 9)
     check("explicit i64", max<i64>(4, 2) == 4)
     check("inferred from a typed value", max(7, 5) == 7)

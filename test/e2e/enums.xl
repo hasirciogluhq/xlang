@@ -96,7 +96,7 @@ fn greenSeconds(l: Light) -> i64 {
 
 fn id(v: Value) -> Value { return v }
 
-fn main() -> i32 {
+@entry fn main() -> i32 {
     // value enums keep working
     check("level-low", Level.Low as i64, 0)
     check("level-mid", Level.Mid as i64, 5)

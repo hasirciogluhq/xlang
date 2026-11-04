@@ -37,7 +37,7 @@ fn fail(name: *ui8, got: *ui8) {
     print("\n")
 }
 
-fn main() -> i32 {
+@entry fn main() -> i32 {
     local d: [ui8; 64]
     local hex: [ui8; 129]
     sha512("abc", 3, &d[0])

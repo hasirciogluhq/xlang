@@ -24,7 +24,7 @@ fn same(a: *ui8, b: *ui8) -> bool {
     return true
 }
 
-fn main() -> i32 {
+@entry fn main() -> i32 {
     local k: [ui8; 32]
     local u: [ui8; 32]
     local want: [ui8; 32]

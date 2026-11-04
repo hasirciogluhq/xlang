@@ -11,12 +11,32 @@
 #include <memory>
 #include <optional>
 #include <string>
+#include <string_view>
 
 namespace xlang::codegen {
 
 /// Size/alignment of a type as the semantic phase computed it (structs, classes, arrays,
 /// interface values); the generator never lays out aggregates itself.
 using LayoutQuery = std::function<std::optional<TypeLayout>(const Type&)>;
+
+/// What the build produces. It decides which entry code is generated.
+enum class Output {
+    Executable, ///< `_start` (OS entry stub) calls `_xl_initAll`, then `main` with the process arguments
+    Shared,     ///< `_xl_initAll` is a constructor (ELF `.init_array`, Mach-O `__mod_init_func`); no `main` needed
+    Static,     ///< `_xl_initAll` is an exported symbol the host calls; no entry code
+    Object,     ///< same as Static, for one object file
+};
+
+/// The output kind of an `--emit=` value (`exe`, `shared`, `static`; everything else is an object).
+[[nodiscard]] constexpr Output outputOf(std::string_view emit) {
+    if (emit == "exe") {
+        return Output::Executable;
+    }
+    if (emit == "shared") {
+        return Output::Shared;
+    }
+    return emit == "static" ? Output::Static : Output::Object;
+}
 
 struct CodegenInput {
     const hir::Module& module;
@@ -25,7 +45,7 @@ struct CodegenInput {
     DiagnosticEngine& diagnostics;
     LayoutQuery layout;
     std::string module_name;     ///< name of the LLVM module (root file stem)
-    bool emit_entry{true};       ///< define `_start` calling the root `main` (executables)
+    Output output{Output::Executable};
     /// Per-module compilation (plan 8.1): only this module's functions/globals are defined, the
     /// rest are external declarations; vtables/itables are weak definitions in every module.
     std::optional<std::string> only_module;

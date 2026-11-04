@@ -24,7 +24,7 @@ proj="$pk/proj"; mkdir -p "$proj"
 cat >"$proj/main.xl" <<'XL'
 from "example.org/u/lib" import answer
 from "example.org/u/lib/sub" import deep
-fn main() -> i32 { return answer() + deep() }
+@entry fn main() -> i32 { return answer() + deep() }
 XL
 cat >"$proj/xlang.toml" <<TOML
 [dependencies]
@@ -90,7 +90,7 @@ if [ $? -ne 0 ] && echo "$out" | grep -q "no stable release tag" && [ ! -f "$pk/
 # an import of a repository that xlang.toml does not list
 mkdir -p "$pk/undeclared"
 echo 'from "example.org/u/other" import x
-fn main() -> i32 { return 0 }' >"$pk/undeclared/main.xl"
+@entry fn main() -> i32 { return 0 }' >"$pk/undeclared/main.xl"
 echo '[package]
 name = "undeclared"' >"$pk/undeclared/xlang.toml"
 out=$("$xlang" check "$pk/undeclared/main.xl" 2>&1)
@@ -116,7 +116,7 @@ TOML
   (cd "$nat" && g add . && g commit -q -m nat && g tag v0.1.0)
   mkdir -p "$pk/natproj"
   echo 'from "example.org/u/nat" import add
-fn main() -> i32 { return add(1, 2) }' >"$pk/natproj/main.xl"
+@entry fn main() -> i32 { return add(1, 2) }' >"$pk/natproj/main.xl"
   cat >"$pk/natproj/xlang.toml" <<TOML
 [dependencies]
 "example.org/u/nat" = { version = "v0.1.0", source = "$nat" }
@@ -133,7 +133,7 @@ std="$pk/mystd"; mkdir -p "$std"; (cd "$std" && g init -q -b main)
 cp -R "$root/std/." "$std/"
 (cd "$std" && g add . && g commit -q -m std && g tag v0.0.1)
 mkdir -p "$pk/stdproj"
-echo 'fn main() -> i32 { return 7 }' >"$pk/stdproj/main.xl"
+echo '@entry fn main() -> i32 { return 7 }' >"$pk/stdproj/main.xl"
 cat >"$pk/stdproj/xlang.toml" <<TOML
 [std]
 package = "example.org/u/mystd"

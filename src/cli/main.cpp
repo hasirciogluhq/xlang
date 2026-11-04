@@ -554,19 +554,38 @@ int main(int argc, char** argv) {
                         out = dir / ((windows ? "" : "lib") + stem + ext);
                     }
                 }
-                bool has_main = false;
+                // `@entry` is checked against the output: an executable needs one, libraries and
+                // objects have none, and DLLs and Windows programs take no arguments.
+                const xlang::hir::Function* entry = nullptr;
                 for (const xlang::hir::Function& f : module.functions) {
-                    has_main = has_main || (f.module.empty() && f.name == "main" && f.has_body);
+                    entry = f.is_entry ? &f : entry;
                 }
-                if (emit == "exe" && !has_main) {
-                    // The compiler generates the entry stub only around `main`; without it the
-                    // linker would fail on the stub's own symbol.
+                const xlang::codegen::Output output = xlang::codegen::outputOf(emit);
+                const bool entry_takes_args = entry != nullptr && entry->param_count > 0;
+                if (emit == "exe" && entry == nullptr) {
                     diagnostics.error("E0739",
                                       xlang::Span{},
-                                      std::format("`{}` has no entry point: no `main` function",
+                                      std::format("`{}` has no entry point: no `@entry` function",
                                                   path.filename().string()),
-                                      "define `fn main()` in this file, or build it as a library "
-                                      "with `--emit=obj`, `--emit=static` or `--emit=shared`");
+                                      "mark one module-level function `@entry fn main()`, or build the "
+                                      "file as a library with `--emit=obj`, `--emit=static` or `--emit=shared`");
+                } else if (entry != nullptr && (emit == "static" || emit == "obj")) {
+                    diagnostics.error("E0754",
+                                      entry->span,
+                                      std::format("`@entry` on `{}` in a static library or object file",
+                                                  entry->name),
+                                      "remove `@entry`: a library has no entry point, use `@init` for "
+                                      "startup work or `@fini` for teardown");
+                } else if (entry_takes_args &&
+                           (output == xlang::codegen::Output::Shared || config.target.os == "windows")) {
+                    diagnostics.error("E0755",
+                                      entry->span,
+                                      std::format("`@entry` on `{}` takes arguments, which {} does not pass",
+                                                  entry->name,
+                                                  output == xlang::codegen::Output::Shared
+                                                      ? "a shared library"
+                                                      : "a Windows program"),
+                                      "write `@entry fn name()` with no parameters");
                 } else if (emit == "header") {
                     std::string guard = "XLANG_" + stem + "_H";
                     for (char& ch : guard) {
@@ -655,7 +674,7 @@ int main(int argc, char** argv) {
                                                             diagnostics,
                                                             layoutOf,
                                                             name,
-                                                            emit == "exe"};
+                                                            xlang::codegen::outputOf(emit)};
                             cg.only_module = m->key;
                             auto artifact = xlang::codegen::generate(cg);
                             if (!artifact) {
@@ -694,7 +713,7 @@ int main(int argc, char** argv) {
                     }
                 } else {
                     xlang::codegen::CodegenInput cg{
-                        module, config, sources, diagnostics, layoutOf, stem, emit == "exe"};
+                        module, config, sources, diagnostics, layoutOf, stem, xlang::codegen::outputOf(emit)};
                     auto artifact = xlang::codegen::generate(cg);
                     if (artifact) {
                         artifact->optimize(config.opt_level);

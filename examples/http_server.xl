@@ -39,7 +39,7 @@ fn handleMe(c: *Context) {
     ctxString(c, 200, user.name)
 }
 
-fn main() -> i32 {
+@entry fn main() -> i32 {
     local router: Router
     routerInit(&router)
     routerUse(&router, authMiddleware)

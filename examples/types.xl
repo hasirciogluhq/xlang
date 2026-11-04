@@ -6,7 +6,7 @@ struct Point {
     y: i32
 }
 
-fn main() -> i32 {
+@entry fn main() -> i32 {
     local p: *Point = new Point { x: 10, y: 20 }
     print("sum: ")
     println((p.x + p.y) as i64)

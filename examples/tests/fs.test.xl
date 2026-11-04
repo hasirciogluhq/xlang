@@ -26,7 +26,7 @@ fn tooSmall(t: *T) {
     fsRemove(path)
 }
 
-fn main() -> i32 {
+@entry fn main() -> i32 {
     local s: Suite
     suiteInit(&s)
     test(&s, "write, append, read", writeRead)

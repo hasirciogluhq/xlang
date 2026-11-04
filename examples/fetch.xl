@@ -5,7 +5,7 @@ from "std" import print, println, fetchGet, Response, jsonInt, jsonString, jsonB
 global buf: [ui8; 8192]
 global name: [ui8; 64]
 
-fn main() -> i32 {
+@entry fn main() -> i32 {
     local resp: Response
     if fetchGet("http://127.0.0.1:8080/api/info", &buf[0], 8192, &resp) != 0 {
         println("request failed (is examples/http_server.xl running?)")

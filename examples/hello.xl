@@ -4,7 +4,7 @@ from "std" import print, println
 
 global counter: i64 = 0
 
-fn main() -> i32 {
+@entry fn main() -> i32 {
     local x: i64 = 10
     local y: i64 = 20
     counter = counter + 1

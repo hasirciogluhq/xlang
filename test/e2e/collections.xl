@@ -59,7 +59,7 @@ fn trackedChecks() {
     check("truncate drops the tail once each", dropped == 4 && v.length() == 1)
 }
 
-fn main() -> i32 {
+@entry fn main() -> i32 {
     local s: String = String("Jones")
     check("length from a literal", s.length() == 5)
     s.append(" and ")

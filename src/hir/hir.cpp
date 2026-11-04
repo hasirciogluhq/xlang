@@ -207,6 +207,9 @@ void dumpModule(std::ostream& out, const Module& m) {
     for (const std::string& init : m.init_functions) {
         out << "init " << init << '\n';
     }
+    for (const std::string& fini : m.fini_functions) {
+        out << "fini " << fini << '\n';
+    }
     for (const Enum& e : m.enums) {
         out << "enum " << e.name << ": " << typeName(e.underlying) << '\n';
         for (const EnumMemberValue& v : e.members) {

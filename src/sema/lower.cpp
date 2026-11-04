@@ -163,6 +163,13 @@ struct LowerShared {
     std::map<std::string, Role> roles;
     std::map<std::string, Span> link_names;
     std::set<std::string> init_fns;  ///< qualified names of the `@init` functions
+    std::set<std::string> fini_fns;  ///< qualified names of the `@fini` functions
+    std::string entry_fn;            ///< qualified name of the `@entry` function (empty = none yet)
+
+    /// `@init`, `@fini` and `@entry` functions are started by the generated code, never called by user code.
+    [[nodiscard]] bool isHook(const std::string& qname) const {
+        return init_fns.contains(qname) || fini_fns.contains(qname) || entry_fn == qname;
+    }
 };
 
 class Lowerer {
@@ -176,11 +183,15 @@ class Lowerer {
     /// Ends the module scope (after every instance is lowered).
     void finish();
     void checkRegistrations();
-    /// Finds the `@init` functions of this module (E0729 when one does not fit).
-    void checkInitFunctions();
+    /// Finds the `@init`, `@fini` and `@entry` functions of this module (E0729 / E0752 / E0753 when one does not fit).
+    void checkHookFunctions();
+    /// Validates the signature of an `@entry` function: none, or `(argc: i32, argv: **ui8)`, returning void or i32.
+    void checkEntrySignature(const FnDecl& f, const std::vector<Type>& params, const Type& ret);
     void run();
     /// The `@init` functions of this module, in source order.
     [[nodiscard]] const std::vector<std::string>& initFunctions() const { return init_order_; }
+    /// The `@fini` functions of this module, in source order.
+    [[nodiscard]] const std::vector<std::string>& finiFunctions() const { return fini_order_; }
 
   private:
     using EP = hir::ExprPtr;
@@ -484,6 +495,7 @@ class Lowerer {
     hir::Module& mod_;
     bool is_std_;                       ///< module is part of the standard library
     std::vector<std::string> init_order_;  ///< this module's `@init` functions (qualified names)
+    std::vector<std::string> fini_order_;  ///< this module's `@fini` functions (qualified names)
     ScopeStack scopes_;
     hir::Function* fn_{nullptr};
     bool in_ctor_{false};  ///< the function is a class `init`: `self.f = v` on a droppable field is a raw store
@@ -1462,37 +1474,80 @@ void Lowerer::checkRegistrations() {
     }
 }
 
-void Lowerer::checkInitFunctions() {
+void Lowerer::checkHookFunctions() {
+    // Attribute name, and the code reported when it is put on something that cannot be that hook.
+    struct Hook {
+        std::string_view attr;
+        const char* code;
+    };
+    constexpr std::array<Hook, 3> hooks{{{"init", "E0729"}, {"fini", "E0729"}, {"entry", "E0752"}}};
     for (const Item& item : s_.program_.items) {
         const DeclBase& base = declBase(item);
-        const auto* cls = std::get_if<ClassDecl>(&item.decl);
-        if (cls != nullptr) {
+        if (const auto* cls = std::get_if<ClassDecl>(&item.decl)) {
             for (const FnDecl& m : cls->methods) {
-                if (const Attribute* at = findAttribute(m.attributes, "init")) {
-                    err("E0729",
-                        at->span,
-                        std::format("`@init` on method `{}.{}` is not allowed", base.name, m.name),
-                        "`@init` is for module-level functions");
+                for (const Hook& h : hooks) {
+                    if (const Attribute* at = findAttribute(m.attributes, h.attr)) {
+                        err(h.code,
+                            at->span,
+                            std::format("`@{}` on method `{}.{}` is not allowed", h.attr, base.name, m.name),
+                            std::format("`@{}` is for module-level functions", h.attr));
+                    }
                 }
             }
         }
-        const Attribute* init = findAttribute(base.attributes, "init");
-        if (init == nullptr) {
-            continue;
-        }
         const auto* fn = std::get_if<FnDecl>(&item.decl);
-        if (fn == nullptr || !fn->generic_params.empty() || !fn->params.empty() ||
-            !fn->return_type.isVoid() || !fn->has_body) {
-            err("E0729",
-                init->span,
-                std::format("`@init` on `{}` needs a plain function", base.name),
-                "write `@init fn name() { ... }`: no generics, parameters, return type or "
-                "declaration without a body");
-            continue;
+        for (const Hook& h : hooks) {
+            const Attribute* at = findAttribute(base.attributes, h.attr);
+            if (at == nullptr) {
+                continue;
+            }
+            // Init and fini run without arguments; the entry's signature is checked with its types.
+            const bool no_params = h.attr != "entry";
+            if (fn == nullptr || !fn->generic_params.empty() || !fn->has_body ||
+                (no_params && (!fn->params.empty() || !fn->return_type.isVoid()))) {
+                err(h.code,
+                    at->span,
+                    std::format("`@{}` on `{}` needs a plain function", h.attr, base.name),
+                    no_params ? std::format("write `@{} fn name() {{ ... }}`: no generics, parameters, "
+                                            "return type or declaration without a body", h.attr)
+                              : "write `@entry fn main()`: no generics, methods or declaration without a body");
+                continue;
+            }
+            const std::string qname = s_.qualify(base.name);
+            if (h.attr == "init") {
+                sh_.init_fns.insert(qname);
+                init_order_.push_back(qname);
+            } else if (h.attr == "fini") {
+                sh_.fini_fns.insert(qname);
+                fini_order_.push_back(qname);
+            } else if (!sh_.entry_fn.empty()) {
+                err("E0753",
+                    at->span,
+                    std::format("`@entry` on `{}` but the program already has `@entry` on `{}`", base.name, sh_.entry_fn),
+                    "a program has exactly one `@entry` function: remove the second one");
+            } else {
+                sh_.entry_fn = qname;
+            }
         }
-        const std::string qname = s_.qualify(base.name);
-        sh_.init_fns.insert(qname);
-        init_order_.push_back(qname);
+    }
+}
+
+void Lowerer::checkEntrySignature(const FnDecl& f, const std::vector<Type>& params, const Type& ret) {
+    const auto isUi8 = [](const Type& t) { return t.kind == TypeKind::Int && t.bits == 8 && !t.is_signed; };
+    const auto isPtrTo = [](const Type& t, const auto& pred) {
+        return t.kind == TypeKind::Pointer && t.elem != nullptr && pred(*t.elem);
+    };
+    const bool ret_ok = ret.isVoid() || (ret.kind == TypeKind::Int && ret.bits == 32 && ret.is_signed);
+    const bool argc_ok = params.size() >= 1 && params[0].kind == TypeKind::Int && params[0].bits == 32 &&
+                         params[0].is_signed;
+    const bool argv_ok = params.size() >= 2 && isPtrTo(params[1], [&](const Type& t) { return isPtrTo(t, isUi8); });
+    const bool params_ok = params.empty() || (params.size() == 2 && argc_ok && argv_ok);
+    if (!ret_ok || !params_ok) {
+        err("E0752",
+            f.name_span,
+            std::format("`@entry` function `{}` has an invalid signature", f.name),
+            "write `@entry fn name()` or `@entry fn name(argc: i32, argv: **ui8) -> i32`: "
+            "the return type is void or i32");
     }
 }
 
@@ -2541,6 +2596,8 @@ void Lowerer::lowerFunction(const FnDecl& f,
     out.module = s_.key_;
     out.owner = owner;
     out.is_init = sh_.init_fns.contains(qname);
+    out.is_fini = sh_.fini_fns.contains(qname);
+    out.is_entry = sh_.entry_fn == qname;
     out.exported = mods.exported || mods.export_c || mods.registered;
     out.export_c = mods.export_c;
     out.declared = mods.declared;
@@ -2608,6 +2665,9 @@ void Lowerer::lowerFunction(const FnDecl& f,
         if (!p.is_self && needsDrop(t)) {
             owned_params.push_back({id, t, p.span});
         }
+    }
+    if (out.is_entry) {
+        checkEntrySignature(f, param_types, out.ret);
     }
     out.param_count = static_cast<std::uint32_t>(out.locals.size());
     // The drop flags follow the parameters (the first `param_count` locals).
@@ -4775,11 +4835,11 @@ Lowerer::EP Lowerer::fromEntry(const ScopeEntry& entry, const Expr& at, const Ty
             }
             pick = match.front();
         }
-        if (sh_.init_fns.contains(cands[pick].key)) {
+        if (sh_.isHook(cands[pick].key)) {
             err("E0727",
                 at.span,
-                std::format("`{}` is an `@init` function and cannot be used as a value", entry.name),
-                "`@init` functions run once before `main`; take a normal function instead");
+                std::format("`{}` is an `@init`, `@fini` or `@entry` function and cannot be used as a value", entry.name),
+                "hook functions are started by the generated code; take a normal function instead");
             return nullptr;
         }
         EP f = mk(hir::ExprKind::FuncRef, fnTypeOf(owner, *cands[pick].decl), at.span);
@@ -5915,11 +5975,11 @@ Lowerer::EP Lowerer::callEntry(const Expr& e, const ScopeEntry& entry, const std
             pick = *chosen;
         }
         const OverloadCandidate& cand = cands[pick];
-        if (sh_.init_fns.contains(cand.key)) {
+        if (sh_.isHook(cand.key)) {
             err("E0727",
                 e.span,
-                std::format("`{}` is an `@init` function and cannot be called", name),
-                "`@init` functions run once before `main`; move the shared code into a normal "
+                std::format("`{}` is an `@init`, `@fini` or `@entry` function and cannot be called", name),
+                "hook functions are started by the generated code; move the shared code into a normal "
                 "function and call that");
             return nullptr;
         }
@@ -6406,7 +6466,7 @@ hir::Module lowerProgram(const std::vector<Sema*>& modules,
         l->checkRegistrations();
     }
     for (auto& l : lowerers) {
-        l->checkInitFunctions();
+        l->checkHookFunctions();
     }
     for (auto& l : lowerers) {
         l->run();
@@ -6425,6 +6485,9 @@ hir::Module lowerProgram(const std::vector<Sema*>& modules,
     for (Sema* s : init_order) {
         for (const std::string& name : by_sema.at(s)->initFunctions()) {
             shared.module.init_functions.push_back(name);
+        }
+        for (const std::string& name : by_sema.at(s)->finiFunctions()) {
+            shared.module.fini_functions.push_back(name);
         }
     }
     return std::move(shared.module);

@@ -21,7 +21,7 @@ fn worker(arg: *void) {
     println(" done")
 }
 
-fn main() -> i32 {
+@entry fn main() -> i32 {
     local id: usize = 1
     while id <= 3 {
         spawn(worker, id as *void)

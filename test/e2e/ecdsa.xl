@@ -16,7 +16,7 @@ fn unhex(hex: *ui8, out: *ui8, n: usize) {
     }
 }
 
-fn main() -> i32 {
+@entry fn main() -> i32 {
     local qx: [ui8; 32]
     local qy: [ui8; 32]
     local r: [ui8; 32]

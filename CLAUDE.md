@@ -31,6 +31,7 @@
 
 ## Core rules
 - No compatibility layers. Language and compiler can change freely.
+- **No BC for the development branch (hard rule).** The `development` branch carries no backward compatibility: when behavior changes, the superseded form is removed completely from code, tests, examples and docs, with no note about the old form.
 - Ignore `examples/`, `test/xlang/`, old `.xlang` files, and `.cursor/`.
 - Maintain only `std/` (`.xl`) and `test/e2e/`.
 - Compiler knows only the language, CPU primitives, and a closed builtin list (`syscall`, `__builtin_` atomics/fence/asm, `__builtin_read`/`__builtin_write`/`__builtin_drop`/`__builtin_needsDrop`, `__builtin_unwindPads`/`__builtin_unwindPadCount`, `sizeOf`-style, `staticAssert`, `nil`, `MemoryOrder`).

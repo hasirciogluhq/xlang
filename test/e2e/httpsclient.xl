@@ -56,7 +56,7 @@ fn get(path: *ui8) -> isize {
     return total as isize
 }
 
-fn main() -> i32 {
+@entry fn main() -> i32 {
 #ifdef tlsEc
     trustSetBundlePem(ecCert, strlen(ecCert))
 #else

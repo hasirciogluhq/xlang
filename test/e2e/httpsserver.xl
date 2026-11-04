@@ -22,7 +22,7 @@ fn listening() {
     print("server: listening\n")
 }
 
-fn main() -> i32 {
+@entry fn main() -> i32 {
 #ifdef tlsEc
     local r: i32 = tlsLoadCredentialsPem(&cred, ecCert, strlen(ecCert), ecKey, strlen(ecKey))
 #else

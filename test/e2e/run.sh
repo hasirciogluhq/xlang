@@ -22,6 +22,7 @@ tests=(
   "router|0|router ok|0|1"
   "stdlib|0|499500|0|1"
   "fsjson|0||0|1"
+  "argv|0|argv ok|0|0"
   "panics|134|before|0|0"
   "vecpanic|134|before|0|0"
   "threads|0|40000|1|0"
@@ -49,6 +50,7 @@ tests=(
   "init|0|init ok|0|1"
   "initset|0|initset ok|0|1"
   "cyclic|0|cyclic ok|0|1"
+  "entry_order|3|initA initB entry finiB finiA|0|0"
 )
 [ "${XLANG_E2E_NET:-}" = 1 ] && tests+=("https|0|https ok|0|1")
 
@@ -232,6 +234,44 @@ for p in "${pairs[@]}"; do
     done
   done
 done
+
+# Entry-model rules, checked at compile time: name | build flags | expected (a diagnostic code that the
+# build output must contain, or `ok`: the build must succeed). Native only; no run, no Docker.
+diags=(
+  "diag_noentry||E0739"
+  "diag_twoentry||E0753"
+  "diag_badsig||E0752"
+  "diag_init_args||E0729"
+  "diag_static_entry|--emit=static|E0754"
+  "diag_shared_args|--emit=shared|E0755"
+  "entry_order|--emit=ir|ok"
+  "shared_hook|--emit=static|ok"
+)
+for d in "${diags[@]}"; do
+  IFS='|' read -r name flags want <<<"$d"
+  out=$("$xlang" build "$here/$name.xl" $flags -o "$work/$name.out" 2>&1); code=$?
+  if { [ "$want" = ok ] && [ "$code" = 0 ]; } || { [ "$want" != ok ] && [ "$code" != 0 ] && grep -qF "$want" <<<"$out"; }; then
+    echo "ok   [diag/$name]"; pass=$((pass+1))
+  else
+    echo "FAIL [diag/$name] want $want"; echo "$out" | head -5; fail=$((fail+1))
+  fi
+done
+
+# Shared-library load hook: the @init of a library runs when it is loaded before the host's @entry.
+# Exercised on macOS only (DYLD_INSERT_LIBRARIES); Linux and Windows are open in KNOWN-LIMITATIONS.md.
+if [ "$host_os" = Darwin ]; then
+  if "$xlang" build "$here/shared_hook.xl" --emit=shared -o "$work/libshared_hook.dylib" 2>"$work/hook.err" &&
+     "$xlang" build "$here/shared_host.xl" -o "$work/shared_host" 2>>"$work/hook.err"; then
+    out=$(DYLD_INSERT_LIBRARIES="$work/libshared_hook.dylib" "$work/shared_host" 2>&1); code=$?
+    if [ "$code" = 0 ] && [ "$(head -1 <<<"$out")" = "lib up" ] && grep -qF "host" <<<"$out"; then
+      echo "ok   [$host_os/shared_hook load]"; pass=$((pass+1))
+    else
+      echo "FAIL [$host_os/shared_hook load] exit $code"; echo "$out" | head -5; fail=$((fail+1))
+    fi
+  else
+    echo "FAIL [$host_os/shared_hook load] build"; head -8 "$work/hook.err"; fail=$((fail+1))
+  fi
+fi
 
 # `xlang test`: a passing selection exits 0, a failing suite exits 1 and is reported as FAIL.
 cd "$root"

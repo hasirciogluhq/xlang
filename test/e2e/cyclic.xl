@@ -29,7 +29,7 @@ export fn cycSeqValue() -> i32 {
     cycSeq = 2
 }
 
-fn main() -> i32 {
+@entry fn main() -> i32 {
     check("cyclicdep @init ran before the entry module's @init", cycSawDep == 1)
     check("entry module @init ran", cycSeqValue() == 2)
     check("cross-cycle call reaches cyclicdep and back", depPlusCycle() == 15)

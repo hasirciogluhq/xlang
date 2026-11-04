@@ -4,7 +4,7 @@ from "std" import print, httpsGet, Response, tlsErrorText, TlsConn, tlsConnect, 
 
 global buf: [ui8; 65536]
 
-fn main() -> i32 {
+@entry fn main() -> i32 {
     local resp: Response
     local err: i32 = 0
     if !httpsGet("example.com", 443, "/", &buf[0], 65536, &resp, &err) {

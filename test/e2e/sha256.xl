@@ -43,7 +43,7 @@ fn check(name: *ui8, msg: *ui8, n: usize, want: *ui8) {
     }
 }
 
-fn main() -> i32 {
+@entry fn main() -> i32 {
     check("empty", "", 0, "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855")
     check("abc", "abc", 3, "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad")
     local two: *ui8 = "abcdbcdecdefdefgefghfghighijhijkijkljklmklmnlmnomnopnopq"

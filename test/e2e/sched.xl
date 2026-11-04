@@ -15,7 +15,7 @@ fn task(arg: *void) {
     __builtin_atomicAdd(&done, 1, MemoryOrder.seqCst)
 }
 
-fn main() -> i32 {
+@entry fn main() -> i32 {
     local i: usize = 1
     while i <= 200 {
         spawn(task, i as *void)

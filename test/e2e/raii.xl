@@ -66,7 +66,7 @@ fn early(flag: bool) -> i32 {
     return 0
 }
 
-fn main() -> i32 {
+@entry fn main() -> i32 {
     order = 0
     drops = 0
     {

@@ -20,7 +20,7 @@ fn writer(arg: *void) {
     ioWrite(fds[1], "hello", 5)
 }
 
-fn main() -> i32 {
+@entry fn main() -> i32 {
     assert!(sys.sysPipe(&fds[0], false) == 0)
     spawn(reader, nil)
     spawn(writer, nil)

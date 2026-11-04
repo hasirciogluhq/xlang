@@ -41,7 +41,7 @@ fn expect(name: *ui8, d: *ui8, n: usize, want: *ui8) {
     }
 }
 
-fn main() -> i32 {
+@entry fn main() -> i32 {
     local key: [ui8; 22]
     local i: usize = 0
     while i < 22 {

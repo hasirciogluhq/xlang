@@ -151,12 +151,12 @@ constexpr std::size_t kLeadWidth = 40;
          "A symbol named `_start`, `mainCRTStartup` or `_xl_initAll` was requested through `export(c)`, "
          "`@mangle` or `declare`. The compiler generates these symbols to start the program. Rename the "
          "function or global."},
-        {"E0727", Severity::Error, "call or value use of an `@init` function",
-         "An `@init` function runs once before `main` and cannot be called from code or used as a "
+        {"E0727", Severity::Error, "call or value use of an `@init`, `@fini` or `@entry` function",
+         "Hook functions are started by the generated code and cannot be called from code or used as a "
          "function value. Move the shared code into a normal function and call or use that."},
-        {"E0729", Severity::Error, "invalid `@init` function",
-         "`@init` marks a module-level function with no generics, no parameters, no return type and a "
-         "body. It is not allowed on methods or on other kinds of declarations."},
+        {"E0729", Severity::Error, "invalid `@init` or `@fini` function",
+         "`@init` and `@fini` mark a module-level function with no generics, no parameters, no return type "
+         "and a body. They are not allowed on methods or on other kinds of declarations."},
         {"E0720", Severity::Error, "move out of a field, element or pointer",
          "A value that needs drop was moved out of a class field, an array element or a dereferenced "
          "pointer. Only locals and parameters can give up ownership. Take its address or copy it "
@@ -210,10 +210,10 @@ constexpr std::size_t kLeadWidth = 40;
          "A parameter pack has no index operator, because its elements have different types. "
          "Iterate it with `for x in name { }`, or pass it on with `..name`."},
         {"E0739", Severity::Error, "executable without an entry point",
-         "`--emit=exe` (and `xlang run`) needs a root-module function `main` with a body: the compiler "
-         "generates the program entry stub around it. A file without `main`, such as a library module "
-         "that other files import, cannot be linked as an executable. Add `fn main()`, or build the "
-         "file with `--emit=obj`, `--emit=static` or `--emit=shared`."},
+         "`--emit=exe` (and `xlang run`) needs exactly one `@entry` function with a body: the compiler "
+         "generates the program start code around it. A program without `@entry` cannot be linked as an "
+         "executable. Mark `@entry fn main()`, or build the file with `--emit=obj`, `--emit=static` or "
+         "`--emit=shared`."},
         {"E0740", Severity::Error, "invalid xlang.toml or xlang.lock",
          "The project manifest or lock file cannot be read or does not follow the format: a TOML syntax "
          "error, an unknown key, a dependency that is not named by a repository path such as "
@@ -255,6 +255,19 @@ constexpr std::size_t kLeadWidth = 40;
         {"E0751", Severity::Error, "wrong number of payload values",
          "A payload variant is built like a call, `E.A(x, y)`, with exactly as many values as its "
          "payload has; a variant without data is written `E.B`."},
+        {"E0752", Severity::Error, "invalid `@entry` function",
+         "`@entry` marks a module-level function with no generics and a body, and a signature of no parameters "
+         "or exactly `argc: i32` and `argv: **ui8` in that order, returning void or i32. Methods and other "
+         "declarations cannot be the entry."},
+        {"E0753", Severity::Error, "more than one `@entry` function",
+         "A program has exactly one `@entry` function. Remove the second `@entry` attribute, or move the code "
+         "into an `@init` function or a normal function that the entry calls."},
+        {"E0754", Severity::Error, "`@entry` in a static library or object file",
+         "Static libraries and object files have no entry point: the program that links them provides it. "
+         "Remove `@entry`, use `@init` for startup work and `@fini` for teardown."},
+        {"E0755", Severity::Error, "`@entry` arguments on a shared library or Windows program",
+         "The `argc`/`argv` form of `@entry` is available for executables on Linux and macOS only. Shared "
+         "libraries and Windows programs take `@entry fn name()` with no parameters."},
         {"W0701", Severity::Warning, "missing return",
          "Control can fall off the end of a function that returns a value: some path has no "
          "`return` (a loop that ends with `break`, an `if` without `else`, ...). Add a `return`, "

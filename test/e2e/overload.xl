@@ -40,7 +40,7 @@ class Acc {
     fn add(self, s: str) { self.total = self.total + s.len as i64 }
 }
 
-fn main() -> i32 {
+@entry fn main() -> i32 {
     check("str first", foo("a", 1) == 1)
     check("str second", foo(1, "b") == 101)
     check("struct area", area(Rect { w: 2, h: 3 }) == 6)

@@ -48,7 +48,7 @@ fn run(r: *Router, method: *ui8, path: *ui8) {
     routerDispatch(r, &c)
 }
 
-fn main() -> i32 {
+@entry fn main() -> i32 {
     local r: Router
     routerInit(&r)
     routerGet(&r, "/", root)

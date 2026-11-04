@@ -5,7 +5,7 @@ from "std" import jsonInt, jsonString, jsonBool, jsonHas
 global text: [ui8; 512]
 global name: [ui8; 32]
 
-fn main() -> i32 {
+@entry fn main() -> i32 {
     local path: *ui8 = "xlang_e2e_fsjson.tmp"
     assert!(fsWrite(path, "{\"id\": -42, \"user\": {\"id\": 1}, "))
     assert!(fsAppend(path, "\"name\": \"a\\\"b\", \"ok\": true, \"list\": [1, {\"x\": 2}]}"))

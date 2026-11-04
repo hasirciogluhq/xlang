@@ -3,7 +3,7 @@ from "std" import print, free, assert, strlen, sqrt
 
 struct Point { x: i32, y: i32 }
 
-fn main() -> i32 {
+@entry fn main() -> i32 {
     print("hello from std\n")
     local p: *Point = new Point { x: 3, y: 4 }
     assert!(p != nil)
