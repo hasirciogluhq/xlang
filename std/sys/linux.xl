@@ -1,6 +1,8 @@
 // Linux: raw syscalls. Numbers differ per architecture.
 #if arch == "x86_64"
 define SYS_READ = 0
+define SYS_IOCTL = 16
+define SYS_GETDENTS64 = 217
 define SYS_WRITE = 1
 define SYS_MMAP = 9
 define SYS_MUNMAP = 11
@@ -16,6 +18,8 @@ define SYS_EPOLL_CTL = 233
 define SYS_EPOLL_WAIT = 232
 #elif arch == "aarch64"
 define SYS_READ = 63
+define SYS_IOCTL = 29
+define SYS_GETDENTS64 = 61
 define SYS_WRITE = 64
 define SYS_MMAP = 222
 define SYS_MUNMAP = 215
@@ -262,4 +266,15 @@ export fn sysClockSeconds() -> i64 {
     local ts: [i64; 2]
     if syscall(SYS_CLOCK_GETTIME, 0, &ts[0]) < 0 { return -1 }
     return ts[0]
+}
+
+/// getdents64 (`linux_dirent64` records into `buf`): the number of bytes read, 0 at the end of the directory, or -errno.
+/// The record layout is in include/uapi/linux/dirent.h: inode u64, offset i64, record length u16, type u8, then the NUL-terminated name.
+export fn sysGetdents(fd: i32, buf: *ui8, n: usize) -> isize {
+    return syscall(SYS_GETDENTS64, fd, buf, n) as isize
+}
+
+/// ioctl(fd, request, arg): 0 on success, -errno on failure.
+export fn sysIoctl(fd: i32, request: ui64, arg: *void) -> i32 {
+    return syscall(SYS_IOCTL, fd, request, arg) as i32
 }

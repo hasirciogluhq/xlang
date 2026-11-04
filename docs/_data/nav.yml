@@ -48,6 +48,8 @@
       url: /std/compress.html
     - title: Encodings
       url: /std/encoding.html
+    - title: CPU features
+      url: /std/cpu.html
     - title: Date and time
       url: /std/time.html
     - title: Versions (SemVer)

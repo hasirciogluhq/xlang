@@ -1,5 +1,151 @@
-// std/gpu: the std feature `gpu` is off by default; this module only reports availability so
-// programs can branch on it. Device back ends are not part of the default stdlib.
+// std/gpu: GPU devices. Linux: the DRM render nodes /dev/dri/renderD<N>, which need no DRM-master right (the kernel allows only
+// the driver-independent and render ioctls on them, drm_ioctl.c DRM_RENDER_ALLOW). Each node is identified by the driver name
+// that DRM_IOCTL_VERSION returns (amdgpu, i915, xe, msm, panfrost, nouveau, ...).
+//   DRM_IOCTL_VERSION = DRM_IOWR(0x00, struct drm_version) (include/uapi/drm/drm.h), with the generic ioctl encoding of
+//   include/uapi/asm-generic/ioctl.h: direction (read and write = 3) in bits 30..31, size 64 (sizeof struct drm_version on LP64)
+//   in bits 16..29, type 'd' = 0x64 in bits 8..15, number 0 in bits 0..7: 0xC0406400.
+//   struct drm_version (drm.h): int major, minor, patchlevel; size_t name_len; char *name; size_t date_len; char *date;
+//   size_t desc_len; char *desc. The name buffer is filled and name_len is set to the driver name length.
+// macOS (Metal, IOKit) and Windows (DXGI) are not implemented: gpuDrmDevices returns 0 there, and the plan defers them.
+// Vendor compute APIs (CUDA, Vulkan, OpenCL) are not part of this module.
+#if os == "linux"
+
+from "../sys/linux" import sysOpenRead, sysClose, sysGetdents, sysIoctl
+
+define DRM_IOCTL_VERSION = 0xC0406400
+define DRM_NAME_MAX = 64
+define DRM_DIR = "/dev/dri"
+
+/// The DRM version record of include/uapi/drm/drm.h (LP64 layout; repr(c) keeps the field order and padding of the C struct).
+@repr(c) struct DrmVersion {
+    major: i32
+    minor: i32
+    patch: i32
+    nameLen: usize
+    name: *ui8
+    dateLen: usize
+    date: *ui8
+    descLen: usize
+    desc: *ui8
+}
+
+/// One render node: its path and the driver name the kernel reports for it.
+export struct GpuDevice {
+    path: [ui8; 32]
+    driver: [ui8; 64]
+    ok: bool
+}
+
+/// Asks the driver behind the render node `fd` for its name into `driver`; returns the name length, or 0.
+fn driverName(fd: i32, driver: *ui8) -> usize {
+    local v: DrmVersion
+    local name: [ui8; 64]
+    v.nameLen = DRM_NAME_MAX
+    v.name = &name[0]
+    v.dateLen = 0
+    v.date = nil
+    v.descLen = 0
+    v.desc = nil
+    if sysIoctl(fd, DRM_IOCTL_VERSION, &v as *void) < 0 { return 0 }
+    local n: usize = v.nameLen
+    if n >= DRM_NAME_MAX { n = DRM_NAME_MAX - 1 }
+    local i: usize = 0
+    while i < n {
+        driver[i] = name[i]
+        i = i + 1
+    }
+    driver[n] = 0
+    return n
+}
+
+/// True when `p` starts with the bytes of `prefix`.
+fn startsWith(p: *ui8, prefix: str) -> bool {
+    local i: usize = 0
+    while i < prefix.len {
+        if p[i] != prefix[i] { return false }
+        i = i + 1
+    }
+    return true
+}
+
+/// Writes `DRM_DIR "/" name` (NUL-terminated) into `out` (capacity `cap`); false when it does not fit.
+fn buildPath(out: *ui8, cap: usize, name: *ui8) -> bool {
+    local i: usize = 0
+    while DRM_DIR[i] != 0 {
+        if i + 2 >= cap { return false }
+        out[i] = DRM_DIR[i]
+        i = i + 1
+    }
+    out[i] = 47
+    i = i + 1
+    local k: usize = 0
+    while name[k] != 0 {
+        if i + 1 >= cap { return false }
+        out[i] = name[k]
+        i = i + 1
+        k = k + 1
+    }
+    out[i] = 0
+    return true
+}
+
+/// Fills `out` with the render nodes (at most `max`) and returns how many were found. Nodes that cannot be opened or queried are
+/// skipped, so a permission problem shows up as a smaller count.
+export fn gpuDrmDevices(out: *GpuDevice, max: usize) -> usize {
+    local dir: i32 = sysOpenRead(DRM_DIR)
+    if dir < 0 { return 0 }
+    local buf: [ui8; 4096]
+    local count: usize = 0
+    while count < max {
+        local got: isize = sysGetdents(dir, &buf[0], 4096)
+        if got <= 0 { break }
+        local at: usize = 0
+        while at < (got as usize) && count < max {
+            local reclen: usize = (buf[at + 16] as usize) | ((buf[at + 17] as usize) << 8)
+            local nameAt: usize = at + 19
+            if startsWith(&buf[nameAt], "renderD") {
+                local dev: GpuDevice
+                if buildPath(&dev.path[0], 32, &buf[nameAt]) {
+                    local fd: i32 = sysOpenRead(&dev.path[0])
+                    if fd >= 0 {
+                        local len: usize = driverName(fd, &dev.driver[0])
+                        sysClose(fd)
+                        if len > 0 {
+                            dev.ok = true
+                            out[count] = dev
+                            count = count + 1
+                        }
+                    }
+                }
+            }
+            if reclen == 0 { break }
+            at = at + reclen
+        }
+    }
+    sysClose(dir)
+    return count
+}
+
+/// True when at least one render node exists and answers the version query.
+export fn gpuAvailable() -> bool {
+    local one: GpuDevice
+    return gpuDrmDevices(&one, 1) > 0
+}
+
+#else
+
+export struct GpuDevice {
+    path: [ui8; 32]
+    driver: [ui8; 64]
+    ok: bool
+}
+
+export fn gpuDrmDevices(out: *GpuDevice, max: usize) -> usize {
+    return 0
+}
+
 export fn gpuAvailable() -> bool {
     return false
 }
+
+#endif
