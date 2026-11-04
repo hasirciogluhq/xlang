@@ -124,6 +124,14 @@ export class S3Result {
         self.contentType = String()
         self.clientError = 0
     }
+
+    /// The UploadId of a CreateMultipartUpload answer (the `<UploadId>` element of the XML body, see
+    /// https://docs.aws.amazon.com/AmazonS3/latest/API/API_CreateMultipartUpload.html), or "" when absent.
+    fn UploadId(self) -> String {
+        local id: String = String()
+        id.append(xmlTag(self.body.asStr(), "UploadId"))
+        return id
+    }
 }
 
 /// One object of a listing.

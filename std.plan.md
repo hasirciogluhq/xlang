@@ -468,3 +468,36 @@ Goal: `@library("name") declare fn` works on Linux and macOS the same way it wor
 14. Networking protocols and HTTP audit (sections 19, 20), then JWT, JWS, JWK and AWS SigV4 (section 21).
 15. GPU (section 17) and hardware (section 18): Linux DRM and sysfs first; macOS and Windows after their design passes.
 16. System services, data formats and compression (sections 22, 23).
+
+## 25. Language and API ergonomics (proposals, not built yet)
+Status: recorded only. Nothing in this section is implemented; the user asked for these to be planned, not built. Each item needs its design (syntax, sema, codegen) before work starts, and each is checked against the CLAUDE.md rule that stdlib is preferred over compiler builtins.
+Goal: remove the pain points of current code (see the table at the end of this section).
+
+- 25.1 Error flow with `else`: `local slot = slotOf(id) else { c.status(404); return }` takes the fast path when the value is nil or failed. `else |e| { ... }` binds the error when the expression fails. Both work on `?T` and on fallible calls. Interacts with `try`/`catch`, which stays for panics.
+- 25.2 `match` as the only multi-way branch (no `switch`; `match` covers its job). Expression form, patterns in stages: literal (`42`, `"hello"`, `true`), wildcard `_`, binding `x`, range `1..10` and `100..=200`, or `1 | 2 | 3`, guard `x if x > 10`, optional `Some(v)` / `None` for `?T`, enum `Color.RGB(r, g, b)` once enums carry payloads, struct `Post { used: true, id }` last. `match` and `else |e|` coexist: `else |e|` for the quick exit, `match` for full branching.
+- 25.3 `?` operator (propagate): `local id = c.param("id").parse<i64>()?` returns the error to the caller. Needs a fallible return type in the function signature; defined together with 25.1.
+- 25.4 Generic parsing: `parse<T>()` on `str`/`String`, returning the value plus an error with the position and reason. Stdlib function, not a compiler builtin, once generics on methods with a type argument are supported.
+- 25.5 Fixed buffer with length: `buf[N]string` (a fixed array of bytes plus its length, on the stack, no allocation). Replaces hand-written `title: [ui8; 120], titleLen: usize`.
+- 25.6 Compile-time JSON literal: `json"{ id: p.id, title: p.title }"`. Expanded at compile time to an encoder call that escapes strings, so no hand-written `\"` escapes. Macro-like; the compiler only expands the literal, and the encoder itself is stdlib.
+- 25.7 Route block: `r.group("/api", requireToken) { r.post(...); r.put(...); r.delete(...) }`. Needs a trailing block argument (a function literal passed as the last argument) and captures or an explicit receiver. Depends on closure capture (currently `unknown name k` for captured names) before the block can be sugar over a literal.
+- 25.8 `for` over ranges and collections: `for i, p := range posts { }` and `for c := range s.bytes() { }`, plus the existing `for i in lo..hi`. Stdlib iterators; the loop form is the compiler part.
+- 25.9 Slice syntax: `auth[7..]` and `s[a..b]` yield a view (`str`) without copying; bounds checked under `--safety=checked`.
+- 25.10 Operators on std types, both as builtins and as overloads, with the overload used for user types: `x += 1`, `a == b` (for `String` and `str` via `eq`), and `copy(dst, src)` as a builtin for bulk copy. Open decision: `copy` as a compiler builtin conflicts with the closed builtin list in CLAUDE.md; the stdlib form `std/mem` copy is the default unless the compiler change is approved.
+- 25.11 Local type inference: `local slot := slotOf(id)`; the declared type is optional when the initializer fixes it.
+- 25.12 String-first stdlib: user code and new stdlib functions use `String` for owned text and `str` only for views at boundaries. Conversions: `String.asStr()` (view), `String.from(str)` (copy), `str.toString()`; each stdlib module migrates its public API to these in one pass. Rule already in CLAUDE.md (Std API types); this item is the migration of the existing modules.
+
+Pain points this section addresses (current code):
+
+| Pain | Now | Planned |
+|------|-----|---------|
+| Three text types | `str`, `String`, `*ui8` + length | `String` in APIs, `str` view at boundaries (25.12) |
+| Manual length | `titleLen`, `textLen` fields | `buf[N]string` (25.5) |
+| Manual pointer and length | `fromParts(&t[0], tl)` everywhere | slice syntax (25.9) |
+| Manual JSON | `sprintf("{\"id\":{}}", ...)` plus escaping helpers | `json"..."` (25.6) |
+| Manual parse | a hand-written `toId()` | `parse<i64>()?` (25.3, 25.4) |
+| Error as bool | `fn readPost(...) -> bool`, no message | `else |e|` and `?` (25.1, 25.3) |
+| Explicit type on every local | `local i: i32 = 0` | `:=` inference (25.11) |
+| Index loops | `local i = 0; while i < n { i = i + 1 }` | `for ... range` (25.8) |
+| Verbose calls for operators | `eq(fromC(x), "token")`, `nextId = nextId + 1` | operators (25.10) |
+
+Order (when started): 25.12 and 25.11 (no grammar change, widest benefit), then 25.9, 25.8, 25.5, 25.4, 25.1 with 25.3, 25.2, 25.6, 25.10, 25.7 last (25.7 needs closure capture).

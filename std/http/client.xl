@@ -8,6 +8,7 @@ from "../net/dns" import dnsResolve
 from "../tls/tls" import TlsConn, tlsConnectHost, tlsWrite, tlsRead, tlsClose
 from "../str/str" import fromParts, eq, fromC
 from "../str/string" import String
+from "../str/fmt" import toString
 from "../collections/vec" import Vec
 from "url" import Url, urlParse
 
@@ -304,7 +305,7 @@ fn exchange(c: *Client, u: *Url, method: str, req: *Request, body: str, out: *Re
     head.append(host)
     if (!u.https && u.port != 80) || (u.https && u.port != 443) {
         head.append(":")
-        head.append(portText(u.port).asStr())
+        head.append(toString(u.port as ui64).asStr())
     }
     head.append("\r\nUser-Agent: ")
     head.append(c.userAgent.asStr())
@@ -313,7 +314,7 @@ fn exchange(c: *Client, u: *Url, method: str, req: *Request, body: str, out: *Re
     if body.len > 0 || eq(method, "POST") || eq(method, "PUT") {
         if !req.headers.Has("Content-Length") {
             head.append("Content-Length: ")
-            head.append(portText(body.len as ui16).asStr())
+            head.append(toString(body.len as ui64).asStr())
             head.append("\r\n")
         }
     }
@@ -329,24 +330,6 @@ fn exchange(c: *Client, u: *Url, method: str, req: *Request, body: str, out: *Re
     local code: i32 = readResponse(u.https, &tls, fd, method, out)
     closeConn(u.https, &tls, fd)
     return code
-}
-
-fn portText(v: ui16) -> String {
-    local s: String = String()
-    local x: ui32 = v as ui32
-    local digits: [ui8; 8]
-    local n: usize = 0
-    while true {
-        digits[n] = (48 + (x % 10)) as ui8
-        n = n + 1
-        x = x / 10
-        if x == 0 { break }
-    }
-    while n > 0 {
-        n = n - 1
-        s.append(fromParts(&digits[n], 1))
-    }
-    return s
 }
 
 fn send(https: bool, tls: *TlsConn, fd: i32, data: *ui8, n: usize) -> bool {

@@ -1,8 +1,8 @@
-// S3 client e2e against an S3-compatible server (SeaweedFS in the e2e runner, started with an access key). Defines: s3Port (the
-// server's port on 127.0.0.1), s3Key, s3Secret. Covers bucket creation, PutObject, GetObject, HeadObject, ListObjectsV2, a presigned
-// GET fetched with the HTTP client, a two-part multipart upload (5 MiB parts), DeleteObject, and the NoSuchKey answer afterwards.
-// Prints "s3 ok" and exits 0 on success.
-from "std" import print, String, Client, Response, S3Client, S3Result, S3List, s3ProfileGeneric, sprintf
+// S3 client end-to-end against an S3-compatible server on 127.0.0.1:18333 with the access key testkey / testsecret. The e2e runner
+// starts SeaweedFS there when XLANG_E2E_S3=1 (see run.sh). Covers bucket creation, PutObject, GetObject, HeadObject, ListObjectsV2,
+// a presigned GET fetched with the HTTP client, a two-part multipart upload (5 MiB first part), DeleteObject, and the NoSuchKey answer
+// afterwards. Prints "s3 ok" and exits 0 on success; the exit status is the number of failed checks.
+from "std" import print, String, Client, Response, S3Client, S3Result, S3List, s3ProfileGeneric
 
 fn check(name: *ui8, ok: bool) -> i32 {
     if !ok {
@@ -14,13 +14,24 @@ fn check(name: *ui8, ok: bool) -> i32 {
     return 0
 }
 
+fn fill(s: *String, piece: str, times: usize) {
+    local i: usize = 0
+    while i < times {
+        s.append(piece)
+        i = i + 1
+    }
+}
+
 @entry fn main() -> i32 {
-    local profile = s3ProfileGeneric("127.0.0.1:" + "" + s3Port, "us-east-1", false)
-    local s3: S3Client = S3Client(profile, s3Key, s3Secret)
+    local s3: S3Client = S3Client(s3ProfileGeneric("127.0.0.1:18333", "us-east-1", false), "testkey", "testsecret")
     local failures: i32 = 0
     local bucket: str = "xlang-e2e"
+
+    // Rerunnable: a bucket left by an earlier run answers 409 (BucketAlreadyOwnedByYou), which is fine here.
     local made: S3Result = s3.CreateBucket(bucket)
-    failures += check("create bucket", made.ok)
+    failures += check("create bucket", made.ok || made.status == 409)
+    // Leftovers of an earlier run: the listing below must see exactly the one object this run puts.
+    s3.DeleteObject(bucket, "big.bin")
 
     local put: S3Result = s3.PutObject(bucket, "hello.txt", "text/plain", "hello s3")
     failures += check("put", put.ok)
@@ -39,19 +50,17 @@ fn check(name: *ui8, ok: bool) -> i32 {
     local viaUrl: Response = client.Get(url.asStr())
     failures += check("presigned get", viaUrl.error == 0 && viaUrl.status == 200 && viaUrl.body.asStr().len == 8)
 
-    // multipart: two 5 MiB parts, the second one the last part (the minimum size applies to all but the last part)
-    local big: String = String()
-    local chunk: String = String()
-    local i: usize = 0
-    while i < 5 * 1024 * 1024 {
-        chunk.append("a")
-        i = i + 1
-    }
+    // Multipart: 5 MiB first part (the minimum for every part but the last), then a 4-byte last part.
+    local block: String = String()
+    fill(&block, "a", 1024)
+    local first: String = String()
+    fill(&first, block.asStr(), 5120)
     local start: S3Result = s3.CreateMultipartUpload(bucket, "big.bin", "application/octet-stream")
     failures += check("create multipart", start.ok)
-    local uploadId: str = xmlTagValue(start.body.asStr(), "UploadId")
-    local p1: S3Result = s3.UploadPart(bucket, "big.bin", uploadId, 1, chunk.asStr())
-    local p2: S3Result = s3.UploadPart(bucket, "big.bin", uploadId, 2, "tail")
+    local uploadId: String = start.UploadId()
+    failures += check("upload id", uploadId.asStr().len > 0)
+    local p1: S3Result = s3.UploadPart(bucket, "big.bin", uploadId.asStr(), 1, first.asStr())
+    local p2: S3Result = s3.UploadPart(bucket, "big.bin", uploadId.asStr(), 2, "tail")
     failures += check("upload parts", p1.ok && p2.ok)
     local parts: String = String()
     parts.append("<Part><PartNumber>1</PartNumber><ETag>")
@@ -59,10 +68,10 @@ fn check(name: *ui8, ok: bool) -> i32 {
     parts.append("</ETag></Part><Part><PartNumber>2</PartNumber><ETag>")
     parts.append(p2.etag.asStr())
     parts.append("</ETag></Part>")
-    local done: S3Result = s3.CompleteMultipartUpload(bucket, "big.bin", uploadId, parts.asStr())
+    local done: S3Result = s3.CompleteMultipartUpload(bucket, "big.bin", uploadId.asStr(), parts.asStr())
     failures += check("complete multipart", done.ok)
-    local big2: S3Result = s3.GetObject(bucket, "big.bin")
-    failures += check("multipart size", big2.ok && big2.body.asStr().len == 5 * 1024 * 1024 + 4)
+    local assembled: S3Result = s3.GetObject(bucket, "big.bin")
+    failures += check("multipart size", assembled.ok && assembled.body.asStr().len == 5242880 + 4)
 
     local del: S3Result = s3.DeleteObject(bucket, "hello.txt")
     failures += check("delete", del.ok)

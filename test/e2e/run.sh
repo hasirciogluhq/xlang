@@ -4,6 +4,9 @@
 # Runs natively; when Docker is available, also on Linux aarch64 and x86_64 (cross-built); when
 # `cxrun` (CrossOver/Wine: `cxrun <exe>` runs a Windows executable and returns its exit status) is on
 # PATH, also as Windows x86_64 executables. XLANG_E2E_NET=1 adds the tests that need the Internet.
+# XLANG_E2E_S3=1 adds s3.xl, which needs an S3-compatible server on 127.0.0.1:18333 with the access key
+# testkey / testsecret, for example SeaweedFS:
+#   docker run -d -p 18333:8333 -v "$PWD/test/e2e/seaweedfs.json:/etc/seaweedfs/s3.json" chrislusf/seaweedfs server -s3 -s3.config=/etc/seaweedfs/s3.json
 # A Docker registry failure is a SKIP, not a FAIL: alpine:3 is pulled once up front (3 attempts), and a
 # container that never starts (exit 125) is retried once. Only a wrong result or a build error fails.
 set -u
@@ -121,6 +124,15 @@ docker_run() {  # platform binary
   return "$code"
 }
 
+# S3 runs natively only: the server listens on the host's loopback, which a Docker container does not reach.
+if [ "${XLANG_E2E_S3:-}" = 1 ]; then
+  if "$xlang" build "$here/s3.xl" -o "$work/s3" 2>"$work/s3.err"; then
+    run_one "$host_os/s3" "$work/s3" 0 "s3 ok" env
+  else
+    echo "FAIL [$host_os/s3] build"; head -8 "$work/s3.err"; fail=$((fail+1))
+  fi
+fi
+
 for t in "${tests[@]}"; do
   IFS='|' read -r name want text threads win <<<"$t"
   src=$here/$name.xl
@@ -166,12 +178,13 @@ for t in "${tests[@]}"; do
 done
 
 # Server/client pairs (TLS 1.3 server, HTTPS server): see `pairs` above.
-run_pair() {   # label server-bin client-bin text mode(native|docker:PLAT|windows)
-  local label=$1 srv=$2 cli=$3 text=$4 mode=$5 out code
+run_pair() {   # label server-bin client-bin text mode(native|docker:PLAT|windows) port
+  local label=$1 srv=$2 cli=$3 text=$4 mode=$5 port=$6 out code
   case "$mode" in
     native)
       "$srv" >"$work/srv.log" 2>&1 & spid=$!
-      sleep 1
+      # wait until the server accepts on its port (up to 10 s), instead of a fixed sleep that races a loaded machine
+      for _ in $(seq 100); do (exec 3<>"/dev/tcp/127.0.0.1/$port") 2>/dev/null && break; sleep 0.1; done
       out=$("$cli" 2>&1); code=$?
       ;;
     docker:*)
@@ -225,7 +238,7 @@ for p in "${pairs[@]}"; do
       # (`${a[@]+"${a[@]}"}`: an empty array is not an unbound variable under `set -u` in bash 3.2)
       if "$xlang" build "$here/$srvname.xl" ${target[@]+"${target[@]}"} -D "tlsPort=$port" ${extra[@]+"${extra[@]}"} -o "$s" 2>"$work/pair.err" &&
          "$xlang" build "$here/$cliname.xl" ${target[@]+"${target[@]}"} -D "tlsPort=$port" ${extra[@]+"${extra[@]}"} -o "$c" 2>>"$work/pair.err"; then
-        run_pair "$suffix/$srvname+$cliname/$cert" "$s" "$c" "$text" "$runmode"
+        run_pair "$suffix/$srvname+$cliname/$cert" "$s" "$c" "$text" "$runmode" "$port"
       else
         echo "FAIL [$suffix/$srvname+$cliname/$cert] build"; head -8 "$work/pair.err"; fail=$((fail+1))
       fi

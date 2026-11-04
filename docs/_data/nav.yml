@@ -66,6 +66,8 @@
       url: /std/http.html
     - title: HTTP audit (RFC 9110, 9112)
       url: /std/http-audit.html
+    - title: Cloud storage (S3)
+      url: /std/cloud.html
     - title: System calls
       url: /std/syscalls/
     - title: Linux x86-64 numbers
