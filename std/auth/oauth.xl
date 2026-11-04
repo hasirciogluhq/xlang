@@ -1,0 +1,91 @@
+// std/auth/oauth: the parts of OAuth 2.0 (RFC 6749, https://www.rfc-editor.org/rfc/rfc6749) that do not depend on a transport:
+// percent-encoding of query and form values (RFC 3986 section 2.1, https://www.rfc-editor.org/rfc/rfc3986), the PKCE code
+// verifier and S256 challenge (RFC 7636, https://www.rfc-editor.org/rfc/rfc7636: challenge = BASE64URL(SHA256(verifier)), with
+// the verifier 43 to 128 characters of unreserved characters, section 4.1 and 4.2), and the authorization request URL
+// (RFC 6749 section 4.1.1). Sending the requests and receiving the responses is done by the HTTP client.
+from "../encoding/base64" import base64UrlEncodeRaw
+from "../crypto/hash/digest" import digest, DIGEST_SHA256
+from "../str/string" import String
+from "../str/str" import fromParts
+from "../mem/mem" import currentAllocator
+
+/// True for the RFC 3986 unreserved characters: ALPHA, DIGIT, '-', '.', '_', '~'.
+fn isUnreserved(c: ui8) -> bool {
+    return (c >= 48 && c <= 57) || (c >= 65 && c <= 90) || (c >= 97 && c <= 122) || c == 45 || c == 46 || c == 95 || c == 126
+}
+
+/// Writes the percent-encoded form of `value[0..n)` to `out` in the uppercase hex of RFC 3986 section 2.1; returns the number of
+/// bytes written. The output needs at most 3 * n bytes.
+export fn pctEncodeInto(value: *ui8, n: usize, out: *ui8) -> usize {
+    local hex: [ui8; 16] = [48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 65, 66, 67, 68, 69, 70]
+    local o: usize = 0
+    local i: usize = 0
+    while i < n {
+        local c: ui8 = value[i]
+        if isUnreserved(c) {
+            out[o] = c
+            o = o + 1
+        } else {
+            out[o] = 37
+            out[o + 1] = hex[(c >> 4) as usize]
+            out[o + 2] = hex[(c & 15) as usize]
+            o = o + 3
+        }
+        i = i + 1
+    }
+    return o
+}
+
+/// The percent-encoded value as a String.
+export fn pctEncode(value: str) -> String {
+    local buf: *ui8 = currentAllocator.alloc(3 * value.len + 1, 1) as *ui8
+    if buf == nil { panic("pctEncode: out of memory") }
+    local n: usize = pctEncodeInto(value.ptr, value.len, buf)
+    local out: String = String()
+    out.append(fromParts(buf, n))
+    currentAllocator.free(buf as *void)
+    return out
+}
+
+/// The PKCE S256 code challenge for `verifier` (RFC 7636 section 4.2), as a String. Empty when the verifier is not 43 to 128
+/// unreserved characters (section 4.1).
+export fn pkceChallengeS256(verifier: str) -> String {
+    if verifier.len < 43 || verifier.len > 128 { return String() }
+    local i: usize = 0
+    while i < verifier.len {
+        if !isUnreserved(verifier[i]) { return String() }
+        i = i + 1
+    }
+    local h: [ui8; 32]
+    if !digest(DIGEST_SHA256, verifier.ptr, verifier.len, &h[0]) { return String() }
+    local enc: [ui8; 64]
+    local n: usize = base64UrlEncodeRaw(&h[0], 32, &enc[0])
+    local out: String = String()
+    out.append(fromParts(&enc[0], n))
+    return out
+}
+
+/// Builds the authorization request URL (RFC 6749 section 4.1.1) with response_type=code, client_id, redirect_uri, and optional
+/// scope and state, plus the PKCE challenge when `challenge` is not empty (method S256). Values are percent-encoded.
+export fn authorizationUrl(endpoint: str, clientId: str, redirectUri: str, scope: str, state: str, challenge: str) -> String {
+    local out: String = String()
+    out.append(endpoint)
+    out.append("?response_type=code&client_id=")
+    out.append(pctEncode(clientId).asStr())
+    out.append("&redirect_uri=")
+    out.append(pctEncode(redirectUri).asStr())
+    if scope.len > 0 {
+        out.append("&scope=")
+        out.append(pctEncode(scope).asStr())
+    }
+    if state.len > 0 {
+        out.append("&state=")
+        out.append(pctEncode(state).asStr())
+    }
+    if challenge.len > 0 {
+        out.append("&code_challenge=")
+        out.append(challenge)
+        out.append("&code_challenge_method=S256")
+    }
+    return out
+}

@@ -1,0 +1,100 @@
+// std/net/proto/ntp: the NTP packet (RFC 5905, https://www.rfc-editor.org/rfc/rfc5905, section 7.3) and the clock offset and
+// delay of section 8. The packet is 48 bytes, big-endian: byte 0 holds LI (2 bits), VN (3 bits) and Mode (3 bits); then
+// stratum, poll and precision (1 byte each); root delay and root dispersion (32-bit NTP short format, 16.16 seconds);
+// reference identifier (4 bytes); and four 64-bit timestamps in NTP format (32.32 seconds since 1900-01-01T00:00:00Z,
+// section 6). Unix time is NTP time minus 2208988800 seconds (the 70 years between the two epochs, section 6).
+// A client request sets LI 0, VN 4 and Mode 3 (client), so byte 0 is 0x23.
+
+/// The NTP epoch offset from the Unix epoch in seconds (RFC 5905 section 6).
+define NTP_UNIX_OFFSET = 2208988800
+
+/// A parsed 48-byte NTP packet. Timestamps are kept as the raw 32.32 values.
+export struct NtpPacket {
+    leap: ui8
+    version: ui8
+    mode: ui8
+    stratum: ui8
+    poll: i8
+    precision: i8
+    rootDelay: ui32
+    rootDispersion: ui32
+    refId: ui32
+    reference: ui64
+    origin: ui64
+    receive: ui64
+    transmit: ui64
+    ok: bool
+}
+
+/// Writes a client request (LI 0, VN 4, Mode 3) with the transmit timestamp `xmit` into `out` (48 bytes); returns 48.
+export fn ntpClientRequest(xmit: ui64, out: *ui8) -> usize {
+    local i: usize = 0
+    while i < 48 {
+        out[i] = 0
+        i = i + 1
+    }
+    out[0] = 0x23
+    putBe(out, 40, xmit, 8)
+    return 48
+}
+
+fn putBe(out: *ui8, at: usize, v: ui64, width: usize) {
+    local i: usize = 0
+    while i < width {
+        out[at + i] = ((v >> (((width - 1 - i) * 8) as ui64)) & 0xff) as ui8
+        i = i + 1
+    }
+}
+
+fn getBe(buf: *ui8, at: usize, width: usize) -> ui64 {
+    local v: ui64 = 0
+    local i: usize = 0
+    while i < width {
+        v = (v << 8) | (buf[at + i] as ui64)
+        i = i + 1
+    }
+    return v
+}
+
+/// Parses a 48-byte NTP packet. `ok` is false when fewer than 48 bytes are given or the version is not 3 or 4.
+export fn ntpParse(buf: *ui8, n: usize) -> NtpPacket {
+    local p: NtpPacket
+    if n < 48 { return p }
+    p.leap = buf[0] >> 6
+    p.version = (buf[0] >> 3) & 7
+    p.mode = buf[0] & 7
+    if p.version != 3 && p.version != 4 { return p }
+    p.stratum = buf[1]
+    p.poll = buf[2] as i8
+    p.precision = buf[3] as i8
+    p.rootDelay = getBe(buf, 4, 4) as ui32
+    p.rootDispersion = getBe(buf, 8, 4) as ui32
+    p.refId = getBe(buf, 12, 4) as ui32
+    p.reference = getBe(buf, 16, 8)
+    p.origin = getBe(buf, 24, 8)
+    p.receive = getBe(buf, 32, 8)
+    p.transmit = getBe(buf, 40, 8)
+    p.ok = true
+    return p
+}
+
+/// Unix seconds of an NTP 32.32 timestamp (the fraction is dropped).
+export fn ntpToUnixSeconds(ts: ui64) -> i64 {
+    return ((ts >> 32) as i64) - NTP_UNIX_OFFSET
+}
+
+/// The clock offset and round-trip delay of section 8, from the four timestamps t1 (client send), t2 (server receive),
+/// t3 (server send) and t4 (client receive), all in NTP 32.32 format. Both results are in 32.32 units (signed).
+export struct NtpOffsetDelay {
+    offset: i64
+    delay: i64
+}
+
+export fn ntpOffsetDelay(t1: ui64, t2: ui64, t3: ui64, t4: ui64) -> NtpOffsetDelay {
+    local a: i64 = (t2 as i64) - (t1 as i64)
+    local b: i64 = (t3 as i64) - (t4 as i64)
+    local r: NtpOffsetDelay
+    r.offset = (a + b) / 2
+    r.delay = ((t4 as i64) - (t1 as i64)) - ((t3 as i64) - (t2 as i64))
+    return r
+}

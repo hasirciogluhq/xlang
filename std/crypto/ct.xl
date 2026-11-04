@@ -1,0 +1,30 @@
+// std/crypto/ct: constant-time helpers for secret data.
+//   constantTimeEq: compares two byte strings without an early exit, so the time depends only on the length (the
+//   difference is accumulated over every byte, then tested once). The language has no guarantee that the optimizer keeps
+//   the branch-free form; the check here is by design, and the emitted code should be inspected for secret-length use.
+//   secureZero: overwrites a buffer with zeros through atomic stores with sequentially consistent ordering, so the
+//   optimizer cannot remove the stores as dead (the buffer is not read afterwards in the caller's frame). The
+//   specification of this practice is NIST SP 800-88 Rev. 1 (media sanitization, the overwrite principle); it applies
+//   to memory the process controls, not to swapped or copied pages.
+//   Specifications for the comparison pattern: the tag comparisons of RFC 8439 section 2.8 and RFC 5869 (HKDF) state
+//   that tags are compared in constant time.
+
+/// True when `a[0..n)` and `b[0..n)` hold the same bytes. Visits every byte, with no early exit.
+export fn constantTimeEq(a: *ui8, b: *ui8, n: usize) -> bool {
+    local diff: ui8 = 0
+    local i: usize = 0
+    while i < n {
+        diff = diff | (a[i] ^ b[i])
+        i = i + 1
+    }
+    return diff == 0
+}
+
+/// Writes `n` zero bytes at `p` with sequentially consistent atomic stores (see the file header).
+export fn secureZero(p: *ui8, n: usize) {
+    local i: usize = 0
+    while i < n {
+        __builtin_atomicStore(&p[i], 0, MemoryOrder.seqCst)
+        i = i + 1
+    }
+}

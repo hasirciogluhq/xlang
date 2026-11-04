@@ -1,0 +1,94 @@
+// std/str/compare: three-way comparison, ASCII case-insensitive equality, byte set membership, the ASCII
+// whitespace predicate and glob matching for the `str` view. Everything is byte-wise on unsigned bytes. Case
+// rules are ASCII only (A-Z and a-z): no Unicode folding, no normalization. Whitespace is the ASCII set: space,
+// tab, newline, vertical tab, form feed and carriage return.
+//
+// Glob syntax (`globMatch`): `*` matches any run of bytes, including an empty run; `?` matches exactly one
+// byte; every other byte matches itself. There is no bracket class and no escape character: a literal `*` or
+// `?` cannot be matched by a glob. The rules are the common shell-style subset; see docs/known-limitations.md.
+
+/// ASCII whitespace: space, tab, newline, vertical tab, form feed and carriage return.
+export fn isSpace(c: ui8) -> bool {
+    return c == 32 || (c >= 9 && c <= 13)
+}
+
+/// ASCII lowercase of one byte: A-Z become a-z, every other byte is unchanged.
+fn lowerAscii(c: ui8) -> ui8 {
+    if c >= 65 && c <= 90 { return c + 32 }
+    return c
+}
+
+/// Three-way byte-wise comparison: -1 when `a` sorts first, 0 when equal, 1 when `a` sorts after.
+/// Bytes compare as unsigned values; a proper prefix sorts before its extensions, so "ab" < "abc".
+export fn compare(a: str, b: str) -> i32 {
+    local n: usize = a.len
+    if b.len < n { n = b.len }
+    local i: usize = 0
+    while i < n {
+        if a[i] != b[i] {
+            if a[i] < b[i] { return -1 }
+            return 1
+        }
+        i = i + 1
+    }
+    if a.len < b.len { return -1 }
+    if a.len > b.len { return 1 }
+    return 0
+}
+
+/// Equality after ASCII case folding of both sides. Lengths must match; other bytes compare exactly.
+export fn equalIgnoreCase(a: str, b: str) -> bool {
+    if a.len != b.len { return false }
+    local i: usize = 0
+    while i < a.len {
+        if lowerAscii(a[i]) != lowerAscii(b[i]) { return false }
+        i = i + 1
+    }
+    return true
+}
+
+/// True when at least one byte of `s` occurs in `set`. An empty `set` matches nothing.
+export fn containsAny(s: str, set: str) -> bool {
+    local i: usize = 0
+    while i < s.len {
+        local j: usize = 0
+        while j < set.len {
+            if s[i] == set[j] { return true }
+            j = j + 1
+        }
+        i = i + 1
+    }
+    return false
+}
+
+/// True when `text` matches the glob `pattern` (syntax in the file header). Iterative two-pointer matching:
+/// on a mismatch, the last `*` absorbs one more byte of `text` and matching resumes after it. Time is
+/// O(len(pattern) * len(text)) in the worst case and O(len) for patterns with at most one star.
+export fn globMatch(pattern: str, text: str) -> bool {
+    local p: usize = 0
+    local t: usize = 0
+    local starP: usize = 0      // pattern index just after the most recent `*`
+    local starT: usize = 0      // text index where that `*` started matching
+    local hasStar: bool = false
+    while t < text.len {
+        if p < pattern.len && pattern[p] == 42 {          // '*'
+            hasStar = true
+            starP = p + 1
+            starT = t
+            p = p + 1
+        } else if p < pattern.len && (pattern[p] == 63 || pattern[p] == text[t]) {   // '?' or equal byte
+            p = p + 1
+            t = t + 1
+        } else if hasStar {
+            starT = starT + 1
+            t = starT
+            p = starP
+        } else {
+            return false
+        }
+    }
+    while p < pattern.len && pattern[p] == 42 {
+        p = p + 1
+    }
+    return p == pattern.len
+}

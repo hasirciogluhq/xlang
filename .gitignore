@@ -1,5 +1,8 @@
 # Build
 /build/
+/outputs/
+/.direnv/
+/dist/
 .xmake/
 compile_commands.json
 
@@ -9,18 +12,13 @@ compile_commands.json
 *.a
 *.so
 *.dylib
-xlang
-hello
-examples/hello
-examples/math
+build
+output
+out
 
-# Runtime build cache
-/runtime/runtime.o
-/runtime/*.ll
-
-# Legacy C shim (removed)
-/runtime/rt.c
-/runtime/rt.o
+# Runtime build cache (user-program link of frontend)
+/src/runtime/frontend/runtime.o
+/src/runtime/frontend/*.ll
 
 # macOS
 .DS_Store
@@ -33,3 +31,10 @@ examples/math
 
 # Debug
 *.dSYM/
+.xlang-cache/
+# Package cache (xlang.toml / xlang.lock are committed, the downloaded sources are not)
+.xlang/
+# Jekyll build output and cache (the Pages workflow builds in CI; local builds write here)
+_site/
+docs/.jekyll-cache/
+docs/.sass-cache/

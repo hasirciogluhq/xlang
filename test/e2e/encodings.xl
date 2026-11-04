@@ -1,0 +1,133 @@
+// Encoding known-answer tests: RFC 4648 section 10 vectors (base64, base64url, base16), hex, and rejection cases.
+from "std/encoding/base64" import base64Encode, base64Decode, base64UrlEncode, base64UrlDecode, base64EncodedLen
+from "std/encoding/hex" import hexEncode, hexDecode, base16Encode, base16Decode, hexEncodedLen
+from "std" import print, strlen
+
+global failures: i32 = 0
+
+/// True when the first `n` bytes of `a` and `b` are equal (binary-safe; `b` need not be NUL-terminated).
+fn sameN(a: *ui8, b: *ui8, n: usize) -> bool {
+    local i: usize = 0
+    while i < n {
+        if a[i] != b[i] { return false }
+        i = i + 1
+    }
+    return true
+}
+
+/// True when `a[0..n]` equals the NUL-terminated text `b` and `b` ends exactly at `n`.
+fn same(a: *ui8, n: usize, b: *ui8) -> bool {
+    return strlen(b) == n && sameN(a, b, n)
+}
+
+fn fail(what: *ui8, text: *ui8) {
+    failures = failures + 1
+    print("FAIL ")
+    print(what)
+    print(": ")
+    print(text)
+    print("\n")
+}
+
+/// Encodes `input` with `enc`-style call `encName`, checks the text and the decode back to the input.
+fn checkBase64(input: *ui8, n: usize, want: *ui8) {
+    local out: [ui8; 64]
+    local len: usize = base64Encode(input, n, &out[0])
+    out[len] = 0
+    if len != base64EncodedLen(n) || !same(&out[0], len, want) {
+        fail("base64Encode", &out[0])
+    }
+    local back: [ui8; 16]
+    local got: isize = base64Decode(want, strlen(want), &back[0])
+    if got != n as isize || (n > 0 && !sameN(&back[0], input, n)) {
+        fail("base64Decode", want)
+    }
+}
+
+fn checkBase64Url(input: *ui8, n: usize, want: *ui8) {
+    local out: [ui8; 64]
+    local len: usize = base64UrlEncode(input, n, &out[0])
+    out[len] = 0
+    if !same(&out[0], len, want) {
+        fail("base64UrlEncode", &out[0])
+    }
+    local back: [ui8; 16]
+    local got: isize = base64UrlDecode(want, strlen(want), &back[0])
+    if got != n as isize || (n > 0 && !sameN(&back[0], input, n)) {
+        fail("base64UrlDecode", want)
+    }
+}
+
+fn checkHex(input: *ui8, n: usize, lower: *ui8, upper: *ui8) {
+    local out: [ui8; 64]
+    local len: usize = hexEncode(input, n, &out[0])
+    out[len] = 0
+    if len != hexEncodedLen(n) || !same(&out[0], len, lower) {
+        fail("hexEncode", &out[0])
+    }
+    len = base16Encode(input, n, &out[0])
+    out[len] = 0
+    if !same(&out[0], len, upper) {
+        fail("base16Encode", &out[0])
+    }
+    local back: [ui8; 16]
+    if hexDecode(lower, strlen(lower), &back[0]) != n as isize || (n > 0 && !sameN(&back[0], input, n)) {
+        fail("hexDecode", lower)
+    }
+    if base16Decode(upper, strlen(upper), &back[0]) != n as isize || (n > 0 && !sameN(&back[0], input, n)) {
+        fail("base16Decode", upper)
+    }
+}
+
+/// `text` must be rejected by a decoder: returns -1.
+fn rejected(what: *ui8, got: isize, text: *ui8) {
+    if got != -1 {
+        fail(what, text)
+    }
+}
+
+@entry fn main() -> i32 {
+    // RFC 4648 section 10 base64 vectors (every padding case).
+    checkBase64("", 0, "")
+    checkBase64("f", 1, "Zg==")
+    checkBase64("fo", 2, "Zm8=")
+    checkBase64("foo", 3, "Zm9v")
+    checkBase64("foob", 4, "Zm9vYg==")
+    checkBase64("fooba", 5, "Zm9vYmE=")
+    checkBase64("foobar", 6, "Zm9vYmFy")
+    // Bytes that produce '+' and '/' in standard base64 and '-' and '_' in base64url.
+    local hard: [ui8; 3] = [251, 255, 191]
+    checkBase64(&hard[0], 3, "+/+/")
+    checkBase64Url(&hard[0], 3, "-_-_")
+    checkBase64Url("f", 1, "Zg==")
+    checkBase64Url("foobar", 6, "Zm9vYmFy")
+
+    // RFC 4648 section 10 base16 vectors, plus binary bytes.
+    checkHex("", 0, "", "")
+    checkHex("f", 1, "66", "66")
+    checkHex("foobar", 6, "666f6f626172", "666F6F626172")
+    local bin: [ui8; 2] = [0, 255]
+    checkHex(&bin[0], 2, "00ff", "00FF")
+
+    // Strict decoders reject what RFC 4648 forbids.
+    local buf: [ui8; 16]
+    rejected("base64Decode length", base64Decode("Zm9", 3, &buf[0]), "Zm9")
+    rejected("base64Decode pad middle", base64Decode("Zm=v", 4, &buf[0]), "Zm=v")
+    rejected("base64Decode pad then data", base64Decode("Zg==Zg==", 8, &buf[0]), "Zg==Zg==")
+    rejected("base64Decode nonzero tail", base64Decode("Zh==", 4, &buf[0]), "Zh==")
+    rejected("base64Decode nonzero tail 3", base64Decode("Zm9vYh==", 8, &buf[0]), "Zm9vYh==")
+    rejected("base64Decode whitespace", base64Decode("Zm9v YQ==", 8, &buf[0]), "Zm9v YQ==")
+    rejected("base64Decode url char", base64Decode("-_-_", 4, &buf[0]), "-_-_")
+    rejected("base64UrlDecode std char", base64UrlDecode("+/+/", 4, &buf[0]), "+/+/")
+    rejected("base64UrlDecode nonzero tail", base64UrlDecode("Zh==", 4, &buf[0]), "Zh==")
+    rejected("hexDecode odd", hexDecode("abc", 3, &buf[0]), "abc")
+    rejected("hexDecode non-hex", hexDecode("0g", 2, &buf[0]), "0g")
+    rejected("base16Decode lowercase", base16Decode("00ff", 4, &buf[0]), "00ff")
+    rejected("base16Decode odd", base16Decode("0", 1, &buf[0]), "0")
+
+    if failures == 0 {
+        print("encodings ok\n")
+        return 0
+    }
+    return 1
+}

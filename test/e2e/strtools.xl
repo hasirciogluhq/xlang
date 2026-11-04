@@ -1,0 +1,65 @@
+// Strings: the str helpers, String additions and format / fmtAppend.
+from "std" import print, format, fmtAppend, String, Vec, find, contains, startsWith, endsWith, trim, split, toI64, toU64, eq
+
+global failures: i32 = 0
+
+fn check(name: *ui8, ok: bool) {
+    if !ok {
+        failures = failures + 1
+        print("FAIL ")
+        print(name)
+        print("\n")
+    }
+}
+
+@entry fn main() -> i32 {
+    check("find", find("hello world", "o w") == 4)
+    check("find absent", find("hello", "xyz") == -1)
+    check("find empty needle", find("abc", "") == 0)
+    check("contains", contains("abcdef", "cde") && !contains("abc", "d"))
+    check("starts with", startsWith("prefix-x", "prefix") && !startsWith("pre", "prefix"))
+    check("ends with", endsWith("file.xl", ".xl") && !endsWith("xl", "file.xl"))
+
+    local trimmed: String = trim("  \t hi there \n")
+    check("trim", trimmed.equals("hi there"))
+    check("trim all blanks", trim(" \r\n ").len == 0)
+
+    local parts: Vec<String> = split("a,,bc,", ",")
+    check("split count keeps empty pieces", parts.length() == 4)
+    check("split pieces", parts.get(0).equals("a") && parts.get(1).len == 0 && parts.get(2).equals("bc") && parts.get(3).len == 0)
+
+    local n: i64 = 0
+    check("i64 positive", toI64("12345", &n) && n == 12345)
+    check("i64 negative", toI64("-42", &n) && n == -42)
+    check("i64 minimum", toI64("-9223372036854775808", &n) && n == (0 - 9223372036854775807) - 1)
+    check("i64 overflow", !toI64("9223372036854775808", &n))
+    check("i64 lone sign", !toI64("-", &n))
+    check("i64 junk", !toI64("12a", &n))
+
+    local u: ui64 = 0
+    check("u64 maximum", toU64("18446744073709551615", &u) && u + 1 == 0)
+    check("u64 overflow", !toU64("18446744073709551616", &u))
+    check("u64 empty", !toU64("", &u))
+
+    local src: String = String("MiXeD 1")
+    local low: String = src.toLowerAscii()
+    local up: String = src.toUpperAscii()
+    check("lower", low.equals("mixed 1"))
+    check("upper", up.equals("MIXED 1") && src.equals("MiXeD 1"))
+    check("String find, starts, ends", src.find("X") == 2 && src.startsWith("Mi") && src.endsWith(" 1"))
+    check("String slice", src.slice(0, 2).equals("Mi"))
+    local filled: String = String(3, 65)
+    check("String filled with a byte", filled.equals("AAA") && filled.cstr()[3] == 0)
+
+    local msg: String = format("{} + {} = {}", 1, 2, 3)
+    check("format three", msg.equals("1 + 2 = 3"))
+    local acc: String = String("x=")
+    fmtAppend(&acc, "{} {{}} {}", -7, true)
+    check("fmtAppend with braces and bool", acc.equals("x=-7 {} true"))
+    check("format float", format("{}", 2.5).equals("2.500000"))
+
+    if failures == 0 {
+        print("strtools ok\n")
+    }
+    return failures
+}

@@ -1,0 +1,136 @@
+// std/crypto/x509/spki: writing public keys (SubjectPublicKeyInfo, RFC 5280 section 4.1.2.7, https://www.rfc-editor.org/rfc/rfc5280)
+// and EC private keys (PKCS #8, RFC 5208, https://www.rfc-editor.org/rfc/rfc5208, with the ECPrivateKey of RFC 5915,
+// https://www.rfc-editor.org/rfc/rfc5915). Public keys are written from a parsed Cert (RSA: modulus and exponent, EC: the
+// uncompressed point 04 || X || Y, RFC 5480 section 2.2). Object identifiers: rsaEncryption 1.2.840.113549.1.1.1 (RFC 8017
+// appendix C), id-ecPublicKey 1.2.840.10045.2.1 (RFC 5480 section 2.1.1), prime256v1 1.2.840.10045.3.1.7 and secp384r1
+// 1.3.132.0.34 (RFC 5480 appendix A). The output is a String holding the DER bytes; PEM is written with `pemEncode`.
+// Not done: RSA private keys (PKCS #1 and PKCS #8). PrivKey keeps only the modulus and the private exponent, and the other
+// CRT values are needed for that encoding. The EC PKCS #8 output omits the optional public key of RFC 5915 section 3.
+from "../../encoding/der" import derTlvLen, derWriteTlv, derIntegerBody
+from "../../encoding/pemwrite" import pemEncode
+from "../../str/string" import String
+from "../../str/str" import fromParts
+from "../../mem/mem" import currentAllocator
+from "x509" import Cert, KEY_RSA, KEY_EC_P256, KEY_EC_P384
+from "privkey" import PrivKey
+
+// The curve OID contents (without tag and length), kept in static storage because they are returned as views.
+global OID_P256: [ui8; 8] = [0x2a, 0x86, 0x48, 0xce, 0x3d, 0x03, 0x01, 0x07]
+global OID_P384: [ui8; 5] = [0x2b, 0x81, 0x04, 0x00, 0x22]
+
+/// One TLV with the given tag and body, as a new String.
+fn tlv(tag: ui8, body: str) -> String {
+    local n: usize = derTlvLen(body.len)
+    local buf: *ui8 = currentAllocator.alloc(n, 1) as *ui8
+    if buf == nil { panic("tlv: out of memory") }
+    local w: usize = derWriteTlv(tag, body.ptr, body.len, buf)
+    local out: String = String()
+    out.append(fromParts(buf, w))
+    currentAllocator.free(buf as *void)
+    return out
+}
+
+/// An INTEGER TLV for the unsigned big-endian magnitude `v[0..n)` (minimal form, RFC 5280 / X.690 section 8.3).
+fn intTlv(v: *ui8, n: usize) -> String {
+    local body: *ui8 = currentAllocator.alloc(n + 1, 1) as *ui8
+    if body == nil { panic("intTlv: out of memory") }
+    local bl: usize = derIntegerBody(v, n, body)
+    local out: String = tlv(0x02, fromParts(body, bl))
+    currentAllocator.free(body as *void)
+    return out
+}
+
+/// The concatenation of two DER values, as a String.
+fn concat(a: str, b: str) -> String {
+    local out: String = String()
+    out.append(a)
+    out.append(b)
+    return out
+}
+
+/// The SubjectPublicKeyInfo DER of the key in `c`. Empty when the certificate has no key this module can write.
+export fn spkiFromCert(c: *Cert) -> String {
+    local algBody: String = String()
+    local bits: String = String()
+    if c.keyType == KEY_RSA {
+        // AlgorithmIdentifier { rsaEncryption, NULL }
+        local oid: [ui8; 9] = [0x2a, 0x86, 0x48, 0x86, 0xf7, 0x0d, 0x01, 0x01, 0x01]
+        local nul: [ui8; 2] = [0x05, 0x00]
+        local algId: String = concat(tlv(0x06, fromParts(&oid[0], 9)).asStr(), fromParts(&nul[0], 2))
+        algBody = tlv(0x30, algId.asStr())
+        // RSAPublicKey { modulus, exponent }
+        local rsaKey: String = concat(intTlv(c.rsaN, c.rsaNLen).asStr(), intTlv(c.rsaE, c.rsaELen).asStr())
+        local seq: String = tlv(0x30, rsaKey.asStr())
+        bits = bitString(seq.asStr())
+    } else if c.keyType == KEY_EC_P256 || c.keyType == KEY_EC_P384 {
+        // AlgorithmIdentifier { id-ecPublicKey, namedCurve }
+        local ecOid: [ui8; 7] = [0x2a, 0x86, 0x48, 0xce, 0x3d, 0x02, 0x01]
+        local curve: str = curveOid(c.keyType)
+        local algId: String = concat(tlv(0x06, fromParts(&ecOid[0], 7)).asStr(), tlv(0x06, curve).asStr())
+        algBody = tlv(0x30, algId.asStr())
+        bits = bitString(fromParts(c.ecPoint, c.ecPointLen))
+    } else {
+        return String()
+    }
+    return tlv(0x30, concat(algBody.asStr(), bits.asStr()).asStr())
+}
+
+/// The BIT STRING of `content` with zero unused bits (the leading 0x00 of X.690 section 8.6.2).
+fn bitString(content: str) -> String {
+    local body: *ui8 = currentAllocator.alloc(content.len + 1, 1) as *ui8
+    if body == nil { panic("bitString: out of memory") }
+    body[0] = 0
+    local i: usize = 0
+    while i < content.len {
+        body[1 + i] = content[i]
+        i = i + 1
+    }
+    local out: String = tlv(0x03, fromParts(body, content.len + 1))
+    currentAllocator.free(body as *void)
+    return out
+}
+
+/// The OID TLV body of the named curve: prime256v1 or secp384r1.
+fn curveOid(keyType: i32) -> str {
+    if keyType == KEY_EC_P256 { return fromParts(&OID_P256[0], 8) }
+    return fromParts(&OID_P384[0], 5)
+}
+
+/// A PEM "PUBLIC KEY" block (RFC 7468 section 13) of the key in `c`; empty when the key cannot be written.
+export fn spkiPemFromCert(c: *Cert) -> String {
+    local der: String = spkiFromCert(c)
+    if der.length() == 0 { return der }
+    local label: str = "PUBLIC KEY"
+    return pemEncode(label.ptr, label.len, der.cstr(), der.length())
+}
+
+/// The PKCS #8 DER of an EC private key (RFC 5208 section 5, with the ECPrivateKey of RFC 5915). The private scalar is written
+/// at the curve size. Empty when the key is not an EC key.
+export fn ecPkcs8FromKey(k: *PrivKey) -> String {
+    local size: usize = 0
+    if k.keyType == KEY_EC_P256 { size = 32 }
+    if k.keyType == KEY_EC_P384 { size = 48 }
+    if size == 0 { return String() }
+    // ECPrivateKey { version 1, privateKey OCTET STRING, [0] parameters }
+    local one: [ui8; 1] = [1]
+    local ver: String = tlv(0x02, fromParts(&one[0], 1))
+    local scalar: String = tlv(0x04, fromParts(&k.d[0], size))
+    local curve: str = curveOid(k.keyType)
+    local params: String = tlv(0xa0, tlv(0x06, curve).asStr())
+    local ecPriv: String = tlv(0x30, concat(ver.asStr(), concat(scalar.asStr(), params.asStr()).asStr()).asStr())
+    // PrivateKeyInfo { version 0, AlgorithmIdentifier { id-ecPublicKey, curve }, privateKey OCTET STRING }
+    local zero: [ui8; 1] = [0]
+    local v0: String = tlv(0x02, fromParts(&zero[0], 1))
+    local ecOid: [ui8; 7] = [0x2a, 0x86, 0x48, 0xce, 0x3d, 0x02, 0x01]
+    local algId: String = tlv(0x30, concat(tlv(0x06, fromParts(&ecOid[0], 7)).asStr(), tlv(0x06, curve).asStr()).asStr())
+    local octet: String = tlv(0x04, ecPriv.asStr())
+    return tlv(0x30, concat(v0.asStr(), concat(algId.asStr(), octet.asStr()).asStr()).asStr())
+}
+
+/// A PEM "PRIVATE KEY" block (PKCS #8) of an EC key; empty when the key is not EC.
+export fn ecPkcs8PemFromKey(k: *PrivKey) -> String {
+    local der: String = ecPkcs8FromKey(k)
+    if der.length() == 0 { return der }
+    local label: str = "PRIVATE KEY"
+    return pemEncode(label.ptr, label.len, der.cstr(), der.length())
+}

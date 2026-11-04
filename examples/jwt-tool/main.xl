@@ -1,0 +1,67 @@
+// jwt-tool: signs and verifies JSON Web Tokens (RFC 7519) in compact form (RFC 7515).
+//   jwt-tool sign-hs256 <secret> <payload.json>      prints a token signed with HS256
+//   jwt-tool verify-hs256 <secret> <token>           exit 0 when the signature and the alg (HS256) are valid
+//   jwt-tool verify-jwk <alg> <key.jwk> <token>      alg is RS256, ES256 or EdDSA; the key is a JSON Web Key (RFC 7517)
+//   jwt-tool thumbprint <key.jwk>                    the RFC 7638 thumbprint of the key
+// Signature checks only: claims such as exp and aud are read by the caller (see docs/std/auth.md).
+from "std" import print, String, fromC, fromParts, eq, strlen, fsReadAll, jwtSignHs256, jwtVerifyHs256, jwtVerifyWithJwk, jwkThumbprintSha256
+from "std/mem" import currentAllocator
+
+define BUF = 16384
+
+/// Reads a file into a new buffer of BUF bytes; returns the buffer and sets `n` to its length (-1 on failure).
+fn load(path: *ui8, n: *isize) -> *ui8 {
+    local buf: *ui8 = currentAllocator.alloc(BUF, 1) as *ui8
+    *n = fsReadAll(path, buf, BUF)
+    return buf
+}
+
+fn usage() -> i32 {
+    print("usage: jwt-tool sign-hs256 <secret> <payload.json> | verify-hs256 <secret> <token> |\n")
+    print("       verify-jwk <RS256|ES256|EdDSA> <key.jwk> <token> | thumbprint <key.jwk>\n")
+    return 2
+}
+
+@entry fn main(argc: i32, argv: **ui8) -> i32 {
+    if argc < 2 { return usage() }
+    local cmd: str = fromC(argv[1])
+    if eq(cmd, "sign-hs256") && argc == 4 {
+        local n: isize = 0
+        local payload: *ui8 = load(argv[3], &n)
+        if n < 0 { return 1 }
+        local header: str = "{\"alg\":\"HS256\",\"typ\":\"JWT\"}"
+        local token: String = jwtSignHs256(header, fromParts(payload, n as usize), argv[2], strlen(argv[2]))
+        print(token.asStr())
+        print("\n")
+        return 0
+    }
+    if eq(cmd, "verify-hs256") && argc == 4 {
+        local ok: bool = jwtVerifyHs256(fromC(argv[3]), argv[2], strlen(argv[2]))
+        print(ok ? "valid\n" : "invalid\n")
+        if ok { return 0 }
+        return 1
+    }
+    if eq(cmd, "verify-jwk") && argc == 5 {
+        local n: isize = 0
+        local key: *ui8 = load(argv[3], &n)
+        if n < 0 { return 1 }
+        local ok: bool = jwtVerifyWithJwk(fromC(argv[4]), fromParts(key, n as usize), fromC(argv[2]))
+        print(ok ? "valid\n" : "invalid\n")
+        if ok { return 0 }
+        return 1
+    }
+    if eq(cmd, "thumbprint") && argc == 3 {
+        local n: isize = 0
+        local key: *ui8 = load(argv[2], &n)
+        if n < 0 { return 1 }
+        local tp: String = jwkThumbprintSha256(fromParts(key, n as usize))
+        if tp.length() == 0 {
+            print("unsupported key\n")
+            return 1
+        }
+        print(tp.asStr())
+        print("\n")
+        return 0
+    }
+    return usage()
+}

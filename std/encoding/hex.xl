@@ -1,0 +1,85 @@
+// std/encoding/hex: hexadecimal text (base16). The encoders write `2n` characters and no NUL. `hexEncode`
+// writes lowercase, `base16Encode` writes uppercase as RFC 4648 section 8 specifies. `hexDecode` accepts both
+// cases; `base16Decode` accepts only uppercase, the strict form of RFC 4648 section 8.
+// Decoders return the number of bytes written, or -1 for an odd length or a non-hex character. Nothing allocates.
+// https://www.rfc-editor.org/rfc/rfc4648#section-8
+
+/// Characters written by `hexEncode` / `base16Encode` for `n` bytes.
+export fn hexEncodedLen(n: usize) -> usize {
+    return n * 2
+}
+
+/// The ASCII digit for a nibble `v` (0..15): `0-9` then `a-f`, or `A-F` when `upper`.
+fn nibbleChar(v: ui8, upper: bool) -> ui8 {
+    if v < 10 {
+        return 48 + v
+    }
+    if upper {
+        return 55 + v
+    }
+    return 87 + v
+}
+
+fn encodeWith(data: *ui8, n: usize, out: *ui8, upper: bool) -> usize {
+    local i: usize = 0
+    while i < n {
+        out[i * 2] = nibbleChar(data[i] >> 4, upper)
+        out[i * 2 + 1] = nibbleChar(data[i] & 15, upper)
+        i = i + 1
+    }
+    return n * 2
+}
+
+/// Value 0..15 of a hex digit in either case, -1 when `c` is not one.
+fn hexValue(c: ui8) -> i32 {
+    if c >= 48 && c <= 57 {
+        return (c - 48) as i32
+    }
+    if c >= 97 && c <= 102 {
+        return (c - 87) as i32
+    }
+    if c >= 65 && c <= 70 {
+        return (c - 55) as i32
+    }
+    return -1
+}
+
+fn decodeWith(text: *ui8, n: usize, out: *ui8, upperOnly: bool) -> isize {
+    if n % 2 != 0 {
+        return -1
+    }
+    local i: usize = 0
+    while i < n {
+        local hi: i32 = hexValue(text[i])
+        local lo: i32 = hexValue(text[i + 1])
+        if hi < 0 || lo < 0 {
+            return -1
+        }
+        if upperOnly && (text[i] >= 97 || text[i + 1] >= 97) {
+            return -1
+        }
+        out[i / 2] = ((hi << 4) | lo) as ui8
+        i = i + 2
+    }
+    return (n / 2) as isize
+}
+
+/// Lowercase hex of `data[0..n]` into `out` (`hexEncodedLen(n)` bytes). Returns the characters written.
+export fn hexEncode(data: *ui8, n: usize, out: *ui8) -> usize {
+    return encodeWith(data, n, out, false)
+}
+
+/// Decodes `n` hex characters (either case) into `out`. Returns the bytes written, or -1.
+export fn hexDecode(text: *ui8, n: usize, out: *ui8) -> isize {
+    return decodeWith(text, n, out, false)
+}
+
+/// Uppercase RFC 4648 base16 of `data[0..n]` into `out` (`hexEncodedLen(n)` bytes).
+export fn base16Encode(data: *ui8, n: usize, out: *ui8) -> usize {
+    return encodeWith(data, n, out, true)
+}
+
+/// Strict RFC 4648 base16 decode: uppercase only. Returns the bytes written, or -1.
+export fn base16Decode(text: *ui8, n: usize, out: *ui8) -> isize {
+    return decodeWith(text, n, out, true)
+}

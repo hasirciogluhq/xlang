@@ -1,0 +1,45 @@
+// Route groups with nested prefixes and middleware. The middleware of a group runs before the handlers of that group only.
+//   GET /api/v1/users/        -> 401 without the X-Token header, else the list
+//   GET /api/v1/users/:id     -> 401 without the header, else the user
+//   GET /public               -> no middleware
+from "std" import print, Router, Group, Context, routerInit, routerGet, routerGroup, groupSub, groupUse, groupGet, routerServe, ctxString, ctxHeader, ctxNext, ctxAbortWithStatus, ctxParam
+
+fn authRequired(c: *Context) {
+    if ctxHeader(c, "X-Token") == nil {
+        ctxAbortWithStatus(c, 401)
+        return
+    }
+    ctxNext(c)
+}
+
+fn listUsers(c: *Context) {
+    ctxString(c, 200, "list users")
+}
+
+fn getUser(c: *Context) {
+    ctxString(c, 200, "get user")
+}
+
+fn publicPage(c: *Context) {
+    ctxString(c, 200, "public")
+}
+
+fn listening() {
+    print("listening on http://127.0.0.1:8080\n")
+}
+
+@entry fn main() -> i32 {
+    local r: Router
+    routerInit(&r)
+    local api: Group
+    routerGroup(&r, "/api", &api)
+    local v1: Group
+    groupSub(&api, "/v1", &v1)
+    local users: Group
+    groupSub(&v1, "/users", &users)
+    groupUse(&users, authRequired)
+    groupGet(&users, "/", listUsers)
+    groupGet(&users, "/:id", getUser)
+    routerGet(&r, "/public", publicPage)
+    return routerServe(&r, 2130706433, 8080, listening)
+}

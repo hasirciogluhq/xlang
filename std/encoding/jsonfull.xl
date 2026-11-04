@@ -1,0 +1,446 @@
+// std/encoding/jsonfull: JSON validation, navigation, string decoding and writing (RFC 8259, https://www.rfc-editor.org/rfc/rfc8259;
+// JSON Pointer RFC 6901, https://www.rfc-editor.org/rfc/rfc6901). The reader is a recursive-descent validator over the bytes;
+// values are not converted into a tree. A value is located by its raw text (a view of the input), and strings are decoded
+// on request. Nesting deeper than 512 levels is rejected to bound the recursion.
+from "../str/str" import fromParts
+from "../str/string" import String
+from "utf8" import utf8Encode
+
+define JSON_MAX_DEPTH = 512
+
+fn skipWs(text: *ui8, n: usize, pos: *usize) {
+    while *pos < n && (text[*pos] == 32 || text[*pos] == 9 || text[*pos] == 10 || text[*pos] == 13) {
+        *pos = *pos + 1
+    }
+}
+
+fn hexVal(c: ui8) -> i32 {
+    if c >= 48 && c <= 57 { return (c - 48) as i32 }
+    if c >= 97 && c <= 102 { return (c - 87) as i32 }
+    if c >= 65 && c <= 70 { return (c - 55) as i32 }
+    return -1
+}
+
+/// Parses a string literal at `pos` (the opening quote). Checks the escapes and returns true; `pos` moves past the closing
+/// quote. Control characters below 0x20 are rejected (RFC 8259 section 7).
+fn skipString(text: *ui8, n: usize, pos: *usize) -> bool {
+    if *pos >= n || text[*pos] != 34 { return false }
+    *pos = *pos + 1
+    while *pos < n {
+        local c: ui8 = text[*pos]
+        if c == 34 {
+            *pos = *pos + 1
+            return true
+        }
+        if c < 32 { return false }
+        if c == 92 {
+            if *pos + 1 >= n { return false }
+            local e: ui8 = text[*pos + 1]
+            if e == 117 {
+                if *pos + 6 > n { return false }
+                local k: usize = 0
+                while k < 4 {
+                    if hexVal(text[*pos + 2 + k]) < 0 { return false }
+                    k = k + 1
+                }
+                *pos = *pos + 6
+            } else {
+                if !(e == 34 || e == 92 || e == 47 || e == 98 || e == 102 || e == 110 || e == 114 || e == 116) { return false }
+                *pos = *pos + 2
+            }
+        } else {
+            *pos = *pos + 1
+        }
+    }
+    return false
+}
+
+fn skipNumber(text: *ui8, n: usize, pos: *usize) -> bool {
+    local start: usize = *pos
+    if *pos < n && text[*pos] == 45 { *pos = *pos + 1 }
+    if *pos >= n { return false }
+    if text[*pos] == 48 {
+        *pos = *pos + 1
+    } else if text[*pos] >= 49 && text[*pos] <= 57 {
+        while *pos < n && text[*pos] >= 48 && text[*pos] <= 57 { *pos = *pos + 1 }
+    } else {
+        return false
+    }
+    if *pos < n && text[*pos] == 46 {
+        *pos = *pos + 1
+        if *pos >= n || text[*pos] < 48 || text[*pos] > 57 { return false }
+        while *pos < n && text[*pos] >= 48 && text[*pos] <= 57 { *pos = *pos + 1 }
+    }
+    if *pos < n && (text[*pos] == 101 || text[*pos] == 69) {
+        *pos = *pos + 1
+        if *pos < n && (text[*pos] == 43 || text[*pos] == 45) { *pos = *pos + 1 }
+        if *pos >= n || text[*pos] < 48 || text[*pos] > 57 { return false }
+        while *pos < n && text[*pos] >= 48 && text[*pos] <= 57 { *pos = *pos + 1 }
+    }
+    return *pos > start
+}
+
+fn matchWord(text: *ui8, n: usize, pos: *usize, word: *ui8, wl: usize) -> bool {
+    if *pos + wl > n { return false }
+    local i: usize = 0
+    while i < wl {
+        if text[*pos + i] != word[i] { return false }
+        i = i + 1
+    }
+    *pos = *pos + wl
+    return true
+}
+
+/// Skips one JSON value starting at `pos` (after whitespace), with `depth` levels already open. Returns false on any
+/// grammar error.
+fn skipValue(text: *ui8, n: usize, pos: *usize, depth: usize) -> bool {
+    if depth > JSON_MAX_DEPTH { return false }
+    skipWs(text, n, pos)
+    if *pos >= n { return false }
+    local c: ui8 = text[*pos]
+    if c == 34 { return skipString(text, n, pos) }
+    if c == 123 {
+        *pos = *pos + 1
+        skipWs(text, n, pos)
+        if *pos < n && text[*pos] == 125 {
+            *pos = *pos + 1
+            return true
+        }
+        while true {
+            skipWs(text, n, pos)
+            if !skipString(text, n, pos) { return false }
+            skipWs(text, n, pos)
+            if *pos >= n || text[*pos] != 58 { return false }
+            *pos = *pos + 1
+            if !skipValue(text, n, pos, depth + 1) { return false }
+            skipWs(text, n, pos)
+            if *pos >= n { return false }
+            if text[*pos] == 44 {
+                *pos = *pos + 1
+            } else if text[*pos] == 125 {
+                *pos = *pos + 1
+                return true
+            } else {
+                return false
+            }
+        }
+    }
+    if c == 91 {
+        *pos = *pos + 1
+        skipWs(text, n, pos)
+        if *pos < n && text[*pos] == 93 {
+            *pos = *pos + 1
+            return true
+        }
+        while true {
+            if !skipValue(text, n, pos, depth + 1) { return false }
+            skipWs(text, n, pos)
+            if *pos >= n { return false }
+            if text[*pos] == 44 {
+                *pos = *pos + 1
+            } else if text[*pos] == 93 {
+                *pos = *pos + 1
+                return true
+            } else {
+                return false
+            }
+        }
+    }
+    if c == 116 { return matchWord(text, n, pos, "true", 4) }
+    if c == 102 { return matchWord(text, n, pos, "false", 5) }
+    if c == 110 { return matchWord(text, n, pos, "null", 4) }
+    return skipNumber(text, n, pos)
+}
+
+/// True when `text[0..n)` is exactly one JSON value surrounded by optional whitespace (RFC 8259 section 2).
+export fn jsonValid(text: *ui8, n: usize) -> bool {
+    local pos: usize = 0
+    if !skipValue(text, n, &pos, 0) { return false }
+    skipWs(text, n, &pos)
+    return pos == n
+}
+
+/// The raw text of the value at `pos`: a view of the input from the value's first byte to its last. Advances `pos` past
+/// it. An empty view means the value is malformed.
+export fn jsonSkipRaw(text: *ui8, n: usize, pos: *usize) -> str {
+    skipWs(text, n, pos)
+    local start: usize = *pos
+    if !skipValue(text, n, pos, 0) { return fromParts(text, 0) }
+    return fromParts(&text[start], *pos - start)
+}
+
+/// The value at the JSON Pointer `ptr[0..plen)` (RFC 6901) of the document `text[0..n)`: its raw text, or an empty view
+/// when the path does not exist or the document is malformed along the way. Keys are compared after decoding their escapes
+/// (`~1` is "/", `~0` is "~"). Array indices are decimal without leading zeros (section 4).
+export fn jsonPointerGet(text: *ui8, n: usize, ptr: *ui8, plen: usize) -> str {
+    local pos: usize = 0
+    skipWs(text, n, &pos)
+    local cur: usize = pos
+    local i: usize = 0
+    // ptr must be empty or start with '/'
+    if plen > 0 && ptr[0] != 47 { return fromParts(text, 0) }
+    local p: usize = 0
+    while p < plen {
+        // one reference token: ptr[p+1 .. next '/')
+        p = p + 1
+        local tokStart: usize = p
+        while p < plen && ptr[p] != 47 { p = p + 1 }
+        local tok: *ui8 = &ptr[tokStart]
+        local tokLen: usize = p - tokStart
+        local decoded: String = unescapeToken(tok, tokLen)
+        local found: bool = false
+        local at: usize = cur
+        if text[at] == 123 {
+            local q: usize = at + 1
+            skipWs(text, n, &q)
+            while q < n && text[q] != 125 {
+                local k0: usize = q
+                if !skipString(text, n, &q) { return fromParts(text, 0) }
+                local keyRaw: str = fromParts(&text[k0 + 1], q - k0 - 2)
+                skipWs(text, n, &q)
+                if q >= n || text[q] != 58 { return fromParts(text, 0) }
+                q = q + 1
+                skipWs(text, n, &q)
+                local vstart: usize = q
+                if !skipValue(text, n, &q, 0) { return fromParts(text, 0) }
+                if equalsDecoded(keyRaw, decoded.asStr()) {
+                    cur = vstart
+                    found = true
+                    break
+                }
+                skipWs(text, n, &q)
+                if q < n && text[q] == 44 { q = q + 1 }
+                skipWs(text, n, &q)
+            }
+        } else if text[at] == 91 {
+            local idx: usize = 0
+            local okIdx: bool = decoded.length() > 0
+            i = 0
+            while i < decoded.length() {
+                local ch: ui8 = decoded.at(i)
+                if ch < 48 || ch > 57 { okIdx = false }
+                idx = idx * 10 + (ch - 48) as usize
+                i = i + 1
+            }
+            if !okIdx { return fromParts(text, 0) }
+            local q: usize = at + 1
+            skipWs(text, n, &q)
+            local count: usize = 0
+            while q < n && text[q] != 93 {
+                local vstart: usize = q
+                if !skipValue(text, n, &q, 0) { return fromParts(text, 0) }
+                if count == idx {
+                    cur = vstart
+                    found = true
+                    break
+                }
+                count = count + 1
+                skipWs(text, n, &q)
+                if q < n && text[q] == 44 { q = q + 1 }
+                skipWs(text, n, &q)
+            }
+        }
+        if !found { return fromParts(text, 0) }
+        cur = cur
+    }
+    local end: usize = cur
+    if !skipValue(text, n, &end, 0) { return fromParts(text, 0) }
+    return fromParts(&text[cur], end - cur)
+}
+
+/// Decodes the escapes of a JSON pointer reference token (`~1` to "/", `~0` to "~").
+fn unescapeToken(tok: *ui8, n: usize) -> String {
+    local out: String = String()
+    local i: usize = 0
+    while i < n {
+        if tok[i] == 126 && i + 1 < n && tok[i + 1] == 49 {
+            out.push(47)
+            i = i + 2
+        } else if tok[i] == 126 && i + 1 < n && tok[i + 1] == 48 {
+            out.push(126)
+            i = i + 2
+        } else {
+            out.push(tok[i])
+            i = i + 1
+        }
+    }
+    return out
+}
+
+/// True when the raw JSON string text `raw` (between the quotes, escapes not yet decoded) equals `key` after decoding.
+fn equalsDecoded(raw: str, key: str) -> bool {
+    local dec: String = jsonStringDecode(raw)
+    return dec.equals(key)
+}
+
+/// Decodes the escapes of a JSON string body (the bytes between the quotes): \" \\ \/ \b \f \n \r \t and \uXXXX, with a
+/// UTF-16 surrogate pair combined into one code point (RFC 8259 section 7). Invalid escapes are copied as they are, which the
+/// validator has already excluded for documents passed through jsonValid.
+export fn jsonStringDecode(raw: str) -> String {
+    local out: String = String()
+    local i: usize = 0
+    local buf: [ui8; 4]
+    while i < raw.len {
+        local c: ui8 = raw[i]
+        if c != 92 {
+            out.push(c)
+            i = i + 1
+        } else {
+            local e: ui8 = raw[i + 1]
+            if e == 117 {
+                local cp: i32 = 0
+                local k: usize = 0
+                while k < 4 {
+                    cp = (cp << 4) | hexVal(raw[i + 2 + k])
+                    k = k + 1
+                }
+                i = i + 6
+                if cp >= 0xd800 && cp <= 0xdbff && i + 6 <= raw.len && raw[i] == 92 && raw[i + 1] == 117 {
+                    local lo: i32 = 0
+                    k = 0
+                    while k < 4 {
+                        lo = (lo << 4) | hexVal(raw[i + 2 + k])
+                        k = k + 1
+                    }
+                    if lo >= 0xdc00 && lo <= 0xdfff {
+                        cp = 0x10000 + ((cp - 0xd800) << 10) + (lo - 0xdc00)
+                        i = i + 6
+                    }
+                }
+                local w: usize = utf8Encode(cp, &buf[0])
+                local j: usize = 0
+                while j < w {
+                    out.push(buf[j])
+                    j = j + 1
+                }
+            } else {
+                local ch: ui8 = e
+                if e == 98 { ch = 8 }
+                if e == 102 { ch = 12 }
+                if e == 110 { ch = 10 }
+                if e == 114 { ch = 13 }
+                if e == 116 { ch = 9 }
+                out.push(ch)
+                i = i + 2
+            }
+        }
+    }
+    return out
+}
+
+/// Writes a JSON document incrementally into a String: objects, arrays, keys, and scalar values. Strings are escaped as
+/// RFC 8259 section 7 requires (quote, backslash and control characters; other code points are written as UTF-8).
+export class JsonWriter {
+    out: String
+    needComma: bool
+
+    fn init(self) {
+        self.out = String()
+        self.needComma = false
+    }
+
+    fn sep(self) {
+        if self.needComma { self.out.push(44) }
+        self.needComma = true
+    }
+
+    fn beginObject(self) {
+        self.sep()
+        self.out.push(123)
+        self.needComma = false
+    }
+
+    fn endObject(self) {
+        self.out.push(125)
+        self.needComma = true
+    }
+
+    fn beginArray(self) {
+        self.sep()
+        self.out.push(91)
+        self.needComma = false
+    }
+
+    fn endArray(self) {
+        self.out.push(93)
+        self.needComma = true
+    }
+
+    /// An object key (followed by the value written next).
+    fn key(self, name: str) {
+        self.sep()
+        self.writeString(name)
+        self.out.push(58)
+        self.needComma = false
+    }
+
+    fn valueString(self, s: str) {
+        self.sep()
+        self.writeString(s)
+    }
+
+    fn valueInt(self, v: i64) {
+        self.sep()
+        local digits: String = String()
+        local neg: bool = v < 0
+        local m: ui64 = 0
+        if neg { m = (0 - (v as ui64)) } else { m = v as ui64 }
+        if m == 0 { digits.push(48) }
+        while m > 0 {
+            digits.push((48 + (m % 10)) as ui8)
+            m = m / 10
+        }
+        if neg { self.out.push(45) }
+        local i: usize = digits.length()
+        while i > 0 {
+            i = i - 1
+            self.out.push(digits.at(i))
+        }
+    }
+
+    fn valueBool(self, b: bool) {
+        self.sep()
+        if b { self.out.append("true") } else { self.out.append("false") }
+    }
+
+    fn valueNull(self) {
+        self.sep()
+        self.out.append("null")
+    }
+
+    fn writeString(self, s: str) {
+        self.out.push(34)
+        local i: usize = 0
+        while i < s.len {
+            local c: ui8 = s[i]
+            if c == 34 {
+                self.out.append("\\\"")
+            } else if c == 92 {
+                self.out.append("\\\\")
+            } else if c == 10 {
+                self.out.append("\\n")
+            } else if c == 13 {
+                self.out.append("\\r")
+            } else if c == 9 {
+                self.out.append("\\t")
+            } else if c == 8 {
+                self.out.append("\\b")
+            } else if c == 12 {
+                self.out.append("\\f")
+            } else if c < 32 {
+                self.out.append("\\u00")
+                self.out.push(hexDigit(c >> 4))
+                self.out.push(hexDigit(c & 15))
+            } else {
+                self.out.push(c)
+            }
+            i = i + 1
+        }
+        self.out.push(34)
+    }
+}
+
+fn hexDigit(v: ui8) -> ui8 {
+    if v < 10 { return 48 + v }
+    return 87 + v
+}

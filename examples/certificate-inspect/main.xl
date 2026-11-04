@@ -1,0 +1,124 @@
+// certificate-inspect: reads a PEM certificate and prints what a TLS client checks about it.
+//   certificate-inspect <cert.pem> [root.pem] [crl.pem]
+// Prints the subject and issuer length, the validity period (Unix seconds), whether it is a CA, and the SHA-256
+// fingerprint. With a root, it validates the chain (RFC 5280 section 6.1, through x509ChainVerify). With a CRL, it
+// reports whether the certificate's serial number is listed (RFC 5280 section 5). Exit status 0 when every check requested passes.
+from "std" import print, fromParts, hexEncode, fsReadAll, pemNext, x509Parse, x509ChainVerify, x509IsCa, x509SelfSigned, x509ValidAt, x509FingerprintSha256, x509SubjectDer, Cert, crlParse, crlIsRevoked, Crl, derRead, Tlv
+from "std/sys" import sysClockSeconds
+from "std/mem" import currentAllocator
+
+define BUF = 65536
+
+/// Reads a whole file into a fresh buffer; returns its length, or -1.
+fn readFile(path: *ui8, buf: *ui8) -> isize {
+    return fsReadAll(path, buf, BUF)
+}
+
+/// Decodes the first PEM block with label `label` of `text` into `der`; returns its length, or 0.
+fn firstDer(text: *ui8, n: usize, label: *ui8, der: *ui8) -> usize {
+    local pos: usize = 0
+    return pemNext(text, n, &pos, label, der, BUF)
+}
+
+/// The serial number bytes of a certificate: the INTEGER after the optional [0] version field of the TBSCertificate.
+fn serialOf(c: *Cert, out: *ui8) -> usize {
+    local t: Tlv
+    if !derRead(c.tbs, c.tbsLen, &t) { return 0 }
+    local body: *ui8 = t.body
+    local len: usize = t.len
+    local first: Tlv
+    if !derRead(body, len, &first) { return 0 }
+    if first.tag == 0xa0 {
+        local rest: usize = first.total
+        if !derRead(&body[rest], len - rest, &first) { return 0 }
+    }
+    if first.tag != 0x02 { return 0 }
+    local i: usize = 0
+    while i < first.len {
+        out[i] = first.body[i]
+        i = i + 1
+    }
+    return first.len
+}
+
+fn yesNo(b: bool) -> *ui8 {
+    if b { return "yes" }
+    return "no"
+}
+
+@entry fn main(argc: i32, argv: **ui8) -> i32 {
+    if argc < 2 {
+        print("usage: certificate-inspect <cert.pem> [root.pem] [crl.pem]\n")
+        return 2
+    }
+    local text: *ui8 = currentAllocator.alloc(BUF, 1) as *ui8
+    local n: isize = readFile(argv[1], text)
+    if n <= 0 {
+        print("cannot read the certificate\n")
+        return 1
+    }
+    local der: *ui8 = currentAllocator.alloc(BUF, 1) as *ui8
+    local dl: usize = firstDer(text, n as usize, "CERTIFICATE", der)
+    local cert: Cert
+    if dl == 0 || !x509Parse(&cert, der, dl) {
+        print("no parsable certificate in the file\n")
+        return 1
+    }
+    local now: i64 = sysClockSeconds()
+    local fp: [ui8; 32]
+    x509FingerprintSha256(&cert, &fp[0])
+    local hex: [ui8; 64]
+    hexEncode(&fp[0], 32, &hex[0])
+    print("subject DER bytes: ")
+    print(x509SubjectDer(&cert).len)
+    print("\nnot before (unix): ")
+    print(cert.notBefore)
+    print("\nnot after (unix):  ")
+    print(cert.notAfter)
+    print("\nvalid now:         ")
+    print(yesNo(x509ValidAt(&cert, now)))
+    print("\nself-signed:       ")
+    print(yesNo(x509SelfSigned(&cert)))
+    print("\nca:                ")
+    print(yesNo(x509IsCa(&cert)))
+    print("\nsha-256 fingerprint: ")
+    print(fromParts(&hex[0], 64))
+    print("\n")
+    local ok: bool = true
+    if argc >= 3 {
+        local rootText: *ui8 = currentAllocator.alloc(BUF, 1) as *ui8
+        local rn: isize = readFile(argv[2], rootText)
+        local rootDer: *ui8 = currentAllocator.alloc(BUF, 1) as *ui8
+        local rdl: usize = firstDer(rootText, rn as usize, "CERTIFICATE", rootDer)
+        local root: Cert
+        if rdl == 0 || !x509Parse(&root, rootDer, rdl) {
+            print("no parsable root certificate\n")
+            return 1
+        }
+        local chain: [Cert; 1]
+        chain[0] = cert
+        local roots: [Cert; 1]
+        roots[0] = root
+        local valid: bool = x509ChainVerify(&chain[0], 1, &roots[0], 1, now)
+        print("chain to root:     ")
+        print(yesNo(valid))
+        print("\n")
+        ok = ok && valid
+    }
+    if argc >= 4 {
+        local crlText: *ui8 = currentAllocator.alloc(BUF, 1) as *ui8
+        local cn: isize = readFile(argv[3], crlText)
+        local crlDer: *ui8 = currentAllocator.alloc(BUF, 1) as *ui8
+        local cdl: usize = firstDer(crlText, cn as usize, "X509 CRL", crlDer)
+        local crl: Crl = crlParse(crlDer, cdl)
+        local serial: *ui8 = currentAllocator.alloc(32, 1) as *ui8
+        local sl: usize = serialOf(&cert, serial)
+        local revoked: bool = crlIsRevoked(&crl, serial, sl)
+        print("revoked in crl:    ")
+        print(yesNo(revoked))
+        print("\n")
+        ok = ok && !revoked
+    }
+    if ok { return 0 }
+    return 1
+}

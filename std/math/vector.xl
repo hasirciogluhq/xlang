@@ -1,0 +1,259 @@
+// std/math/vector: vector and matrix helpers over f64. Vectors are arrays of f64 passed by pointer with an explicit
+// length or a fixed size of 3 (cross). Matrices are row-major arrays of f64 with explicit dimensions.
+//   Determinant and inverse: Gaussian elimination with partial pivoting (Golub and Van Loan, Matrix Computations,
+//   algorithm 3.4.1 for the pivoted LU; the inverse is Gauss-Jordan on the augmented matrix). The pivot test is exact
+//   zero, so nearly singular matrices give large but finite values; the caller checks the condition if it matters.
+from "float" import fabs
+from "math" import sqrt
+from "../mem/mem" import currentAllocator
+
+define MATH_PI = 3.141592653589793
+
+/// Dot product of the length-n vectors a and b.
+export fn dot(a: *f64, b: *f64, n: usize) -> f64 {
+    local s: f64 = 0.0
+    local i: usize = 0
+    while i < n {
+        s = s + a[i] * b[i]
+        i = i + 1
+    }
+    return s
+}
+
+/// Cross product of two 3-vectors, written to `out` (3 entries).
+export fn cross(a: *f64, b: *f64, out: *f64) {
+    local x: f64 = a[1] * b[2] - a[2] * b[1]
+    local y: f64 = a[2] * b[0] - a[0] * b[2]
+    local z: f64 = a[0] * b[1] - a[1] * b[0]
+    out[0] = x
+    out[1] = y
+    out[2] = z
+}
+
+/// Euclidean length of the length-n vector a.
+export fn norm(a: *f64, n: usize) -> f64 {
+    return sqrt(dot(a, a, n))
+}
+
+/// Writes a / |a| to `out`. Returns false (and writes zeros) for the zero vector.
+export fn normalize(a: *f64, n: usize, out: *f64) -> bool {
+    local l: f64 = norm(a, n)
+    local i: usize = 0
+    if l == 0.0 {
+        while i < n {
+            out[i] = 0.0
+            i = i + 1
+        }
+        return false
+    }
+    while i < n {
+        out[i] = a[i] / l
+        i = i + 1
+    }
+    return true
+}
+
+/// The linear interpolation a + (b - a) t (t is not clamped).
+export fn lerp(a: f64, b: f64, t: f64) -> f64 {
+    return a + (b - a) * t
+}
+
+/// Hermite smoothstep between edges e0 and e1: 0 below e0, 1 above e1, 3t^2 - 2t^3 in between.
+export fn smoothstep(e0: f64, e1: f64, x: f64) -> f64 {
+    local t: f64 = (x - e0) / (e1 - e0)
+    if t < 0.0 { t = 0.0 }
+    if t > 1.0 { t = 1.0 }
+    return t * t * (3.0 - 2.0 * t)
+}
+
+/// Maps x from [inLo, inHi] linearly onto [outLo, outHi] (not clamped). Panics when inLo equals inHi.
+export fn mapRange(x: f64, inLo: f64, inHi: f64, outLo: f64, outHi: f64) -> f64 {
+    if inLo == inHi { panic("mapRange: the input range is empty") }
+    return outLo + (x - inLo) * (outHi - outLo) / (inHi - inLo)
+}
+
+export fn degToRad(deg: f64) -> f64 {
+    return deg * MATH_PI / 180.0
+}
+
+export fn radToDeg(rad: f64) -> f64 {
+    return rad * 180.0 / MATH_PI
+}
+
+/// out = a + b for r x c matrices.
+export fn matAdd(a: *f64, b: *f64, n: usize, out: *f64) {
+    local i: usize = 0
+    while i < n {
+        out[i] = a[i] + b[i]
+        i = i + 1
+    }
+}
+
+/// out = a - b for n entries.
+export fn matSub(a: *f64, b: *f64, n: usize, out: *f64) {
+    local i: usize = 0
+    while i < n {
+        out[i] = a[i] - b[i]
+        i = i + 1
+    }
+}
+
+/// out = a * b for a (r x k) and b (k x c); out is r x c.
+export fn matMul(a: *f64, r: usize, k: usize, b: *f64, c: usize, out: *f64) {
+    local i: usize = 0
+    while i < r {
+        local j: usize = 0
+        while j < c {
+            local s: f64 = 0.0
+            local t: usize = 0
+            while t < k {
+                s = s + a[i * k + t] * b[t * c + j]
+                t = t + 1
+            }
+            out[i * c + j] = s
+            j = j + 1
+        }
+        i = i + 1
+    }
+}
+
+/// out = a^T for a (r x c); out is c x r.
+export fn matTranspose(a: *f64, r: usize, c: usize, out: *f64) {
+    local i: usize = 0
+    while i < r {
+        local j: usize = 0
+        while j < c {
+            out[j * r + i] = a[i * c + j]
+            j = j + 1
+        }
+        i = i + 1
+    }
+}
+
+/// Determinant of the n x n matrix `a` (a copy is reduced; `a` is not changed). LU with partial pivoting.
+export fn matDet(a: *f64, n: usize) -> f64 {
+    local m: *f64 = nil
+    m = allocF64(n * n)
+    local i: usize = 0
+    while i < n * n {
+        m[i] = a[i]
+        i = i + 1
+    }
+    local det: f64 = 1.0
+    local col: usize = 0
+    while col < n {
+        local piv: usize = col
+        local row: usize = col + 1
+        while row < n {
+            if fabs(m[row * n + col]) > fabs(m[piv * n + col]) { piv = row }
+            row = row + 1
+        }
+        if m[piv * n + col] == 0.0 {
+            freeF64(m)
+            return 0.0
+        }
+        if piv != col {
+            local t: usize = 0
+            while t < n {
+                local tmp: f64 = m[col * n + t]
+                m[col * n + t] = m[piv * n + t]
+                m[piv * n + t] = tmp
+                t = t + 1
+            }
+            det = 0.0 - det
+        }
+        det = det * m[col * n + col]
+        row = col + 1
+        while row < n {
+            local f: f64 = m[row * n + col] / m[col * n + col]
+            local t: usize = col
+            while t < n {
+                m[row * n + t] = m[row * n + t] - f * m[col * n + t]
+                t = t + 1
+            }
+            row = row + 1
+        }
+        col = col + 1
+    }
+    freeF64(m)
+    return det
+}
+
+/// The inverse of the n x n matrix `a` in `out` (Gauss-Jordan). False when a pivot is exactly zero (singular).
+export fn matInverse(a: *f64, n: usize, out: *f64) -> bool {
+    local m: *f64 = nil
+    m = allocF64(n * 2 * n)
+    local i: usize = 0
+    while i < n {
+        local j: usize = 0
+        while j < n {
+            m[i * 2 * n + j] = a[i * n + j]
+            m[i * 2 * n + n + j] = 0.0
+            j = j + 1
+        }
+        m[i * 2 * n + n + i] = 1.0
+        i = i + 1
+    }
+    local col: usize = 0
+    while col < n {
+        local piv: usize = col
+        local row: usize = col + 1
+        while row < n {
+            if fabs(m[row * 2 * n + col]) > fabs(m[piv * 2 * n + col]) { piv = row }
+            row = row + 1
+        }
+        if m[piv * 2 * n + col] == 0.0 {
+            freeF64(m)
+            return false
+        }
+        if piv != col {
+            local t: usize = 0
+            while t < 2 * n {
+                local tmp: f64 = m[col * 2 * n + t]
+                m[col * 2 * n + t] = m[piv * 2 * n + t]
+                m[piv * 2 * n + t] = tmp
+                t = t + 1
+            }
+        }
+        local d: f64 = m[col * 2 * n + col]
+        local t: usize = 0
+        while t < 2 * n {
+            m[col * 2 * n + t] = m[col * 2 * n + t] / d
+            t = t + 1
+        }
+        row = 0
+        while row < n {
+            if row != col {
+                local f: f64 = m[row * 2 * n + col]
+                t = 0
+                while t < 2 * n {
+                    m[row * 2 * n + t] = m[row * 2 * n + t] - f * m[col * 2 * n + t]
+                    t = t + 1
+                }
+            }
+            row = row + 1
+        }
+        col = col + 1
+    }
+    i = 0
+    while i < n {
+        local j: usize = 0
+        while j < n {
+            out[i * n + j] = m[i * 2 * n + n + j]
+            j = j + 1
+        }
+        i = i + 1
+    }
+    freeF64(m)
+    return true
+}
+
+fn allocF64(count: usize) -> *f64 {
+    local p: *void = currentAllocator.alloc(count * 8, 8)
+    if p == nil { panic("matrix: out of memory") }
+    return p as *f64
+}
+
+fn freeF64(p: *f64) {
+    currentAllocator.free(p as *void)
+}

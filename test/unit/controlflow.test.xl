@@ -1,0 +1,155 @@
+// Control-flow syntax: break, labels, for, do-while, switch, defer, ?:, compound assignment, ++/--.
+from "std/testing" import Suite, T, suiteInit, test, suiteRun, expectEq
+
+enum Color { Red, Green, Blue }
+
+global counter: i64 = 0
+global deferred: i64 = 0
+
+fn bump() -> i64 {
+    counter += 1
+    return counter - 1
+}
+
+fn classify(v: i32) -> i32 {
+    switch v {
+        case 1, 2 { return 10 }
+        case 3 { return 30 }
+        default { return -1 }
+    }
+}
+
+fn colorCode(c: Color) -> i32 {
+    switch c {
+        case Color.Red { return 1 }
+        case Color.Green { return 2 }
+        default { return 3 }
+    }
+}
+
+fn deferOrder() -> i64 {
+    local n: i64 = 0
+    {
+        defer { n = n * 10 + 1 }
+        defer { n = n * 10 + 2 }
+        n = 5
+    }
+    return n
+}
+
+fn deferReturn() -> i64 {
+    defer deferred += 7
+    return 42
+}
+
+fn breakOut(t: *T) {
+    local i: i64 = 0
+    while true {
+        if i == 5 { break }
+        i += 1
+    }
+    expectEq(t, i, 5)
+}
+
+fn labels(t: *T) {
+    local sum: i64 = 0
+    outer: for local a: i64 = 0; a < 5; a++ {
+        for local b: i64 = 0; b < 5; b++ {
+            if b == 3 { continue outer }
+            if a == 3 { break outer }
+            sum += 1
+        }
+    }
+    expectEq(t, sum, 9)
+}
+
+fn forLoops(t: *T) {
+    local odd: i64 = 0
+    for local k: i64 = 0; k < 10; k++ {
+        if k % 2 == 0 { continue }
+        odd += k
+    }
+    expectEq(t, odd, 25)
+    local total: i64 = 0
+    for j in 0..5 { total += j }
+    expectEq(t, total, 10)
+}
+
+fn compound(t: *T) {
+    local c: i64 = 6
+    c *= 7
+    c -= 2
+    c /= 4
+    c %= 7
+    c <<= 3
+    c >>= 1
+    c |= 1
+    c &= 0x1f
+    c ^= 2
+    expectEq(t, c, 15)
+    local p: i64 = 1
+    p++
+    p++
+    p--
+    expectEq(t, p, 2)
+}
+
+fn targetEvaluatedOnce(t: *T) {
+    local arr: [i64; 3] = [0, 0, 0]
+    counter = 0
+    arr[bump()] += 5
+    expectEq(t, counter, 1)
+    expectEq(t, arr[0], 5)
+}
+
+fn doWhile(t: *T) {
+    local runs: i64 = 0
+    do {
+        runs += 1
+    } while false
+    expectEq(t, runs, 1)
+    local w: i64 = 0
+    do {
+        w += 1
+        if w < 3 { continue }
+    } while w < 3
+    expectEq(t, w, 3)
+}
+
+fn switches(t: *T) {
+    expectEq(t, classify(2) as i64, 10)
+    expectEq(t, classify(3) as i64, 30)
+    expectEq(t, classify(9) as i64, -1)
+    expectEq(t, colorCode(Color.Green) as i64, 2)
+    expectEq(t, colorCode(Color.Blue) as i64, 3)
+}
+
+fn ternary(t: *T) {
+    local i: i64 = 5
+    local a: i64 = i > 2 ? 100 : 200
+    expectEq(t, a, 100)
+    local nested: i64 = i > 9 ? 1 : i > 4 ? 2 : 3
+    expectEq(t, nested, 2)
+}
+
+fn defers(t: *T) {
+    expectEq(t, deferOrder(), 521)
+    deferred = 0
+    expectEq(t, deferReturn(), 42)
+    expectEq(t, deferred, 7)
+}
+
+fn main() -> i32 {
+    local s: Suite
+    suiteInit(&s)
+    test(&s, "break", breakOut)
+    test(&s, "labeled break/continue", labels)
+    test(&s, "for and range", forLoops)
+    test(&s, "compound assignment and ++/--", compound)
+    test(&s, "compound target evaluated once", targetEvaluatedOnce)
+    test(&s, "do-while", doWhile)
+    test(&s, "switch", switches)
+    test(&s, "ternary", ternary)
+    test(&s, "defer", defers)
+    return suiteRun(&s)
+}

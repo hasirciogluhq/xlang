@@ -2,6 +2,7 @@
 // Serves examples/welcome.html at /. Listens on 0.0.0.0:$PORT.
 
 import * as http from http
+import * as filesystem from filesystem
 
 fn str_to_int(s: string): int32 {
     local i = 0
@@ -18,8 +19,10 @@ fn str_to_int(s: string): int32 {
     return n
 }
 
+declare xl_env_get(key: string): string
+
 fn listen_port(): int32 {
-    local raw = env_get("PORT")
+    local raw = xl_env_get("PORT")
     if str_len(raw) == 0 {
         return 8080
     }
@@ -35,7 +38,7 @@ fn on_listen(info: ServerInfo) {
 }
 
 fn handle_welcome(ctx: Context) {
-    local html = ReadAll("examples/welcome.html")
+    local html = filesystem.ReadAll("examples/welcome.html")
     if str_len(html) == 0 {
         ctx.String(404, "welcome.html not found")
         return 0

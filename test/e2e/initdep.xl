@@ -1,0 +1,10 @@
+// initdep: a module whose `@init` function runs before the `@init` functions of the modules that import it.
+global depState: i32 = 0
+
+@init fn depBoot() {
+    depState = 7
+}
+
+export fn depReady() -> bool {
+    return depState == 7
+}

@@ -1,0 +1,32 @@
+# GitHub Pages site for xlang. The site is built from this docs/ folder by the `pages` workflow
+# (.github/workflows/pages.yml) with actions/jekyll-build-pages. No Python and no Ruby project file is needed.
+# Project pages live under /xlang: https://hasirciogluhq.github.io/xlang/
+title: xlang
+description: Documentation for the xlang language, compiler and standard library.
+url: "https://hasirciogluhq.github.io"
+baseurl: "/xlang"
+theme: minima
+markdown: kramdown
+
+# Every page uses the docs layout (sidebar + content) unless its front matter says otherwise; the sidebar
+# menu is defined in _data/nav.yml.
+defaults:
+  - scope:
+      path: ""
+    values:
+      layout: docs
+
+# Every .md file is a page, with or without front matter.
+plugins:
+  - jekyll-optional-front-matter
+  - jekyll-relative-links
+
+relative_links:
+  enabled: true
+  collections: false
+
+# docs-ai/ is for AI tools and is not part of the human site; other non-page files stay out too.
+exclude:
+  - "*.bak"
+  - Gemfile
+  - Gemfile.lock

@@ -1,0 +1,132 @@
+// std/crypto/x509/crl: certificate revocation lists (RFC 5280, https://www.rfc-editor.org/rfc/rfc5280, section 5). A CRL is
+//   CertificateList ::= SEQUENCE { tbsCertList, signatureAlgorithm, signatureValue BIT STRING }
+//   TBSCertList ::= SEQUENCE { version INTEGER OPTIONAL, signature, issuer Name, thisUpdate Time, nextUpdate Time OPTIONAL,
+//                              revokedCertificates SEQUENCE OF SEQUENCE { serial INTEGER, revocationDate Time, ... } OPTIONAL,
+//                              crlExtensions [0] OPTIONAL }
+// The signature covers the tbsCertList TLV. This module reads the issuer, the times, the revoked serial numbers and the
+// signature check against the issuer's key. Revocation reasons and CRL extensions (including the CRL distribution points
+// and delta CRLs) are not interpreted. Serial numbers compare as integers: leading zero bytes of the DER encoding are ignored.
+// The views point into `der`, which must outlive the Crl.
+from "x509" import Cert, Tlv, derRead, parseTime, sigAlgOf, x509VerifySignature
+
+/// A parsed CRL. `hasNextUpdate` is false when the nextUpdate field is absent (RFC 5280 section 5.1.2.5).
+export struct Crl {
+    tbs: *ui8                 // the tbsCertList TLV: the signed bytes
+    tbsLen: usize
+    issuer: *ui8              // the issuer Name TLV
+    issuerLen: usize
+    sigAlg: i32
+    sig: *ui8                 // signature bytes, without the unused-bits byte
+    sigLen: usize
+    thisUpdate: i64           // seconds since 1970-01-01 UTC
+    nextUpdate: i64
+    hasNextUpdate: bool
+    revoked: *ui8             // body of the revokedCertificates SEQUENCE (empty when absent)
+    revokedLen: usize
+    ok: bool
+}
+
+/// Parses a DER CRL.
+export fn crlParse(der: *ui8, len: usize) -> Crl {
+    local c: Crl
+    local outer: Tlv
+    if !derRead(der, len, &outer) || outer.tag != 0x30 { return c }
+    local body: *ui8 = outer.body
+    local avail: usize = outer.len
+    local tbs: Tlv
+    if !derRead(body, avail, &tbs) || tbs.tag != 0x30 { return c }
+    c.tbs = body
+    c.tbsLen = tbs.total
+    local off: usize = tbs.total
+    if off > avail { return c }
+    local alg: Tlv
+    if !derRead(&body[off], avail - off, &alg) || alg.tag != 0x30 { return c }
+    local oid: Tlv
+    if !derRead(alg.body, alg.len, &oid) || oid.tag != 0x06 { return c }
+    c.sigAlg = sigAlgOf(&oid)
+    off = off + alg.total
+    local sigTlv: Tlv
+    if off > avail || !derRead(&body[off], avail - off, &sigTlv) || sigTlv.tag != 0x03 { return c }
+    if sigTlv.len < 1 || sigTlv.body[0] != 0 { return c }
+    c.sig = &sigTlv.body[1]
+    c.sigLen = sigTlv.len - 1
+    // the tbsCertList fields
+    local tb: *ui8 = tbs.body
+    local tl: usize = tbs.len
+    local p: usize = 0
+    local f: Tlv
+    if !derRead(tb, tl, &f) { return c }
+    if f.tag == 0x02 {
+        p = f.total
+        if !derRead(&tb[p], tl - p, &f) { return c }
+    }
+    // f is the inner signature AlgorithmIdentifier
+    if f.tag != 0x30 { return c }
+    p = p + f.total
+    local issuer: Tlv
+    if p > tl || !derRead(&tb[p], tl - p, &issuer) || issuer.tag != 0x30 { return c }
+    c.issuer = &tb[p]
+    c.issuerLen = issuer.total
+    p = p + issuer.total
+    local thisUpd: Tlv
+    if p > tl || !derRead(&tb[p], tl - p, &thisUpd) { return c }
+    if thisUpd.tag != 0x17 && thisUpd.tag != 0x18 { return c }
+    c.thisUpdate = parseTime(&thisUpd)
+    p = p + thisUpd.total
+    if p < tl {
+        local next: Tlv
+        if !derRead(&tb[p], tl - p, &next) { return c }
+        if next.tag == 0x17 || next.tag == 0x18 {
+            c.nextUpdate = parseTime(&next)
+            c.hasNextUpdate = true
+            p = p + next.total
+        }
+    }
+    if p < tl {
+        local rev: Tlv
+        if !derRead(&tb[p], tl - p, &rev) { return c }
+        if rev.tag == 0x30 {
+            c.revoked = rev.body
+            c.revokedLen = rev.len
+        }
+    }
+    c.ok = true
+    return c
+}
+
+/// True when the serial number `serial[0..n)` (the INTEGER content) is listed in the CRL. Leading zero bytes are ignored on both
+/// sides, so 0x00 0x80 and 0x80 are the same number.
+export fn crlIsRevoked(c: *Crl, serial: *ui8, n: usize) -> bool {
+    if !c.ok { return false }
+    local p: usize = 0
+    while p < c.revokedLen {
+        local entry: Tlv
+        if !derRead(&c.revoked[p], c.revokedLen - p, &entry) || entry.tag != 0x30 { return false }
+        local num: Tlv
+        if !derRead(entry.body, entry.len, &num) || num.tag != 0x02 { return false }
+        if sameInteger(num.body, num.len, serial, n) { return true }
+        p = p + entry.total
+    }
+    return false
+}
+
+/// Compares two INTEGER contents as unsigned magnitudes after stripping leading zero bytes.
+fn sameInteger(a: *ui8, an: usize, b: *ui8, bn: usize) -> bool {
+    local i: usize = 0
+    while i + 1 < an && a[i] == 0 { i = i + 1 }
+    local j: usize = 0
+    while j + 1 < bn && b[j] == 0 { j = j + 1 }
+    if an - i != bn - j { return false }
+    local k: usize = 0
+    while k < an - i {
+        if a[i + k] != b[j + k] { return false }
+        k = k + 1
+    }
+    return true
+}
+
+/// True when the CRL signature verifies under the issuer certificate's public key.
+export fn crlVerifySignature(c: *Crl, issuer: *Cert) -> bool {
+    if !c.ok { return false }
+    return x509VerifySignature(issuer, c.sigAlg, c.tbs, c.tbsLen, c.sig, c.sigLen)
+}

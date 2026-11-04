@@ -1,0 +1,152 @@
+// std/crypto/cipher/salsa20: Salsa20 (D. J. Bernstein, "The Salsa20 family of stream ciphers", 2008, and the eSTREAM
+// submission, https://www.ecrypt.eu.org/stream/salsa20pf.html) with a 256-bit key, a 64-bit nonce and a 64-bit block
+// counter, plus HSalsa20 and XSalsa20 (the 192-bit-nonce form of the NaCl secretbox stream, Bernstein 2008,
+// https://nacl.cr.yp.to/valid.html). 20 rounds.
+// Quarter round (Salsa20 specification, section 3): b ^= rotl(a + d, 7); c ^= rotl(b + a, 9); d ^= rotl(c + b, 13);
+// a ^= rotl(d + c, 18). A double round is a column round then a row round.
+// State words: the constants "expand 32-byte k" at words 0, 5, 10, 15; the key at 1-4 and 11-14; the nonce at 6-7; the
+// block counter (little-endian, 64 bits) at 8-9.
+// Vectors: the eSTREAM Salsa20/20 256-bit set 1 vector 0 keystream starts E3BE8FDD8BECA2E3 (with key 80 00 ... 00 and
+// zero nonce); the NaCl crypto_stream test vector gives XSalsa20 keystream eea6a7251c1e72916d11c2cb214d3c25.
+
+fn sal32(p: *ui8) -> ui32 {
+    return (p[0] as ui32) | ((p[1] as ui32) << 8) | ((p[2] as ui32) << 16) | ((p[3] as ui32) << 24)
+}
+
+fn sst32(p: *ui8, v: ui32) {
+    p[0] = (v & 0xff) as ui8
+    p[1] = ((v >> 8) & 0xff) as ui8
+    p[2] = ((v >> 16) & 0xff) as ui8
+    p[3] = ((v >> 24) & 0xff) as ui8
+}
+
+fn sRotl(x: ui32, n: ui32) -> ui32 {
+    return (x << n) | (x >> (32 - n))
+}
+
+/// The Salsa20 quarter round on the state words at indices a, b, c, d (section 3 of the specification).
+fn qround(x: *ui32, a: usize, b: usize, c: usize, d: usize) {
+    x[b] = x[b] ^ sRotl(x[a] + x[d], 7)
+    x[c] = x[c] ^ sRotl(x[b] + x[a], 9)
+    x[d] = x[d] ^ sRotl(x[c] + x[b], 13)
+    x[a] = x[a] ^ sRotl(x[d] + x[c], 18)
+}
+
+/// Twenty rounds (ten double rounds) on `x`, in place.
+fn salsaRounds(x: *ui32, doubles: usize) {
+    local r: usize = 0
+    while r < doubles {
+        // column round
+        qround(x, 0, 4, 8, 12)
+        qround(x, 5, 9, 13, 1)
+        qround(x, 10, 14, 2, 6)
+        qround(x, 15, 3, 7, 11)
+        // row round
+        qround(x, 0, 1, 2, 3)
+        qround(x, 5, 6, 7, 4)
+        qround(x, 10, 11, 8, 9)
+        qround(x, 15, 12, 13, 14)
+        r = r + 1
+    }
+}
+
+/// One 64-byte Salsa20 block for the 32-byte key, 8-byte nonce and 64-bit block `counter`.
+fn salsaBlock(key: *ui8, nonce: *ui8, counter: ui64, out: *ui8) {
+    local input: [ui32; 16]
+    input[0] = 0x61707865
+    input[5] = 0x3320646e
+    input[10] = 0x79622d32
+    input[15] = 0x6b206574
+    local i: usize = 0
+    while i < 4 {
+        input[1 + i] = sal32(&key[i * 4])
+        input[11 + i] = sal32(&key[16 + i * 4])
+        i = i + 1
+    }
+    input[6] = sal32(&nonce[0])
+    input[7] = sal32(&nonce[4])
+    input[8] = (counter & 0xffffffff) as ui32
+    input[9] = (counter >> 32) as ui32
+    local x: [ui32; 16]
+    i = 0
+    while i < 16 {
+        x[i] = input[i]
+        i = i + 1
+    }
+    salsaRounds(&x[0], 10)
+    i = 0
+    while i < 16 {
+        sst32(&out[i * 4], x[i] + input[i])
+        i = i + 1
+    }
+}
+
+/// Salsa20 keystream XOR: `dst[i] = src[i] xor keystream[i]` for `n` bytes, the block counter starting at `counter`.
+export fn salsa20Xor(key: *ui8, nonce: *ui8, counter: ui64, src: *ui8, n: usize, dst: *ui8) {
+    local ks: [ui8; 64]
+    local done: usize = 0
+    local ctr: ui64 = counter
+    while done < n {
+        salsaBlock(key, nonce, ctr, &ks[0])
+        local take: usize = n - done
+        if take > 64 { take = 64 }
+        local i: usize = 0
+        while i < take {
+            dst[done + i] = src[done + i] ^ ks[i]
+            i = i + 1
+        }
+        done = done + take
+        ctr = ctr + 1
+    }
+}
+
+/// HSalsa20 (NaCl specification, https://nacl.cr.yp.to/valid.html): the key and a 16-byte nonce through the 20-round
+/// core with no feed-forward. The 32-byte subkey is words 0, 5, 10, 15, 6, 7, 8, 9, little-endian.
+export fn hSalsa20(key: *ui8, nonce16: *ui8, out: *ui8) {
+    local x: [ui32; 16]
+    x[0] = 0x61707865
+    x[5] = 0x3320646e
+    x[10] = 0x79622d32
+    x[15] = 0x6b206574
+    local i: usize = 0
+    while i < 4 {
+        x[1 + i] = sal32(&key[i * 4])
+        x[11 + i] = sal32(&key[16 + i * 4])
+        x[6 + i] = sal32(&nonce16[i * 4])
+        i = i + 1
+    }
+    salsaRounds(&x[0], 10)
+    sst32(&out[0], x[0])
+    sst32(&out[4], x[5])
+    sst32(&out[8], x[10])
+    sst32(&out[12], x[15])
+    sst32(&out[16], x[6])
+    sst32(&out[20], x[7])
+    sst32(&out[24], x[8])
+    sst32(&out[28], x[9])
+}
+
+/// XSalsa20 keystream XOR with a 24-byte nonce: the subkey is HSalsa20(key, nonce[0..16)) and the stream is Salsa20 with
+/// the nonce nonce[16..24), counter from zero.
+export fn xsalsa20Xor(key: *ui8, nonce24: *ui8, src: *ui8, n: usize, dst: *ui8) {
+    local subkey: [ui8; 32]
+    hSalsa20(key, nonce24, &subkey[0])
+    salsa20Xor(&subkey[0], &nonce24[16], 0, src, n, dst)
+}
+
+/// The Salsa20 core (RFC 7914 section 3): `out = in + rounds(in)` on 16 little-endian words, with `doubleRounds` double
+/// rounds (10 for Salsa20/20, 4 for the Salsa20/8 used by scrypt). `in` and `out` may be the same buffer.
+export fn salsaCore(input: *ui32, out: *ui32, doubleRounds: usize) {
+    local x: [ui32; 16]
+    local i: usize = 0
+    while i < 16 {
+        x[i] = input[i]
+        i = i + 1
+    }
+    salsaRounds(&x[0], doubleRounds)
+    i = 0
+    while i < 16 {
+        out[i] = x[i] + input[i]
+        i = i + 1
+    }
+}

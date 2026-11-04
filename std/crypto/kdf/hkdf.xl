@@ -1,0 +1,63 @@
+// std/crypto/kdf/hkdf: HKDF (RFC 5869, https://www.rfc-editor.org/rfc/rfc5869) over any digest of std/crypto/hash.
+//   Extract: PRK = HMAC-Hash(salt, IKM); an empty salt means a string of HashLen zero bytes (section 2.2).
+//   Expand:  T(0) = empty, T(i) = HMAC-Hash(PRK, T(i-1) || info || i) for i = 1 .. ceil(L / HashLen) (section 2.3).
+// Test vector (RFC 5869 appendix A.1, SHA-256): IKM 0x0b repeated 22 times, salt 000102..0c, info f0f1..f9, L = 42,
+// OKM = 3cb25f25faacd57a90434f64d0362f2a2d2d0a90cf1a5a4c5db02d56ecc4c5bf34007208d5b887185865.
+// The protocol-specific HKDF-Expand-Label of TLS 1.3 stays in std/crypto/hash/hmac (SHA-256).
+from "../hash/digest" import digestLen
+from "../hash/mac" import hmac
+from "../../mem/mem" import currentAllocator
+
+/// PRK = HKDF-Extract(salt, ikm) for digest `alg`; `prk` receives digestLen(alg) bytes. False for an unknown digest.
+export fn hkdfExtractAlg(alg: i32, salt: *ui8, slen: usize, ikm: *ui8, ilen: usize, prk: *ui8) -> bool {
+    local hl: usize = digestLen(alg)
+    if hl == 0 { return false }
+    local zeros: [ui8; 64]
+    local i: usize = 0
+    while i < 64 {
+        zeros[i] = 0
+        i = i + 1
+    }
+    if slen == 0 {
+        return hmac(alg, &zeros[0], hl, ikm, ilen, prk)
+    }
+    return hmac(alg, salt, slen, ikm, ilen, prk)
+}
+
+/// OKM = HKDF-Expand(prk, info, len) for digest `alg`. False for an unknown digest or when `len` exceeds 255 * HashLen.
+export fn hkdfExpandAlg(alg: i32, prk: *ui8, info: *ui8, ilen: usize, okm: *ui8, len: usize) -> bool {
+    local hl: usize = digestLen(alg)
+    if hl == 0 || len > 255 * hl { return false }
+    local buf: *ui8 = currentAllocator.alloc(hl + ilen + 1, 1) as *ui8
+    if buf == nil { panic("hkdfExpandAlg: out of memory") }
+    local t: [ui8; 64]
+    local tlen: usize = 0
+    local done: usize = 0
+    local counter: ui32 = 1
+    while done < len {
+        local i: usize = 0
+        while i < tlen {
+            buf[i] = t[i]
+            i = i + 1
+        }
+        i = 0
+        while i < ilen {
+            buf[tlen + i] = info[i]
+            i = i + 1
+        }
+        buf[tlen + ilen] = (counter & 0xff) as ui8
+        hmac(alg, prk, hl, buf, tlen + ilen + 1, &t[0])
+        tlen = hl
+        local take: usize = len - done
+        if take > hl { take = hl }
+        local j: usize = 0
+        while j < take {
+            okm[done + j] = t[j]
+            j = j + 1
+        }
+        done = done + take
+        counter = counter + 1
+    }
+    currentAllocator.free(buf as *void)
+    return true
+}

@@ -1,0 +1,27 @@
+// std/checksum/adler: Adler-32 (RFC 1950 section 8.2, the zlib trailer). Two running sums modulo the largest
+// prime below 2^16, 65521: A starts at 1 (sum of the bytes plus 1) and B is the sum of the A values. The
+// checksum is B * 65536 + A. The modulus is prime and below 2^16 so that the sums fit 32 bits between reductions.
+// The incremental form takes the previous result as `adler` (start with 1), as zlib's adler32() does.
+// Adler-32 is weak for short inputs; it is a transport check, not an integrity code.
+// https://www.rfc-editor.org/rfc/rfc1950#section-8.2
+
+/// The Adler-32 prime modulus (RFC 1950 section 8.2).
+export define ADLER32_MOD = 65521
+
+/// Adler-32 of `data[0..n]`, continuing from `adler` (1 for a new checksum).
+export fn adler32Update(adler: ui32, data: *ui8, n: usize) -> ui32 {
+    local a: ui32 = adler & 0xffff
+    local b: ui32 = adler >> 16
+    local i: usize = 0
+    while i < n {
+        a = (a + (data[i] as ui32)) % ADLER32_MOD
+        b = (b + a) % ADLER32_MOD
+        i = i + 1
+    }
+    return (b << 16) | a
+}
+
+/// Adler-32 of `data[0..n]`.
+export fn adler32(data: *ui8, n: usize) -> ui32 {
+    return adler32Update(1, data, n)
+}

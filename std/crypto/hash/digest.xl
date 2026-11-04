@@ -1,0 +1,96 @@
+// std/crypto/hash/digest: hash selection by algorithm id, for the signature code (RSA, X.509, TLS) and the generic
+// HMAC in mac.xl. Each id has an output length and a block length (the block length is what HMAC pads to,
+// RFC 2104 section 2: 64 bytes for MD5, SHA-1 and SHA-224/256, 128 bytes for SHA-384/512 and SHA-512/t).
+from "sha256" import sha256, sha224
+from "sha512" import sha512, sha384, sha512t224, sha512t256
+from "sha1" import sha1
+from "md5" import md5
+from "sha3" import sha3224, sha3256, sha3384, sha3512
+from "blake2" import blake2b, blake2s
+
+export define DIGEST_SHA256 = 1
+export define DIGEST_SHA384 = 2
+export define DIGEST_SHA512 = 3
+export define DIGEST_SHA224 = 4
+export define DIGEST_SHA512_224 = 5
+export define DIGEST_SHA512_256 = 6
+export define DIGEST_SHA1 = 7
+export define DIGEST_MD5 = 8
+export define DIGEST_SHA3_224 = 9
+export define DIGEST_SHA3_256 = 10
+export define DIGEST_SHA3_384 = 11
+export define DIGEST_SHA3_512 = 12
+export define DIGEST_BLAKE2B_512 = 13
+export define DIGEST_BLAKE2S_256 = 14
+
+/// Output size of `alg` in bytes, 0 for an unknown id.
+export fn digestLen(alg: i32) -> usize {
+    if alg == DIGEST_SHA256 { return 32 }
+    if alg == DIGEST_SHA384 { return 48 }
+    if alg == DIGEST_SHA512 { return 64 }
+    if alg == DIGEST_SHA224 { return 28 }
+    if alg == DIGEST_SHA512_224 { return 28 }
+    if alg == DIGEST_SHA512_256 { return 32 }
+    if alg == DIGEST_SHA1 { return 20 }
+    if alg == DIGEST_MD5 { return 16 }
+    if alg == DIGEST_SHA3_224 { return 28 }
+    if alg == DIGEST_SHA3_256 { return 32 }
+    if alg == DIGEST_SHA3_384 { return 48 }
+    if alg == DIGEST_SHA3_512 { return 64 }
+    if alg == DIGEST_BLAKE2B_512 { return 64 }
+    if alg == DIGEST_BLAKE2S_256 { return 32 }
+    return 0
+}
+
+/// Input block size of `alg` in bytes (the HMAC block size), 0 for an unknown id. For SHA-3 the block size is the
+/// sponge rate (FIPS 202; HMAC-SHA3 uses it as the block length, RFC 2104 section 2 with the rate in place of B).
+/// BLAKE2 has no HMAC block size of its own (its keyed mode is the MAC, RFC 7693 section 2.5), so both BLAKE2 ids
+/// have a zero block length here and `hmac` rejects them. SHA-3 block lengths are the sponge rates, as in NIST SP 800-107
+/// Rev. 1 section 5.3.
+export fn digestBlockLen(alg: i32) -> usize {
+    if alg == DIGEST_SHA256 || alg == DIGEST_SHA224 || alg == DIGEST_SHA1 || alg == DIGEST_MD5 { return 64 }
+    if alg == DIGEST_SHA384 || alg == DIGEST_SHA512 || alg == DIGEST_SHA512_224 || alg == DIGEST_SHA512_256 {
+        return 128
+    }
+    if alg == DIGEST_SHA3_224 { return 144 }
+    if alg == DIGEST_SHA3_256 { return 136 }
+    if alg == DIGEST_SHA3_384 { return 104 }
+    if alg == DIGEST_SHA3_512 { return 72 }
+    return 0
+}
+
+/// Hashes `data[0..n]` with `alg` into `out` (`digestLen(alg)` bytes). False for an unknown id.
+export fn digest(alg: i32, data: *ui8, n: usize, out: *ui8) -> bool {
+    if alg == DIGEST_SHA256 {
+        sha256(data, n, out)
+    } else if alg == DIGEST_SHA384 {
+        sha384(data, n, out)
+    } else if alg == DIGEST_SHA512 {
+        sha512(data, n, out)
+    } else if alg == DIGEST_SHA224 {
+        sha224(data, n, out)
+    } else if alg == DIGEST_SHA512_224 {
+        sha512t224(data, n, out)
+    } else if alg == DIGEST_SHA512_256 {
+        sha512t256(data, n, out)
+    } else if alg == DIGEST_SHA1 {
+        sha1(data, n, out)
+    } else if alg == DIGEST_MD5 {
+        md5(data, n, out)
+    } else if alg == DIGEST_SHA3_224 {
+        sha3224(data, n, out)
+    } else if alg == DIGEST_SHA3_256 {
+        sha3256(data, n, out)
+    } else if alg == DIGEST_SHA3_384 {
+        sha3384(data, n, out)
+    } else if alg == DIGEST_SHA3_512 {
+        sha3512(data, n, out)
+    } else if alg == DIGEST_BLAKE2B_512 {
+        blake2b(nil, 0, data, n, out, 64)
+    } else if alg == DIGEST_BLAKE2S_256 {
+        blake2s(nil, 0, data, n, out, 32)
+    } else {
+        return false
+    }
+    return true
+}

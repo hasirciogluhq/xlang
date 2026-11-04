@@ -1,0 +1,6 @@
+// A shared library with a load hook (@init) and an unload hook (@fini). Loaded into a host process
+// through DYLD_INSERT_LIBRARIES, the @init function runs before the host's @entry (see shared_host.xl).
+from "std" import print
+
+@init fn up() { print("lib up\n") }
+@fini fn down() { print("lib down\n") }

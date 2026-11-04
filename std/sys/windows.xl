@@ -1,0 +1,351 @@
+// Windows: the NT native API. Windows has no stable system call numbers (they change between builds),
+// so the stable boundary is ntdll.dll's `Nt*` exports, which are the system calls themselves; they are
+// imported with `@library`. Where the OS offers no stable kernel interface (sockets are in `sock.xl`,
+// entropy here) the documented user-mode library is used instead: ws2_32 and bcrypt. No C runtime is involved.
+//
+// A file "fd" is the kernel handle's low 32 bits (kernel handle values are 32-bit safe). Socket fds are
+// told apart by `isSocket` in `sock.xl`, so `sysRead`/`sysWrite`/`sysClose` need no table.
+from "sock" import isSocket, socketOf, sockSend, sockRecv, sockClose
+
+define CURRENT_PROCESS = -1
+define STATUS_PENDING = 0x103
+define STATUS_END_OF_FILE = 0xC0000011
+define STATUS_PIPE_BROKEN = 0xC000014B
+
+@library("ntdll") declare fn NtWriteFile(h: i64, event: i64, apc: *void, apcCtx: *void, iosb: *i64, buf: *ui8, len: ui32, offset: *i64, key: *ui32) -> i32
+@library("ntdll") declare fn NtReadFile(h: i64, event: i64, apc: *void, apcCtx: *void, iosb: *i64, buf: *ui8, len: ui32, offset: *i64, key: *ui32) -> i32
+@library("ntdll") declare fn NtCreateFile(h: *i64, access: ui32, attrs: *ui64, iosb: *i64, alloc: *i64, fileAttrs: ui32, share: ui32, disposition: ui32, options: ui32, ea: *void, eaLen: ui32) -> i32
+@library("ntdll") declare fn NtDeleteFile(attrs: *ui64) -> i32
+@library("ntdll") declare fn NtClose(h: i64) -> i32
+@library("ntdll") declare fn NtQueryInformationFile(h: i64, iosb: *i64, info: *void, len: ui32, infoClass: ui32) -> i32
+@library("ntdll") declare fn NtWaitForSingleObject(h: i64, alertable: ui8, timeout: *i64) -> i32
+@library("ntdll") declare fn NtTerminateProcess(process: i64, status: i32) -> i32
+@library("ntdll") declare fn NtAllocateVirtualMemory(process: i64, base: **void, zeroBits: usize, size: *usize, allocType: ui32, protect: ui32) -> i32
+@library("ntdll") declare fn NtFreeVirtualMemory(process: i64, base: **void, size: *usize, freeType: ui32) -> i32
+@library("ntdll") declare fn NtYieldExecution() -> i32
+@library("ntdll") declare fn RtlDosPathNameToNtPathName_U(dos: *ui16, nt: *ui64, part: *void, relative: *void) -> ui8
+@library("ntdll") declare fn RtlFreeUnicodeString(s: *ui64)
+
+@library("kernel32") declare fn GetStdHandle(which: i32) -> i64
+
+@library("bcrypt") declare fn BCryptGenRandom(alg: *void, buf: *ui8, len: ui32, flags: ui32) -> i32
+
+global ioStatus: [i64; 2]
+
+fn stdHandle(fd: i32) -> i64 {
+    if fd == 0 { return GetStdHandle(-10) }
+    if fd == 1 { return GetStdHandle(-11) }
+    if fd == 2 { return GetStdHandle(-12) }
+    return fd as i64
+}
+
+/// Waits for a pending synchronous request and returns the final status.
+fn finish(h: i64, status: i32, iosb: *i64) -> i32 {
+    if status == STATUS_PENDING {
+        NtWaitForSingleObject(h, 0, nil)
+        return iosb[0] as i32
+    }
+    return status
+}
+
+// Writes to a socket or a file handle. Code that writes only to files (the panic message) calls
+// `sysWriteFile` instead, so the socket branch and ws2_32 are not linked into programs that never use sockets
+// (plan 24, reachability pruning).
+export fn sysWrite(fd: i32, buf: *ui8, n: usize) -> isize {
+    if isSocket(fd) { return sockSend(fd, buf, n) }
+    return sysWriteFile(fd, buf, n)
+}
+
+/// Writes to a file handle through NtWriteFile. A socket fd is not valid here.
+export fn sysWriteFile(fd: i32, buf: *ui8, n: usize) -> isize {
+    local h: i64 = stdHandle(fd)
+    local io: [i64; 2]
+    local len: ui32 = n as ui32
+    if n > 1073741824 { len = 1073741824 }
+    local st: i32 = finish(h, NtWriteFile(h, 0, nil, nil, &io[0], buf, len, nil, nil), &io[0])
+    if st < 0 { return -1 }
+    return io[1] as isize
+}
+
+export fn sysRead(fd: i32, buf: *ui8, n: usize) -> isize {
+    if isSocket(fd) { return sockRecv(fd, buf, n) }
+    local h: i64 = stdHandle(fd)
+    local io: [i64; 2]
+    local len: ui32 = n as ui32
+    if n > 1073741824 { len = 1073741824 }
+    local st: i32 = finish(h, NtReadFile(h, 0, nil, nil, &io[0], buf, len, nil, nil), &io[0])
+    if st == (STATUS_END_OF_FILE as i32) || st == (STATUS_PIPE_BROKEN as i32) { return 0 }
+    if st < 0 { return -1 }
+    return io[1] as isize
+}
+
+export fn sysExit(code: i32) {
+    NtTerminateProcess(CURRENT_PROCESS as i64, code)
+}
+
+export fn sysMap(size: usize) -> *void {
+    local base: *void = nil
+    local region: usize = size
+    // MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE
+    local st: i32 = NtAllocateVirtualMemory(CURRENT_PROCESS as i64, &base, 0, &region, 12288, 4)
+    if st < 0 { return nil }
+    return base
+}
+
+export fn sysUnmap(p: *void, size: usize) {
+    local base: *void = p
+    local region: usize = 0
+    NtFreeVirtualMemory(CURRENT_PROCESS as i64, &base, &region, 32768)   // MEM_RELEASE
+}
+
+export fn sysYield() {
+    NtYieldExecution()
+}
+
+export fn sysThreadId() -> i64 {
+    return 0
+}
+
+export fn sysWait(addr: *ui32, expected: ui32) {
+    local spins: i32 = 0
+    while __builtin_atomicLoad(addr, MemoryOrder.acquire) == expected && spins < 64 {
+        spins = spins + 1
+    }
+}
+
+export fn sysWake(addr: *ui32, count: i32) {
+}
+
+// Threads need `NtCreateThreadEx` plus a futex-like wait (WaitOnAddress); not done yet, the scheduler
+// stays on one thread like macOS (see docs/known-limitations.md).
+export fn sysThreadCreate(entry: fn(*void), arg: *void, stack: *void, size: usize, ctid: *ui32) -> i64 {
+    return -1
+}
+
+export fn sysThreadRelease(stack: *void, size: usize) {
+    sysUnmap(stack, size)
+}
+
+// ---- readiness polling: WSAPoll ------------------------------------------------------------------
+// WSAPoll reports readiness of sockets only (https://learn.microsoft.com/en-us/windows/win32/api/winsock2/nf-winsock2-wsapoll).
+// It is the readiness backend; IOCP is a completion model and needs a different API, so it is not used here.
+// Constants and layout from winsock2.h (public header copy: https://raw.githubusercontent.com/wine-mirror/wine/master/include/winsock2.h):
+//   POLLERR 0x0001, POLLHUP 0x0002, POLLNVAL 0x0004, POLLRDNORM 0x0100, POLLRDBAND 0x0200, POLLWRNORM 0x0010.
+//   POLLIN = POLLRDNORM|POLLRDBAND = 0x0300, POLLOUT = POLLWRNORM = 0x0010.
+// WSAPOLLFD = { SOCKET fd (8 bytes); SHORT events (offset 8); SHORT revents (offset 10) } = 16 bytes with padding.
+define WSA_POLL_IN = 768          // 0x0300
+define WSA_POLL_OUT = 16          // 0x0010
+define WSA_POLLFD_SIZE = 16
+define WATCH_CAP = 256            // watches held by the process, shared by every poll set
+
+@library("ws2_32") declare fn WSAPoll(fds: *ui8, n: ui32, timeout: i32) -> i32
+
+/// One interest: a socket watched by poll set `owner`. `used` false means the slot is free.
+struct PollWatch {
+    owner: i32
+    sock: ui64
+    events: i16
+    token: usize
+    used: bool
+}
+
+global pollWatches: [PollWatch; 256]
+global pollOwnerNext: i32
+
+/// A new poll set. Sets are identified by a process-wide counter; `pfd` is that id.
+export fn sysPollCreate() -> i32 {
+    pollOwnerNext = pollOwnerNext + 1
+    return pollOwnerNext
+}
+
+/// Adds or updates a one-shot read or write interest in socket `fd` (a tagged socket fd from `sock.xl`).
+/// Like epoll's EPOLLONESHOT, the interest is removed when it fires. Returns 0, or -1 for a file handle
+/// or when the process-wide table is full.
+export fn sysPollWatch(pfd: i32, fd: i32, write: bool, token: usize) -> i32 {
+    if !isSocket(fd) { return -1 }
+    local sock: ui64 = socketOf(fd)
+    local ev: i16 = WSA_POLL_IN as i16
+    if write { ev = WSA_POLL_OUT as i16 }
+    local free: i32 = -1
+    local i: usize = 0
+    while i < WATCH_CAP {
+        if pollWatches[i].used && pollWatches[i].owner == pfd && pollWatches[i].sock == sock {
+            pollWatches[i].events = ev
+            pollWatches[i].token = token
+            return 0
+        }
+        if !pollWatches[i].used && free < 0 { free = i as i32 }
+        i = i + 1
+    }
+    if free < 0 { return -1 }
+    pollWatches[free as usize].owner = pfd
+    pollWatches[free as usize].sock = sock
+    pollWatches[free as usize].events = ev
+    pollWatches[free as usize].token = token
+    pollWatches[free as usize].used = true
+    return 0
+}
+
+/// Waits up to `timeoutMs` (-1 = forever) for the watches of set `pfd` and stores the tokens of the ready
+/// ones (at most `max`); returns how many. Fired watches are removed. An empty set returns 0 at once
+/// (WSAPoll rejects an empty array), so it does not sleep for `timeoutMs`.
+export fn sysPollWait(pfd: i32, tokens: *usize, max: i32, timeoutMs: i32) -> i32 {
+    local buf: [ui8; 4096]          // WATCH_CAP WSAPOLLFD entries of 16 bytes
+    local slotOf: [usize; 256]      // the pollWatches index behind each WSAPOLLFD entry
+    local n: usize = 0
+    local i: usize = 0
+    while i < WATCH_CAP {
+        if pollWatches[i].used && pollWatches[i].owner == pfd {
+            local base: usize = &buf[0] as usize + n * WSA_POLLFD_SIZE
+            local fdp: *ui64 = base as *ui64
+            fdp[0] = pollWatches[i].sock
+            local evp: *i16 = (base + 8) as *i16
+            evp[0] = pollWatches[i].events
+            evp[1] = 0
+            slotOf[n] = i
+            n = n + 1
+        }
+        i = i + 1
+    }
+    if n == 0 { return 0 }
+    local r: i32 = WSAPoll(&buf[0], n as ui32, timeoutMs)
+    if r <= 0 { return 0 }
+    local out: i32 = 0
+    local k: usize = 0
+    while k < n && out < max {
+        local revents: *i16 = (&buf[0] as usize + k * WSA_POLLFD_SIZE + 10) as *i16
+        if revents[0] != 0 {
+            local w: usize = slotOf[k]
+            tokens[out as usize] = pollWatches[w].token
+            pollWatches[w].used = false
+            out = out + 1
+        }
+        k = k + 1
+    }
+    return out
+}
+
+export fn sysPipe(fds: *i32, nonblocking: bool) -> i32 {
+    return -1
+}
+
+// ---- files ---------------------------------------------------------------------------------------
+
+/// UTF-8 (ASCII-oriented: bytes >= 0x80 are widened as Latin-1) -> UTF-16, `/` becomes `\`. false if too long.
+fn widen(path: *ui8, out: *ui16, cap: usize) -> bool {
+    local i: usize = 0
+    while path[i] != 0 {
+        if i + 1 >= cap { return false }
+        local c: ui16 = path[i] as ui16
+        if c == 47 { c = 92 }
+        out[i] = c
+        i = i + 1
+    }
+    out[i] = 0
+    return true
+}
+
+/// NtCreateFile on a DOS path. `access`/`disposition`/`options` as in the NT API; -1 on failure.
+fn createFile(path: *ui8, access: ui32, disposition: ui32, options: ui32) -> i32 {
+    local wide: [ui16; 520]
+    if !widen(path, &wide[0], 520) { return -1 }
+    local name: [ui64; 2]
+    if RtlDosPathNameToNtPathName_U(&wide[0], &name[0], nil, nil) == 0 { return -1 }
+    local oa: [ui64; 6]
+    oa[0] = 48
+    oa[1] = 0
+    oa[2] = &name[0] as ui64
+    oa[3] = 64                  // OBJ_CASE_INSENSITIVE
+    oa[4] = 0
+    oa[5] = 0
+    local h: i64 = 0
+    local io: [i64; 2]
+    // share read|write|delete, FILE_ATTRIBUTE_NORMAL
+    local st: i32 = NtCreateFile(&h, access, &oa[0], &io[0], nil, 128, 7, disposition, options, nil, 0)
+    RtlFreeUnicodeString(&name[0])
+    if st < 0 { return -1 }
+    return h as i32
+}
+
+// FILE_SYNCHRONOUS_IO_NONALERT | FILE_NON_DIRECTORY_FILE
+define FILE_IO_OPTIONS = 96
+
+export fn sysOpenRead(path: *ui8) -> i32 {
+    // GENERIC_READ | SYNCHRONIZE, FILE_OPEN
+    return createFile(path, 0x80100000, 1, FILE_IO_OPTIONS)
+}
+
+export fn sysOpenWrite(path: *ui8, append: bool) -> i32 {
+    if append {
+        // FILE_APPEND_DATA | SYNCHRONIZE, FILE_OPEN_IF: writes go to the end of the file
+        return createFile(path, 0x100004, 3, FILE_IO_OPTIONS)
+    }
+    // GENERIC_WRITE | SYNCHRONIZE, FILE_OVERWRITE_IF
+    return createFile(path, 0x40100000, 5, FILE_IO_OPTIONS)
+}
+
+export fn sysClose(fd: i32) -> i32 {
+    if isSocket(fd) { return sockClose(fd) }
+    if NtClose(fd as i64) < 0 { return -1 }
+    return 0
+}
+
+export fn sysUnlink(path: *ui8) -> i32 {
+    local wide: [ui16; 520]
+    if !widen(path, &wide[0], 520) { return -1 }
+    local name: [ui64; 2]
+    if RtlDosPathNameToNtPathName_U(&wide[0], &name[0], nil, nil) == 0 { return -1 }
+    local oa: [ui64; 6]
+    oa[0] = 48
+    oa[1] = 0
+    oa[2] = &name[0] as ui64
+    oa[3] = 64
+    oa[4] = 0
+    oa[5] = 0
+    local st: i32 = NtDeleteFile(&oa[0])
+    RtlFreeUnicodeString(&name[0])
+    if st < 0 { return -1 }
+    return 0
+}
+
+export fn sysFileSize(fd: i32) -> i64 {
+    local info: [i64; 3]        // FILE_STANDARD_INFORMATION: AllocationSize, EndOfFile, ...
+    local io: [i64; 2]
+    if NtQueryInformationFile(fd as i64, &io[0], &info[0] as *void, 24, 5) < 0 { return -1 }
+    return info[1]
+}
+
+// ---- entropy and wall clock --------------------------------------------------------------------
+
+/// Fills `buf[0..n]` from the system-preferred CNG RNG (BCRYPT_USE_SYSTEM_PREFERRED_RNG).
+export fn sysRandom(buf: *ui8, n: usize) -> bool {
+    local done: usize = 0
+    while done < n {
+        local chunk: usize = n - done
+        if chunk > 65536 { chunk = 65536 }
+        if BCryptGenRandom(nil, &buf[done], chunk as ui32, 2) < 0 { return false }
+        done = done + chunk
+    }
+    return true
+}
+
+/// Seconds since 1970-01-01 UTC, read from KUSER_SHARED_DATA.SystemTime (the read-only page the
+/// kernel maps at 0x7FFE0000 in every process; no call needed). 100 ns units since 1601.
+export fn sysClockSeconds() -> i64 {
+    local t: *ui32 = 2147352596 as *ui32            // 0x7FFE0014
+    local lo: ui32 = 0
+    local hi1: i32 = 0
+    local hi2: i32 = 0
+    local tries: i32 = 0
+    while tries < 8 {
+        hi1 = t[1] as i32
+        lo = t[0]
+        hi2 = t[2] as i32
+        if hi1 == hi2 {
+            local ticks: i64 = ((hi1 as i64) * 4294967296) + (lo as i64)
+            return ticks / 10000000 - 11644473600
+        }
+        tries = tries + 1
+    }
+    return -1
+}

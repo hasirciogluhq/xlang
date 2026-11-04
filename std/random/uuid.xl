@@ -1,0 +1,211 @@
+// std/random/uuid: UUIDs as specified by RFC 9562 (https://www.rfc-editor.org/rfc/rfc9562). A UUID is 16 bytes
+// in network (big-endian) order. Version is the high nibble of byte 6; variant `10` is the high two bits of
+// byte 8 (RFC 9562 section 4.1). The text form is 8-4-4-4-12 hex digits (section 4), written lowercase.
+// Versions:
+//   v1  time and node, section 5.1; time is 100-ns ticks since 1582-10-15 (section 5.1).
+//   v3  MD5 of namespace and name, section 5.3 (https://www.rfc-editor.org/rfc/rfc1321 for MD5).
+//   v4  random, section 5.4.
+//   v5  SHA-1 of namespace and name, section 5.5 (https://www.rfc-editor.org/rfc/rfc3174 for SHA-1).
+//   v6  reordered v1 time, section 5.6, so that values sort by time as text.
+//   v7  Unix milliseconds and random, section 5.7.
+//   v8  caller-defined bits, section 5.8.
+// Random bits come straight from OS entropy: no state is kept, so there is no reseed or fork issue.
+// Time is always the caller's: the clock helpers in std/sys give seconds only, so v1, v6 and v7 take the time.
+from "entropy" import randomBytes
+from "../encoding/hex" import hexEncode, hexDecode
+from "../crypto/hash/md5" import Md5, md5Init, md5Update, md5Final
+from "../crypto/hash/sha1" import Sha1, sha1Init, sha1Update, sha1Final
+
+/// 100-ns ticks from 1582-10-15T00:00:00Z (the Gregorian reform date, RFC 9562 section 5.1) to the Unix epoch.
+define GREGORIAN_OFFSET_100NS = 122192928000000000
+
+/// Namespace IDs of RFC 9562 Appendix B.
+export global UUID_NS_DNS: [ui8; 16] = [0x6b, 0xa7, 0xb8, 0x10, 0x9d, 0xad, 0x11, 0xd1, 0x80, 0xb4, 0x00, 0xc0, 0x4f, 0xd4, 0x30, 0xc8]
+export global UUID_NS_URL: [ui8; 16] = [0x6b, 0xa7, 0xb8, 0x11, 0x9d, 0xad, 0x11, 0xd1, 0x80, 0xb4, 0x00, 0xc0, 0x4f, 0xd4, 0x30, 0xc8]
+export global UUID_NS_OID: [ui8; 16] = [0x6b, 0xa7, 0xb8, 0x12, 0x9d, 0xad, 0x11, 0xd1, 0x80, 0xb4, 0x00, 0xc0, 0x4f, 0xd4, 0x30, 0xc8]
+export global UUID_NS_X500: [ui8; 16] = [0x6b, 0xa7, 0xb8, 0x14, 0x9d, 0xad, 0x11, 0xd1, 0x80, 0xb4, 0x00, 0xc0, 0x4f, 0xd4, 0x30, 0xc8]
+
+/// Writes the low `bytes` bytes of `value` big-endian at `out[at..]`.
+fn putBE(out: *ui8, at: usize, value: ui64, bytes: usize) {
+    local i: usize = 0
+    while i < bytes {
+        out[at + i] = ((value >> (((bytes - 1 - i) * 8) as ui64)) & 0xff) as ui8
+        i = i + 1
+    }
+}
+
+/// Sets version (high nibble of byte 6) and the RFC variant `10` (high bits of byte 8).
+fn setVersion(out: *ui8, version: ui8) {
+    out[6] = (version << 4) | (out[6] & 0x0f)
+    out[8] = 0x80 | (out[8] & 0x3f)
+}
+
+/// A version 1 UUID or version 6 UUID generator. The node is random with the multicast bit set (RFC 9562
+/// section 6.10, so it cannot collide with a hardware address). The clock sequence is random 14 bits and goes
+/// up when the clock moves backwards (section 6.1). Two calls with the same timestamp never return the same
+/// UUID: the timestamp is bumped by one tick, which is safe because it stays inside the same generator.
+export class UuidTimeGen {
+    node: [ui8; 6]
+    clockSeq: ui64
+    last: ui64
+
+    fn init(self) {
+        randomBytes(&self.node[0], 6)
+        self.node[0] = self.node[0] | 0x01
+        local seq: [ui8; 2]
+        randomBytes(&seq[0], 2)
+        self.clockSeq = (((seq[0] as ui64) << 8) | (seq[1] as ui64)) & 0x3fff
+        self.last = 0
+    }
+
+    /// The Gregorian 100-ns timestamp for `unix100ns`, strictly greater than every earlier result.
+    fn stamp(self, unix100ns: ui64) -> ui64 {
+        local ts: ui64 = unix100ns + GREGORIAN_OFFSET_100NS
+        if ts < self.last {
+            self.clockSeq = (self.clockSeq + 1) & 0x3fff
+        }
+        if ts <= self.last {
+            ts = self.last + 1
+        }
+        self.last = ts
+        return ts
+    }
+
+    /// Version 1 (RFC 9562 section 5.1): time_low, time_mid, time_hi with version, clock_seq, node.
+    fn v1(self, out: *ui8, unix100ns: ui64) {
+        local ts: ui64 = self.stamp(unix100ns)
+        putBE(out, 0, ts, 4)
+        putBE(out, 4, ts >> 32, 2)
+        putBE(out, 6, (ts >> 48) & 0x0fff, 2)
+        out[6] = 0x10 | out[6]
+        putBE(out, 8, self.clockSeq, 2)
+        out[8] = 0x80 | out[8]
+        local i: usize = 0
+        while i < 6 {
+            out[10 + i] = self.node[i]
+            i = i + 1
+        }
+    }
+
+    /// Version 6 (RFC 9562 section 5.6): the same time, stored most significant part first.
+    fn v6(self, out: *ui8, unix100ns: ui64) {
+        local ts: ui64 = self.stamp(unix100ns)
+        putBE(out, 0, ts >> 28, 4)
+        putBE(out, 4, (ts >> 12) & 0xffff, 2)
+        putBE(out, 6, 0x6000 | (ts & 0x0fff), 2)
+        putBE(out, 8, self.clockSeq, 2)
+        out[8] = 0x80 | out[8]
+        local i: usize = 0
+        while i < 6 {
+            out[10 + i] = self.node[i]
+            i = i + 1
+        }
+    }
+}
+
+/// A version 3 UUID (RFC 9562 section 5.3): MD5 over the 16-byte namespace followed by `name[0..n]`.
+export fn uuidV3(out: *ui8, ns: *ui8, name: *ui8, n: usize) {
+    local m: Md5
+    md5Init(&m)
+    md5Update(&m, ns, 16)
+    md5Update(&m, name, n)
+    local d: [ui8; 16]
+    md5Final(&m, &d[0])
+    local i: usize = 0
+    while i < 16 {
+        out[i] = d[i]
+        i = i + 1
+    }
+    setVersion(out, 3)
+}
+
+/// A version 5 UUID (RFC 9562 section 5.5): SHA-1 over the namespace and name, first 16 of the 20 bytes.
+export fn uuidV5(out: *ui8, ns: *ui8, name: *ui8, n: usize) {
+    local s: Sha1
+    sha1Init(&s)
+    sha1Update(&s, ns, 16)
+    sha1Update(&s, name, n)
+    local d: [ui8; 20]
+    sha1Final(&s, &d[0])
+    local i: usize = 0
+    while i < 16 {
+        out[i] = d[i]
+        i = i + 1
+    }
+    setVersion(out, 5)
+}
+
+/// A version 4 UUID (random, RFC 9562 section 5.4) into `out[0..16]`.
+export fn uuidV4(out: *ui8) {
+    randomBytes(out, 16)
+    setVersion(out, 4)
+}
+
+/// A version 7 UUID (RFC 9562 section 5.7) into `out[0..16]`: a 48-bit big-endian Unix timestamp in
+/// milliseconds, then random bits. Values sort by creation time to millisecond resolution.
+export fn uuidV7(out: *ui8, unixMillis: ui64) {
+    randomBytes(out, 16)
+    putBE(out, 0, unixMillis, 6)
+    setVersion(out, 7)
+}
+
+/// A version 8 UUID (RFC 9562 section 5.8): the caller's 16 bytes with version and variant set.
+export fn uuidV8(out: *ui8, custom: *ui8) {
+    local i: usize = 0
+    while i < 16 {
+        out[i] = custom[i]
+        i = i + 1
+    }
+    setVersion(out, 8)
+}
+
+/// The nil UUID (all zero bytes, RFC 9562 section 5.9).
+export fn uuidNil(out: *ui8) {
+    local i: usize = 0
+    while i < 16 {
+        out[i] = 0
+        i = i + 1
+    }
+}
+
+/// The canonical text form of the 16 bytes at `uuid` (36 lowercase characters, RFC 9562 section 4) into
+/// `out[0..36]`. The caller provides 36 bytes; no NUL is written.
+export fn uuidString(uuid: *ui8, out: *ui8) {
+    hexEncode(&uuid[0], 4, &out[0])
+    out[8] = 45
+    hexEncode(&uuid[4], 2, &out[9])
+    out[13] = 45
+    hexEncode(&uuid[6], 2, &out[14])
+    out[18] = 45
+    hexEncode(&uuid[8], 2, &out[19])
+    out[23] = 45
+    hexEncode(&uuid[10], 6, &out[24])
+}
+
+/// Decodes the 36-character text form (hyphens at 8, 13, 18, 23; either case, RFC 9562 section 4) into 16 bytes at
+/// `out`. Returns false when the text has another length, a misplaced hyphen or a non-hex digit.
+export fn uuidParse(text: *ui8, n: usize, out: *ui8) -> bool {
+    if n != 36 { return false }
+    if text[8] != 45 || text[13] != 45 || text[18] != 45 || text[23] != 45 { return false }
+    local at: [usize; 5] = [0, 9, 14, 19, 24]
+    local width: [usize; 5] = [8, 4, 4, 4, 12]
+    local pos: usize = 0
+    local k: usize = 0
+    while k < 5 {
+        local got: isize = hexDecode(&text[at[k]], width[k], &out[pos])
+        if got != (width[k] / 2) as isize { return false }
+        pos = pos + width[k] / 2
+        k = k + 1
+    }
+    return true
+}
+
+/// The version number (high nibble of byte 6).
+export fn uuidVersion(uuid: *ui8) -> i32 {
+    return (uuid[6] >> 4) as i32
+}
+
+/// True when the variant bits are `10` (RFC 9562 variant of this specification).
+export fn uuidIsRfcVariant(uuid: *ui8) -> bool {
+    return (uuid[8] & 0xc0) == 0x80
+}

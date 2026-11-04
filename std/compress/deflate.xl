@@ -1,0 +1,224 @@
+// std/compress/deflate: DEFLATE compression (RFC 1951, https://www.rfc-editor.org/rfc/rfc1951), with the zlib (RFC 1950,
+// https://www.rfc-editor.org/rfc/rfc1950) and gzip (RFC 1952, https://www.rfc-editor.org/rfc/rfc1952) wrappers. Two block types are
+// written: stored (section 3.2.4, BTYPE 00, up to 65535 bytes per block) and fixed Huffman (section 3.2.6, BTYPE 01, with the fixed
+// code lengths of section 3.2.6 and the length and distance code tables of section 3.2.5). The fixed-Huffman block uses a greedy
+// LZ77 matcher with a 3-byte hash and a 32 KiB window (section 2); it is not the entropy-optimal encoder of zlib, so the output is
+// valid but usually larger than zlib's. Dynamic Huffman blocks are not written (they are read by std/compress/inflate).
+// Bits are packed least significant first (section 3.1.1); Huffman codes are sent most significant bit first (section 3.1.1).
+// Verified with gzip -t, perl's Compress::Zlib, and the inflate module of this library.
+from "../checksum/crc" import crc32
+from "../checksum/adler" import adler32
+from "../mem/mem" import currentAllocator
+
+global DEF_LEN_BASE: [ui32; 29] = [3, 4, 5, 6, 7, 8, 9, 10, 11, 13, 15, 17, 19, 23, 27, 31, 35, 43, 51, 59, 67, 83, 99, 115, 131, 163, 195, 227, 258]
+global DEF_LEN_EXTRA: [ui32; 29] = [0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 2, 2, 2, 2, 3, 3, 3, 3, 4, 4, 4, 4, 5, 5, 5, 5, 0]
+global DEF_DIST_BASE: [ui32; 30] = [1, 2, 3, 4, 5, 7, 9, 13, 17, 25, 33, 49, 65, 97, 129, 193, 257, 385, 513, 769, 1025, 1537, 2049, 3073, 4097, 6145, 8193, 12289, 16385, 24577]
+global DEF_DIST_EXTRA: [ui32; 30] = [0, 0, 0, 0, 1, 1, 2, 2, 3, 3, 4, 4, 5, 5, 6, 6, 7, 7, 8, 8, 9, 9, 10, 10, 11, 11, 12, 12, 13, 13]
+
+/// The output state of the bit writer: `ok` is false once the output would exceed `cap`.
+export struct BitOut {
+    out: *ui8
+    cap: usize
+    len: usize
+    acc: ui64
+    nacc: usize
+    ok: bool
+}
+
+fn bitsByte(w: *BitOut, b: ui8) {
+    if w.len >= w.cap {
+        w.ok = false
+        return
+    }
+    w.out[w.len] = b
+    w.len = w.len + 1
+}
+
+/// Writes the low `n` bits of `v`, least significant first.
+fn bitsPut(w: *BitOut, v: ui64, n: usize) {
+    w.acc = w.acc | (v << (w.nacc as ui64))
+    w.nacc = w.nacc + n
+    while w.nacc >= 8 {
+        bitsByte(w, (w.acc & 0xff) as ui8)
+        w.acc = w.acc >> 8
+        w.nacc = w.nacc - 8
+    }
+}
+
+/// Writes a Huffman code of `len` bits, most significant bit first.
+fn codePut(w: *BitOut, code: ui64, len: usize) {
+    local i: usize = len
+    while i > 0 {
+        i = i - 1
+        bitsPut(w, (code >> (i as ui64)) & 1, 1)
+    }
+}
+
+/// Pads with zero bits to a byte boundary.
+fn bitsAlign(w: *BitOut) {
+    if w.nacc > 0 {
+        bitsByte(w, (w.acc & 0xff) as ui8)
+        w.acc = 0
+        w.nacc = 0
+    }
+}
+
+/// A literal or length symbol (0 to 287) in the fixed code of section 3.2.6.
+fn emitSymbol(w: *BitOut, sym: ui32) {
+    if sym < 144 {
+        codePut(w, (0x30 + sym) as ui64, 8)
+    } else if sym < 256 {
+        codePut(w, (0x190 + sym - 144) as ui64, 9)
+    } else if sym < 280 {
+        codePut(w, (sym - 256) as ui64, 7)
+    } else {
+        codePut(w, (0xc0 + sym - 280) as ui64, 8)
+    }
+}
+
+/// A match of `len` bytes (3 to 258) at distance `dist` (1 to 32768).
+fn emitMatch(w: *BitOut, len: usize, dist: usize) {
+    local li: usize = 28
+    while (DEF_LEN_BASE[li] as usize) > len { li = li - 1 }
+    emitSymbol(w, (257 + li) as ui32)
+    bitsPut(w, (len - (DEF_LEN_BASE[li] as usize)) as ui64, DEF_LEN_EXTRA[li] as usize)
+    local di: usize = 29
+    while (DEF_DIST_BASE[di] as usize) > dist { di = di - 1 }
+    codePut(w, di as ui64, 5)
+    bitsPut(w, (dist - (DEF_DIST_BASE[di] as usize)) as ui64, DEF_DIST_EXTRA[di] as usize)
+}
+
+fn hash3(d: *ui8, i: usize) -> usize {
+    return ((((d[i] as usize) << 10) ^ ((d[i + 1] as usize) << 5) ^ (d[i + 2] as usize))) & 0x7fff
+}
+
+/// Writes the input as one fixed-Huffman block with greedy matches; `final` sets BFINAL.
+fn fixedBlock(w: *BitOut, src: *ui8, n: usize, final: bool) {
+    if final { bitsPut(w, 1, 1) } else { bitsPut(w, 0, 1) }
+    bitsPut(w, 1, 2)
+    local head: *i64 = currentAllocator.alloc(32768 * 8, 8) as *i64
+    if head == nil { panic("deflate: out of memory") }
+    local h: usize = 0
+    while h < 32768 {
+        head[h] = -1
+        h = h + 1
+    }
+    local i: usize = 0
+    while i < n {
+        if i + 2 < n {
+            local hv: usize = hash3(src, i)
+            local cand: i64 = head[hv]
+            head[hv] = i as i64
+            if cand >= 0 && i - (cand as usize) <= 32768 {
+                local c: usize = cand as usize
+                local l: usize = 0
+                while l < 258 && i + l < n && src[c + l] == src[i + l] { l = l + 1 }
+                if l >= 3 {
+                    emitMatch(w, l, i - c)
+                    local k: usize = 1
+                    while k < l {
+                        if i + k + 2 < n { head[hash3(src, i + k)] = (i + k) as i64 }
+                        k = k + 1
+                    }
+                    i = i + l
+                    continue
+                }
+            }
+        }
+        emitSymbol(w, src[i] as ui32)
+        i = i + 1
+    }
+    emitSymbol(w, 256)
+    currentAllocator.free(head as *void)
+}
+
+/// Raw DEFLATE (no wrapper) of `src[0..n)` with fixed Huffman blocks. Returns the byte count, or -1 when `cap` is too small.
+export fn deflateFixed(src: *ui8, n: usize, out: *ui8, cap: usize) -> isize {
+    local w: BitOut
+    w.out = out
+    w.cap = cap
+    w.ok = true
+    fixedBlock(&w, src, n, true)
+    bitsAlign(&w)
+    if !w.ok { return -1 }
+    return w.len as isize
+}
+
+/// Raw DEFLATE with stored blocks (section 3.2.4): no compression, the output is the input plus 5 bytes per 65535 bytes.
+export fn deflateStored(src: *ui8, n: usize, out: *ui8, cap: usize) -> isize {
+    local w: BitOut
+    w.out = out
+    w.cap = cap
+    w.ok = true
+    local pos: usize = 0
+    while true {
+        local len: usize = n - pos
+        if len > 65535 { len = 65535 }
+        local final: bool = pos + len == n
+        if final { bitsPut(&w, 1, 1) } else { bitsPut(&w, 0, 1) }
+        bitsPut(&w, 0, 2)
+        bitsAlign(&w)
+        bitsByte(&w, (len & 0xff) as ui8)
+        bitsByte(&w, ((len >> 8) & 0xff) as ui8)
+        bitsByte(&w, ((~len) & 0xff) as ui8)
+        bitsByte(&w, ((~len >> 8) & 0xff) as ui8)
+        local k: usize = 0
+        while k < len {
+            bitsByte(&w, src[pos + k])
+            k = k + 1
+        }
+        pos = pos + len
+        if final { break }
+    }
+    if !w.ok { return -1 }
+    return w.len as isize
+}
+
+/// A zlib stream (RFC 1950): the header 0x78 0x9c (deflate, 32 KiB window, default level), the fixed-Huffman DEFLATE data, and the
+/// Adler-32 of the input in big-endian order.
+export fn zlibCompress(src: *ui8, n: usize, out: *ui8, cap: usize) -> isize {
+    if cap < 2 { return -1 }
+    out[0] = 0x78
+    out[1] = 0x9c
+    local body: isize = deflateFixed(src, n, &out[2], cap - 2)
+    if body < 0 { return -1 }
+    local at: usize = 2 + (body as usize)
+    if at + 4 > cap { return -1 }
+    local a: ui32 = adler32(src, n)
+    out[at] = (a >> 24) as ui8
+    out[at + 1] = ((a >> 16) & 0xff) as ui8
+    out[at + 2] = ((a >> 8) & 0xff) as ui8
+    out[at + 3] = (a & 0xff) as ui8
+    return (at + 4) as isize
+}
+
+/// A gzip member (RFC 1952): the 10-byte header with no name and mtime 0, the fixed-Huffman DEFLATE data, then CRC-32 and ISIZE (the
+/// input length mod 2^32), both little-endian.
+export fn gzipCompress(src: *ui8, n: usize, out: *ui8, cap: usize) -> isize {
+    if cap < 10 { return -1 }
+    out[0] = 0x1f
+    out[1] = 0x8b
+    out[2] = 8
+    out[3] = 0
+    out[4] = 0
+    out[5] = 0
+    out[6] = 0
+    out[7] = 0
+    out[8] = 0
+    out[9] = 255
+    local body: isize = deflateFixed(src, n, &out[10], cap - 10)
+    if body < 0 { return -1 }
+    local at: usize = 10 + (body as usize)
+    if at + 8 > cap { return -1 }
+    local c: ui32 = crc32(src, n)
+    out[at] = (c & 0xff) as ui8
+    out[at + 1] = ((c >> 8) & 0xff) as ui8
+    out[at + 2] = ((c >> 16) & 0xff) as ui8
+    out[at + 3] = ((c >> 24) & 0xff) as ui8
+    local sz: ui32 = (n & 0xffffffff) as ui32
+    out[at + 4] = (sz & 0xff) as ui8
+    out[at + 5] = ((sz >> 8) & 0xff) as ui8
+    out[at + 6] = ((sz >> 16) & 0xff) as ui8
+    out[at + 7] = ((sz >> 24) & 0xff) as ui8
+    return (at + 8) as isize
+}

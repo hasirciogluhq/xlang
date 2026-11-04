@@ -1,0 +1,167 @@
+// std/math/trig: trigonometric, inverse and hyperbolic functions on f64 (no libm). Range reduction for sin, cos and tan
+// uses pi/2 as a high and a low part, so the reduced argument carries an error of order |x| times 1e-16 for |x| up to
+// 1e6; for larger arguments the results lose accuracy and that is documented, not hidden. Checked against bc -l to 1e-9 on sample points. Series use 15 terms on
+// [-pi/4, pi/4] (sin, cos), 25 terms on |x| <= 0.2 (atan). Accuracy checked against bc -l on sample points.
+from "math" import sqrt
+from "float" import exp, log, floor, round, fabs
+
+define T_PI_2_HI = 1.5707963267948966
+define T_PI_2_LO = 6.123233995736766e-17
+
+/// Taylor sine and cosine of a reduced argument |r| <= pi/4.
+fn sinSeries(r: f64) -> f64 {
+    local r2: f64 = r * r
+    local term: f64 = r
+    local sum: f64 = r
+    local k: i32 = 1
+    while k <= 7 {
+        term = 0.0 - term * r2 / (((2 * k) as f64) * ((2 * k + 1) as f64))
+        sum = sum + term
+        k = k + 1
+    }
+    return sum
+}
+
+fn cosSeries(r: f64) -> f64 {
+    local r2: f64 = r * r
+    local term: f64 = 1.0
+    local sum: f64 = 1.0
+    local k: i32 = 1
+    while k <= 7 {
+        term = 0.0 - term * r2 / (((2 * k - 1) as f64) * ((2 * k) as f64))
+        sum = sum + term
+        k = k + 1
+    }
+    return sum
+}
+
+/// The reduced argument r = x - k pi/2 and the quadrant k mod 4 (k = round(x / (pi/2))).
+fn reduce(x: f64, r: *f64) -> i32 {
+    local k: f64 = round(x / T_PI_2_HI)
+    *r = (x - k * T_PI_2_HI) - k * T_PI_2_LO
+    local q: i64 = (k as i64) % 4
+    if q < 0 { q = q + 4 }
+    return q as i32
+}
+
+/// sin(x) for |x| up to about 1e6.
+export fn sin(x: f64) -> f64 {
+    local r: f64 = 0.0
+    local q: i32 = reduce(x, &r)
+    if q == 0 { return sinSeries(r) }
+    if q == 1 { return cosSeries(r) }
+    if q == 2 { return 0.0 - sinSeries(r) }
+    return 0.0 - cosSeries(r)
+}
+
+/// cos(x).
+export fn cos(x: f64) -> f64 {
+    local r: f64 = 0.0
+    local q: i32 = reduce(x, &r)
+    if q == 0 { return cosSeries(r) }
+    if q == 1 { return 0.0 - sinSeries(r) }
+    if q == 2 { return 0.0 - cosSeries(r) }
+    return sinSeries(r)
+}
+
+/// tan(x) = sin(x) / cos(x). Infinity at odd multiples of pi/2 (where cos is zero, as the nearest double).
+export fn tan(x: f64) -> f64 {
+    return sin(x) / cos(x)
+}
+
+/// atan(x) for any x: for |x| > 1 through pi/2 - atan(1/x); then the half-angle reduction until |x| <= 0.2; then the
+/// Taylor series of arctangent.
+export fn atan(x: f64) -> f64 {
+    if x != x { return x }
+    if x < 0.0 { return 0.0 - atan(0.0 - x) }
+    if x > 1.0 { return T_PI_2_HI + T_PI_2_LO - atan(1.0 / x) }
+    local factor: f64 = 1.0
+    local y: f64 = x
+    local halvings: i32 = 0
+    while y > 0.2 && halvings < 4 {
+        y = y / (1.0 + sqrt(1.0 + y * y))
+        halvings = halvings + 1
+        factor = factor * 2.0
+    }
+    local y2: f64 = y * y
+    local term: f64 = y
+    local sum: f64 = 0.0
+    local k: i32 = 0
+    while k < 25 {
+        sum = sum + term / ((2 * k + 1) as f64)
+        term = 0.0 - term * y2
+        k = k + 1
+    }
+    return factor * sum
+}
+
+/// atan2(y, x): the angle of the point (x, y) in (-pi, pi].
+export fn atan2(y: f64, x: f64) -> f64 {
+    if x > 0.0 { return atan(y / x) }
+    if x < 0.0 {
+        if y >= 0.0 { return atan(y / x) + T_PI_2_HI * 2.0 }
+        return atan(y / x) - T_PI_2_HI * 2.0
+    }
+    if y > 0.0 { return T_PI_2_HI }
+    if y < 0.0 { return 0.0 - T_PI_2_HI }
+    return 0.0
+}
+
+/// asin(x) for |x| <= 1 (NaN outside).
+export fn asin(x: f64) -> f64 {
+    if x > 1.0 || x < -1.0 { return 0.0 / 0.0 }
+    return atan2(x, sqrt(1.0 - x * x))
+}
+
+/// acos(x) for |x| <= 1 (NaN outside).
+export fn acos(x: f64) -> f64 {
+    if x > 1.0 || x < -1.0 { return 0.0 / 0.0 }
+    return atan2(sqrt(1.0 - x * x), x)
+}
+
+/// sinh(x): the Taylor series for |x| < 1 (no cancellation), exponentials otherwise.
+export fn sinh(x: f64) -> f64 {
+    if fabs(x) < 1.0 {
+        local x2: f64 = x * x
+        local term: f64 = x
+        local sum: f64 = x
+        local k: i32 = 1
+        while k <= 12 {
+            term = term * x2 / (((2 * k) as f64) * ((2 * k + 1) as f64))
+            sum = sum + term
+            k = k + 1
+        }
+        return sum
+    }
+    return (exp(x) - exp(0.0 - x)) / 2.0
+}
+
+/// cosh(x).
+export fn cosh(x: f64) -> f64 {
+    return (exp(x) + exp(0.0 - x)) / 2.0
+}
+
+/// tanh(x): 1 or -1 beyond |x| > 40 (the value rounds to them).
+export fn tanh(x: f64) -> f64 {
+    if x > 40.0 { return 1.0 }
+    if x < -40.0 { return -1.0 }
+    return sinh(x) / cosh(x)
+}
+
+/// asinh(x) = log(x + sqrt(x^2 + 1)), odd.
+export fn asinh(x: f64) -> f64 {
+    if x < 0.0 { return 0.0 - asinh(0.0 - x) }
+    return log(x + sqrt(x * x + 1.0))
+}
+
+/// acosh(x) for x >= 1 (NaN below).
+export fn acosh(x: f64) -> f64 {
+    if x < 1.0 { return 0.0 / 0.0 }
+    return log(x + sqrt(x * x - 1.0))
+}
+
+/// atanh(x) for |x| < 1.
+export fn atanh(x: f64) -> f64 {
+    if x >= 1.0 || x <= -1.0 { return 0.0 / 0.0 }
+    return 0.5 * log((1.0 + x) / (1.0 - x))
+}

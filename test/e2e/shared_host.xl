@@ -1,0 +1,7 @@
+// Host executable for shared_hook.xl: prints "host" from its @entry.
+from "std" import print
+
+@entry fn main() -> i32 {
+    print("host\n")
+    return 0
+}

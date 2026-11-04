@@ -1,65 +1,54 @@
 import * as vscode from "vscode";
-import {
-  ATOMIC_BOOL_METHODS,
-  ATOMIC_INT_METHODS,
-  COMPILER_BUILTINS,
-  CONN_METHODS,
-  CONTEXT_METHODS,
-  ERROR_METHODS,
-  ERROR_RUNTIME,
-  EXPECT_CHAIN,
-  GLOBAL_RUNTIME_FUNCTIONS,
-  JSON_METHODS,
-  KEYWORDS,
-  LOCK_METHODS,
-  NET_SYSCALLS,
-  PROCESS_SYSCALLS,
-  ROUTER_METHODS,
-  RUNTIME_TYPES,
-  RWLOCK_METHODS,
-  SERVER_METHODS,
-  SYNC_FACTORIES,
-  TEST_BUILTINS,
-  TYPES,
-  catalogToHover,
-  type CatalogEntry,
-} from "./builtins";
+import { DIAGNOSTIC_CODES, catalogToHover, findCatalogEntry } from "./builtins";
 import { getLanguageIndex } from "./languageIndex";
-import { symbolToHover, type SymbolDoc } from "./symbols";
+import { symbolToHover } from "./symbols";
 
-const WORD = /[\w.]+/;
+const IDENT = /[A-Za-z_]\w*/;
+const CODE = /\b[EW]\d{4}\b/;
 
 export function registerHover(context: vscode.ExtensionContext): void {
   context.subscriptions.push(
     vscode.languages.registerHoverProvider("xlang", {
       provideHover(document, position) {
         const index = getLanguageIndex();
-        const line = document.lineAt(position.line).text;
 
-        const member = findMemberExpression(line, position.character, position.line);
-        if (member) {
-          const sym = index.findSymbol(document, member.member, member.object);
-          if (sym) {
-            return new vscode.Hover(symbolToHover(sym), member.range);
+        const codeRange = document.getWordRangeAtPosition(position, CODE);
+        if (codeRange) {
+          const code = document.getText(codeRange);
+          const text = DIAGNOSTIC_CODES[code];
+          if (text) {
+            const md = new vscode.MarkdownString(`**${code}** ${text}\n\nRun \`xlang --explain ${code}\` for the long form.`);
+            return new vscode.Hover(md, codeRange);
           }
         }
 
-        const word = document.getWordRangeAtPosition(position, WORD);
+        const word = document.getWordRangeAtPosition(position, IDENT);
         if (!word) {
           return null;
         }
         const name = document.getText(word);
 
-        const catalog = findCatalogEntry(name);
-        if (catalog) {
-          return new vscode.Hover(catalogToHover(catalog), word);
+        // `a.b`: resolve through the type of `a`.
+        const before = document.lineAt(position.line).text.slice(0, word.start.character);
+        const chain = /([A-Za-z_]\w*(?:\s*\.\s*[A-Za-z_]\w*)*)\s*\.\s*$/.exec(before);
+        if (chain) {
+          const members = index.resolveMemberAccess(document, chain[1], position.line);
+          const sym = members.find((s) => s.name === name);
+          if (sym) {
+            return new vscode.Hover(symbolToHover(sym), word);
+          }
+          return null;
         }
 
-        const sym = index.findSymbol(document, name);
+        const sym = index.findSymbol(document, name, position.line);
         if (sym) {
           return new vscode.Hover(symbolToHover(sym), word);
         }
 
+        const catalog = findCatalogEntry(name);
+        if (catalog) {
+          return new vscode.Hover(catalogToHover(catalog), word);
+        }
         return null;
       },
     })
@@ -71,78 +60,38 @@ export function registerDefinitions(context: vscode.ExtensionContext): void {
     vscode.languages.registerDefinitionProvider("xlang", {
       provideDefinition(document, position) {
         const index = getLanguageIndex();
-        const member = findMemberExpression(
-          document.lineAt(position.line).text,
-          position.character,
-          position.line
-        );
-        if (member) {
-          const sym = index.findSymbol(document, member.member, member.object);
-          if (sym?.filePath) {
-            return new vscode.Location(
-              vscode.Uri.file(sym.filePath),
-              new vscode.Position(sym.line, 0)
-            );
+
+        // A module path inside an import string jumps to the module file.
+        const lineText = document.lineAt(position.line).text;
+        const importMatch = /^\s*(?:from|import|export)\b.*?"([^"]+)"/.exec(lineText);
+        if (importMatch) {
+          const start = lineText.indexOf(`"${importMatch[1]}"`);
+          if (position.character >= start && position.character <= start + importMatch[1].length + 2) {
+            const mod = index.getModule(importMatch[1], document.uri.fsPath);
+            if (mod) {
+              return new vscode.Location(vscode.Uri.file(mod.filePath), new vscode.Position(0, 0));
+            }
           }
         }
 
-        const word = document.getWordRangeAtPosition(position, WORD);
+        const word = document.getWordRangeAtPosition(position, IDENT);
         if (!word) {
           return null;
         }
-        const sym = index.findSymbol(document, document.getText(word));
-        if (sym?.filePath && sym.line > 0) {
-          return new vscode.Location(vscode.Uri.file(sym.filePath), new vscode.Position(sym.line, 0));
+        const name = document.getText(word);
+        const before = lineText.slice(0, word.start.character);
+        const chain = /([A-Za-z_]\w*(?:\s*\.\s*[A-Za-z_]\w*)*)\s*\.\s*$/.exec(before);
+        const sym = chain
+          ? index.resolveMemberAccess(document, chain[1], position.line).find((s) => s.name === name)
+          : index.findSymbol(document, name, position.line);
+        if (sym?.filePath) {
+          return new vscode.Location(
+            vscode.Uri.file(sym.filePath),
+            new vscode.Position(sym.line, 0)
+          );
         }
         return null;
       },
     })
   );
-}
-
-function findMemberExpression(
-  line: string,
-  character: number,
-  lineNumber: number
-): { object: string; member: string; range: vscode.Range } | null {
-  const prefix = line.slice(0, character);
-  const match = /([\w]+)\.([\w]*)$/.exec(prefix);
-  if (!match || !match[2]) {
-    return null;
-  }
-  const object = match[1];
-  const member = match[2];
-  const start = character - member.length;
-  return {
-    object,
-    member,
-    range: new vscode.Range(lineNumber, start, lineNumber, character),
-  };
-}
-
-function findCatalogEntry(name: string): CatalogEntry | undefined {
-  const pools = [
-    ...KEYWORDS,
-    ...TYPES,
-    ...GLOBAL_RUNTIME_FUNCTIONS,
-    ...RUNTIME_TYPES,
-    ...COMPILER_BUILTINS,
-    ...TEST_BUILTINS,
-    ...EXPECT_CHAIN,
-    ...SYNC_FACTORIES,
-    ...ERROR_RUNTIME,
-    ...ERROR_METHODS,
-    ...PROCESS_SYSCALLS,
-    ...NET_SYSCALLS,
-    ...ROUTER_METHODS,
-    ...CONTEXT_METHODS,
-    ...SERVER_METHODS,
-    ...CONN_METHODS,
-    ...LOCK_METHODS,
-    ...RWLOCK_METHODS,
-    ...ATOMIC_INT_METHODS,
-    ...ATOMIC_BOOL_METHODS,
-    ...JSON_METHODS,
-  ];
-  return pools.find((e) => e.label === name);
 }

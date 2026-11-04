@@ -1,0 +1,33 @@
+// std/encoding/pemwrite: PEM encoding (RFC 7468, https://www.rfc-editor.org/rfc/rfc7468). The text is
+//   -----BEGIN <label>-----, the base64 of the DER in lines of at most 64 characters (section 2), -----END <label>-----,
+// each line ending in LF. The label is the caller's and must be an upper-case label such as CERTIFICATE or PRIVATE KEY
+// (section 3). The base64 is the standard alphabet with padding (RFC 4648 section 4).
+from "base64" import base64Encode, base64EncodedLen
+from "../mem/mem" import currentAllocator
+from "../str/string" import String
+from "../str/str" import fromParts
+
+/// Encodes `der[0..n)` as a PEM block with `label[0..llen)`.
+export fn pemEncode(label: *ui8, llen: usize, der: *ui8, n: usize) -> String {
+    local out: String = String()
+    out.append("-----BEGIN ")
+    out.append(fromParts(label, llen))
+    out.append("-----\n")
+    local b64cap: usize = base64EncodedLen(n)
+    local body: *ui8 = currentAllocator.alloc(b64cap + 1, 1) as *ui8
+    if body == nil { panic("pemEncode: out of memory") }
+    local b64len: usize = base64Encode(der, n, body)
+    local i: usize = 0
+    while i < b64len {
+        local take: usize = b64len - i
+        if take > 64 { take = 64 }
+        out.append(fromParts(&body[i], take))
+        out.append("\n")
+        i = i + take
+    }
+    currentAllocator.free(body as *void)
+    out.append("-----END ")
+    out.append(fromParts(label, llen))
+    out.append("-----\n")
+    return out
+}

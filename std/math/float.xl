@@ -1,0 +1,298 @@
+// std/math/float: elementary functions on f64 with no libm (the language runs without a C runtime). Each function is a
+// series or a reduction with a stated range; the accuracy is documented per function and was checked against bc -l
+// (arbitrary precision) on sample points. Bit-level access uses pointer reinterpretation of the value.
+//   Exponential: exp(x) = 2^k * exp(r), r = x - k ln2, |r| <= ln2/2; exp(r) by its Taylor series (20 terms).
+//   Logarithm: x = m 2^e with m in [sqrt(1/2), sqrt 2); log m = 2 atanh((m-1)/(m+1)), odd series (40 terms).
+//   Trigonometry: sin and cos reduce x modulo pi/2 with a three-part pi/2 (Cody-Waite), then Taylor on [-pi/4, pi/4].
+//   Inverse trigonometry: atan halves the argument until |x| < 0.2, then its Taylor series; the others use atan2.
+
+from "math" import sqrt
+
+define F_LN2 = 0.6931471805599453
+define F_LN10 = 2.302585092994046
+define F_PI = 3.141592653589793
+define F_PI_2 = 1.5707963267948966
+define F_PI_2_HI = 1.5707963267948966
+define F_PI_2_MID = 6.123233995736766e-17
+
+/// The bits of `x` as an unsigned 64-bit integer.
+export fn f64Bits(x: f64) -> ui64 {
+    local v: f64 = x
+    return *(&v as *ui64)
+}
+
+/// The f64 with the bit pattern `b`.
+export fn f64FromBits(b: ui64) -> f64 {
+    local v: ui64 = b
+    return *(&v as *f64)
+}
+
+export fn isNan(x: f64) -> bool {
+    return x != x
+}
+
+export fn isInf(x: f64) -> bool {
+    return x == 1.0 / 0.0 || x == -1.0 / 0.0
+}
+
+/// Largest integral value not above `x`. Values of magnitude 2^52 and above are already integral; NaN and infinities
+/// are returned unchanged.
+export fn floor(x: f64) -> f64 {
+    if isNan(x) || isInf(x) || x >= 4503599627370496.0 || x <= -4503599627370496.0 { return x }
+    local t: f64 = (x as i64) as f64
+    if t > x { t = t - 1.0 }
+    return t
+}
+
+/// Smallest integral value not below `x`.
+export fn ceil(x: f64) -> f64 {
+    if isNan(x) || isInf(x) || x >= 4503599627370496.0 || x <= -4503599627370496.0 { return x }
+    local t: f64 = (x as i64) as f64
+    if t < x { t = t + 1.0 }
+    return t
+}
+
+/// Integral part of `x` (toward zero).
+export fn trunc(x: f64) -> f64 {
+    if x < 0.0 { return ceil(x) }
+    return floor(x)
+}
+
+/// `x` rounded to the nearest integer, halfway cases away from zero.
+export fn round(x: f64) -> f64 {
+    if x < 0.0 { return 0.0 - round(0.0 - x) }
+    local t: f64 = trunc(x)
+    if x - t >= 0.5 { t = t + 1.0 }
+    return t
+}
+
+/// |x|.
+export fn fabs(x: f64) -> f64 {
+    if x < 0.0 { return 0.0 - x }
+    return x
+}
+
+/// Remainder of x / y with the sign of x, computed exactly by subtracting shifted copies of y (fmod, IEEE 754 section 5.3.1).
+/// NaN when y is zero or x is infinite.
+export fn fmod(x: f64, y: f64) -> f64 {
+    if y == 0.0 || isNan(x) || isNan(y) || isInf(x) { return 0.0 / 0.0 }
+    if isInf(y) { return x }
+    local ax: f64 = fabs(x)
+    local ay: f64 = fabs(y)
+    if ax < ay { return x }
+    local r: f64 = ax
+    while r >= ay {
+        local t: f64 = ay
+        while t * 2.0 <= r {
+            t = t * 2.0
+        }
+        r = r - t
+    }
+    if x < 0.0 { return 0.0 - r }
+    return r
+}
+
+/// x * 2^n (exact unless it overflows or underflows).
+export fn ldexp(x: f64, n: i32) -> f64 {
+    local r: f64 = x
+    local k: i32 = n
+    while k > 0 {
+        local step: i32 = k
+        if step > 1000 { step = 1000 }
+        r = r * f64FromBits(((1023 + step) as ui64) << 52)
+        k = k - step
+    }
+    while k < 0 {
+        local step: i32 = 0 - k
+        if step > 1000 { step = 1000 }
+        r = r * f64FromBits(((1023 - step) as ui64) << 52)
+        k = k + step
+    }
+    return r
+}
+
+/// Splits `x` into m * 2^e with |m| in [0.5, 1) (frexp). Zero, NaN and infinities give m = x and e = 0.
+export fn frexp(x: f64, e: *i32) -> f64 {
+    *e = 0
+    if x == 0.0 || isNan(x) || isInf(x) { return x }
+    local m: f64 = x
+    local k: i32 = 0
+    while fabs(m) >= 1.0 {
+        m = m * 0.5
+        k = k + 1
+    }
+    while fabs(m) < 0.5 {
+        m = m * 2.0
+        k = k - 1
+    }
+    *e = k
+    return m
+}
+
+/// e^x. Checked against bc -l to 1e-9 absolute on sample points in [-2, 4]; full double accuracy is not verified.
+export fn exp(x: f64) -> f64 {
+    if isNan(x) { return x }
+    if x > 709.0 { return 1.0 / 0.0 }
+    if x < -745.0 { return 0.0 }
+    local k: i32 = round(x / F_LN2) as i32
+    local r: f64 = x - (k as f64) * F_LN2
+    local term: f64 = 1.0
+    local sum: f64 = 1.0
+    local i: i32 = 1
+    while i <= 20 {
+        term = term * r / (i as f64)
+        sum = sum + term
+        i = i + 1
+    }
+    return ldexp(sum, k)
+}
+
+/// 2^x.
+export fn exp2(x: f64) -> f64 {
+    return exp(x * F_LN2)
+}
+
+/// Natural logarithm. NaN for negative input, -infinity for zero. Checked against bc -l to 1e-9 on sample points.
+export fn log(x: f64) -> f64 {
+    if isNan(x) || x < 0.0 { return 0.0 / 0.0 }
+    if x == 0.0 { return 0.0 - 1.0 / 0.0 }
+    if isInf(x) { return x }
+    local e: i32 = 0
+    local m: f64 = frexp(x, &e)
+    // bring m into [sqrt(1/2), sqrt(2)) so that |s| is at most 0.1716
+    if m < 0.7071067811865476 {
+        m = m * 2.0
+        e = e - 1
+    }
+    local s: f64 = (m - 1.0) / (m + 1.0)
+    local s2: f64 = s * s
+    local term: f64 = s
+    local sum: f64 = 0.0
+    local k: i32 = 0
+    while k < 40 {
+        sum = sum + term / (2.0 * (k as f64) + 1.0)
+        term = term * s2
+        k = k + 1
+    }
+    return 2.0 * sum + (e as f64) * F_LN2
+}
+
+/// Base-2 logarithm.
+export fn log2(x: f64) -> f64 {
+    return log(x) / F_LN2
+}
+
+/// Base-10 logarithm.
+export fn log10(x: f64) -> f64 {
+    return log(x) / F_LN10
+}
+
+/// x^y for x > 0 through exp(y log x); for an integer y the power is built by repeated squaring (exact to rounding).
+/// x = 0 gives 0 for y > 0; a negative x is only defined for an integer y.
+export fn pow(x: f64, y: f64) -> f64 {
+    if y == 0.0 { return 1.0 }
+    if isNan(x) || isNan(y) { return 0.0 / 0.0 }
+    local yi: i64 = y as i64
+    if (yi as f64) == y && fabs(y) < 1000000000.0 {
+        local base: f64 = x
+        local n: i64 = yi
+        if n < 0 {
+            base = 1.0 / x
+            n = 0 - n
+        }
+        local r: f64 = 1.0
+        while n > 0 {
+            if (n & 1) != 0 { r = r * base }
+            base = base * base
+            n = n >> 1
+        }
+        return r
+    }
+    if x < 0.0 { return 0.0 / 0.0 }
+    if x == 0.0 { return 0.0 }
+    return exp(y * log(x))
+}
+
+/// Square root of a non-negative value is `sqrt` in math.xl; cube root with the sign of x.
+export fn cbrt(x: f64) -> f64 {
+    if x == 0.0 || isNan(x) || isInf(x) { return x }
+    local a: f64 = fabs(x)
+    local r: f64 = exp(log(a) / 3.0)
+    // two Newton steps for r^3 = a
+    r = r - (r * r * r - a) / (3.0 * r * r)
+    r = r - (r * r * r - a) / (3.0 * r * r)
+    if x < 0.0 { return 0.0 - r }
+    return r
+}
+
+/// sqrt(x*x + y*y) without overflow for large inputs.
+export fn hypot(x: f64, y: f64) -> f64 {
+    local ax: f64 = fabs(x)
+    local ay: f64 = fabs(y)
+    if isInf(ax) || isInf(ay) { return 1.0 / 0.0 }
+    local big: f64 = ax
+    local small: f64 = ay
+    if small > big {
+        big = ay
+        small = ax
+    }
+    if big == 0.0 { return 0.0 }
+    local q: f64 = small / big
+    return big * sqrt(1.0 + q * q)
+}
+
+/// IEEE 754 remainder (section 5.3.1): x - n y with n the integer nearest to x / y (ties to even). NaN for a zero y or an
+/// infinite x; the result has magnitude at most |y| / 2.
+export fn remainder(x: f64, y: f64) -> f64 {
+    if y == 0.0 || isNan(x) || isNan(y) || isInf(x) { return 0.0 / 0.0 }
+    if isInf(y) { return x }
+    local q: f64 = x / y
+    local n: f64 = round(q)
+    // ties to even: when x / y is exactly halfway, take the even neighbour
+    if fabs(q - trunc(q)) == 0.5 {
+        if fmod(trunc(q), 2.0) != 0.0 { n = trunc(q) + (q > 0.0 ? 1.0 : -1.0) }
+        else { n = trunc(q) }
+    }
+    return x - n * y
+}
+
+/// Splits `x` into its integral part (returned) and fractional part (written to `frac`), both with the sign of x.
+export fn modf(x: f64, frac: *f64) -> f64 {
+    if isNan(x) || isInf(x) {
+        *frac = 0.0
+        return x
+    }
+    local ip: f64 = trunc(x)
+    *frac = x - ip
+    return ip
+}
+
+/// `mag` with the sign bit of `sign` (copysign, IEEE 754 section 5.5.2). A NaN `sign` is read by its bit pattern.
+export fn copysign(mag: f64, sign: f64) -> f64 {
+    local neg: bool = (f64Bits(sign) >> 63) != 0
+    local m: ui64 = f64Bits(mag) & 0x7fffffffffffffff
+    if neg { m = m | 0x8000000000000000 }
+    return f64FromBits(m)
+}
+
+/// The next representable double after `x` in the direction of `y` (nextafter, IEEE 754 section 5.5.3).
+export fn nextafter(x: f64, y: f64) -> f64 {
+    if isNan(x) || isNan(y) { return x + y }
+    if x == y { return y }
+    if x == 0.0 {
+        if y > 0.0 { return f64FromBits(1) }
+        return f64FromBits(0x8000000000000001)
+    }
+    local b: ui64 = f64Bits(x)
+    if (y > x) == (x > 0.0) {
+        b = b + 1
+    } else {
+        b = b - 1
+    }
+    return f64FromBits(b)
+}
+
+/// Natural logarithm under the name of the mathematical notation ln x (same as `log`).
+export fn ln(x: f64) -> f64 {
+    return log(x)
+}

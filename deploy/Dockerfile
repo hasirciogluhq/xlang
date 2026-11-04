@@ -19,7 +19,7 @@ COPY . .
 RUN mkdir -p /out \
     && xmake f -y -m release \
     && xmake -y \
-    && ./build/xlang build deploy/server.xlang -o /out/server
+    && ./outputs/xlang build deploy/server.xlang -o /out/server
 
 FROM debian:bookworm-slim AS runner
 

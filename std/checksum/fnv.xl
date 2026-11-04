@@ -1,0 +1,60 @@
+// std/checksum/fnv: Fowler-Noll-Vo hashes, FNV-1 and FNV-1a, 32 and 64 bits. Specification and constants:
+// Fowler, Noll, Vo and Eastlake, draft-eastlake-fnv (https://datatracker.ietf.org/doc/html/draft-eastlake-fnv-21).
+// FNV-1 multiplies then XORs each byte; FNV-1a XORs then multiplies (better bit dispersion for short keys).
+// Offset basis and primes:
+//   32-bit: basis 0x811c9dc5, prime 16777619 (2^24 + 2^8 + 0x93)
+//   64-bit: basis 0xcbf29ce484222325, prime 1099511628211 (2^40 + 2^8 + 0xb3)
+// Not collision resistant against an adversary; intended for hash tables and quick fingerprints.
+
+/// 64-bit constant from two 32-bit halves.
+fn word(hi: ui32, lo: ui32) -> ui64 {
+    return ((hi as ui64) << 32) | (lo as ui64)
+}
+
+export define FNV32_BASIS = 0x811c9dc5
+export define FNV32_PRIME = 16777619
+export define FNV64_PRIME = 1099511628211
+
+/// FNV-1a 32-bit of `data[0..n]`.
+export fn fnv1a32(data: *ui8, n: usize) -> ui32 {
+    local h: ui32 = FNV32_BASIS
+    local i: usize = 0
+    while i < n {
+        h = (h ^ (data[i] as ui32)) * FNV32_PRIME
+        i = i + 1
+    }
+    return h
+}
+
+/// FNV-1 32-bit of `data[0..n]`.
+export fn fnv1_32(data: *ui8, n: usize) -> ui32 {
+    local h: ui32 = FNV32_BASIS
+    local i: usize = 0
+    while i < n {
+        h = (h * FNV32_PRIME) ^ (data[i] as ui32)
+        i = i + 1
+    }
+    return h
+}
+
+/// FNV-1a 64-bit of `data[0..n]`.
+export fn fnv1a64(data: *ui8, n: usize) -> ui64 {
+    local h: ui64 = word(0xcbf29ce4, 0x84222325)
+    local i: usize = 0
+    while i < n {
+        h = (h ^ (data[i] as ui64)) * FNV64_PRIME
+        i = i + 1
+    }
+    return h
+}
+
+/// FNV-1 64-bit of `data[0..n]`.
+export fn fnv1_64(data: *ui8, n: usize) -> ui64 {
+    local h: ui64 = word(0xcbf29ce4, 0x84222325)
+    local i: usize = 0
+    while i < n {
+        h = (h * FNV64_PRIME) ^ (data[i] as ui64)
+        i = i + 1
+    }
+    return h
+}

@@ -1,0 +1,54 @@
+// archive-tool: compresses and decompresses files with the DEFLATE family (RFC 1951, RFC 1950, RFC 1952).
+//   archive-tool gzip   <in> <out.gz>     write a gzip member (fixed-Huffman DEFLATE, CRC-32 and ISIZE)
+//   archive-tool zlib   <in> <out.zz>     write a zlib stream (fixed-Huffman DEFLATE, Adler-32)
+//   archive-tool gunzip <in.gz> <out>     decode a gzip file (all DEFLATE block types, CRC-32 and length checked)
+//   archive-tool unzlib <in.zz> <out>     decode a zlib stream (Adler-32 checked)
+// The output buffer of the decoders is 64 MiB; a file that inflates to more is refused.
+from "std" import print, fromC, eq, fsReadAll, fsWrite, fromParts, gzipCompress, zlibCompress, gunzip, zlibDecompress
+from "std/mem" import currentAllocator
+
+define IN_CAP = 64 * 1024 * 1024
+define OUT_CAP = 64 * 1024 * 1024
+
+@entry fn main(argc: i32, argv: **ui8) -> i32 {
+    if argc != 4 {
+        print("usage: archive-tool gzip|zlib|gunzip|unzlib <in> <out>\n")
+        return 2
+    }
+    local mode: str = fromC(argv[1])
+    local input: *ui8 = currentAllocator.alloc(IN_CAP, 1) as *ui8
+    local n: isize = fsReadAll(argv[2], input, IN_CAP)
+    if n < 0 {
+        print("cannot read the input\n")
+        return 1
+    }
+    local output: *ui8 = currentAllocator.alloc(OUT_CAP, 1) as *ui8
+    local m: isize = -1
+    if eq(mode, "gzip") {
+        m = gzipCompress(input, n as usize, output, OUT_CAP)
+    } else if eq(mode, "zlib") {
+        m = zlibCompress(input, n as usize, output, OUT_CAP)
+    } else if eq(mode, "gunzip") {
+        m = gunzip(input, n as usize, output, OUT_CAP)
+    } else if eq(mode, "unzlib") {
+        m = zlibDecompress(input, n as usize, output, OUT_CAP)
+    } else {
+        print("unknown mode\n")
+        return 2
+    }
+    if m < 0 {
+        print("failed: the input is not valid for this mode, or the output is too large\n")
+        return 1
+    }
+    if !fsWrite(argv[3], fromParts(output, m as usize)) {
+        print("cannot write the output\n")
+        return 1
+    }
+    print(mode)
+    print(": ")
+    print(n)
+    print(" -> ")
+    print(m)
+    print(" bytes\n")
+    return 0
+}

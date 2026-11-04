@@ -1,0 +1,24 @@
+// std/http/middleware: ready-made middleware for `routerUse` / `groupUse`.
+from "../io/io" import eprint
+from "../str/str" import fromC
+from "context" import Context, ctxNext, ctxSetHeader, ctxAbortWithStatus
+from "util" import cstrEq
+
+/// Runs the rest of the chain, then logs `METHOD PATH` to stderr.
+export fn mwLogger(c: *Context) {
+    ctxNext(c)
+    eprint(fromC(c.method))
+    eprint(" ")
+    eprint(fromC(c.path))
+    eprint("\n")
+}
+
+/// Adds permissive CORS headers and answers preflight `OPTIONS` requests with 204.
+export fn mwCors(c: *Context) {
+    ctxSetHeader(c, "Access-Control-Allow-Origin", "*")
+    ctxSetHeader(c, "Access-Control-Allow-Methods", "GET, POST, PUT, PATCH, DELETE, HEAD, OPTIONS")
+    ctxSetHeader(c, "Access-Control-Allow-Headers", "Content-Type, Authorization")
+    if cstrEq(c.method, "OPTIONS") {
+        ctxAbortWithStatus(c, 204)
+    }
+}

@@ -1,0 +1,39 @@
+// std/math: written in xl (no libm).
+export fn abs(x: f64) -> f64 {
+    if x < 0.0 { return 0.0 - x }
+    return x
+}
+
+export fn min(a: f64, b: f64) -> f64 {
+    if a < b { return a }
+    return b
+}
+
+export fn max(a: f64, b: f64) -> f64 {
+    if a > b { return a }
+    return b
+}
+
+export fn minInt(a: i64, b: i64) -> i64 {
+    if a < b { return a }
+    return b
+}
+
+export fn maxInt(a: i64, b: i64) -> i64 {
+    if a > b { return a }
+    return b
+}
+
+/// Square root by Newton's method from a bit-level first guess.
+export fn sqrt(x: f64) -> f64 {
+    if x <= 0.0 { return 0.0 }
+    local bits: ui64 = *(&x as *ui64)
+    bits = (bits / 2) + 2303911188496170496     // halves the exponent: ~sqrt as a first guess
+    local g: f64 = *(&bits as *f64)
+    local i: i32 = 0
+    while i < 8 {
+        g = 0.5 * (g + x / g)
+        i = i + 1
+    }
+    return g
+}

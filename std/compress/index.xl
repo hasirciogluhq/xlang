@@ -1,0 +1,4 @@
+// std/compress: decompression of DEFLATE (RFC 1951), gzip (RFC 1952) and zlib (RFC 1950) streams. Compression is not yet
+// implemented; see std.plan.md section 23.
+export * from "inflate"
+export * from "deflate"

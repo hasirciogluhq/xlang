@@ -1,222 +1,196 @@
 # xlang
 
-**xlang** is an LLVM-based programming language targeting self-hosting. The compiler binary (`xlang`) produces native executables or object files from `.xlang` source. The runtime (print, scheduler, spawn) is largely **written in xlang**; C++ only provides the compiler, OS bridge (syscall), and LLVM codegen layer.
+Documentation: <https://hasirciogluhq.github.io/xlang/> (built from `docs/` by the `pages` workflow).
+
+**xlang** is an extremely low-level, LLVM-based programming language. Optional high-level APIs (`net`/`http`, and similar) are importable packages — not the language core. The `xlang` CLI compiles `.xlang` to native objects / executables / static libraries. C++ owns the compiler, host tooling, and LLVM codegen.
 
 ```
-┌─────────────────┐     ┌──────────────────┐     ┌─────────────┐
-│  .xlang source  │ ──► │  xlang (C++/LLVM) │ ──► │  executable │
-└─────────────────┘     └──────────────────┘     └─────────────┘
+┌─────────────────┐     ┌──────────────────────────┐     ┌────────────────┐
+│  .xlang source  │ ──► │  xlang (C++ / LLVM API)   │ ──► │  .o / exe / .a │
+└─────────────────┘     └──────────────────────────┘     └────────────────┘
                                │
-                               ▼
-                        runtime/*.xlang
-                        (print, scheduler, spawn)
+                CommonIrBuilder → Module → TargetMachine
                                │
-                               ▼
-                        syscall bridge
-                        (pthread, sysconf, …)
+          user declarations and linked objects
 ```
 
 ## Features
 
 | Area | Support |
 |------|---------|
-| Types | `int32`, `int64`, `float`, `double`, `bool`, `string`, struct, pointer, array |
-| Functions | Overload, variadic (`...`), `export` / `external` |
-| Modules | `import`, `import * as`, directory packages (`libs/http/`), `XLANG_PATH` |
+| Types | `int32`, `int64`, `float`, `double`, `bool`, `string`, struct, pointer |
+| Functions | Overload, variadic (`...`), `export` / `external` / `declare` |
+| Modules | `import`, `import * as`, directory modules (`http/`), git packages (`import "github.com/user/repo"`) |
 | Memory | `new` / `delete`, struct fields, heap |
 | Control flow | `if` / `else`, `while` |
 | Strings | Concat (`+`), `printf`-style formatted `print` |
-| Concurrency | `spawn` / `wait_all`, `sync` module (Lock, RWLock, AtomicInt) |
-| Linking | Link external `.o` files |
+| Concurrency | user-defined functions and linked objects |
+| Native kernel | `declare syscall <n> name(...)` or `@syscall(n, args...)` |
+| External symbols | plain `declare name(...)` → resolve from user-provided objects |
 
-Full language reference: **[docs/LANGUAGE.md](docs/LANGUAGE.md)**  
-VS Code extension (IntelliSense, hover, diagnostics): **[vscode/README.md](vscode/README.md)**
+## Packages
 
-## Requirements
+A package is a git repository of plain `.xl` source, named by its repository path and versioned by its tags. There is no registry and no required layout: no monorepo or polyrepo rule, no `cmd/` or `apps/`, no standard the compiler enforces. Build your repositories the way you like; the package system only saves you the typing.
+
+```sh
+xlang package install github.com/user/repo      # newest stable tag (v1.2.0 or 1.2.0); repo@v1.2.0-test installs a test/pre-release tag when named
+xlang run main.xl                               # from "github.com/user/repo" import ...
+```
+
+`xlang.toml` lists dependencies, `xlang.lock` pins their commits, `.xlang/cache` holds the sources. Builds never touch the network. The standard library is a package too: the compiler embeds a default and any project may use a local directory or a repository at another version. Packages may also ship prebuilt files per platform (`[[native]]`), which the compiler links. Details: **[docs/compiler/packages.md](docs/compiler/packages.md)**.
+
+Full language reference: **[docs/language/index.md](docs/language/index.md)** · Linking: **[docs/compiler/linking.md](docs/compiler/linking.md)**  
+VS Code extension: **[vscode/README.md](vscode/README.md)**
+
+## Install
+
+Prebuilt compilers exist for macOS and Linux on arm64 and amd64. The installer picks the archive for your OS and CPU, checks its SHA-256 against the release's `checksums.txt`, and installs the **latest release** by default. Releases are built by pushing a `v*` tag; until the first one exists the installer and `xlang self-update` report that no release is published.
+
+### macOS and Linux
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/hasirciogluhq/xlang/main/scripts/install.sh | bash
+```
+
+`xlang` is placed in `~/.local/bin` (change it with `XLANG_INSTALL_DIR=<dir>`; pin a release with `XLANG_VERSION=<x.y.z>`). If that directory is not on your `PATH`, the installer prints the line to add to your shell profile. Check it with `xlang --version`.
+
+With Homebrew: `brew install hasirciogluhq/tap/xlang`.
+
+### Windows
+
+There is no native Windows build of the compiler yet. Install [WSL](https://learn.microsoft.com/windows/wsl/install) (`wsl --install`), then run the Linux command above inside it. The compiler can still produce Windows executables from there (`--target x86_64-pc-windows-msvc`).
+
+### Update
+
+```bash
+xlang self-update           # also: xlang update, xlang upgrade
+xlang self-update --check   # only report whether a newer release exists
+```
+
+`self-update` downloads the latest release for your OS and CPU, verifies it, and replaces the running binary; when you already have the latest it says so. A Homebrew install is updated with `brew upgrade xlang` instead. Details: **[docs/compiler/install.md](docs/compiler/install.md)**.
+
+### Shell completion
+
+Tab completion for bash, zsh and fish is set up **automatically** by every install method: the install script and `xlang completions install` configure the shells you use (the login shell, or any shell whose startup file already exists), and the Homebrew formula installs the scripts into Homebrew's completion directories. It covers subcommands, flags and option values (`--emit`, `--color`, ...) for both `xlang` and `xl`, and `xlang self-update` refreshes the scripts. Open a new terminal afterwards.
+
+```bash
+xlang completions install            # (re)run the setup by hand, e.g. after a build from source
+xlang completions zsh                # print a script instead: bash | zsh | fish
+curl -fsSL https://raw.githubusercontent.com/hasirciogluhq/xlang/main/scripts/install.sh | bash -s -- --no-completions
+```
+
+The setup writes `~/.local/share/xlang/completions/xlang.{bash,zsh}` and adds one marked block (`# >>> xlang completion >>>`) to `~/.zshrc` and `~/.bash_profile` (macOS) or `~/.bashrc` (Linux); fish gets `~/.config/fish/completions/{xlang,xl}.fish`. Delete the block to opt out.
+
+## Requirements (building from source)
 
 - [xmake](https://xmake.io) ≥ 2.8
-- **C++17** compiler (Clang or GCC)
-- **Clang** (for LLVM IR → object → executable linking; `clang` must be on PATH)
+- **C++26** compiler (Clang or GCC); C++23 is the minimum, and the build picks C++26 automatically when available
+- **Clang** on `PATH` (used when linking the final image)
+- LLVM (via xmake package)
 
 ## Build
 
 ```bash
 xmake
 # optional: xmake f -m debug && xmake
-# install: xmake install -o /usr/local
 ```
 
-Compiler binary: `./build/xlang`
+Compiler binary: `./outputs/xlang`
 
-Runtime sources live in `runtime/` and are embedded into the binary at build time. During development, set `XLANG_RUNTIME_DIR` to use the runtime from the source tree.
+xmake builds the C/C++ compiler and host tooling only.
 
 ## Quick start
 
 ```bash
-# Hello world
-./build/xlang run examples/strings.xlang
-
-# Module import
-./build/xlang run examples/hello.xlang
-
-# Struct + heap
-./build/xlang run examples/types.xlang
-
-# HTTP server
-./build/xlang run examples/http_server.xlang
+./outputs/xlang run test/e2e/strings.xl
+./outputs/xlang run test/e2e/print.xl
+./outputs/xlang run test/e2e/sched.xl
 ```
-
-## VS Code extension
-
-IntelliSense, hover documentation, import-aware completions, diagnostics, and run/test commands:
-
-```bash
-cd vscode && bun install && bun run compile && bun run package
-code --install-extension xlang-1.0.0.vsix
-```
-
-See [vscode/README.md](vscode/README.md) for details.
 
 ## CLI
 
-### `xlang run`
-
-Compiles source, links with runtime, and runs the program.
-
-```bash
-xlang run program.xlang
-xlang run main.xlang lib.o          # link additional object files
-xlang run program.xlang --keep-artifacts
-xlang run program.xlang --runtime path/to/runtime.xlang
-```
+Defaults for `xlang build foo.xlang`: executable + OS baseline syslibs (e.g. `-pthread`).
 
 ### `xlang build`
 
-Produces an executable or object file.
-
 ```bash
-xlang build app.xlang                        # → app (executable)
-xlang build app.xlang lib.o -o myapp         # link with lib.o
-xlang build lib.xlang --build=lib -o lib.o   # object library
-xlang build app.xlang --emit-ir              # write LLVM IR
-xlang build app.xlang --skip-runtime         # no runtime (no print/spawn)
+xlang build app.xlang                              # executable (default)
+xlang build app.xlang lib.o -o myapp
+xlang build app.xlang --build=object -o app.o
+xlang build app.xlang --build=static -o libapp.a
+xlang build app.xlang --build=shared               # experimental
+xlang build app.xlang --target linux --arch x64
+xlang build app.xlang --emit-ir                    # dump Module IR
 xlang build app.xlang --keep-ir
-xlang build app.xlang -o output/path
 ```
 
-### `xlang parse`
+`--build=` values: `executable` (aliases: `binary`, `exe`) | `static` | `shared` | `object` (legacy alias: `lib` → object).
 
-Shows an AST summary (debug).
+### `xlang run`
 
 ```bash
-xlang parse examples/hello.xlang
+xlang run program.xlang
+xlang run main.xlang lib.o
+xlang run program.xlang --keep-artifacts
 ```
 
-### `xlang test`
-
-Runs Vitest-style tests from `*.test.xlang` files (one process per file).
+### `xlang parse` / `xlang test`
 
 ```bash
-xlang test                    # default: test/xlang/
-xlang test http               # pattern filter
-xlang test --parallel         # parallel Test* functions
+xlang check test/e2e/print.xl
+xlang test test/e2e/strings.xl
+xlang test --parallel
 ```
 
-Test API (`libs/test.xlang`): `expect(actual).toEqual(expected)`, `expectFn(fn).toThrow()`, `Test*` functions.
+## Declares (two paths)
 
 ```xlang
-import test from test
-import router from http/router
-
-fn TestPingRoute() {
-    local r = router.NewRouter()
-    r.Get("/ping", handle_ping)
-    local ctx = r.DispatchRequest("GET", "/ping")
-    expect(ctx.status).toEqual(200)
-    return 0
-}
-
-fn handle_ping(ctx: Context) {
-    ctx.String(200, "pong")
-    expect(1).toEqual(1)
-    return 0
-}
+declare external_fn(host: string, port: int32): int64   // external C ABI
+declare syscall 1 write(fd: int64, buf: int64, n: int64): int64 // CPU-native trap
+// or: @syscall(1, fd, buf, n)
 ```
 
----
+
+## Tree
 
 ```
 xlang/
-├── src/              # xlang compiler (lexer, parser, codegen, linker)
-├── include/xlang/    # C++ headers
-├── runtime/          # Embedded runtime package (print, scheduler, net, errors)
-├── libs/             # Importable libraries (json, http/, test, process)
-│   └── http/         # Router + TCP server (router.xlang)
-├── examples/         # Sample programs
-├── test/xlang/       # *.test.xlang suite
-├── vscode/           # VS Code extension (IntelliSense, hover, diagnostics)
-├── xmake.lua         # Build (xmake)
-├── xmake/            # Embed helpers (runtime + libs)
-└── docs/LANGUAGE.md
+├── src/
+│   ├── cli/                 # main
+│   ├── lang/                # ast, lexer, parser, types
+│   ├── codegen/             # CommonIrBuilder, TargetMachine, lowering
+│   ├── compiler/            # compile / link / module / test
+│   ├── host/                # layout and target resolution
+│   ├── platform/            # linux | macosx | windows
+│   ├── util/
+├── include/xlang/
+├── vscode/
+├── xmake.lua
+├── xmake/
+└── docs/
 ```
 
-## Architecture overview
+## Architecture
 
-### Compiler (`xlang`)
+1. **Lexer / parser** (`src/lang`) → AST  
+2. **Module loader** — `import` merge  
+3. **Codegen** (`src/codegen`) — AST → `CommonIrBuilder` → `llvm::Module` → `TargetMachine` → `.o`  
+4. **Link** — generated object + user-provided objects + OS baseline syslibs
 
-1. **Lexer / Parser** — source → AST  
-2. **Module loader** — merges files via `import`  
-3. **Codegen** — AST → LLVM IR  
-4. **Syscall lowering** — `declare syscall` → OS/pthread bridge (C++ IR)  
-5. **Clang** — IR → `.o` → executable (+ runtime `.o`)
+Kernel entry is only via `declare syscall` / `@syscall`; ordinary `declare` names are external symbols.
 
-### Runtime
-
-User programs are linked with the **runtime** by default (`runtime/` package):
-
-- **`print(...)`** — variadic formatted output
-- **`fetch(url)`** — HTTP/HTTPS GET (`runtime/net.xlang`)
-- **`spawn` / `wait_all` / `cpu` / `add_worker`** — scheduler (`runtime/scheduler.xlang`)
-- **`sync`** — `Lock`, `RWLock`, `AtomicInt` with method API (`l.Lock()`, `a.FetchAdd()`)
-
-Importable **libs** (embedded at compile time):
-
-- **`json`** — parse + typed field access
-- **`http`** — Gin-style router (`Context`, `r.Use`, `ctx.JSON`, `r.ListenAndServe`)
-- **`test`** — Vitest-style `expect`
-- **`process`** — fork, pipe, fd, env, `file_read`
-
-### Library + external linking
-
-```bash
-# lib.xlang → lib.o
-xlang build test/lib.xlang --build=lib -o test/lib.o
-
-# main.xlang declares external function, lib.o is linked
-xlang run test/main.xlang test/lib.o
-```
-
-`test/main.xlang`:
-
-```xlang
-declare external fn zamazokka(str)
-
-fn main() {
-    zamazokka(1978)
-}
-```
-
-## Environment variables
+## Environment
 
 | Variable | Description |
 |----------|-------------|
-| `XLANG_PATH` | Colon-separated module search directories |
-| `XLANG_RUNTIME_DIR` | Override runtime source tree (development) |
-| `XLANG_LIBS_DIR` | Override libs source tree (development) |
+| `XLANG_MODULE_PATH` | Module search directories (path list separator) |
+| `XLANG_LIB_PATH` | Static library (`.a`) search directories |
+| `XLANG_CLANG` | Clang binary override |
+| `XLANG_TARGET_OS` / `XLANG_TARGET_ARCH` / `XLANG_TARGET_TRIPLE` | Target overrides |
 
 ## Status
 
-xlang is an early-stage language (v0.1). APIs and syntax may change. See the **Limitations** section in [docs/LANGUAGE.md](docs/LANGUAGE.md) for known constraints.
+Early-stage (v0.1). APIs and syntax may change. See [docs/language/index.md](docs/language/index.md) limitations.
 
 ## License
 

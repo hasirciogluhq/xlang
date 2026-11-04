@@ -1,0 +1,143 @@
+// std/random/prng: non-cryptographic generators for simulation, games, sampling and test data.
+// Xoshiro256** is the generator of Blackman and Vigna (https://prng.di.unimi.it/xoshiro256starstar.c); its
+// state is seeded from SplitMix64 (https://prng.di.unimi.it/splitmix64.c), the seeding the authors recommend.
+// The state is 256 bits and linear over GF(2): a few outputs let an observer recover it. Never use these
+// generators for keys, nonces, tokens or anything an attacker must not predict; use std/random/csprng.
+// Integer ranges use Lemire's multiply-and-reject method ("Fast Random Integer Generation in an Interval",
+// ACM TOMACS 2019, https://arxiv.org/abs/1805.10941): unbiased, and one 64x64 multiply in the common case.
+from "entropy" import randomU64
+
+/// 64-bit constant from its two 32-bit halves: xlang literals above the i32 range are not used here.
+fn word(hi: ui32, lo: ui32) -> ui64 {
+    return ((hi as ui64) << 32) | (lo as ui64)
+}
+
+fn rotl64(x: ui64, k: ui64) -> ui64 {
+    return (x << k) | (x >> (64 - k))
+}
+
+/// SplitMix64 (Steele, Lea and Flood, OOPSLA 2014; constants from Vigna's reference). Advances `state` by the
+/// golden-ratio increment and returns one mixed 64-bit value.
+export fn splitMix64(state: *ui64) -> ui64 {
+    *state = *state + word(0x9e3779b9, 0x7f4a7c15)
+    local z: ui64 = *state
+    z = (z ^ (z >> 30)) * word(0xbf58476d, 0x1ce4e5b9)
+    z = (z ^ (z >> 27)) * word(0x94d049bb, 0x133111eb)
+    return z ^ (z >> 31)
+}
+
+/// High 64 bits of the full 128-bit product `a * b`. xlang has no 128-bit integer, so the product is built
+/// from four 32x32 partial products; no partial sum can overflow 64 bits.
+export fn mulHigh(a: ui64, b: ui64) -> ui64 {
+    local aL: ui64 = a & 0xffffffff
+    local aH: ui64 = a >> 32
+    local bL: ui64 = b & 0xffffffff
+    local bH: ui64 = b >> 32
+    local ll: ui64 = aL * bL
+    local lh: ui64 = aL * bH
+    local hl: ui64 = aH * bL
+    local hh: ui64 = aH * bH
+    local mid: ui64 = (ll >> 32) + (lh & 0xffffffff) + (hl & 0xffffffff)
+    return hh + (lh >> 32) + (hl >> 32) + (mid >> 32)
+}
+
+/// Xoshiro256** generator. The state is never all zero: seeding guarantees it.
+export class Xoshiro256 {
+    s: [ui64; 4]
+
+    /// Seeds from OS entropy. Panics when the OS source fails.
+    fn init(self) {
+        self.seedFrom(randomU64())
+    }
+
+    /// Seeds deterministically: the same seed gives the same sequence on every platform.
+    fn init(self, seed: ui64) {
+        self.seedFrom(seed)
+    }
+
+    fn seedFrom(self, seed: ui64) {
+        local sm: ui64 = seed
+        self.s[0] = splitMix64(&sm)
+        self.s[1] = splitMix64(&sm)
+        self.s[2] = splitMix64(&sm)
+        self.s[3] = splitMix64(&sm)
+    }
+
+    /// The next 64-bit output.
+    fn next(self) -> ui64 {
+        local result: ui64 = rotl64(self.s[1] * 5, 7) * 9
+        local t: ui64 = self.s[1] << 17
+        self.s[2] = self.s[2] ^ self.s[0]
+        self.s[3] = self.s[3] ^ self.s[1]
+        self.s[1] = self.s[1] ^ self.s[2]
+        self.s[0] = self.s[0] ^ self.s[3]
+        self.s[2] = self.s[2] ^ t
+        self.s[3] = rotl64(self.s[3], 45)
+        return result
+    }
+
+    /// Uniform integer in [0, bound) with no modulo bias. Panics when `bound` is 0.
+    fn below(self, bound: ui64) -> ui64 {
+        if bound == 0 {
+            panic("random: below(0)")
+        }
+        local x: ui64 = self.next()
+        local m: ui64 = mulHigh(x, bound)
+        local lo: ui64 = x * bound
+        if lo < bound {
+            // Rejection threshold: (2^64 - bound) mod bound. Products below it are the biased ones.
+            local t: ui64 = (0 - bound) % bound
+            while lo < t {
+                x = self.next()
+                m = mulHigh(x, bound)
+                lo = x * bound
+            }
+        }
+        return m
+    }
+
+    /// Uniform integer in [lo, hi], both ends included. Panics when lo > hi. Correct for the whole i64 range.
+    fn between(self, lo: i64, hi: i64) -> i64 {
+        if lo > hi {
+            panic("random: between with lo > hi")
+        }
+        // hi - lo in wrapping unsigned arithmetic is exact; `count` wraps to 0 only for the full 2^64 range.
+        local count: ui64 = ((hi as ui64) - (lo as ui64)) + 1
+        if count == 0 {
+            return self.next() as i64
+        }
+        return ((lo as ui64) + self.below(count)) as i64
+    }
+
+    /// Uniform double in [0, 1): 53 random bits scaled by 2^-53, so every value is exact and below 1.
+    fn float64(self) -> f64 {
+        return (self.next() >> 11) as f64 / 9007199254740992.0
+    }
+
+    /// Writes `n` random bytes to `out[0..n]`, eight bytes per output, least significant byte first.
+    fn fill(self, out: *ui8, n: usize) {
+        local i: usize = 0
+        while i < n {
+            local w: ui64 = self.next()
+            local k: usize = 0
+            while k < 8 && i < n {
+                out[i] = ((w >> ((k * 8) as ui64)) & 255) as ui8
+                i = i + 1
+                k = k + 1
+            }
+        }
+    }
+}
+
+/// Unbiased in-place Fisher-Yates shuffle of `s[0..n]` (Durstenfeld's form). Each element is moved with
+/// raw reads and writes, so `T` must not need drop; the element type is checked by the caller's use.
+export fn shuffle<T>(r: *Xoshiro256, s: *T, n: usize) {
+    local i: usize = n
+    while i > 1 {
+        local j: usize = r.below(i as ui64) as usize
+        i = i - 1
+        local t: T = __builtin_read(&s[i])
+        __builtin_write(&s[i], __builtin_read(&s[j]))
+        __builtin_write(&s[j], t)
+    }
+}

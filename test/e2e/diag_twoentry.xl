@@ -1,0 +1,3 @@
+// Two @entry functions: the second one is rejected with E0753.
+@entry fn first() -> i32 { return 0 }
+@entry fn second() -> i32 { return 1 }

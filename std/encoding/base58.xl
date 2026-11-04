@@ -1,0 +1,105 @@
+// std/encoding/base58: Base58 with the Bitcoin alphabet (no RFC; the alphabet is the one of the Bitcoin base58check
+// definition, https://en.bitcoin.it/wiki/Base58Check_encoding). Leading zero bytes become leading '1' characters; the rest
+// is the big-endian integer written in base 58. The byte-string conversion is long division by 58 (Knuth algorithm style).
+define B58_ALPHABET = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz"
+
+/// Writes the Base58 text of `data[0..n)` to `out` (at most n * 138 / 100 + 1 bytes) and returns its length.
+export fn base58Encode(data: *ui8, n: usize, out: *ui8) -> usize {
+    local zeros: usize = 0
+    while zeros < n && data[zeros] == 0 {
+        zeros = zeros + 1
+    }
+    local work: [ui8; 512]
+    local i: usize = 0
+    while i < n {
+        work[i] = data[i]
+        i = i + 1
+    }
+    local digits: [ui8; 800]
+    local nd: usize = 0
+    local start: usize = zeros
+    while start < n {
+        // divide the big-endian number work[start..n) by 58
+        local rem: ui32 = 0
+        i = start
+        while i < n {
+            local cur: ui32 = (rem << 8) | (work[i] as ui32)
+            work[i] = (cur / 58) as ui8
+            rem = cur % 58
+            i = i + 1
+        }
+        digits[nd] = rem as ui8
+        nd = nd + 1
+        while start < n && work[start] == 0 {
+            start = start + 1
+        }
+    }
+    local o: usize = 0
+    while o < zeros {
+        out[o] = 49
+        o = o + 1
+    }
+    local k: usize = nd
+    while k > 0 {
+        k = k - 1
+        out[o] = B58_ALPHABET[digits[k] as usize]
+        o = o + 1
+    }
+    return o
+}
+
+/// The value of a Base58 character, or -1.
+fn b58Value(c: ui8) -> i32 {
+    local i: usize = 0
+    while i < 58 {
+        if B58_ALPHABET[i] == c { return i as i32 }
+        i = i + 1
+    }
+    return -1
+}
+
+/// Decodes Base58 text of `n` characters into `out` (at most n bytes); returns the byte count, or -1 for a character outside
+/// the alphabet or an output that does not fit in `cap`.
+export fn base58Decode(text: *ui8, n: usize, out: *ui8, cap: usize) -> isize {
+    local zeros: usize = 0
+    while zeros < n && text[zeros] == 49 {
+        zeros = zeros + 1
+    }
+    local bytes: [ui8; 800]
+    local nb: usize = 0
+    local i: usize = zeros
+    while i < n {
+        local v: i32 = b58Value(text[i])
+        if v < 0 { return -1 }
+        // bytes = bytes * 58 + v, big-endian stored least significant first
+        local carry: ui32 = v as ui32
+        local k: usize = 0
+        while k < nb {
+            local t: ui32 = (bytes[k] as ui32) * 58 + carry
+            bytes[k] = (t & 0xff) as ui8
+            carry = t >> 8
+            k = k + 1
+        }
+        while carry > 0 {
+            if nb >= 800 { return -1 }
+            bytes[nb] = (carry & 0xff) as ui8
+            nb = nb + 1
+            carry = carry >> 8
+        }
+        i = i + 1
+    }
+    local total: usize = zeros + nb
+    if total > cap { return -1 }
+    local o: usize = 0
+    while o < zeros {
+        out[o] = 0
+        o = o + 1
+    }
+    local k: usize = nb
+    while k > 0 {
+        k = k - 1
+        out[o] = bytes[k]
+        o = o + 1
+    }
+    return total as isize
+}
