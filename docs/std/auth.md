@@ -22,7 +22,7 @@ The tokens were produced by openssl (RSA-2048 and P-256 keys, and an Ed25519 key
 
 ## AWS Signature Version 4
 
-`std/auth/sigv4` does the keyed steps of the AWS signing process: `sigv4SigningKey` (the four HMAC steps for date, region and service), `sigv4Signature` (the hex signature of the string to sign), and `sigv4StringToSign` (the three-line string with the algorithm name, the request time and the scope). The caller builds the canonical request, hashes it with SHA-256 and passes the hex digest in.
+`std/auth/sigv4` does the keyed steps of the AWS signing process: `sigv4SigningKey(secret, dateStamp, region, service, out)` (the four HMAC steps for date, region and service, written as 32 bytes to `out`), `sigv4Signature(secret, dateStamp, region, service, stringToSign)` (the hex signature of the string to sign), and `sigv4StringToSign(amzDate, scope, canonicalRequestHashHex)` (the string with the algorithm name, the request time, the scope and the hex digest of the canonical request). The caller builds the canonical request, hashes it with SHA-256 and passes the hex digest in.
 
 The AWS documentation's IAM ListUsers example gives the signature `5d672d79c15b13162d9279b0855cfba6789a8edb4c82c400e06b5924a6f2b5d7`, and the code reproduces it.
 
