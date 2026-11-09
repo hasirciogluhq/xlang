@@ -3,12 +3,12 @@
 
 #include <algorithm>
 #include <chrono>
+#include <csignal>
 #include <cstdio>
 #include <cstdlib>
 #include <filesystem>
 #include <iostream>
 #include <regex>
-#include <csignal>
 #include <set>
 #include <sys/wait.h>
 #include <unistd.h>
@@ -26,14 +26,16 @@ namespace {
 constexpr const char* kTestSuffix = ".test.xl";
 
 bool endsWith(const std::string& s, const std::string& suffix) {
-    return s.size() >= suffix.size() && s.compare(s.size() - suffix.size(), suffix.size(), suffix) == 0;
+    return s.size() >= suffix.size() &&
+           s.compare(s.size() - suffix.size(), suffix.size(), suffix) == 0;
 }
 
 bool hasGlob(const std::string& s) {
     return s.find_first_of("*?[") != std::string::npos;
 }
 
-/// `**` crosses directories (`a/**/b` also matches `a/b`), `*` and `?` stay inside one path segment,
+/// `**` crosses directories (`a/**/b` also matches `a/b`), `*` and `?` stay inside one path
+/// segment,
 /// `[abc]` is a character class.
 std::regex globToRegex(const std::string& glob) {
     std::string re = "^";
@@ -130,9 +132,8 @@ bool matchesWithAncestors(const std::string& path, const std::regex& rx) {
 }
 
 /// Files selected by one pattern; `error` is set when the pattern can never match anything.
-std::vector<std::string> select(const std::string& pattern,
-                                const std::vector<std::string>& all_files,
-                                std::string& error) {
+std::vector<std::string>
+select(const std::string& pattern, const std::vector<std::string>& all_files, std::string& error) {
     std::vector<std::string> out;
     if (pattern.starts_with("re:")) {
         std::regex rx;
@@ -187,8 +188,8 @@ std::vector<std::string> select(const std::string& pattern,
     return out;
 }
 
-/// Runs `argv` and waits; the child inherits stdout/stderr. Returns the exit status (128+signal when
-/// killed by a signal, -1 when the process could not be started).
+/// Runs `argv` and waits; the child inherits stdout/stderr. Returns the exit status (128+signal
+/// when killed by a signal, -1 when the process could not be started).
 volatile sig_atomic_t g_forward_pid = 0;
 
 void forwardSignal(int sig) {
@@ -197,8 +198,8 @@ void forwardSignal(int sig) {
     }
 }
 
-/// With `forward` set, SIGINT/SIGTERM/SIGHUP received by this process are passed on to the child, so
-/// killing `xlang run` does not leave the program running (and holding e.g. its listening port).
+/// With `forward` set, SIGINT/SIGTERM/SIGHUP received by this process are passed on to the child,
+/// so killing `xlang run` does not leave the program running (and holding e.g. its listening port).
 int runProcess(const std::vector<std::string>& args, bool forward = false) {
     std::vector<char*> argv;
     for (const std::string& a : args) {
@@ -239,7 +240,7 @@ int runProcess(const std::vector<std::string>& args, bool forward = false) {
     return -1;
 }
 
-}  // namespace
+} // namespace
 
 std::string selfExecutable(const char* argv0) {
 #ifdef __APPLE__
@@ -261,7 +262,9 @@ std::string selfExecutable(const char* argv0) {
     return fs::absolute(argv0, ec2).string();
 }
 
-int runProgram(const std::string& self, const std::string& file, const std::vector<std::string>& build_args) {
+int runProgram(const std::string& self,
+               const std::string& file,
+               const std::vector<std::string>& build_args) {
     std::error_code ec;
     const fs::path exe = fs::temp_directory_path() / ("xlang-run-" + std::to_string(::getpid()));
     std::vector<std::string> build = {self, "build", file, "-o", exe.string()};
@@ -292,7 +295,8 @@ int runTests(const TestRunOptions& options, const std::string& self) {
             return 1;
         }
         if (found.empty()) {
-            std::cerr << c.red() << "error: " << c.reset() << "no test files match `" << pattern << "`\n";
+            std::cerr << c.red() << "error: " << c.reset() << "no test files match `" << pattern
+                      << "`\n";
             return 1;
         }
         chosen.insert(found.begin(), found.end());
@@ -343,13 +347,14 @@ int runTests(const TestRunOptions& options, const std::string& self) {
         if (built) {
             code = runProcess({exe.string()});
         }
-        const auto ms =
-            std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - t0).count();
+        const auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+                            std::chrono::steady_clock::now() - t0)
+                            .count();
 
         if (code == 0) {
             ++passed;
-            std::cout << c.inverseGreen() << " PASS " << c.reset() << ' ' << file << c.dim() << " (" << ms
-                      << " ms)" << c.reset() << "\n\n";
+            std::cout << c.inverseGreen() << " PASS " << c.reset() << ' ' << file << c.dim() << " ("
+                      << ms << " ms)" << c.reset() << "\n\n";
         } else {
             failed.push_back(file);
             std::cout << c.inverseRed() << " FAIL " << c.reset() << ' ' << file << c.dim();
@@ -366,14 +371,15 @@ int runTests(const TestRunOptions& options, const std::string& self) {
     }
     fs::remove_all(work, ec);
 
-    const auto total_ms =
-        std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - started).count();
+    const auto total_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+                              std::chrono::steady_clock::now() - started)
+                              .count();
     std::cout << c.bold() << "Test files  " << c.reset();
     if (!failed.empty()) {
         std::cout << c.red() << c.bold() << failed.size() << " failed" << c.reset() << ", ";
     }
-    std::cout << c.green() << c.bold() << passed << " passed" << c.reset() << c.dim() << " (" << chosen.size()
-              << ")" << c.reset() << '\n';
+    std::cout << c.green() << c.bold() << passed << " passed" << c.reset() << c.dim() << " ("
+              << chosen.size() << ")" << c.reset() << '\n';
     std::cout << c.bold() << "Duration    " << c.reset() << total_ms << " ms\n";
     for (const std::string& f : failed) {
         std::cout << c.red() << "  \xe2\x9c\x97 " << c.reset() << f << '\n';
@@ -381,4 +387,4 @@ int runTests(const TestRunOptions& options, const std::string& self) {
     return failed.empty() ? 0 : 1;
 }
 
-}  // namespace xlang::cli
+} // namespace xlang::cli

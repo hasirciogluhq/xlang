@@ -1,14 +1,18 @@
 #!/bin/bash
-# Package system end to end (sourced by run.sh; uses $xlang, $work, pass, fail). Needs `git`.
-# Every repository is a local git repository: no network. A dependency's `source` points at it.
+# Package system end to end (sourced by run.sh; uses $xlang, $work, the lib.sh sink and wantName). Needs
+# `git`. Every repository is a local git repository: no network. A dependency's `source` points at it.
+# The cases are sequential: they share one project directory, so each step sees the state the previous one
+# left. XLANG_E2E_FILTER narrows them like the rest of the suite.
 if ! command -v git >/dev/null 2>&1; then
-  echo "skip [packages] git not found"; skip=$((skip+1))
+  wantName packages && skipLine packages "git not found"
+elif ! wantName packages; then
+  : # filtered out
 else
 pk="$work/pk"
 rm -rf "$pk"; mkdir -p "$pk"
 g() { git -c user.email=t@t -c user.name=t -c commit.gpgsign=false -c tag.gpgsign=false "$@"; }
-pkg_ok()   { echo "ok   [packages/$1]"; pass=$((pass+1)); }
-pkg_fail() { echo "FAIL [packages/$1] $2"; [ -n "${3:-}" ] && echo "$3" | head -8; fail=$((fail+1)); }
+pkg_ok()   { okLine "packages/$1"; }
+pkg_fail() { failLine "packages/$1" "$2" "${3:-}"; }
 
 # --- a pure-xl library with release tags
 lib="$pk/lib"; mkdir -p "$lib/sub"; (cd "$lib" && g init -q -b main)

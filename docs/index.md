@@ -18,6 +18,7 @@ Use the sidebar to move between pages.
 
 - Language reference: [Language](language/)
 - Build and install: [Install](compiler/install.html)
+- Running the test suites: [Testing](compiler/testing.html)
 - Examples: [Examples](examples.html), short routing and web programs and complete programs
 - Standard library overview: [Standard library](std/)
 - Cloud storage client: [Cloud storage (S3)](std/cloud.html)

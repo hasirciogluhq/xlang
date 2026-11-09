@@ -1,14 +1,25 @@
 #!/bin/bash
 # End-to-end tests: build each program with the compiler and run it.
 #   test/e2e/run.sh [path/to/xlang]
+#
 # Runs natively; when Docker is available, also on Linux aarch64 and x86_64 (cross-built); when
 # `cxrun` (CrossOver/Wine: `cxrun <exe>` runs a Windows executable and returns its exit status) is on
-# PATH, also as Windows x86_64 executables. XLANG_E2E_NET=1 adds the tests that need the Internet.
-# XLANG_E2E_S3=1 adds s3.xl, which needs an S3-compatible server on 127.0.0.1:18333 with the access key
-# testkey / testsecret, for example SeaweedFS:
+# PATH, also as Windows x86_64 executables.
+#
+# Environment:
+#   XLANG_E2E_FILTER=<regex>   run only the tests whose name matches (a POSIX extended regular expression,
+#                              for example `math_` or `^(big|try)$`). Matches the test name, not the leg.
+#   XLANG_E2E_JOBS=<n>         concurrent legs (default: the CPU count). Each leg builds in its own process.
+#   XLANG_E2E_NET=1            adds the tests that need the Internet.
+#   XLANG_E2E_S3=1             adds s3.xl, which needs an S3-compatible server on 127.0.0.1:18333 with the
+#                              access key testkey / testsecret, for example SeaweedFS:
 #   docker run -d -p 18333:8333 -v "$PWD/test/e2e/seaweedfs.json:/etc/seaweedfs/s3.json" chrislusf/seaweedfs server -s3 -s3.config=/etc/seaweedfs/s3.json
+#
 # A Docker registry failure is a SKIP, not a FAIL: alpine:3 is pulled once up front (3 attempts), and a
 # container that never starts (exit 125) is retried once. Only a wrong result or a build error fails.
+#
+# The independent legs (one per test and target) run in a pool of XLANG_E2E_JOBS workers: see lib.sh. The
+# server/client pairs keep their own sequential loop, because each one needs a free port and a running peer.
 set -u
 here=$(cd "$(dirname "$0")" && pwd)
 root=$(cd "$here/../.." && pwd)
@@ -16,6 +27,9 @@ xlang=${1:-$root/outputs/xlang}
 work=$(mktemp -d)
 trap 'rm -rf "$work"; [ -n "${spid:-}" ] && kill "$spid" 2>/dev/null' EXIT
 pass=0; fail=0; skip=0
+. "$here/lib.sh"
+poolInit "$work/count"
+echo "e2e: $XLANG_E2E_JOBS concurrent legs${XLANG_E2E_FILTER:+, filter '$XLANG_E2E_FILTER'}"
 
 # name | expected exit code | expected stdout (a `grep -F` substring) | uses OS threads | runs on Windows
 tests=(
@@ -81,12 +95,12 @@ run_one() {   # target-label  binary  expected-exit  expected-text  runner...
   local out code
   out=$("$@" "$bin" 2>&1); code=$?
   if [ "$code" != "$want" ]; then
-    echo "FAIL [$label] exit $code (want $want)"; echo "$out" | head -5; fail=$((fail+1)); return
+    failLine "$label" "exit $code (want $want)" "$out"; return
   fi
   if [ -n "$text" ] && ! grep -qF "$text" <<<"$out"; then
-    echo "FAIL [$label] output lacks '$text'"; echo "$out" | head -5; fail=$((fail+1)); return
+    failLine "$label" "output lacks '$text'" "$out"; return
   fi
-  echo "ok   [$label]"; pass=$((pass+1))
+  okLine "$label"
 }
 
 # Pulls alpine:3 for both platforms before any test: up to 3 attempts each, waiting 5 and then 15
@@ -115,10 +129,12 @@ if command -v docker >/dev/null 2>&1 && docker info >/dev/null 2>&1; then
   fi
 fi
 
-docker_run() {  # platform binary
-  local plat=$1 bin=$2 cid
-  cid=$(docker run -d --platform "linux/$plat" -v "$(dirname "$bin")":/w alpine:3 "/w/$(basename "$bin")" 2>"$work/docker.err") || return 125
-  for _ in $(seq 1 60); do
+## Runs a Linux binary in a container; prints its output, returns its exit code (125 when the container
+## never started, 124 on timeout). Each call uses its own container id, so parallel legs do not collide.
+docker_run() {  # platform binary error-file
+  local plat=$1 bin=$2 err=$3 cid
+  cid=$(docker run -d --platform "linux/$plat" -v "$(dirname "$bin")":/w alpine:3 "/w/$(basename "$bin")" 2>"$err") || return 125
+  for _ in $(seq 1 120); do
     [ "$(docker inspect -f '{{.State.Running}}' "$cid")" = "false" ] && break
     sleep 0.5
   done
@@ -131,60 +147,74 @@ docker_run() {  # platform binary
   return "$code"
 }
 
+## One Linux leg of a test: cross-build, then run it in the platform's container.
+linuxLeg() {  # name src plat triple want text
+  local name=$1 src=$2 plat=$3 triple=$4 want=$5 text=$6
+  local out code err bin="$work/$name.$plat"
+  if ! "$xlang" build "$src" --target "$triple" -o "$bin" 2>"$work/$name.$plat.err"; then
+    failLine "linux-$plat/$name" "build" "$(cat "$work/$name.$plat.err")"; return
+  fi
+  err=$work/docker.$name.$plat.err
+  out=$(docker_run "$plat" "$bin" "$err"); code=$?
+  # 125: the container never started (registry or daemon error); retry once, then SKIP
+  [ "$code" = 125 ] && { out=$(docker_run "$plat" "$bin" "$err"); code=$?; }
+  if [ "$code" = 125 ]; then
+    skipLine "linux-$plat/$name" "docker: $(head -1 "$err" 2>/dev/null)"; return
+  fi
+  if [ "$code" != "$want" ] || { [ -n "$text" ] && ! grep -qF "$text" <<<"$out"; }; then
+    failLine "linux-$plat/$name" "exit $code (want $want)" "$out"; return
+  fi
+  okLine "linux-$plat/$name"
+}
+
+## One Windows leg of a test: cross-build, then run it under CrossOver/Wine.
+windowsLeg() {  # name src want text
+  local name=$1 src=$2 want=$3 text=$4 out code bin=$work/$name.exe
+  if ! "$xlang" build "$src" --target "$win_triple" -o "$bin" 2>"$work/$name.exe.err"; then
+    failLine "windows/$name" "build" "$(cat "$work/$name.exe.err")"; return
+  fi
+  out=$(cxrun "$bin" 2>&1 | grep -v dosdevices; exit "${PIPESTATUS[0]}"); code=$?
+  if [ "$code" != "$want" ] || { [ -n "$text" ] && ! grep -qF "$text" <<<"$out"; }; then
+    failLine "windows/$name" "exit $code (want $want)" "$out"; return
+  fi
+  okLine "windows/$name"
+}
+
+## Every leg of one test: native, then the two Linux containers, then Windows when available.
+testLegs() {  # name want text win
+  local name=$1 want=$2 text=$3 win=$4 src=$here/$1.xl
+  if "$xlang" build "$src" -o "$work/$name" 2>"$work/$name.err"; then
+    run_one "$host_os/$name" "$work/$name" "$want" "$text" env
+  else
+    failLine "$host_os/$name" "build" "$(cat "$work/$name.err")"
+  fi
+  if [ "$docker_ok" = 1 ]; then
+    poolRun linuxLeg "$name" "$src" arm64 aarch64-unknown-linux-gnu "$want" "$text"
+    poolRun linuxLeg "$name" "$src" amd64 x86_64-unknown-linux-gnu "$want" "$text"
+  fi
+  if [ "$win" = 1 ] && command -v cxrun >/dev/null 2>&1; then
+    poolRun windowsLeg "$name" "$src" "$want" "$text"
+  fi
+}
+
 # S3 runs natively only: the server listens on the host's loopback, which a Docker container does not reach.
-if [ "${XLANG_E2E_S3:-}" = 1 ]; then
+if [ "${XLANG_E2E_S3:-}" = 1 ] && wantName s3; then
   if "$xlang" build "$here/s3.xl" -o "$work/s3" 2>"$work/s3.err"; then
     run_one "$host_os/s3" "$work/s3" 0 "s3 ok" env
   else
-    echo "FAIL [$host_os/s3] build"; head -8 "$work/s3.err"; fail=$((fail+1))
+    failLine "$host_os/s3" "build" "$(cat "$work/s3.err")"
   fi
 fi
 
 for t in "${tests[@]}"; do
   IFS='|' read -r name want text threads win <<<"$t"
-  src=$here/$name.xl
-  # native (threads come from libSystem pthreads on macOS and from clone on Linux)
-  if "$xlang" build "$src" -o "$work/$name" 2>"$work/$name.err"; then
-    run_one "$host_os/$name" "$work/$name" "$want" "$text" env
-  else
-    echo "FAIL [$host_os/$name] build"; head -8 "$work/$name.err"; fail=$((fail+1))
-  fi
-  # Linux through Docker
-  if [ "$docker_ok" = 1 ]; then
-    for spec in "arm64:aarch64-unknown-linux-gnu" "amd64:x86_64-unknown-linux-gnu"; do
-      plat=${spec%%:*}; triple=${spec#*:}
-      if "$xlang" build "$src" --target "$triple" -o "$work/$name.$plat" 2>"$work/$name.$plat.err"; then
-        out=$(docker_run "$plat" "$work/$name.$plat"); code=$?
-        # 125: the container never started (registry or daemon error); retry once, then SKIP
-        [ "$code" = 125 ] && { out=$(docker_run "$plat" "$work/$name.$plat"); code=$?; }
-        if [ "$code" = 125 ]; then
-          echo "skip [linux-$plat/$name] docker: $(head -1 "$work/docker.err")"; skip=$((skip+1))
-        elif [ "$code" != "$want" ] || { [ -n "$text" ] && ! grep -qF "$text" <<<"$out"; }; then
-          echo "FAIL [linux-$plat/$name] exit $code"; echo "$out" | head -5; fail=$((fail+1))
-        else
-          echo "ok   [linux-$plat/$name]"; pass=$((pass+1))
-        fi
-      else
-        echo "FAIL [linux-$plat/$name] build"; head -8 "$work/$name.$plat.err"; fail=$((fail+1))
-      fi
-    done
-  fi
-  # Windows through CrossOver/Wine
-  if [ "$win" = 1 ] && command -v cxrun >/dev/null 2>&1; then
-    if "$xlang" build "$src" --target "$win_triple" -o "$work/$name.exe" 2>"$work/$name.exe.err"; then
-      out=$(cxrun "$work/$name.exe" 2>&1 | grep -v dosdevices; exit "${PIPESTATUS[0]}"); code=$?
-      if [ "$code" != "$want" ] || { [ -n "$text" ] && ! grep -qF "$text" <<<"$out"; }; then
-        echo "FAIL [windows/$name] exit $code (want $want)"; echo "$out" | head -5; fail=$((fail+1))
-      else
-        echo "ok   [windows/$name]"; pass=$((pass+1))
-      fi
-    else
-      echo "FAIL [windows/$name] build"; head -8 "$work/$name.exe.err"; fail=$((fail+1))
-    fi
-  fi
+  wantName "$name" || continue
+  testLegs "$name" "$want" "$text" "$win"
 done
+poolWait
 
-# Server/client pairs (TLS 1.3 server, HTTPS server): see `pairs` above.
+# Server/client pairs (TLS 1.3 server, HTTPS server): see `pairs` above. These stay sequential: each needs
+# its own port and a live peer, so overlapping them would only make a failure harder to attribute.
 run_pair() {   # label server-bin client-bin text mode(native|docker:PLAT|windows) port
   local label=$1 srv=$2 cli=$3 text=$4 mode=$5 port=$6 out code
   case "$mode" in
@@ -202,7 +232,7 @@ run_pair() {   # label server-bin client-bin text mode(native|docker:PLAT|window
         [ "$code" != 125 ] && break
       done
       if [ "$code" = 125 ]; then
-        echo "skip [$label] docker: $(head -1 <<<"$out")"; skip=$((skip+1)); return
+        skipLine "$label" "docker: $(head -1 <<<"$out")"; return
       fi
       ;;
     windows)
@@ -217,14 +247,15 @@ run_pair() {   # label server-bin client-bin text mode(native|docker:PLAT|window
     kill "$spid" 2>/dev/null; wait "$spid" 2>/dev/null; spid=
   fi
   if [ "$code" != 0 ] || ! grep -qF "$text" <<<"$out"; then
-    echo "FAIL [$label] exit $code"; echo "$out" | head -5; fail=$((fail+1))
+    failLine "$label" "exit $code" "$out"
   else
-    echo "ok   [$label]"; pass=$((pass+1))
+    okLine "$label"
   fi
 }
 
 for p in "${pairs[@]}"; do
   IFS='|' read -r srvname cliname text <<<"$p"
+  wantName "$srvname" || wantName "$cliname" || continue
   for cert in rsa ec; do
     extra=(); [ "$cert" = ec ] && extra=(-D tlsEc=1)
     port=$((port + 1))
@@ -247,7 +278,7 @@ for p in "${pairs[@]}"; do
          "$xlang" build "$here/$cliname.xl" ${target[@]+"${target[@]}"} -D "tlsPort=$port" ${extra[@]+"${extra[@]}"} -o "$c" 2>>"$work/pair.err"; then
         run_pair "$suffix/$srvname+$cliname/$cert" "$s" "$c" "$text" "$runmode" "$port"
       else
-        echo "FAIL [$suffix/$srvname+$cliname/$cert] build"; head -8 "$work/pair.err"; fail=$((fail+1))
+        failLine "$suffix/$srvname+$cliname/$cert" "build" "$(cat "$work/pair.err")"
       fi
     done
   done
@@ -267,32 +298,34 @@ diags=(
 )
 for d in "${diags[@]}"; do
   IFS='|' read -r name flags want <<<"$d"
+  wantName "diag/${name}" || continue
   out=$("$xlang" build "$here/$name.xl" $flags -o "$work/$name.out" 2>&1); code=$?
   if { [ "$want" = ok ] && [ "$code" = 0 ]; } || { [ "$want" != ok ] && [ "$code" != 0 ] && grep -qF "$want" <<<"$out"; }; then
-    echo "ok   [diag/$name]"; pass=$((pass+1))
+    okLine "diag/$name"
   else
-    echo "FAIL [diag/$name] want $want"; echo "$out" | head -5; fail=$((fail+1))
+    failLine "diag/$name" "want $want" "$out"
   fi
 done
 
 # Shared-library load hook: the @init of a library runs when it is loaded before the host's @entry.
 # Exercised on macOS only (DYLD_INSERT_LIBRARIES); Linux and Windows are open in docs/known-limitations.md.
-if [ "$host_os" = Darwin ]; then
+if [ "$host_os" = Darwin ] && wantName shared_hook; then
   if "$xlang" build "$here/shared_hook.xl" --emit=shared -o "$work/libshared_hook.dylib" 2>"$work/hook.err" &&
      "$xlang" build "$here/shared_host.xl" -o "$work/shared_host" 2>>"$work/hook.err"; then
     out=$(DYLD_INSERT_LIBRARIES="$work/libshared_hook.dylib" "$work/shared_host" 2>&1); code=$?
     if [ "$code" = 0 ] && [ "$(head -1 <<<"$out")" = "lib up" ] && grep -qF "host" <<<"$out"; then
-      echo "ok   [$host_os/shared_hook load]"; pass=$((pass+1))
+      okLine "$host_os/shared_hook load"
     else
-      echo "FAIL [$host_os/shared_hook load] exit $code"; echo "$out" | head -5; fail=$((fail+1))
+      failLine "$host_os/shared_hook load" "exit $code" "$out"
     fi
   else
-    echo "FAIL [$host_os/shared_hook load] build"; head -8 "$work/hook.err"; fail=$((fail+1))
+    failLine "$host_os/shared_hook load" "build" "$(cat "$work/hook.err")"
   fi
 fi
 
 # Package system (local git repositories, no network): see packages.sh.
 . "$here/packages.sh"
 
+countLoad
 echo "e2e: $pass passed, $fail failed, $skip skipped"
 [ "$fail" = 0 ]

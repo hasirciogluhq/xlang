@@ -47,7 +47,7 @@ src/
     source.cpp         # SourceManager / Span
     diagnostics.cpp    # code registry, rendering, allow/deny, log
 test/compiler/         # unit tests (xlang-tests)
-test/e2e/              # end-to-end programs + run.sh (+ packages.sh: the package system against local git repositories)
+test/e2e/              # end-to-end programs + run.sh (+ lib.sh: filter and job pool; packages.sh: the package system)
 std/                   # the standard library, plain xl (plan phase 7), nested by area, each area with index.xl
   runtime/             #   panic, unwind (try/catch walker, register(unwind)), context (stack switch)
   sys/                 #   the per-OS raw layer (linux, macos, windows, sock); OS setup hidden behind sockUp-style functions

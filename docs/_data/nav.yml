@@ -28,6 +28,8 @@
       url: /compiler/packages.html
     - title: Runtime
       url: /compiler/runtime.html
+    - title: Testing
+      url: /compiler/testing.html
     - title: Known limitations
       url: /known-limitations.html
 - title: Standard library
