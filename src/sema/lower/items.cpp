@@ -60,8 +60,7 @@ void Lowerer::buildModuleScope() {
         e.owner = &s_;
         e.qname = "MemoryOrder";
         (void)scopes_.declare(std::move(e));
-    }
-    for (const Item& item : s_.program_.items) {
+    }    for (const Item& item : s_.program_.items) {
         const DeclBase& base = declBase(item);
         if (item.modifiers.registered) {
             registered_names_.insert(base.name);
