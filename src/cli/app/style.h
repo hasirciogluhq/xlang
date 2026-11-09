@@ -1,8 +1,9 @@
 #pragma once
 
+#include "cli/console.h"
+
 #include <cstdlib>
 #include <string_view>
-#include <unistd.h>
 
 namespace xlang::cli {
 
@@ -28,9 +29,13 @@ struct Palette {
     const char* inverseCyan() const { return on ? "\x1b[1;30;46m" : ""; }
 };
 
-/// Whether output to `fd` is colored. `XLANG_COLOR=always|never` decides outright (`--color` sets it,
-/// so the compiler processes that `run` and `test` start follow it); otherwise a terminal is colored
-/// unless `NO_COLOR` is set to a non-empty value.
+/// Whether output to `fd` is colored. `XLANG_COLOR=always|never` decides outright (`--color` sets
+/// it, so the compiler processes that `run` and `test` start follow it); otherwise a terminal is
+/// colored unless `NO_COLOR` is set to a non-empty value.
+///
+/// "A terminal is colored" is `host::colorCapable`: `isatty` on POSIX, and on Windows also that
+/// virtual terminal processing could be switched on for the console (see `cli/console.h`). A
+/// Windows console that cannot render escapes gets no `ESC` bytes at all.
 inline bool useColor(int fd) {
     if (const char* forced = std::getenv("XLANG_COLOR")) {
         const std::string_view value(forced);
@@ -42,7 +47,7 @@ inline bool useColor(int fd) {
         }
     }
     const char* no_color = std::getenv("NO_COLOR");
-    return ::isatty(fd) != 0 && (no_color == nullptr || *no_color == '\0');
+    return host::colorCapable(fd) && (no_color == nullptr || *no_color == '\0');
 }
 
-}  // namespace xlang::cli
+} // namespace xlang::cli

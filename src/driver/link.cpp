@@ -14,7 +14,6 @@
 #include <fstream>
 #include <map>
 #include <set>
-#include <sys/wait.h>
 
 namespace xlang::codegen {
 
@@ -23,10 +22,16 @@ namespace {
 [[nodiscard]] std::filesystem::path findTool(const std::vector<std::string>& names) {
     std::vector<std::filesystem::path> dirs;
     if (const char* path = std::getenv("PATH")) {
-        std::string p = path;
+        const std::string p = path;
+        // `;` between entries on Windows, `:` everywhere else (a Windows drive letter `C:` is why).
+#if defined(_WIN32)
+        constexpr char kSeparator = ';';
+#else
+        constexpr char kSeparator = ':';
+#endif
         std::size_t start = 0;
         while (start <= p.size()) {
-            const std::size_t end = p.find(':', start);
+            const std::size_t end = p.find(kSeparator, start);
             dirs.emplace_back(p.substr(start, end == std::string::npos ? std::string::npos : end - start));
             if (end == std::string::npos) {
                 break;
@@ -34,14 +39,28 @@ namespace {
             start = end + 1;
         }
     }
+#if defined(_WIN32)
+    // The LLVM installer's default directory, then the current drive's root as a last resort.
+    if (const char* program_files = std::getenv("ProgramFiles")) {
+        dirs.emplace_back(std::filesystem::path(program_files) / "LLVM" / "bin");
+    }
+    dirs.emplace_back("C:\\Program Files\\LLVM\\bin");
+#else
     for (const char* extra : {"/opt/homebrew/opt/llvm/bin", "/usr/local/opt/llvm/bin", "/opt/homebrew/bin",
                               "/usr/lib/llvm/bin", "/usr/bin"}) {
         dirs.emplace_back(extra);
     }
+#endif
     std::error_code ec;
     for (const std::string& name : names) {
+#if defined(_WIN32)
+        // A Win32 program is `name.exe`; `lld-link` is `lld-link.exe` on disk.
+        const std::filesystem::path spelled = name.find('.') == std::string::npos ? name + ".exe" : name;
+#else
+        const std::filesystem::path spelled = name;
+#endif
         for (const std::filesystem::path& d : dirs) {
-            const std::filesystem::path candidate = d / name;
+            const std::filesystem::path candidate = d / spelled;
             if (std::filesystem::is_regular_file(candidate, ec)) {
                 return candidate;
             }
@@ -50,8 +69,10 @@ namespace {
     return {};
 }
 
+#if !defined(_WIN32)
 /// The macOS SDK root (`xcrun --show-sdk-path`), where ld64 finds `usr/lib/libSystem.tbd`. Empty when
-/// xcrun is missing; the linker then reports the undefined library itself.
+/// xcrun is missing; the linker then reports the undefined library itself. Only macOS has the SDK,
+/// so the call is not compiled on Windows or Linux (`popen` would need `_popen` there).
 [[nodiscard]] std::string macosSdkRoot() {
     std::string out;
     FILE* pipe = popen("xcrun --show-sdk-path 2>/dev/null", "r");
@@ -68,8 +89,25 @@ namespace {
     }
     return out;
 }
+#endif
 
+/// Quotes one command-line argument for `std::system`.
+///   POSIX: single quotes, an embedded `'` written as `'\''`.
+///   Windows: `std::system` runs through `cmd.exe`, where single quotes are *not* quoting. Double
+///            quotes are, and a literal `"` becomes `\"` (the `cmd.exe` / MSVC runtime rules,
+///            https://learn.microsoft.com/en-us/cpp/cpp/main-function-command-line-args).
 [[nodiscard]] std::string quote(const std::string& s) {
+#if defined(_WIN32)
+    std::string out = "\"";
+    for (const char c : s) {
+        if (c == '"') {
+            out += "\\\"";
+        } else {
+            out += c;
+        }
+    }
+    return out + "\"";
+#else
     std::string out = "'";
     for (const char c : s) {
         if (c == '\'') {
@@ -79,6 +117,7 @@ namespace {
         }
     }
     return out + "'";
+#endif
 }
 
 }  // namespace
@@ -185,11 +224,13 @@ void link(const LinkRequest& r) {
             libs.insert(lib);
         }
         if (t.os == "macos" && !libs.empty()) {
+#if !defined(_WIN32)
             const std::string sdk = macosSdkRoot();
             if (!sdk.empty()) {
                 args.push_back("-syslibroot");
                 args.push_back(sdk);
             }
+#endif
         }
         for (const std::string& lib : libs) {
             args.push_back("-l" + lib);
