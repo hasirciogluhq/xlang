@@ -49,4 +49,4 @@ page, which includes them from `docs/examples/`.
   chunked `source` callback (`FetchOptions`).
 - Errors: `FETCH_OK` or a negative `FETCH_ERR_*` code; `fetchErrorText` gives a message.
 
-Limits are listed in `KNOWN-LIMITATIONS.md`.
+Limits are listed in [Known limitations]({{ site.baseurl }}/known-limitations.html).

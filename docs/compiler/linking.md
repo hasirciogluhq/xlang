@@ -18,7 +18,7 @@ This document describes how the compiler turns a program into an executable, sha
 ## What gets linked
 
 - The program's object code, including the stdlib modules it imports (the stdlib is embedded in the compiler; `--no-std`, `--std=<dir>` and `--std=host/user/repo` change that) and the modules of the installed packages it imports.
-- Prebuilt object files and archives that installed packages list in `[[native]]` entries matching the target (executables and shared libraries only; see [PACKAGE_MANAGER.md]({{ site.baseurl }}/compiler/packages.html)).
+- Prebuilt object files and archives that installed packages list in `[[native]]` entries matching the target (executables and shared libraries only; see [Packages]({{ site.baseurl }}/compiler/packages.html)).
 - For an executable, the compiler-generated entry stub (see below).
 - Nothing else: there is no C runtime, no implicit `-lc`, no `-pthread`. Memory routines such as `memcpy` are stdlib code exported with C names.
 - `--incremental` writes one object per module into a cache directory (`--cache-dir`, default `.xlang-cache` next to the output) and reuses unchanged ones.
@@ -72,7 +72,7 @@ Before code generation the compiler removes every function and global that no ro
 - `--emit=static` archives the program's objects in-process (no `ar`).
 - `--emit=shared` links a shared library (`-shared`, `-dylib` or `/dll`); no entry stub is added.
 - `--emit=header` writes a C header for `export`ed items.
-- `export(c)` keeps a symbol name unmangled so C code can link to it; aggregates are passed through pointers, not the target C ABI (see `KNOWN-LIMITATIONS.md`).
+- `export(c)` keeps a symbol name unmangled so C code can link to it; aggregates are passed through pointers, not the target C ABI (see [Known limitations]({{ site.baseurl }}/known-limitations.html)).
 
 ---
 

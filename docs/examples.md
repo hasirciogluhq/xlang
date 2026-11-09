@@ -10,11 +10,13 @@ The examples come in two sets with one source each:
   `xlang build -o <name> examples/<name>/main.xl`.
 
 Every `xmake build` copies both sets into `build/examples/` (`docs/` and `project/`) and type-checks each program with the
-compiler that was just built, so an example that stops compiling fails the build.
+compiler that was just built (`xlang check`), so an example that stops compiling fails the build.
 
 ## Routing (Gin style)
 
-Each example below is one of the routing examples of the Gin documentation, written with `std/http`.
+Each example below is one of the routing examples of the Gin documentation, written with `std/http`. The server is the
+`Engine` of `std/http/engine`: routes are registered with the method calls, each handler takes a `*Context`, and
+`Engine.Run(port)` serves until the process ends.
 
 ### Hello world
 
@@ -32,11 +34,17 @@ Each example below is one of the routing examples of the Gin documentation, writ
 
 ### Query string
 
+`Query(name)` returns the value of a query parameter, and `DefaultQuery(name, fallback)` returns the fallback when the
+parameter is absent.
+
 ```xlang
 {% include_relative examples/query.xl %}
 ```
 
 ### Groups and middleware
+
+`Group(prefix)` returns a `*RouterGroup` that copies the middleware in effect at that point; `Use` adds middleware to the
+routes registered after it, and `Next` runs the rest of the chain.
 
 ```xlang
 {% include_relative examples/groups.xl %}

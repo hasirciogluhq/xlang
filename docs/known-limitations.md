@@ -44,8 +44,10 @@ The original plan is implemented except the items below, which are intentionally
 
 ## Language/stdlib
 
-- Control flow: `while`, `do { } while c`, `for init; cond; step { }`, `for i in lo..hi { }` (`hi` exclusive,
-  integer bounds, evaluated once), `break`, `continue`, labels (`outer: while ...`, `break outer`, `continue outer`;
+- Control flow: `while`, `do { } while c`, `for init; cond; step { }` (each of the three parts optional),
+  `for i in lo..hi { }` (`hi` exclusive) and `for i in lo..=hi { }` (`hi` inclusive), both with integer bounds
+  evaluated once and an integer literal on one side taking the other side's type, `break`, `continue`, labels
+  (`outer: while ...`, `break outer`, `continue outer`;
   `continue` in a `for` runs the step), `switch v { case a, b { } default { } }` (integers, bools, enums; no
   fallthrough; a `break` inside a `switch` leaves the enclosing loop, the `switch` is not a break target),
   `defer stmt` (runs when the enclosing block is left, including by `return`/`break`/`continue`, last-in
@@ -124,7 +126,7 @@ The original plan is implemented except the items below, which are intentionally
 - `HIR` does not fold constant expressions (`N * 2` is constant in global initializers but folded later).
 - Module resolution: `std`/`std/x` come from the stdlib root; other paths from the importing file's
   directory, then the root file's directory; a path under a dependency's repository path comes from that
-  installed package (`docs/PACKAGE_MANAGER.md`). `import "x"` without alias binds the last path segment.
+  installed package (see [Packages]({{ site.baseurl }}/compiler/packages.html)). `import "x"` without alias binds the last path segment.
   There are no other search-path strategies.
 - The default stdlib is embedded in the compiler (generated `build/gen/std_blob.cpp`, rebuilt when
   `std/**/*.xl` changes); `--std=<dir>`, `--std=host/user/repo[@tag]` and `[std]` in `xlang.toml` replace it.
@@ -132,7 +134,7 @@ The original plan is implemented except the items below, which are intentionally
 
 ## Packages (`xlang package`, `xlang.toml`, `xlang.lock`)
 
-Decisions taken when the package system was added (`docs/PACKAGE_MANAGER.md` is the reference):
+Decisions taken when the package system was added ([Packages]({{ site.baseurl }}/compiler/packages.html) is the reference):
 
 - **Git is the registry.** Packages are tags of git repositories, fetched by running the `git` executable
   (`ls-remote`, `clone --depth 1`); no HTTP client, no hosting API, no search, no publish command. Builds

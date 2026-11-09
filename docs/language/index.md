@@ -236,7 +236,7 @@ try {
 - Leaving the body normally, or with `return`, `break` or `continue`, skips the `catch`. A panic inside the `catch` goes to the next enclosing `try`; `panic(e)` rethrows.
 - `e` points into a buffer owned by the `try` (255 bytes plus NUL); copy it to keep it past the `catch`.
 - A panic with no enclosing `try` is fatal and runs nothing. There are no typed errors.
-- The compiler gives functions that own cleanups a landing pad and keeps their locals in memory (they are not inlined); the walker is stdlib (`std/runtime/unwind`) behind the `unwind` role. Without the role `try` is `E0501`. See `KNOWN-LIMITATIONS.md` for the limits (foreign frames, Windows).
+- The compiler gives functions that own cleanups a landing pad and keeps their locals in memory (they are not inlined); the walker is stdlib (`std/runtime/unwind`) behind the `unwind` role. Without the role `try` is `E0501`. See [Known limitations]({{ site.baseurl }}/known-limitations.html) for the limits (foreign frames, Windows).
 
 ---
 
@@ -322,7 +322,7 @@ Registrations of the same role override by group: the stdlib (the default) is re
 
 ## Modules and import
 
-A module path `"x"` resolves to `x.xl` or `x/index.xl`. `std` and `std/x` come from the stdlib root; a path that starts with a dependency's repository path (`"github.com/user/repo"`, `"github.com/user/repo/sub"`) comes from that installed package (see [PACKAGE_MANAGER.md]({{ site.baseurl }}/compiler/packages.html)); other paths are searched from the importing file's directory, then the root file's directory.
+A module path `"x"` resolves to `x.xl` or `x/index.xl`. `std` and `std/x` come from the stdlib root; a path that starts with a dependency's repository path (`"github.com/user/repo"`, `"github.com/user/repo/sub"`) comes from that installed package (see [Packages]({{ site.baseurl }}/compiler/packages.html)); other paths are searched from the importing file's directory, then the root file's directory.
 
 ```
 import "std"                                // module as a namespace
@@ -366,7 +366,7 @@ declare fn helper(x: i32) -> i32          // resolved at link time from another 
 - Other attributes: `@repr(c)` (C layout), `@allow(CODE)` (silence a warning for the item).
 - `--emit=header` writes a C header for exported items; `--emit=static|shared|obj` produce a static archive, shared library or object.
 
-See [LINKING.md]({{ site.baseurl }}/compiler/linking.html) for how objects are linked.
+See [Linking]({{ site.baseurl }}/compiler/linking.html) for how objects are linked.
 
 ---
 
@@ -414,30 +414,37 @@ The global namespace holds only a closed list of builtins plus `register`ed name
 
 ## Standard library
 
-All of it is in `std/`; `import "std"` or `from "std" import name` brings it in, and `from "std/<module>" import name` imports one module. Modules (see each file for its API):
+All of it is in `std/`; `import "std"` or `from "std" import name` brings it in, and `from "std/<module>" import name` imports one module. Each area has an `index.xl` that re-exports its parts, so `from "std/str" import trim` and `from "std/str/string" import trim` both work. The pages under [Standard library]({{ site.baseurl }}/std/) give the API of each area; this table is the map.
 
-| Module | Contents |
+| Area | Contents |
 |--------|----------|
-| `std/io` | `print`, `println`, `printEndl` (writes only `\n`), `eprint`, `eprintln`, `fprint(fd, ...)`, `fprintln(fd, ...)`. Each takes `str`, `*ui8`, `i64`, `ui64`, `f64`, `bool` or `*String`, or a format string followed by any number of arguments (`..args`). `print` adds no newline and `println` adds one `\n`. Output is written straight to the fd and makes no allocator calls. `f64` prints with six decimals |
-| `std/str/fmt` | {% raw %}The placeholder engine: `{}` takes the next argument, `{{` and `}}` print braces, and a count mismatch panics with `format: N placeholders, got M arguments in "TEXT"`. `sprintf`, `format` (both return a `String`), `fmtAppend(*String, ...)`, `snprintf(buf, cap, fmt, ...) -> usize` (writes at most `cap - 1` bytes plus a NUL and returns the full length), and `toString` for `i64`, `ui64`, `f64`, `bool`, `str` and `*ui8`. The formats take any number of arguments (`..args`); `fmtEmit(sink, fmt, ..args)` is the shared engine{% endraw %} |
-| `std/assert` | `assert!(cond)` macro (panics on failure) |
-| `std/str/str` | `str` helpers: `eq`, `fromC`, `fromParts`, `view` (panics outside the string; no copy), `find` (byte offset or -1), `contains`, `startsWith`, `endsWith`, `toU64(s, *ui64) -> bool` and `toI64(s, *i64) -> bool` (decimal only; false on overflow or junk, and `out` is then unchanged) |
-| `std/str/compare` | `compare(a, b) -> i32` (-1, 0, 1), `equalIgnoreCase`, `containsAny`, `isSpace`, `globMatch(pattern, text)` (`*` and `?`, no escapes) |
-| `std/str/string` | `String` and the text-returning functions: `slice(s, first, n)`, `trim`, `trimStart`, `trimEnd`, `split(s, sep) -> Vec<String>` (keeps empty pieces; panics on an empty separator), `replace` (first occurrence), `replaceAll`, `repeat` |
-| `std/str/string` | `String`: an owned, growable byte string on `currentAllocator` (`init()`, `init(str)`, `init(usize, ui8)` for n copies of a byte, `length`, `asStr`, `cstr`, `at`, `slice`, `find`, `startsWith`, `endsWith`, `push`, `append(str)`, `append(*String)`, `equals`, `clone`, `clear`, `reserve`, `toLowerAscii`, `toUpperAscii` returning new Strings). It frees itself when dropped. Appending a view of its own buffer is not supported. Empty strings do not allocate; there is no small-string optimization |
-| `std/collections/vec` | `Vec<T>`: a growable array on `currentAllocator` (`init()`, `length`, `capacity`, `isEmpty`, `reserve`, `get`, `first`, `last` returning `*T`, `set`, `push`, `pop`, `insert`, `remove`, `swapRemove`, `truncate`, `clear`). Growth is max(needed, 2 * capacity, 4). It drops its elements and frees itself when dropped. `vecClone<T>(*Vec<T>)` copies a Vec whose element type needs no drop. An index past the end panics with `Vec: index I out of range for length L` |
-| `std/mem/memory` | `memcpy`, `memmove`, `memset`, `memcmp`, `strlen`, mapping helpers |
-| `std/mem/mem` | the `Allocator` interface, the default heap `Heap`, the exported global `currentAllocator`, the registered `alloc`/`free` functions that forward to it, `free`. Replace the allocator by assigning `currentAllocator` (for example in an `@init` function) |
-| `std/math/math`, `std/math/bignum` | `abs`, `min`, `max`, `minInt`, `maxInt`, `sqrt`; fixed-width big integers and Montgomery arithmetic for RSA and ECDSA |
-| `std/math` (geometry and `BigInt`) | `Vec2`, `Vec3`, `Vec4`, `Rect` (heap-free `f64` classes with methods), the allocator-backed `Mat` with `matDet`/`matInverse`, scalar helpers (`lerp`, `smoothstep`, `clamp`, `MATH_PI`), and the owning `BigInt` class over the limb functions (see [math.md]({{ site.baseurl }}/std/math.html)) |
-| `std/thread/thread`, `std/thread/sync`, `std/thread/sched` | threads, `Mutex`/`Cond`/`RwLock`/`Once`, cooperative scheduler (`spawn`, `waitAll`, `yield`) |
-| `std/io/fs`, `std/encoding/json` | whole-file helpers; read-only flat JSON lookups |
-| `std/net/dns`, `std/tls/tls`, `std/http` | name resolution, TLS 1.3 client/server, HTTP server and client (see [http.md]({{ site.baseurl }}/std/http.html)) |
-| `std/crypto/hash/*`, `std/crypto/cipher/*`, `std/crypto/kex/x25519`, `std/crypto/sig/*`, `std/crypto/x509/*` | SHA-2, HMAC, AES-GCM, ChaCha20-Poly1305, X25519, RSA and ECDSA, X.509 and private keys, used by TLS |
-| `std/encoding/pem` | PEM armor reader |
-| `std/cpu/cpu`, `std/gpu/gpu`, `std/sys` | CPU helpers; GPU access; the per-OS raw system layer |
-| `std/runtime` | `panic` (the registered `panic`), `unwind` (panic unwinding and the registered `unwind`, what `try` / `catch` run on) and `context` (`switchContext`, the stack-switching primitive of `std/thread/sched`) |
-| `std/testing` | test framework |
+| `std/io` | `print`, `println`, `fprint(fd, ...)`, `fprintln(fd, ...)`, `eprint`, `eprintln`. Each takes `str`, `*ui8`, `i64`, `ui64`, `f64`, `bool` or `*String`, or a format string followed by any number of arguments (`..args`). `print` adds no newline and `println` adds one `\n`. Output is written straight to the fd and makes no allocator calls. `f64` prints with six decimals |
+| `std/io/fs`, `std/io/dir`, `std/io/stat` | whole-file helpers, directory listing (`fsListDir`) and file status |
+| `std/str/fmt` | {% raw %}The placeholder engine: `{}` takes the next argument, `{{` and `}}` print braces, and a count mismatch panics with `format: N placeholders, got M arguments in "TEXT"`. `sprintf`, `format` (both return a `String`), `fmtAppend(*String, ...)`, `snprintf(buf, cap, fmt, ...) -> usize`, and `toString` for the scalar types. `fmtEmit(sink, fmt, ..args)` is the shared engine{% endraw %} |
+| `std/str/str` | the `str` view helpers: `eq`, `fromC`, `fromParts`, `view` (no copy), `find`, `contains`, `startsWith`, `endsWith`, `toU64`, `toI64` (decimal only; false on overflow or junk) |
+| `std/str/compare` | `compare(a, b) -> i32`, `equalIgnoreCase`, `containsAny`, `isSpace`, `globMatch(pattern, text)` (`*` and `?`, no escapes) |
+| `std/str/string` | `String`, an owned growable byte string on `currentAllocator` (`init`, `length`, `asStr`, `cstr`, `at`, `slice`, `find`, `push`, `append`, `equals`, `clone`, `clear`, `reserve`, `toLowerAscii`, `toUpperAscii`), plus the text-returning functions `slice`, `trim`, `trimStart`, `trimEnd`, `split`, `replace`, `replaceAll`, `repeat`. It frees itself when dropped |
+| `std/collections` | `Vec<T>`, a growable array on `currentAllocator` (`length`, `capacity`, `isEmpty`, `reserve`, `get`, `first`, `last`, `set`, `push`, `pop`, `insert`, `remove`, `swapRemove`, `truncate`, `clear`). It drops its elements and frees itself when dropped. An index past the end panics |
+| `std/mem` | `memcpy`, `memmove`, `memset`, `memcmp`, `strlen`; the `Allocator` interface, the default `Heap`, the exported global `currentAllocator` and the registered `alloc`/`free` functions |
+| `std/math` | integer and float helpers (`abs`, `min`, `max`, `sqrt`, trig), `big`/`bigint`/`bignum`/`bigdiv` for fixed-width big integers and Montgomery arithmetic, and the geometry types `Vec2`, `Vec3`, `Vec4`, `Rect`, `Mat2`, `Mat3`, `Mat4`, `Quaternion`, `Transform` |
+| `std/time` | calendar dates and time zones (`std/time/date`, `std/time/tzif`) |
+| `std/random` | entropy, CSPRNG, PRNG, UUIDs and short identifiers |
+| `std/encoding` | `hex`, `base32`, `base58`, `base64`, `base85`, `base91`, `csv`, `der`, `pem`/`pemwrite`, `utf8`, `punycode`/`idna`, `json` (read-only flat lookups) and `jsonfull`, `cbor`/`cborread`, `msgpack`, `protobuf`, `toml` |
+| `std/checksum` | `crc`, `adler`, `fnv` |
+| `std/compress` | `deflate` and `inflate` |
+| `std/crypto` | `hash/` (SHA-1, SHA-2, SHA-3, MD4, MD5, BLAKE2, HMAC and the MAC interface), `cipher/` (AES modes, AES-GCM, ChaCha20-Poly1305, Salsa20), `kdf/` (HKDF, PBKDF2, scrypt), `kex/` (X25519, X448), `sig/` (RSA, ECDSA, Ed25519, Ed448), `x509/` (certificates, CRL, CSR, SPKI, keys, verification), plus `ct` for constant-time comparison |
+| `std/tls` | TLS 1.3 client and server, the trust store and record names |
+| `std/net` | `dns` and the wire protocols under `net/proto/` (IP, DHCP, NTP, MQTT, SOCKS5, STUN, syslog, DNS transport) |
+| `std/http` | the server `Engine`, routes and groups, middleware, `Context`, multipart, URL parsing, and an HTTP client |
+| `std/auth` | JWS, JWT, OAuth and AWS SigV4 |
+| `std/cloud` | an S3 client |
+| `std/semver` | semantic version parsing and comparison |
+| `std/thread` | threads, `Mutex`/`Cond`/`RwLock`/`Once`, and the cooperative scheduler (`spawn`, `waitAll`, `yield`) |
+| `std/os` | process control |
+| `std/cpu`, `std/gpu`, `std/hw` | CPU feature flags, GPU device discovery, and hardware facts from the OS |
+| `std/sys` | the native OS layer: `env`, per-OS raw calls (`linux`, `macos`, `windows`), `sock` and `uring`. Not for user code; reach it through the areas above |
+| `std/runtime` | `panic` (the registered `panic`), `unwind` (panic unwinding and the registered `unwind`, what `try`/`catch` run on) and `context` (stack switching for the scheduler) |
+| `std/testing` | the test framework |
 
 Memory-related defaults can be changed with `--std-features` (for example `-default-allocator`); each feature becomes a `featureXxx` constant for `#if`.
 
@@ -460,23 +467,26 @@ fn addWorks(t: *T) { expectEq(t, 1 + 2, 3) }
 }
 ```
 
-Matchers are typed functions (`expect`, `expectTrue`, `expectEq`, `expectEqUInt`, `expectEqStr`, `expectNear`, `expectGt`, `expectNil`, ...). There is no discovery and no chained matcher syntax. The repository's own end-to-end programs live in `test/e2e/`.
+Matchers are typed functions (`expect`, `expectTrue`, `expectEq`, `expectEqUInt`, `expectEqStr`, `expectNear`, `expectGt`, `expectNil`, ...). There is no discovery and no chained matcher syntax. The repository's own end-to-end programs live in `test/e2e/`, and the language unit suites in `test/unit/`; see [Testing]({{ site.baseurl }}/compiler/testing.html).
 
 ---
 
 ## Command line
 
 ```
-xlang build file.xl [-o out] [--emit=exe|obj|ir|bc|header|static|shared]
+xlang build file.xl [-o out] [--emit exe|obj|ir|bc|header|static|shared]
 xlang run file.xl
 xlang check file.xl
 xlang parse file.xl
 xlang layout file.xl [Type]
 xlang test [patterns...]
+xlang package install|update|remove|list|clean
+xlang completions bash|zsh|fish|install
+xlang self-update [--check]
 xlang --explain E0501
 ```
 
-Common flags: `-D`/`-U`, `--target <triple>`, `-O0..3`, `-g`, `--cpu`, `--mangle=xl|none`, `--safety=checked|unchecked`, `--no-std`, `--std <dir>`, `--std-features`, `--allow`/`--deny`/`--warn-all`/`--allow-all`, `--incremental`, `--diag-format=text|json`. Global: `--version`, `--color auto|always|never` (see [Installing the compiler]({{ site.baseurl }}/compiler/install.html)). `xlang self-update` installs the latest release.
+Common flags: `-D`/`-U`, `--target <triple>`, `-O 0..3`, `-g`, `--cpu`, `--mangle xl|none`, `--safety checked|unchecked`, `--no-std`, `--std <dir|host|user|repo[@tag]>`, `--std-features`, `--layout-scheme`, `--layout-history`, `--incremental`, `--cache-dir`, `--print-cfg`, `--context N`, `--allow`/`--deny`/`--warn-all`/`--allow-all`, `--diag-format text|json`. Global: `--version`, `--color auto|always|never` (see [Installing the compiler]({{ site.baseurl }}/compiler/install.html)). `xlang self-update` installs the latest release.
 
 Diagnostics have codes: `E` for errors, `W` for warnings (for example `E0501`, `W0402`); `--explain CODE` prints the long explanation, and warnings are controlled with `--allow`, `--deny` and `@allow`.
 
@@ -484,4 +494,4 @@ Diagnostics have codes: `E` for errors, `W` for warnings (for example `E0501`, `
 
 ## Limitations
 
-Open decisions and intentional incompleteness are recorded in `KNOWN-LIMITATIONS.md` (nested tuple destructuring, no generic constraints, flat read-only JSON, TLS 1.3 only, and so on).
+Open decisions and intentional incompleteness are recorded in [Known limitations]({{ site.baseurl }}/known-limitations.html) (nested tuple destructuring, no generic constraints, TLS 1.3 only, and so on).
