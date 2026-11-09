@@ -1,0 +1,221 @@
+// std/encoding/utf16: UTF-16 to UTF-8 conversion (Unicode standard, chapter 3, "Surrogates" and "UTF-16"; RFC 3629 for
+// the UTF-8 side, https://www.rfc-editor.org/rfc/rfc3629). This is the boundary an OS API imposes: Windows passes
+// text as WCHAR units (16-bit, UTF-16, NUL terminated or length given), every xlang string is UTF-8, so the two
+// representations meet here.
+//
+// Each entry point names its policy instead of hiding it, because the policies differ and a caller must pick one:
+//
+//   toUtf8       lossy:  an unpaired surrogate becomes U+FFFD, a truncation never splits a code point.
+//   toUtf8Exact  strict: an unpaired surrogate fails the whole conversion (-1), nothing is replaced.
+//
+// Both share the same length rule: `n` is the number of UTF-16 units to read, a unit with value 0 is an ordinary unit
+// and never terminates the input (a C string reaches here through `fromWideC`, which measures it), and the output
+// buffer is never given a terminating NUL that is not counted in the returned length -- room for one is reserved when
+// the caller asks for it with `terminate`, and the terminator then sits at `out[written]`.
+//
+// Writing stops on the first code point that does not fit. The written length that comes back is always a whole
+// number of code points, so a buffer cut in the middle of a character is reported as a shorter string, never as a
+// broken one. Each function returns that length, except the strict one, which also reports failure.
+
+/// U+FFFD REPLACEMENT CHARACTER, the UTF-8 bytes every lossy path substitutes. It is the substitution of the Unicode
+/// standard, chapter 3, section 3.9 ("U+FFFD ... is the replacement of an uninterpretable unit"), and the byte sequence
+/// is the shortest form of EF BF BD, so the result is valid UTF-8.
+define REPLACEMENT_1 = 0xef
+define REPLACEMENT_2 = 0xbf
+define REPLACEMENT_3 = 0xbd
+
+/// Writes the UTF-8 bytes of the code point that starts at unit `i` to `enc` (4 bytes) and returns their count; sets
+/// `units` to 1 or 2 for the number of UTF-16 units consumed. A high surrogate is joined only with an immediately
+/// following low surrogate; a lone surrogate becomes U+FFFD.
+fn unitAt(src: *ui16, n: usize, i: usize, enc: *ui8, units: *usize) -> usize {
+    local u: ui32 = src[i] as ui32
+    *units = 1
+    local cp: i32 = -1
+    if u >= 0xd800 && u <= 0xdbff && i + 1 < n {
+        local lo: ui32 = src[i + 1] as ui32
+        if lo >= 0xdc00 && lo <= 0xdfff {
+            // The pair encodes one code point above the basic plane: (hi - D800) << 10 | (lo - DC00) + 10000.
+            cp = ((((u - 0xd800) << 10) | (lo - 0xdc00)) + 0x10000) as i32
+            *units = 2
+        }
+    } else if u <= 0xd7ff || u >= 0xe000 {
+        cp = u as i32
+    }
+    if cp < 0 {
+        // Lone surrogate (or a high surrogate at the end of the input): the replacement character. U+0000 is a
+        // perfectly good unit and reaches the `cp < 0x80` arm below like any other, so a NUL is data, not a failure.
+        enc[0] = REPLACEMENT_1
+        enc[1] = REPLACEMENT_2
+        enc[2] = REPLACEMENT_3
+        return 3
+    }
+    if cp < 0x80 {
+        enc[0] = cp as ui8
+        return 1
+    }
+    if cp < 0x800 {
+        enc[0] = (0xc0 | (cp >> 6)) as ui8
+        enc[1] = (0x80 | (cp & 0x3f)) as ui8
+        return 2
+    }
+    if cp < 0x10000 {
+        enc[0] = (0xe0 | (cp >> 12)) as ui8
+        enc[1] = (0x80 | ((cp >> 6) & 0x3f)) as ui8
+        enc[2] = (0x80 | (cp & 0x3f)) as ui8
+        return 3
+    }
+    enc[0] = (0xf0 | (cp >> 18)) as ui8
+    enc[1] = (0x80 | ((cp >> 12) & 0x3f)) as ui8
+    enc[2] = (0x80 | ((cp >> 6) & 0x3f)) as ui8
+    enc[3] = (0x80 | (cp & 0x3f)) as ui8
+    return 4
+}
+
+/// The UTF-16 units of the NUL-terminated array `src` (the terminator excluded). Use it when a Windows API hands back
+/// a `WCHAR *` and the unit count is not known; `toUtf8` and `toUtf8Exact` then take the length it returns.
+export fn fromWideC(src: *ui16) -> usize {
+    local n: usize = 0
+    while src[n] != 0 { n = n + 1 }
+    return n
+}
+
+/// Lossy UTF-16 -> UTF-8: converts `n` units of `src` into `out` (capacity `cap` bytes). Writes the bytes and returns
+/// how many were written, which is at most `cap` and always ends on a code point boundary. With `terminate` the
+/// function also writes a NUL at that position and keeps it outside the count, so it needs `written + 1 <= cap`; the
+/// last code point that would need the terminator's byte is skipped instead of written.
+export fn toUtf8(src: *ui16, n: usize, out: *ui8, cap: usize, terminate: bool) -> usize {
+    local reserve: usize = 0
+    if terminate { reserve = 1 }
+    local used: usize = 0
+    local i: usize = 0
+    while i < n {
+        local enc: [ui8; 4]
+        local units: usize = 0
+        local k: usize = unitAt(src, n, i, &enc[0], &units)
+        if used + k + reserve > cap { break }
+        local j: usize = 0
+        while j < k {
+            out[used] = enc[j]
+            used = used + 1
+            j = j + 1
+        }
+        i = i + units
+    }
+    if terminate { out[used] = 0 }
+    return used
+}
+
+/// Strict UTF-16 -> UTF-8: as `toUtf8`, but an unpaired surrogate anywhere in the input fails the conversion. The input
+/// is checked before anything is written, so on failure the result is -1 and `out` is unchanged.
+export fn toUtf8Exact(src: *ui16, n: usize, out: *ui8, cap: usize, terminate: bool) -> i64 {
+    local reserve: usize = 0
+    if terminate { reserve = 1 }
+    // Validate first, so a failure never leaves a half-written buffer behind.
+    local i: usize = 0
+    while i < n {
+        local u: ui32 = src[i] as ui32
+        if u >= 0xd800 && u <= 0xdbff {
+            if i + 1 >= n { return -1 }
+            local lo: ui32 = src[i + 1] as ui32
+            if lo < 0xdc00 || lo > 0xdfff { return -1 }
+            i = i + 2
+        } else if u >= 0xdc00 && u <= 0xdfff {
+            return -1
+        } else {
+            i = i + 1
+        }
+    }
+    return toUtf8(src, n, out, cap, terminate) as i64
+}
+
+/// The number of bytes `toUtf8` would write under the same arguments. Called with a `cap` at least the full size, it is
+/// the exact size the whole string needs, which is how a caller sizes a buffer before allocating it.
+export fn utf8LenOf(src: *ui16, n: usize, cap: usize, terminate: bool) -> usize {
+    local reserve: usize = 0
+    if terminate { reserve = 1 }
+    local used: usize = 0
+    local i: usize = 0
+    while i < n {
+        local enc: [ui8; 4]
+        local units: usize = 0
+        local k: usize = unitAt(src, n, i, &enc[0], &units)
+        if used + k + reserve > cap { break }
+        used = used + k
+        i = i + units
+    }
+    return used
+}
+
+/// True when `n` units of `src` are well-formed UTF-16: every surrogate is part of a complete pair.
+export fn valid(src: *ui16, n: usize) -> bool {
+    local i: usize = 0
+    while i < n {
+        local u: ui32 = src[i] as ui32
+        if u >= 0xd800 && u <= 0xdbff {
+            if i + 1 >= n { return false }
+            local lo: ui32 = src[i + 1] as ui32
+            if lo < 0xdc00 || lo > 0xdfff { return false }
+            i = i + 2
+        } else if u >= 0xdc00 && u <= 0xdfff {
+            return false
+        } else {
+            i = i + 1
+        }
+    }
+    return true
+}
+
+/// Writes the UTF-16 units of the UTF-8 in `s[0..n)` to `out` (capacity `cap` units, terminator included when
+/// `terminate`); returns the units written. An invalid UTF-8 byte becomes U+FFFD. Used on the way back out to an OS API
+/// (a path, an environment name), never for display.
+export fn fromUtf8(s: *ui8, n: usize, out: *ui16, cap: usize, terminate: bool) -> usize {
+    local reserve: usize = 0
+    if terminate { reserve = 1 }
+    local used: usize = 0
+    local i: usize = 0
+    while i < n {
+        local l: usize = 0
+        local cp: i32 = utf8Unit(s, n, i, &l)
+        if l == 0 { l = 1 }
+        i = i + l
+        local unitsNeeded: usize = 1
+        if cp >= 0x10000 { unitsNeeded = 2 }
+        if used + unitsNeeded + reserve > cap { break }
+        if cp >= 0x10000 {
+            local v: i32 = cp - 0x10000
+            out[used] = (0xd800 | (v >> 10)) as ui16
+            out[used + 1] = (0xdc00 | (v & 0x3ff)) as ui16
+            used = used + 2
+        } else {
+            out[used] = cp as ui16
+            used = used + 1
+        }
+    }
+    if terminate { out[used] = 0 }
+    return used
+}
+
+/// One UTF-8 code point at `s[i]`: the code point, or U+FFFD for an invalid or truncated sequence, with `len` set to
+/// the bytes consumed (at least 1, so the caller always advances).
+fn utf8Unit(s: *ui8, n: usize, i: usize, len: *usize) -> i32 {
+    local c: ui8 = s[i]
+    *len = 1
+    if c < 0x80 { return c as i32 }
+    local k: usize = 0
+    if c >= 0xc2 && c <= 0xdf { k = 2 } else if c >= 0xe0 && c <= 0xef { k = 3 } else if c >= 0xf0 && c <= 0xf4 { k = 4 }
+    if k == 0 || i + k > n { return 0xfffd }
+    local cp: i32 = (c as i32) & ((0xff >> (k + 1)) as i32)
+    local j: usize = 1
+    while j < k {
+        if (s[i + j] & 0xc0) != 0x80 { return 0xfffd }
+        cp = (cp << 6) | ((s[i + j] & 0x3f) as i32)
+        j = j + 1
+    }
+    // Shortest form, no surrogate, at most U+10FFFF (RFC 3629, section 3).
+    if k == 3 && cp < 0x800 { return 0xfffd }
+    if k == 4 && cp < 0x10000 { return 0xfffd }
+    if cp >= 0xd800 && cp <= 0xdfff { return 0xfffd }
+    if cp > 0x10ffff { return 0xfffd }
+    *len = k
+    return cp
+}

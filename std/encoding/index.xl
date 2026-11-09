@@ -1,6 +1,6 @@
 // std/encoding: text and data encodings. PEM is RFC 7468 (https://www.rfc-editor.org/rfc/rfc7468);
 // JSON is RFC 8259 (https://www.rfc-editor.org/rfc/rfc8259); base64 and base16 are RFC 4648
-// (https://www.rfc-editor.org/rfc/rfc4648).
+// (https://www.rfc-editor.org/rfc/rfc4648); UTF-8 is RFC 3629 (https://www.rfc-editor.org/rfc/rfc3629).
 export * from "pem"
 export * from "json"
 export * from "hex"
@@ -10,6 +10,7 @@ export * from "base85"
 export * from "pemwrite"
 export * from "der"
 export * from "utf8"
+export * from "utf16"
 export * from "csv"
 export * from "jsonfull"
 export * from "base58"

@@ -297,6 +297,52 @@ export fn split(s: str, sep: str) -> Vec<String> {
     return parts
 }
 
+/// The pieces of `s` between runs of ASCII whitespace, each a new String. A run of whitespace of any length is one
+/// separator, so no empty piece is produced by it, and leading and trailing whitespace produce none: `"  a b  "`
+/// gives `[a, b]`. Whitespace is the ASCII set of `isSpace` (space, tab, newline, vertical tab, form feed, carriage
+/// return); every other byte, including the bytes of a multi-byte UTF-8 character, is part of a piece. An input made
+/// only of whitespace gives an empty Vec.
+export fn splitAsciiWhitespace(s: str) -> Vec<String> {
+    local parts: Vec<String> = Vec<String>()
+    local i: usize = 0
+    while i < s.len {
+        if isSpace(s[i]) {
+            i = i + 1
+        } else {
+            local start: usize = i
+            while i < s.len && !isSpace(s[i]) { i = i + 1 }
+            parts.push(slice(s, start, i - start))
+        }
+    }
+    return parts
+}
+
+/// Copies at most `cap` bytes of `s` to `dst` and returns how many were written. When `s` is longer, the copy stops
+/// before the code point that would be split, so the bytes written are always valid UTF-8 and never a half character;
+/// `dst` is then a shorter string, not a broken one. Used where a buffer has a fixed size (an OS API field, a
+/// fixed-width table) and the leftover is expected to be dropped rather than reported. No terminator is written: the
+/// return value is the length, and the caller adds one when its protocol needs it.
+export fn copyTruncated(s: str, dst: *ui8, cap: usize) -> usize {
+    if s.len <= cap {
+        if s.len > 0 { memcpy(dst as *void, s.ptr as *void, s.len) }
+        return s.len
+    }
+    // The longest prefix that fits without splitting a code point: if the byte at the cut is a continuation byte
+    // (10xxxxxx), back up over the run, at most three of them, so the cut lands on a sequence boundary.
+    local cut: usize = cap
+    local back: usize = 0
+    if (s[cut] & 0xc0) == 0x80 {
+        while cut > 0 && back < 3 && (s[cut] & 0xc0) == 0x80 {
+            cut = cut - 1
+            back = back + 1
+        }
+    }
+    if cut > 0 {
+        memcpy(dst as *void, s.ptr as *void, cut)
+    }
+    return cut
+}
+
 /// `s` with the first occurrence of `needle` replaced by `replacement`; `s` is copied unchanged when `needle`
 /// does not occur. Panics when `needle` is empty.
 export fn replace(s: str, needle: str, replacement: str) -> String {

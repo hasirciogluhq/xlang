@@ -25,6 +25,8 @@ export struct ProcInfo {
 
 #if os == "windows"
 
+from "../encoding/utf16" import toUtf8, fromWideC
+
 // Toolhelp snapshot. Kernel32 offers no plain "list processes" call; the documented pair is a snapshot taken with
 // TH32CS_SNAPPROCESS and then walked with Process32FirstW/Process32NextW. The snapshot is a kernel handle, so it is
 // closed with CloseHandle and not NtClose.
@@ -59,61 +61,6 @@ define PE_EXE_FILE = 40
 @library("kernel32") declare fn Process32NextW(snapshot: *void, entry: *ui8) -> i32
 @library("kernel32") declare fn CloseHandle(handle: *void) -> i32
 
-// UTF-16 -> UTF-8 for the process name. Written here instead of importing std/encoding keeps std/sys free of the
-// encoding area (the sys layer is below it). A lone surrogate becomes U+FFFD, the same rule std/encoding/utf8 uses.
-fn wideName(src: *ui16, out: *ui8, cap: usize) -> usize {
-    local used: usize = 0
-    local i: usize = 0
-    while src[i] != 0 {
-        local u: ui32 = src[i] as ui32
-        i = i + 1
-        local cp: i32 = u as i32
-        if u >= 0xd800 && u <= 0xdbff && src[i] != 0 {
-            local lo: ui32 = src[i] as ui32
-            if lo >= 0xdc00 && lo <= 0xdfff {
-                cp = ((((u - 0xd800) << 10) | (lo - 0xdc00)) + 0x10000) as i32
-                i = i + 1
-            } else {
-                cp = 0xfffd
-            }
-        } else if u >= 0xdc00 && u <= 0xdfff {
-            cp = 0xfffd
-        }
-        // Encode one code point into at most 4 bytes (UTF-8, RFC 3629, https://www.rfc-editor.org/rfc/rfc3629).
-        local enc: [ui8; 4]
-        local n: usize = 0
-        if cp < 0x80 {
-            enc[0] = cp as ui8
-            n = 1
-        } else if cp < 0x800 {
-            enc[0] = (0xc0 | (cp >> 6)) as ui8
-            enc[1] = (0x80 | (cp & 0x3f)) as ui8
-            n = 2
-        } else if cp < 0x10000 {
-            enc[0] = (0xe0 | (cp >> 12)) as ui8
-            enc[1] = (0x80 | ((cp >> 6) & 0x3f)) as ui8
-            enc[2] = (0x80 | (cp & 0x3f)) as ui8
-            n = 3
-        } else {
-            enc[0] = (0xf0 | (cp >> 18)) as ui8
-            enc[1] = (0x80 | ((cp >> 12) & 0x3f)) as ui8
-            enc[2] = (0x80 | ((cp >> 6) & 0x3f)) as ui8
-            enc[3] = (0x80 | (cp & 0x3f)) as ui8
-            n = 4
-        }
-        // Stop before the terminating byte is needed, and never split a multi-byte sequence.
-        if used + n + 1 > cap { break }
-        local k: usize = 0
-        while k < n {
-            out[used] = enc[k]
-            used = used + 1
-            k = k + 1
-        }
-    }
-    out[used] = 0
-    return used
-}
-
 /// Lists up to `max` processes into `out`; returns how many were written (0 when the snapshot cannot be taken).
 /// The Windows snapshot cannot report threads' start time or RSS without opening each process, so those stay 0 here;
 /// `threads`, `pid` and `ppid` come straight from PROCESSENTRY32W.
@@ -132,7 +79,7 @@ export fn procList(out: *ProcInfo, max: usize) -> usize {
         info.ppid = ((&entry[0] as usize + PE_PARENT_ID) as *ui32)[0] as i32
         info.threads = ((&entry[0] as usize + PE_THREADS) as *ui32)[0] as i32
         local namep: *ui16 = (&entry[0] as usize + PE_EXE_FILE) as *ui16
-        wideName(namep, &info.name[0], 256)
+        toUtf8(namep, fromWideC(namep), &info.name[0], 256, true)
         out[count] = info
         count = count + 1
         // The enumerator's own entry id is reused per call, so dwSize must be reset before every Process32NextW.

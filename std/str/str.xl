@@ -109,3 +109,16 @@ export fn toI64(s: str, out: *i64) -> bool {
     }
     return true
 }
+
+/// Byte offset of the last occurrence of `needle` in `s`, or -1 when there is none. The search runs backwards from the
+/// last position the needle fits at, so a caller that looks for a closing delimiter (a last `)`, a trailing `/`) does
+/// not have to scan the string twice. An empty `needle` counts as found at `s.len`.
+export fn findLast(s: str, needle: str) -> i64 {
+    if needle.len > s.len { return -1 }
+    local i: i64 = (s.len - needle.len) as i64
+    while i >= 0 {
+        if eq(view(s, i as usize, needle.len), needle) { return i }
+        i = i - 1
+    }
+    return -1
+}

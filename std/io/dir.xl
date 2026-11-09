@@ -90,7 +90,7 @@ export fn fsListDir(path: *ui8, out: *DirEntry, max: usize) -> usize {
 
 #elif os == "windows"
 
-from "../encoding/utf8" import utf8Decode, utf8Encode
+from "../encoding/utf16" import toUtf8, fromUtf8, fromWideC
 
 // FindFirstFileW / FindNextFileW / FindClose, kernel32 (fileapi.h):
 //   https://learn.microsoft.com/en-us/windows/win32/api/fileapi/nf-fileapi-findfirstfilew
@@ -130,69 +130,11 @@ export struct DirEntry {
     kind: ui8
 }
 
-/// UTF-8 -> UTF-16 into `out` (capacity `cap` units, NUL terminated); false when it does not fit. Surrogate pairs: a code
-/// point above U+FFFF (4 UTF-8 bytes) becomes two UTF-16 units, U+D800..U+DBFF (the high 10 bits of cp - 0x10000) then
-/// U+DC00..U+DFFF (the low 10 bits), which is the UTF-16 encoding of the Unicode standard (chapter 3). Code points in
-/// U+D800..U+DFFF cannot appear in valid UTF-8; utf8Decode rejects them, and an invalid byte is copied as U+FFFD here.
+/// UTF-8 -> UTF-16 into `out` (capacity `cap` units, NUL terminated); false when the whole path does not fit. The
+/// conversion is std/encoding/utf16's job (surrogate pairs, U+FFFD for an invalid byte); this wrapper only reports the
+/// fit, which the Win32 search pattern needs before it appends its wildcard.
 fn utf8ToWide(src: *ui8, n: usize, out: *ui16, cap: usize) -> bool {
-    local i: usize = 0
-    local o: usize = 0
-    while i < n {
-        local l: usize = 0
-        local cp: i32 = utf8Decode(&src[i], n - i, &l)
-        if l == 0 { l = 1 }
-        i = i + l
-        if cp < 0 { cp = 0xfffd }
-        if cp >= 0x10000 {
-            if o + 2 >= cap { return false }
-            local v: i32 = cp - 0x10000
-            out[o] = (0xd800 | (v >> 10)) as ui16
-            out[o + 1] = (0xdc00 | (v & 0x3ff)) as ui16
-            o = o + 2
-        } else {
-            if o + 1 >= cap { return false }
-            out[o] = cp as ui16
-            o = o + 1
-        }
-    }
-    out[o] = 0
-    return true
-}
-
-/// UTF-16 -> UTF-8 into `out` (capacity `cap` bytes, NUL terminated); returns the byte count. A high surrogate followed
-/// by a low surrogate is joined back into one code point ((hi - 0xD800) << 10 | (lo - 0xDC00)) + 0x10000; a lone
-/// surrogate is written as U+FFFD, because UTF-8 has no encoding for a surrogate.
-fn wideToUtf8(src: *ui16, n: usize, out: *ui8, cap: usize) -> usize {
-    local used: usize = 0
-    local i: usize = 0
-    while i < n {
-        local u: ui32 = src[i] as ui32
-        i = i + 1
-        local cp: i32 = u as i32
-        if u >= 0xd800 && u <= 0xdbff && i < n {
-            local lo: ui32 = src[i] as ui32
-            if lo >= 0xdc00 && lo <= 0xdfff {
-                cp = ((((u - 0xd800) << 10) | (lo - 0xdc00)) + 0x10000) as i32
-                i = i + 1
-            } else {
-                cp = 0xfffd
-            }
-        } else if u >= 0xdc00 && u <= 0xdfff {
-            cp = 0xfffd
-        }
-        local enc: [ui8; 4]
-        local k: usize = utf8Encode(cp, &enc[0])
-        if k == 0 { k = utf8Encode(0xfffd, &enc[0]) }
-        local j: usize = 0
-        while j < k && used + 1 < cap {
-            out[used] = enc[j]
-            used = used + 1
-            j = j + 1
-        }
-        if used + 1 >= cap { break }
-    }
-    out[used] = 0
-    return used
+    return fromUtf8(src, n, out, cap, true) == fromWideC(out)
 }
 
 /// Lists the entries of `path` into `out` (at most `max`); returns how many were written, or 0 when the search cannot be
@@ -216,13 +158,12 @@ export fn fsListDir(path: *ui8, out: *DirEntry, max: usize) -> usize {
     while more && count < max {
         local attrs: *ui32 = (&data[0] as usize + FIND_ATTRIBUTES) as *ui32
         local namep: *ui16 = (&data[0] as usize + FIND_NAME) as *ui16
-        local nlen: usize = 0
-        while namep[nlen] != 0 { nlen = nlen + 1 }
+        local nlen: usize = fromWideC(namep)
         // "." (46) and ".." (46, 46) are skipped exactly as in the Linux and macOS branches.
         local dot: bool = nlen > 0 && namep[0] == 46 && (nlen == 1 || (nlen == 2 && namep[1] == 46))
         if !dot {
             local e: DirEntry
-            wideToUtf8(namep, nlen, &e.name[0], 256)
+            toUtf8(namep, nlen, &e.name[0], 256, true)
             // d_type codes: FILE_ATTRIBUTE_DIRECTORY (0x10) is a directory (DT_DIR = 4), everything else is a regular
             // file (DT_REG = 8); reparse points are not resolved, so a directory link reports 4 like GetFileAttributes.
             if (attrs[0] & FILE_ATTRIBUTE_DIRECTORY) != 0 { e.kind = 4 } else { e.kind = 8 }

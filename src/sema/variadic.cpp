@@ -284,7 +284,18 @@ private:
         return e.kind == Expr::Kind::Name && e.text == pack_;
     }
 
+    /// `for x in <pack> { }` and `for x in <something else> { }` share one statement kind (the parser
+    /// cannot know that a name is a pack), so a pack loop is recognised here by its iterable.
+    [[nodiscard]] bool isPackLoop(const Stmt& s) const {
+        return (s.kind == Stmt::Kind::ForPack || s.kind == Stmt::Kind::ForEach) && s.names.empty() &&
+               s.expr && isPack(*s.expr);
+    }
+
     void stmt(const Stmt& s) {
+        if (isPackLoop(s)) {
+            block(*s.body);
+            return;
+        }
         if (s.kind == Stmt::Kind::ForPack) {
             if (!isPack(*s.expr)) {
                 report_("E0735", s.expr->span,

@@ -48,8 +48,7 @@ export fn equalIgnoreCase(a: str, b: str) -> bool {
 }
 
 /// True when at least one byte of `s` occurs in `set`. An empty `set` matches nothing.
-export fn containsAny(s: str, set: str) -> bool {
-    local i: usize = 0
+export fn containsAny(s: str, set: str) -> bool {    local i: usize = 0
     while i < s.len {
         local j: usize = 0
         while j < set.len {
@@ -64,8 +63,7 @@ export fn containsAny(s: str, set: str) -> bool {
 /// True when `text` matches the glob `pattern` (syntax in the file header). Iterative two-pointer matching:
 /// on a mismatch, the last `*` absorbs one more byte of `text` and matching resumes after it. Time is
 /// O(len(pattern) * len(text)) in the worst case and O(len) for patterns with at most one star.
-export fn globMatch(pattern: str, text: str) -> bool {
-    local p: usize = 0
+export fn globMatch(pattern: str, text: str) -> bool {    local p: usize = 0
     local t: usize = 0
     local starP: usize = 0      // pattern index just after the most recent `*`
     local starT: usize = 0      // text index where that `*` started matching
@@ -91,4 +89,26 @@ export fn globMatch(pattern: str, text: str) -> bool {
         p = p + 1
     }
     return p == pattern.len
+}
+
+/// Byte offset of the first occurrence of byte `b` in `s`, or -1. The one-byte form of a search: a delimiter scan
+/// (`findByte(line, b')')`), a quote seek, a field terminator. `b` is a `ui8`, so the caller names the character
+/// literally instead of building a one-byte `str` first.
+export fn findByte(s: str, b: ui8) -> i64 {
+    local i: usize = 0
+    while i < s.len {
+        if s[i] == b { return i as i64 }
+        i = i + 1
+    }
+    return -1
+}
+
+/// Byte offset of the last occurrence of byte `b` in `s`, or -1.
+export fn findLastByte(s: str, b: ui8) -> i64 {
+    local i: i64 = s.len as i64
+    while i > 0 {
+        i = i - 1
+        if s[i as usize] == b { return i }
+    }
+    return -1
 }
