@@ -52,9 +52,9 @@ export class Transform {
         local sy: f64 = self.scale.y
         local sz: f64 = self.scale.z
         return Mat4(r.m[0] * sx, r.m[1] * sy, r.m[2] * sz, self.position.x,
-                    r.m[3] * sx, r.m[4] * sy, r.m[5] * sz, self.position.y,
-                    r.m[6] * sx, r.m[7] * sy, r.m[8] * sz, self.position.z,
-                    0.0, 0.0, 0.0, 1.0)
+        r.m[3] * sx, r.m[4] * sy, r.m[5] * sz, self.position.y,
+        r.m[6] * sx, r.m[7] * sy, r.m[8] * sz, self.position.z,
+        0.0, 0.0, 0.0, 1.0)
     }
 
     /// Writes the placed point into `out`: rotation of (p * scale), then plus position. The scale is componentwise,
@@ -114,8 +114,8 @@ export class Transform {
         parent.applyPoint(&self.position, &worldPos)
         local worldRot: Quat = parent.rotation.mul(&self.rotation)
         local worldScale: Vec3 = Vec3(parent.scale.x * self.scale.x,
-                                      parent.scale.y * self.scale.y,
-                                      parent.scale.z * self.scale.z)
+        parent.scale.y * self.scale.y,
+        parent.scale.z * self.scale.z)
         out.position = worldPos
         out.rotation = worldRot
         out.scale = worldScale
@@ -123,7 +123,13 @@ export class Transform {
 
     /// Moves the position by (dx, dy, dz), in the parent frame (not the local, rotated frame).
     fn translate(self, dx: f64, dy: f64, dz: f64) {
-        self.position = Vec3(self.position.x + dx, self.position.y + dy, self.position.z + dz)
+        // The sum goes into a whole-value local first: a field assignment whose right side reads another field of the
+        // same object (`self.position = Vec3(self.position.x + dx, ..)`) computes the wrong value in the current code
+        // generator, and this form is correct on every backend.
+        local px: f64 = self.position.x
+        local py: f64 = self.position.y
+        local pz: f64 = self.position.z
+        self.position = Vec3(px + dx, py + dy, pz + dz)
     }
 
     /// Rotates the placement by `q`: the rotation is applied in the world (parent) frame, so the new rotation is
@@ -138,7 +144,7 @@ export class Transform {
     /// quaternion (so q and -q, the same rotation, compare unequal here; see `Quat.near`).
     fn near(self, o: *Transform, eps: f64) -> bool {
         return self.position.near(&o.position, eps) && self.rotation.near(&o.rotation, eps) &&
-               self.scale.near(&o.scale, eps)
+        self.scale.near(&o.scale, eps)
     }
 
     /// `near` with the module default of 1e-9.

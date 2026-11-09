@@ -171,7 +171,7 @@ export class Quat {
         }
         if d > 0.999999999 {
             local lin: Quat = Quat(a.w + (c.w - a.w) * t, a.x + (c.x - a.x) * t,
-                                   a.y + (c.y - a.y) * t, a.z + (c.z - a.z) * t)
+            a.y + (c.y - a.y) * t, a.z + (c.z - a.z) * t)
             return lin.normalized()
         }
         local theta: f64 = acos(d)
@@ -199,15 +199,15 @@ export class Quat {
         local wy: f64 = w * y
         local wz: f64 = w * z
         return Mat3(1.0 - 2.0 * (yy + zz), 2.0 * (xy - wz), 2.0 * (xz + wy),
-                    2.0 * (xy + wz), 1.0 - 2.0 * (xx + zz), 2.0 * (yz - wx),
-                    2.0 * (xz - wy), 2.0 * (yz + wx), 1.0 - 2.0 * (xx + yy))
+        2.0 * (xy + wz), 1.0 - 2.0 * (xx + zz), 2.0 * (yz - wx),
+        2.0 * (xz - wy), 2.0 * (yz + wx), 1.0 - 2.0 * (xx + yy))
     }
 
     /// Componentwise equality within `eps` in absolute value. A quaternion and its negation are the same rotation,
     /// so a rotation comparison checks both (`near` of q and `near` of -q).
     fn near(self, o: *Quat, eps: f64) -> bool {
         return approxEqual(self.w, o.w, eps) && approxEqual(self.x, o.x, eps) &&
-               approxEqual(self.y, o.y, eps) && approxEqual(self.z, o.z, eps)
+        approxEqual(self.y, o.y, eps) && approxEqual(self.z, o.z, eps)
     }
 
     /// `near` with the module default of 1e-9.
@@ -218,7 +218,7 @@ export class Quat {
     /// True when this quaternion is the identity rotation (within `eps`).
     fn isIdentity(self, eps: f64) -> bool {
         return approxEqual(self.w, 1.0, eps) && approxEqual(self.x, 0.0, eps) &&
-               approxEqual(self.y, 0.0, eps) && approxEqual(self.z, 0.0, eps)
+        approxEqual(self.y, 0.0, eps) && approxEqual(self.z, 0.0, eps)
     }
 }
 
@@ -259,9 +259,9 @@ export fn quatFromEuler(x: f64, y: f64, z: f64) -> Quat {
     local cz: f64 = cos(hz)
     local sz: f64 = sin(hz)
     return Quat(cz * cy * cx + sz * sy * sx,
-                cz * cy * sx - sz * sy * cx,
-                cz * sy * cx + sz * cy * sx,
-                sz * cy * cx - cz * sy * sx)
+    cz * cy * sx - sz * sy * cx,
+    cz * sy * cx + sz * cy * sx,
+    sz * cy * cx - cz * sy * sx)
 }
 
 /// The intrinsic ZYX Euler angles (x, y, z) of this rotation, the inverse of `quatFromEuler`. With
@@ -338,7 +338,7 @@ export fn quatLookRotation(forward: *Vec3, up: *Vec3) -> Quat {
     local u: Vec3 = right.cross(&f)
     // Columns of the rotation: (right, u, -forward), the camera axes expressed in world space.
     local m: Mat3 = Mat3(right.x, u.x, 0.0 - f.x,
-                         right.y, u.y, 0.0 - f.y,
-                         right.z, u.z, 0.0 - f.z)
+    right.y, u.y, 0.0 - f.y,
+    right.z, u.z, 0.0 - f.z)
     return quatFromMat3(&m)
 }

@@ -3,6 +3,7 @@
 The original plan is implemented except the items below, which are intentionally incomplete or blocked.
 
 ## Platform support
+
 - **Compiler distribution:** prebuilt compilers (install script, `xlang self-update`, Homebrew tap) exist for
   macOS and Linux on arm64/amd64 only. There is no native Windows build of the compiler (it uses POSIX
   process and file APIs); Windows hosts use WSL. `self-update` and `scripts/install.sh` shell out to `curl`,
@@ -35,12 +36,14 @@ The original plan is implemented except the items below, which are intentionally
   public `std/net` layer on top of `std/sys/sock.xl` (IPv6, DNS, address types).
 
 ## ABI and interop
+
 - **`export(c)` and aggregates by value:** structs are passed/returned through pointers (the xl convention),
   not through the target C ABI (SysV/AAPCS register passing). Only pointers, scalars and `@repr(c)`
   structs behind pointers are safe across the boundary.
 - **Itanium typeinfo:** the vtable of an `@repr(c)` class has a `null` typeinfo slot; no `_ZTI...` symbol.
 
 ## Language/stdlib
+
 - Control flow: `while`, `do { } while c`, `for init; cond; step { }`, `for i in lo..hi { }` (`hi` exclusive,
   integer bounds, evaluated once), `break`, `continue`, labels (`outer: while ...`, `break outer`, `continue outer`;
   `continue` in a `for` runs the step), `switch v { case a, b { } default { } }` (integers, bools, enums; no
@@ -48,7 +51,7 @@ The original plan is implemented except the items below, which are intentionally
   `defer stmt` (runs when the enclosing block is left, including by `return`/`break`/`continue`, last-in
   first-out; the deferred statement cannot itself `return`, jump, declare a variable or `defer`; `return v`
   computes `v` before the deferred statements run), `cond ? a : b`, compound assignment (`+= -= *= /= %= &= |= ^=
-  <<= >>=`) and statement-level `x++` / `x--`. `a op= b` is `a = a op b`; a target containing a call is
+<<= >>=`) and statement-level `x++` / `x--`. `a op= b` is `a = a op b`; a target containing a call is
   evaluated once through a hidden pointer. `++`/`--` are lexed as tokens, so `a--b` no longer parses as `a - -b`:
   write `a - -b`. Break/continue across a `switch` or `for` header are not otherwise restricted.
 - Variadic packs (`..args`, core-language phase 12.1): a pack is a compile-time list, so each distinct argument count and
@@ -128,7 +131,9 @@ The original plan is implemented except the items below, which are intentionally
   The compiler never searches the file system for it.
 
 ## Packages (`xlang package`, `xlang.toml`, `xlang.lock`)
+
 Decisions taken when the package system was added (`docs/PACKAGE_MANAGER.md` is the reference):
+
 - **Git is the registry.** Packages are tags of git repositories, fetched by running the `git` executable
   (`ls-remote`, `clone --depth 1`); no HTTP client, no hosting API, no search, no publish command. Builds
   never fetch: `xlang package install` is the only command that uses the network. Go-style auto-download
@@ -167,6 +172,7 @@ Decisions taken when the package system was added (`docs/PACKAGE_MANAGER.md` is 
   names therefore contain dots too. `import "github.com/u/r"` without alias binds the last segment (`r`).
 
 ## Stdlib: files, JSON, HTTP
+
 - **`std/http`:** the server speaks HTTP (`routerServe`) or HTTPS (`routerServeTls`, TLS 1.3; one connection
   at a time, blocking `accept`, `Connection: close`; a slow client stalls everyone for up to the 20 s receive
   timeout). The router is Gin-style (`:name`, `*name`, groups, middleware chains, 404/405, trailing-slash
@@ -204,6 +210,7 @@ Decisions taken when the package system was added (`docs/PACKAGE_MANAGER.md` is 
 - **`std/io/fs` has no directories or metadata** beyond existence and size; the caller supplies all buffers.
 
 ## Testing
+
 - **`std/testing/testing` has no discovery:** a test file registers its tests explicitly (`test(&s, "name", fn)`) and
   returns `suiteRun`. Auto-discovery of `fn test*` would need reflection or a compiler-side convention.
 - **No chained matchers** (`expect(x).toEqual(y)`): the matchers are typed functions (`expectEq` for `i64`, `expectEqUInt`, `expectEqStr`, `expectNear`, ...).
@@ -222,6 +229,7 @@ Decisions taken when the package system was added (`docs/PACKAGE_MANAGER.md` is 
   file. Windows is not supported by the runner (POSIX `fork`).
 
 ## Std cryptography (`std/crypto`)
+
 - **AES is not constant-time:** the S-box lookups depend on the data. The modes and GCM inherit this. A caller that must resist cache timing needs a bitsliced AES, which is not implemented.
 - **XTS needs whole blocks:** the data unit must be a multiple of 16 bytes. Ciphertext stealing (IEEE 1619 section 5.3.2) is not implemented; the call panics otherwise.
 - **CBC does not pad:** the caller adds PKCS#7 padding or whatever framing it uses.
@@ -233,6 +241,7 @@ Decisions taken when the package system was added (`docs/PACKAGE_MANAGER.md` is 
 - **BLAKE2 keyed mode is checked only for the unkeyed vector:** the keyed path shares the code but has no separate published vector in the tests yet.
 
 ## Std mathematics (`std/math`)
+
 - **Floating-point accuracy is checked to 1e-9, not to full double precision:** the elementary functions were compared with `bc -l` on about twenty sample points. The trigonometric reduction uses a two-part pi/2, so accuracy falls off for arguments much larger than 1e6.
 - **Floating-point functions are not correctly rounded:** results can differ from a libm in the last bit.
 - **`pow` with a non-integer exponent** goes through exp and log and loses about |y log x| times the rounding error.
@@ -242,13 +251,19 @@ Decisions taken when the package system was added (`docs/PACKAGE_MANAGER.md` is 
   growing; `modPow` also needs an odd modulus (Montgomery reduction). The type has no operator overloads: an
   operation is a method with a destination (`out.add(&a, &b)`), and `sub` panics when the right operand is larger
   because the value is unsigned.
-- **The geometry value classes are heap-free but not chainable:** `Vec2`, `Vec3`, `Vec4` and `Rect` are classes with
-  `f64` fields, an `init` and methods, so only `Mat` allocates (from the registered allocator). The language has no
-  associated (static) function and no address of a temporary, so a named zero/identity factory is not available
-  (`Vec3(0.0, 0.0, 0.0)`), and the result of a method must be stored in a variable before another method is called
-  on it (`a.add(&b).normalized()` is `E0709`).
+- **The geometry value classes are heap-free but not chainable:** `Vec2`, `Vec3`, `Vec4`, `Rect`, `Mat2`, `Mat3`, `Mat4`,
+  `Quat` and `Transform` are classes with `f64` fields, an `init` and methods, so only `Mat` allocates (from the
+  registered allocator). The language has no associated (static) function and no address of a temporary, so a named
+  zero/identity factory is not available as a method (`Vec3(0.0, 0.0, 0.0)`, and the free functions `mat2Identity`,
+  `mat3Identity`, `mat4Identity`, `quatIdentity`, `transformIdentity`), and the result of a method must be stored in a
+  variable before another method is called on it (`a.add(&b).normalized()` is `E0709`). Every product also has an
+  out-parameter form (`mulTo`) for that reason.
+- **A field assignment whose right side reads another field of the same object computes a wrong value:** the current
+  code generator miscompiles `self.p = Vec3(self.p.x + dx, ..)` and `a.x = a.y` style statements, so every such place in
+  `std/math` copies the fields into locals first. This is a codegen defect, not a language rule.
 
 ## Std random and identifiers (`std/random`)
+
 - **cuid v1 fingerprint is random per process:** the reference uses a hash of the host name. No host name is read (it needs an OS call that is not in std/sys yet). Values from two processes differ in those 4 characters even on the same host.
 - **cuid v2 hash is SHA-256:** the reference uses SHA-3. Values differ from the reference until SHA-3 exists in `std/crypto` (plan Q2). The text is the lowest 23 base36 digits of the hash, not a substring of its text form.
 - **XID machine and pid bytes are random per process:** the reference hashes the host name and uses the real pid. Same consequence as cuid v1.
@@ -257,11 +272,13 @@ Decisions taken when the package system was added (`docs/PACKAGE_MANAGER.md` is 
 - **Sqids and Hashids are not implemented:** neither has a specification, so the output would be defined by this library alone.
 
 ## Std text API (`std/str`)
+
 - **`view` returns a `str` on purpose:** it is the zero-copy byte primitive used inside the stdlib and by byte-level code (`fromParts`, `fromC`, `view`, and the `str` parameters of `eq`, `find`, `compare`, `globMatch`). Every function that returns text as a value returns `String`. Keeping `view` public is a decision: remove it when the compiler converts `str` to `String` views on its own.
 - **`String` methods returning views:** `asStr` returns a `str` view of the String's buffer, valid until the String changes or is dropped. This is the only view-returning method; the copying methods return `String`.
 - **Glob syntax has no escape:** `globMatch` treats `*` and `?` as wildcards in every position, so a literal `*` or `?` cannot be matched. A bracket class and an escape byte are not implemented.
 
 ## Event polling and OS library calls
+
 - **Readiness polling per OS:** Linux uses epoll (`epoll_create1` 291, `epoll_ctl` 233, `epoll_wait` 232 on x86-64; `epoll_pwait` 22 with a null sigmask on arm64). macOS uses kqueue (`kqueue` 362, `kevent` 363, struct kevent 32 bytes). Windows uses WSAPoll, the only readiness call Winsock offers. All three keep one-shot interests, matching EPOLLONESHOT and EV_ONESHOT.
 - **WSAPoll limits:** it reports sockets only, not file handles; the process holds at most 256 watches across all poll sets; an empty set returns at once instead of sleeping for the timeout, because WSAPoll rejects an empty array. The poll-set owner is a process-wide counter, not a handle.
 - **IOCP is not used:** it is a completion model (the kernel performs the I/O), so it cannot sit behind the readiness API. A proactor layer is a later decision.
@@ -271,21 +288,25 @@ Decisions taken when the package system was added (`docs/PACKAGE_MANAGER.md` is 
 - **Former open decision, kept for the record:** direct syscalls versus OS libraries on Linux and macOS: Linux and macOS currently call the kernel with raw numbers and do not link any OS library. The compiler's `@library` path works only on Windows: `src/driver/link.cpp` generates a DLL import library there, while the Linux link is `-static -nostdlib` with no loader and no import path, and the macOS link has no `-lSystem`. Options: (a) keep raw syscalls, no dependency, but macOS numbers are not stable per Apple's ABI; (b) call macOS APIs through `@library("System")`, Apple's supported interface, which needs a `-lSystem` link and a dynamic load command; (c) link static `.a` archives through `[[native]]` in `xlang.toml`, which the linker prunes to the referenced symbols (`--gc-sections` on Linux, `-dead_strip` on macOS). The libc ban that this paragraph referred to was lifted in CLAUDE.md, so option (b) is allowed.
 
 ## Tooling
+
 - Debug info has compile unit, subprograms, line locations and basic types; no struct/class types.
 - `--incremental` caches per-module objects only; semantic analysis still runs for every module (no
   interface files). A MIR layer (plan 8.3) was not needed.
 
 ## Std data formats (`std/encoding`, `std/compress`)
+
 - **Compression is fixed-Huffman only:** `deflateFixed`, `gzipCompress` and `zlibCompress` write one fixed-Huffman block with greedy matches; dynamic-Huffman blocks, lazy matching and the zlib compression levels are not implemented. zstd, brotli, LZ4 and Snappy are not implemented.
 - **CSV records are read one at a time:** a quoted field that spans lines needs the caller to join the lines.
 - **JSON is not a tree:** `jsonPointerGet` and `jsonSkipRaw` return raw views; building a tree or a typed object model is not implemented.
 - **Output buffers are fixed:** the decoders and the writers take the capacity from the caller and report overflow; there is no growing decoder yet.
 
 ## Std authentication (`std/auth`)
+
 - **JWS algorithms:** HS256, RS256, ES256 and EdDSA are verified; ES384, RS384, RS512 and PS256 are not. JWK sets and key selection by `kid` are not implemented.
 - **No claim validation:** `exp`, `nbf`, `iss` and `aud` are not checked; a caller reads them with `jsonPointerGet` and decides.
 
 ## Std time, versions and encodings (`std/time`, `std/semver`, `std/encoding`)
+
 - **No time zones:** `std/time` is UTC only. The TZif format (RFC 8536) and the zone rules are not read.
 - **No ISO 8601 variants:** only the RFC 3339 form is parsed and written; week dates, ordinal dates and durations are not implemented.
 - **No version ranges:** `std/semver` compares versions only. Caret, tilde and range syntax are not implemented.
@@ -294,17 +315,21 @@ Decisions taken when the package system was added (`docs/PACKAGE_MANAGER.md` is 
 - **Base58 has input caps:** `base58Encode` takes at most 512 bytes of input and `base58Decode` produces at most 800 bytes.
 
 ## Std OAuth helpers
+
 - **No token exchange:** `std/auth/oauth` builds the authorization URL and the PKCE values; the token request and response handling (RFC 6749 section 4.1.3) are not implemented here.
 
 ## Time zones
+
 - **POSIX DST rules are not evaluated:** after the last transition of a zone with DST, the last transition type is used. Dates beyond the table (the files list transitions to 2037 for most DST zones) would need the footer rule evaluated (RFC 8536 section 3.3).
 - **Zone files are read by the caller:** the module parses bytes; it does not look up `/usr/share/zoneinfo` or the Windows zone registry.
 
 ## TOML
+
 - **TOML validation does not catch duplicate keys or table redefinitions:** the module checks the grammar without a tree. A caller that loads configuration must detect repeated keys itself.
 - **TOML lookup is by written key:** `tomlGet` compares keys with the quotes and blanks removed; escapes inside quoted keys are not processed, and a repeated `[[array]]` header returns its first occurrence.
 
 ## Std network protocol messages (`std/net/proto`), CSR and CRL, MessagePack
+
 - **NTP has no client:** packets are built and parsed; the UDP exchange, the clock filter and the clock discipline are not implemented.
 - **SOCKS5 without authentication:** only the "no authentication" method (RFC 1928). The username and password subnegotiation (RFC 1929) is not done.
 - **Syslog has no transport:** the RFC 5424 header is written; sending it, the structured data and parsing received messages are not implemented.
@@ -316,27 +341,33 @@ Decisions taken when the package system was added (`docs/PACKAGE_MANAGER.md` is 
 - **TCP has no state machine:** `tcpBuild4` writes a 20-byte header with no options (no MSS, window scale, timestamps or SACK). Connection setup, retransmission and congestion control are not implemented here.
 
 ## Std elliptic curves (`std/crypto/sig`)
+
 - **Ed448 and the other Edwards curves use the slow path:** the scalar reductions go through the integer routines (`bigintDivMod`), not Montgomery form, so an Ed448 signature takes far longer than an Ed25519 one.
 - **Ed448ph (the pre-hashed variant) and contexts are not implemented:** only the pure Ed448 signature with an empty context (RFC 8032 section 5.2.6, phflag 0).
 - **secp256k1 uses the same non-constant-time arithmetic as P-256:** a public key, a signature and a shared secret match openssl, but a secret scalar is processed with data-dependent branches.
 
 ## Std HTTP router (`std/http/router`)
+
 - **No RedirectFixedPath and no internal redirect:** the router redirects a missing or extra trailing slash (`redirectSlash`), but it does not fix a case-insensitive path, and `HandleContext`-style forwarding of a request to another route is not implemented. A handler that needs another route calls the handler directly.
 - **Fixed sizes:** a route pattern is at most 128 bytes, a group prefix at most 128 bytes, and a chain at most 8 handlers (middleware included). A longer pattern stops the program.
 - **Form and body binding:** `c.body` is the raw body; there is no `PostForm`, multipart or `ShouldBindJSON` equivalent yet.
 
 ## Std system information (`std/cpu`, `std/hw`, `std/gpu`, `std/io/dir`)
+
 - **Windows is empty:** `cpuFeatures`, `hwCpuModel`, `gpuDrmDevices` and the others return false or 0 there (IsProcessorFeaturePresent, GlobalMemoryStatusEx and DXGI are planned).
 - **macOS has no directory listing and no GPU enumeration yet:** `getdirentries` is not in the verified XNU table; Metal and IOKit are deferred.
 - **The DRM success path is untested:** no DRM driver exists in the available containers, so `DRM_IOCTL_VERSION` is only exercised on a missing or non-DRM node.
 
 ## Std HTTP conformance (`std/http`)
+
 - **Open HTTP rules:** keep-alive (every response says `Connection: close`), several differing `Content-Length` values (the first is used), and target-form validation (absolute URI and `*` forms are routed as paths). See docs/std/http-audit.md.
 
 ## Std MQTT (`std/net/proto/mqtt`)
+
 - **Packets only:** the builders write CONNECT, PUBLISH, SUBSCRIBE, PINGREQ and DISCONNECT, and the reader parses CONNACK. The connection loop, the QoS 1 and 2 acknowledgements, will messages, credentials and AUTH are not implemented.
 
 ## Batch: process, stat, io_uring, protocols, DER and hardware (this change)
+
 - **io_uring is a standalone backend:** `std/sys/uring` sets up a ring and does a NOP round trip. The event loop (`std/sys/event`) still uses epoll; wiring the completion backend in with the epoll fallback is open. Docker's default seccomp profile refuses io_uring, so the fallback path is what runs in containers.
 - **Process spawn has no environment:** `processSpawn` starts the child with an empty environment; passing one is open. There are no signal handlers (rt_sigaction, sigaction).
 - **Fiber scheduler is not built:** `sysMapGuarded` gives the guard page; the fiber scheduler on top of it is open.
