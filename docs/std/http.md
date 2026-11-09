@@ -1,52 +1,110 @@
-# std/http
+---
+title: HTTP
+---
 
-`import ... from "std"` gives the HTTP server and client. The source is split by purpose in `std/http/`:
-`context.xl` (request/response `Context`), `router.xl` (routes, groups, dispatch), `server.xl` (HTTP and
-HTTPS connection loop), `middleware.xl` (`mwLogger`, `mwCors`), `url.xl`, `stream.xl` and `fetch.xl`
-(client), `util.xl` (string and header helpers).
+`std/http` has an HTTP/1.1 server and client over plain TCP or TLS 1.3. The parts live next to each other:
+
+| File | Contents |
+|---|---|
+| `engine.xl` | `Engine`, `RouterGroup` and `Route`: routing, groups and dispatch |
+| `context.xl` | `Context`: the request and the response of one exchange |
+| `server.xl` | `routerServe` and `routerServeTls`: the connection loop |
+| `middleware.xl` | `Logger`, `Recovery`, `Cors` |
+| `client.xl` | `Client`, `Request`, `Response`, `Headers`, and the streaming calls |
+| `multipart.xl` | multipart form parsing |
+| `url.xl`, `util.xl` | URL parsing and header helpers |
 
 ## Server
 
+```xlang
+from "std" import Engine, Context, Logger, println
+
+fn hello(c: *Context) {
+    c.String(200, "hello\n")
+}
+
+@entry fn main() -> i32 {
+    local e: Engine = Engine()
+    e.Use(Logger)
+    e.GET("/hello", hello)
+    return e.Run(8080)
+}
 ```
-local r: Router
-routerInit(&r)
-routerUse(&r, mwLogger)
-routerGet(&r, "/users/:id", user)       // ctxParam(c, "id")
-routerGet(&r, "/files/*path", files)    // value starts with "/"
-local api: Group
-routerGroup(&r, "/api", &api)
-groupUse(&api, authMiddleware)
-groupPost(&api, "/items", create)
-routerServe(&r, 2130706433, 8080, listening)      // or routerServeTls(&r, ip, port, &cred, listening)
+
+### Engine
+
+| Member | Meaning |
+|---|---|
+| `Engine()` | an engine with no routes |
+| `GET`, `POST`, `PUT`, `PATCH`, `DELETE`, `HEAD`, `OPTIONS` | register a route: `(path, fn(*Context))` |
+| `Any(path, handler)` | register a route for every method |
+| `Handle(method, path, handler)` | register a route for one method token |
+| `Use(mw)` | add middleware to every route registered after it |
+| `Group(prefix)` | a `*RouterGroup` with that prefix, copying the middleware in effect |
+| `NoRoute(handler)`, `NoMethod(handler)` | replace the 404 and 405 handlers |
+| `Run(port)`, `RunTLS(port, &credentials)` | serve until the process ends |
+
+A `RouterGroup` has the same route methods and `Use`/`Group`, all relative to its prefix.
+
+### Matching
+
+- Static routes win over `:name` and `*name`; `:name` matches one segment and `*name` the rest of the path (its value starts with `/`).
+- `HEAD` falls back to `GET`.
+- A path that exists with or without a trailing slash is redirected (301 for `GET`/`HEAD`, 307 otherwise).
+- A known path with another method answers 405; otherwise 404.
+- Registering two routes of one method that differ only in parameter names (`/user/:id` and `/user/:name`) stops the program at start-up, as Gin does.
+
+### Middleware
+
+Middleware is `fn(*Context)`.
+
+```xlang
+fn auth(c: *Context) {
+    if c.GetHeader("Authorization").len == 0 {
+        c.AbortWithStatus(401)
+        return
+    }
+    c.Next()
+}
 ```
 
-- Methods: `routerGet/Post/Put/Patch/Delete/Head/Options`, `routerAny`, `routerHandle(r, method, path, h)`;
-  the same with the `group` prefix on a `Group`.
-- Matching: static routes win over `:name` and `*name`; `HEAD` falls back to `GET`; a path that exists
-  with or without a trailing slash is redirected (301 for GET/HEAD, 307 otherwise); a known path with
-  another method answers 405; otherwise 404 (`routerNoRoute` replaces the handler).
-- Middleware is `fn(*Context)`; call `ctxNext(c)` to run the rest of the chain and continue afterwards,
-  `ctxAbort`/`ctxAbortWithStatus` to stop it.
-- Request: `ctxHeader`, `ctxQuery`, `ctxDefaultQuery`, `ctxParam`, `c.body`/`c.bodyLen`, `c.method`, `c.path`.
-- Response: `ctxString`, `ctxHTML`, `ctxJSON`, `ctxStatus`, `ctxRespond`, `ctxRedirect`, `ctxSetHeader`.
-  Chunked: `ctxBeginStream`, `ctxWriteChunk`, `ctxEndStream`.
-- Per-request data: `ctxSetUser` / `ctxUser`.
+`Next()` runs the rest of the chain and then continues after it; `Abort()` and `AbortWithStatus(code)` stop it; `IsAborted()` reports whether it was stopped.
 
-## Routing
+### `Context`
 
-The router is Gin-style: `:name` and `*name` parameters, route groups with their own middleware, redirects, and
-405 for a known path with another method. Registering two routes of one method that differ only in parameter names
-(`/user/:id` and `/user/:name`) stops the program, as Gin does at startup. The examples are on the [Examples](../examples.html)
-page, which includes them from `docs/examples/`.
+| Group | Members |
+|---|---|
+| Request | `Method()`, `Path()`, `Body()`, `Param(name)`, `Query(name)`, `DefaultQuery(name, fallback)`, `PostForm(name)`, `GetHeader(name)`, `FormValue`, `FormFile`, `FormFileName`, `FormFileType` |
+| Response | `Status(code)`, `String(code, text)`, `JSON(code, text)`, `HTML(code, text)`, `Data(code, bytes)`, `Redirect(code, location)`, `SetHeader(name, value)`, `Respond()` |
+| Chunked | `StreamStart()`, `WriteChunk(bytes)`, `EndStream()` |
+| Chain | `Next()`, `Abort()`, `AbortWithStatus(code)`, `IsAborted()`, `Responded()` |
+
+The examples on the [Examples]({{ site.baseurl }}/examples.html) page are the routing examples of the Gin documentation, written with `std/http`, and are included straight from `docs/examples/`.
 
 ## Client
 
-- `fetch(url, &opts, buf, cap, &resp)` reads the whole response into `buf`, follows redirects and sets
-  `resp.status`, `resp.headers` (`responseHeader`), `resp.body`.
-- Helpers: `fetchGet`, `fetchPost`, `fetchPut`, `fetchPatch`, `fetchDelete`, `fetchHead`, `fetchOptions`,
-  `fetchMethod` (any method token).
-- Streaming: `httpOpen`, `httpRead`, `httpClose`, `httpHeader`; request bodies can come from a buffer or a
-  chunked `source` callback (`FetchOptions`).
-- Errors: `FETCH_OK` or a negative `FETCH_ERR_*` code; `fetchErrorText` gives a message.
+```xlang
+from "std" import Client, Request, Response, println
+
+@entry fn main() -> i32 {
+    local c: Client = Client()
+    local req: Request = Request()
+    req.SetBody("{}")
+    req.Header().Set("Content-Type", "application/json")
+    local resp: Response = c.Do(&req)
+    println("{} {}", resp.Status(), resp.Body().Text())
+    return 0
+}
+```
+
+| Type | Members |
+|---|---|
+| `Client` | `Do(&req) -> Response`, `followRedirects(bool)` |
+| `Request` | `Get`, `Post`, `Put`, `Patch`, `Delete`, `Head` to set the URL and method; `SetBody`, `Header()` |
+| `Headers` | `Add`, `Set`, `Remove`, `Get`, `Has`, `Length`, `Write` |
+| `Response` | `Status()`, `Body()`, `Header()`, `Text()`, `Ok()` |
+| streaming | `httpOpen`, `httpRead`, `httpClose`, `httpHeader`; a request body may come from a buffer or a chunked `source` callback |
+
+`clientErrorText(code)` turns a failure code into a message.
 
 Limits are listed in [Known limitations]({{ site.baseurl }}/known-limitations.html).

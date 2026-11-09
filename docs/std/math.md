@@ -77,7 +77,7 @@ Geometry is split by type, one file per value class, so a caller that needs only
 | `rect.xl`       | `Rect`                                                                                                                                                                                       |
 | `matrix.xl`     | `Mat`, `matIdentity`, `matCopy`, `matAdd`, `matSub`, `matTranspose`, `matDet`, `matInverse` and the internal LU                                                                              |
 | `matrix2.xl`    | `Mat2` and `mat2Identity`, `mat2Rotation`, `mat2Scale`, `mat2FromColumns`, `mat2Lerp`                                                                                                        |
-| `matrix3.xl`    | `Mat3` and `mat3Identity`, `mat3RotationX/Y/Z`, `mat3RotationAxis`, `mat3Scale`, `mat3Translation`, `mat3FromColumns`, `mat3Lerp`, `mat3FromQuat`                                            |
+| `matrix3.xl`    | `Mat3` and `mat3Identity`, `mat3RotationX/Y/Z`, `mat3RotationAxis`, `mat3Scale`, `mat3Translation`, `mat3FromColumns`, `mat3Lerp`                                            |
 | `matrix4.xl`    | `Mat4` and `mat4Identity`, `mat4Translation`, `mat4Scale`, `mat4RotationX/Y/Z`, `mat4RotationAxis`, `mat4FromQuat`, `mat4Perspective`, `mat4Ortho`, `mat4LookAt`, `mat4FromMat3`, `mat4Lerp` |
 | `quaternion.xl` | `Quat` and `quatIdentity`, `quatFromAxisAngle`, `quatFromEuler`, `quatToEuler`, `quatFromMat3`, `quatLookRotation`                                                                           |
 | `transform.xl`  | `Transform` and `transformIdentity`                                                                                                                                                          |
