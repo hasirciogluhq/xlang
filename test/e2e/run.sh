@@ -37,6 +37,7 @@ tests=(
   "controlflow|0|controlflow ok|0|1"
   "for|0|for ok|0|1"
   "enums|0|enums ok|0|1"
+  "generic_enums|0|generic_enums ok|0|1"
   "tuple_return|0|tuple return ok|0|1"
   "tuple_destructure|0|tuple destructuring ok|0|1"
   "proc_list|0|pid|0|1"

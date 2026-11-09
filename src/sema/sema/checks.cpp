@@ -194,6 +194,15 @@ void Sema::analyze() {
         } else if ((std::holds_alternative<StructDecl>(item.decl) ||
                     std::holds_alternative<ClassDecl>(item.decl)) &&
                    genericParamsOf(item).empty()) {
+            // A payload struct of a generic enum (`Result$Ok<T, E>`) has the enum's parameters in
+            // its fields but none of its own; it is checked with the enum's instance.
+            const bool instantiated_part =
+                std::holds_alternative<StructDecl>(item.decl) &&
+                std::get<StructDecl>(item.decl).is_payload &&
+                !genericParamsOf(genericEnumOf(declBase(item).name)).empty();
+            if (instantiated_part) {
+                continue;
+            }
             const auto* fields = std::holds_alternative<StructDecl>(item.decl)
                                      ? &std::get<StructDecl>(item.decl).fields
                                      : &std::get<ClassDecl>(item.decl).fields;

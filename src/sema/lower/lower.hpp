@@ -554,6 +554,9 @@ class Lowerer {
         const StructDecl* decl;
     };
     [[nodiscard]] static const StructDecl* sumDecl(const Item* item);
+    /// True when `named` (what a `case` names) and `scrutinee` describe the same enum: the same
+    /// declaration, or the declaration and one of its instances.
+    [[nodiscard]] static bool sameVariants(const StructDecl& named, const StructDecl& scrutinee);
     [[nodiscard]] std::optional<Sum> sumOfType(const Type& t);
     [[nodiscard]] std::optional<Sum> sumOfEntry(const ScopeEntry& head);
     /// The resolved type of `Name` + `suffix` (`$Tag`, `$Data`, `$Variant`; empty = the enum
@@ -683,6 +686,17 @@ class Lowerer {
     /// `a.b`: a namespace member, an enum member or a variant of a payload enum (both are
     /// resolved through the expected type when the enum is generic), or a field of a value.
     EP fieldExpr(const Expr& e, const Type* expected = nullptr);
+    /// The instance of a generic enum that `expected` names (`Result<i32, E>` for `Result`):
+    /// `E.Ok` and friends of a generic enum take their type from the surrounding expression.
+    [[nodiscard]] std::optional<Type> instancesOf(const Type* expected, const std::string& qname);
+    /// The sum behind `head`: its instance when the head names a generic payload enum (chosen by
+    /// what `expected` names), the declaration's own variant list otherwise. `at` is the use, for
+    /// the E0724 of a generic enum named without an expected type.
+    [[nodiscard]] std::optional<Sum>
+    sumFor(const ScopeEntry& head, const Type* expected, const Span& at);
+    /// True when `head` names a payload enum that has type parameters of its own (whose instance
+    /// `sumFor` needs an expected type for).
+    [[nodiscard]] bool isGenericPayloadEnum(const ScopeEntry& head) const;
     EP unaryExpr(const Expr& e, const Type* expected);
     EP binaryExpr(const Expr& e, const Type* expected);
     EP castExpr(const Expr& e);
@@ -715,6 +729,9 @@ class Lowerer {
     [[nodiscard]] bool castable(const Type& from, const Type& to) const;
 
     // --- queries
+    /// `t` with the envelope of a generic payload enum applied: `Result$Ok<A, B>` reads
+    /// `Result<A, B>$Ok`, the payload struct of the instance. Other types are unchanged.
+    [[nodiscard]] Type sumPartResolved(Sema& sema, const Type& t);
     [[nodiscard]] Type resolvedIn(Sema& sema, const Type& t);
     [[nodiscard]] Type resolved(const Type& t) { return resolvedIn(s_, t); }
     /// Declared type of a global; for an untyped `const`, the default type of its literal value.

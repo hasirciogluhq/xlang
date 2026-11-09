@@ -224,11 +224,15 @@ void Lowerer::emitSumDropGlue(const std::string& qname, const StructDecl& sum, c
     if (!needsDrop(self)) {
         return;
     }
+    // The glue is named after the instance (`Result$dropGlue<i32, E>`): two instances of one
+    // generic enum have different payloads, so they cannot share a body.
+    const std::string glue = dropGlueName(qname);
     const Type ptr = Type::makePointer(self);
-    const Type tag_type = sumPart(Sum{&s_, &sum}, "$Tag", span);
+    const Sum parts{&s_, &sum};
+    const Type tag_type = sumPart(parts, "$Tag", span);
     hir::Function g;
-    g.name = dropGlueName(qname);
-    g.symbol = g.name;
+    g.name = glue;
+    g.symbol = glue;
     g.module = s_.key_;
     g.exported = true;
     g.has_body = true;
@@ -255,7 +259,6 @@ void Lowerer::emitSumDropGlue(const std::string& qname, const StructDecl& sum, c
         f->lhs = std::move(base);
         return f;
     };
-    const std::string data_type = qname + "$Data";
     EP tag = field(self_ptr(), "tag", 0, tag_type);
     hir::Stmt chain;
     bool has_chain = false;
@@ -276,11 +279,11 @@ void Lowerer::emitSumDropGlue(const std::string& qname, const StructDecl& sum, c
         body.kind = hir::StmtKind::Block;
         body.span = span;
         for (const auto& [k, ft] : droppable) {
-            EP data = field(self_ptr(), "data", 1, Type::makeNamed({data_type}));
+            EP data = field(self_ptr(), "data", 1, sumPart(parts, "$Data", span));
             EP payload = field(std::move(data),
                                v.name,
-                               static_cast<std::uint32_t>(sumDataIndex(Sum{&s_, &sum}, i)),
-                               Type::makeNamed({qname + "$" + v.name}));
+                               static_cast<std::uint32_t>(sumDataIndex(parts, i)),
+                               sumPart(parts, "$" + v.name, span));
             EP value = field(std::move(payload),
                              std::format("_{}", k),
                              static_cast<std::uint32_t>(k),
@@ -1187,11 +1190,7 @@ void Lowerer::lowerForEach(const Stmt& s, std::vector<hir::Stmt>& out) {
 void Lowerer::lowerSwitch(const Stmt& s, std::vector<hir::Stmt>& out) {
     const Type boolean = Type::makeBool();
     EP scrutinee = expr(*s.expr, nullptr);
-    // The head names the sum type: `switch r` of a generic enum instance (`Result<i32, E>`) is
-    // matched here, because `sumOfType` only sees the tag and the payload structs of an instance.
-    const ScopeEntry* head = scrutinee ? chainEntry(*s.expr) : nullptr;
-    const auto sum = scrutinee ? sumOfType(scrutinee->type)
-                              : (head != nullptr ? sumOfEntry(*head) : std::nullopt);
+    const auto sum = scrutinee ? sumOfType(scrutinee->type) : std::nullopt;
     if (scrutinee && sum) {
         lowerSumSwitch(s, std::move(scrutinee), out);
         return;

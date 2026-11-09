@@ -898,7 +898,7 @@ class Parser {
                 if (at(TokenKind::DotDot)) {
                     advance();
                     ExprPtr slice = makeExpr(Expr::Kind::Slice, expr->span);
-                    slice->rhs = parseExpr();  // `hi`; absent when the bracket closes here
+                    slice->rhs = parseExpr(); // `hi`; absent when the bracket closes here
                     no_struct_ = saved_no_struct;
                     --nl_depth_;
                     expect(TokenKind::RBracket, "`]` closing the slice");
@@ -910,8 +910,8 @@ class Parser {
                     if (at(TokenKind::DotDot)) {
                         advance();
                         ExprPtr slice = makeExpr(Expr::Kind::Slice, expr->span);
-                        slice->args.push_back(std::move(first));  // `lo`
-                        slice->rhs = parseExpr();                 // `hi`; absent when the bracket closes
+                        slice->args.push_back(std::move(first)); // `lo`
+                        slice->rhs = parseExpr(); // `hi`; absent when the bracket closes
                         no_struct_ = saved_no_struct;
                         --nl_depth_;
                         expect(TokenKind::RBracket, "`]` closing the slice");
@@ -1543,7 +1543,8 @@ class Parser {
                 return stmt;
             }
             if (has_index) {
-                expected("`{` after the iterable; `for x, i in ...` needs a collection, not a range");
+                expected(
+                    "`{` after the iterable; `for x, i in ...` needs a collection, not a range");
             }
             stmt.kind = Stmt::Kind::ForRange;
             if (!match(TokenKind::DotDot)) {
@@ -2226,8 +2227,10 @@ class Parser {
 
     /// A value enum is one item. A payload enum (`Add(A, B)` members) becomes five kinds of
     /// ordinary items: `Name$Tag` (the tag enum), `Name$Vi` (one struct per variant with data),
-    /// `Name$Data` (their union) and `Name` (`{ tag, data }` plus the variant list). Every one of
-    /// them carries the enum's type parameters, so `enum Result<T, E>` instantiates as a unit.
+    /// `Name$Data` (their union) and `Name` (`{ tag, data }` plus the variant list). The union and
+    /// the enum carry the enum's type parameters; the tag enum takes none (it is `i32` either
+    /// way), and the payload structs take none of their own either, because their fields are the
+    /// enum's payload types and they exist only as parts of an enum instance.
     void addEnum(Program& program, DeclStart& s, EnumDecl decl) {
         if (std::ranges::none_of(decl.members, &EnumMember::has_payload)) {
             addItem(program, s, std::move(decl));
@@ -2251,12 +2254,13 @@ class Parser {
         const std::string tag_name = decl.name + "$Tag";
         const std::string data_name = decl.name + "$Data";
 
-        // A generic enum's generated items name each other through the enum's type arguments:
-        // `Result<T, E>` becomes `{ tag: Result$Tag<T, E>, data: Result$Data<T, E> }`. The text
-        // scheme `Result$Tag<T, E>` is what the instance local name `Result$Tag<i32, i32>` and
-        // `typeToString` use, so a generic enum needs no rewriting of the instance.
-        const auto selfArgs = [&](std::string_view suffix) {
+        // The data part of a generic enum names its arguments: `Result<T, E>` holds
+        // `data: Result$Data<T, E>` and each variant field is `Result$Ok<T, E>`. The tag enum does
+        // not: it is `i32` by position whatever the parameters are, so `Result$Tag` has no
+        // parameters and is never instantiated (`Sema::instantiate` shares it between instances).
+        const auto selfArgs = [&](std::string_view suffix, const Span& span) {
             Type t = Type::makeNamed({decl.name + std::string(suffix)});
+            t.span = span;
             if (decl.generic_params.empty()) {
                 return t;
             }
@@ -2266,14 +2270,15 @@ class Parser {
             return t;
         };
         const auto part = [&](std::string_view suffix, const Span& span) {
-            Type t = selfArgs(suffix);
+            Type t = Type::makeNamed({decl.name + std::string(suffix)});
             t.span = span;
             return t;
         };
 
+        // The tag enum is `i32` by position whatever the enum's parameters are, so it stays an
+        // ordinary enum; only the data part and the enum itself name the enum's arguments.
         EnumDecl tag;
         base(tag, tag_name);
-        tag.generic_params = decl.generic_params;
         tag.underlying = Type::makeInt(32, true);
         StructDecl data;
         base(data, data_name);
@@ -2284,7 +2289,7 @@ class Parser {
         sum.generic_params = decl.generic_params;
         sum.attributes = decl.attributes;
         sum.fields.push_back({"tag", part("$Tag", decl.name_span), {}, decl.name_span});
-        sum.fields.push_back({"data", part("$Data", decl.name_span), {}, decl.name_span});
+        sum.fields.push_back({"data", selfArgs("$Data", decl.name_span), {}, decl.name_span});
 
         std::vector<StructDecl> payloads;
         for (EnumMember& m : decl.members) {
@@ -2295,11 +2300,17 @@ class Parser {
             }
             StructDecl& p = payloads.emplace_back();
             base(p, std::format("{}${}", decl.name, m.name));
-            p.generic_params = decl.generic_params;
+            p.is_payload = true;
+            // The payload struct of a generic enum carries **no** type parameters of its own: `T`
+            // is the enum's parameter, and the struct only ever exists as an instance of the enum
+            // (`Result$Ok<i32, E>`), made by `Sema::instantiate` together with the enum itself. The
+            // generated items name each other with the enum's arguments, so a bare `Result$Ok`
+            // would be an undecided name (E0724); each field keeps the enum's own type text and is
+            // substituted by the enum's instance.
             for (const std::size_t i : std::views::iota(std::size_t{0}, m.payload.size())) {
                 p.fields.push_back({std::format("_{}", i), m.payload[i], {}, m.span});
             }
-            data.fields.push_back({m.name, part("$" + m.name, m.span), {}, m.span});
+            data.fields.push_back({m.name, selfArgs("$" + m.name, m.span), {}, m.span});
         }
         addItem(program, s, std::move(tag));
         for (StructDecl& p : payloads) {

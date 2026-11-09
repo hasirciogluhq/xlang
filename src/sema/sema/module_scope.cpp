@@ -6,6 +6,7 @@
 #include <format>
 #include <functional>
 #include <numeric>
+#include <ranges>
 #include <random>
 
 namespace xlang {
@@ -40,6 +41,21 @@ std::string Sema::qualify(const std::string& local) const {
 std::optional<Sema::EntityRef> Sema::lookupEntity(const std::string& name) {
     if (const Symbol* s = find(name)) {
         return EntityRef{this, s, name};
+    }
+    // An instance of a payload enum is named after it: `Result<i32, E>$Ok`. The parts are not
+    // written by hand (the declaration spells `Result$Ok<T, E>`, which resolves to the instance),
+    // but the lowering asks the table for them under that name: the instance is the item that
+    // knows the variants, so the lookup answers with it.
+    if (const std::size_t cut = name.rfind('$'); cut != std::string::npos) {
+        if (const Symbol* s = find(name.substr(0, cut));
+            s != nullptr && s->item != nullptr &&
+            std::holds_alternative<StructDecl>(s->item->decl) &&
+            !std::get<StructDecl>(s->item->decl).variants.empty()) {
+            auto& derived = instance_aliases_["derived:" + name];
+            derived = EntityRef{this, s, name.substr(0, cut)};
+            derived.local = name;
+            return derived;
+        }
     }
     if (const auto it = imports_.find(name); it != imports_.end() && comp_ != nullptr &&
                                              it->second.kind == ImportBinding::Kind::Entity) {
@@ -81,6 +97,30 @@ std::optional<Sema::EntityRef> Sema::entityByQName(const std::string& qname) {
     const std::string local = sep == std::string::npos ? qname : qname.substr(sep + 2);
     if (const Symbol* s = owner->find(local)) {
         return EntityRef{owner, s, local};
+    }
+    // A part of a payload enum instance (`Result<i32, E>$Ok`, `$Data`) has no symbol of its own:
+    // the instance was made out of the enum itself, which knows its variants, so the instance is
+    // what the part resolves to.
+    bool matched = false;
+    for (std::size_t cut = local.rfind('$'); cut != std::string::npos;
+         cut = cut == 0 ? std::string::npos : local.rfind('$', cut - 1)) {
+        const Symbol* s = owner->find(local.substr(0, cut));
+        if (s == nullptr || s->item == nullptr ||
+            !std::holds_alternative<StructDecl>(s->item->decl)) {
+            continue;
+        }
+        const std::string part = local.substr(cut + 1);
+        const auto& sum = std::get<StructDecl>(s->item->decl);
+        matched = part == "Tag" || part == "Data" ||
+                  std::ranges::any_of(
+                      sum.variants, [&](const SumVariant& v) { return v.name == part; });
+        if (!matched) {
+            continue;
+        }
+        auto& derived = owner->instance_aliases_["derived:" + local];
+        derived = EntityRef{owner, s, local.substr(0, cut)};
+        derived.local = local;
+        return derived;
     }
     return std::nullopt;
 }

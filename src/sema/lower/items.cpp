@@ -60,7 +60,8 @@ void Lowerer::buildModuleScope() {
         e.owner = &s_;
         e.qname = "MemoryOrder";
         (void)scopes_.declare(std::move(e));
-    }    for (const Item& item : s_.program_.items) {
+    }
+    for (const Item& item : s_.program_.items) {
         const DeclBase& base = declBase(item);
         if (item.modifiers.registered) {
             registered_names_.insert(base.name);
@@ -139,13 +140,6 @@ void Lowerer::buildModuleScope() {
                    std::holds_alternative<EnumDecl>(item.decl) ||
                    std::holds_alternative<TypeAliasDecl>(item.decl)) {
             e.kind = ScopeEntry::Kind::Type;
-            if (const auto* en = std::get_if<EnumDecl>(&item.decl);
-                en != nullptr && !en->generic_params.empty()) {
-                // A generic enum names no type until its arguments are written. Remembering the
-                // bare name lets `Result<i32, E>` set `instance_type` and lets a generic enum
-                // used without arguments report E0724 instead of looking like a plain name.
-                e.type = Type::makeNamed({base.name});
-            }
         } else {
             continue;
         }
@@ -806,7 +800,7 @@ std::vector<Lowerer::OverloadCandidate> Lowerer::genericCandidates(const ScopeEn
     const std::vector<Type> no_args;
     std::vector<OverloadCandidate> out;
     for (const Item* item : items) {
-        const std::vector<std::string> names = Sema::genericParamsOf(*item);
+        const std::vector<std::string> names = s_.genericParamsOf(*item);
         if (names.empty()) {
             continue;
         }
@@ -944,7 +938,7 @@ std::vector<Lowerer::OverloadCandidate> Lowerer::candidatesOf(const ScopeEntry& 
     const std::string qname = entry.qname.empty() ? entry.name : entry.qname;
     std::vector<OverloadCandidate> out;
     for (const Item* item : items) {
-        if (!Sema::genericParamsOf(*item).empty() || Sema::isPackFn(*item)) {
+        if (!s_.genericParamsOf(*item).empty() || Sema::isPackFn(*item)) {
             continue; // generic and pack overloads are instantiated per call (genericCandidates,
                       // packCandidates)
         }
@@ -1212,7 +1206,9 @@ void Lowerer::lowerEnum(const EnumDecl& decl) {
 // ---------------------------------------------------------------------------------------------
 // Payload enums. The parser turns `enum E { A(i64), B }` into the struct `E { tag: E$Tag, data:
 // E$Data }`, the tag enum `E$Tag`, the union `E$Data { A: E$A }` and one struct `E$A` per variant
-// with data. Here the variants are built (`E.A(1)`, `E.B`) and matched (`switch`).
+// with data. Here the variants are built (`E.A(1)`, `E.B`) and matched (`switch`). A generic enum
+// is the same shape inside its instance: `E<i32>` is the instance of `E`, and its parts are the
+// instances `E<i32>$Tag`, `E<i32>$Data` and `E<i32>$A` (made by `Sema::instantiate`).
 
 const StructDecl* Lowerer::sumDecl(const Item* item) {
     if (item == nullptr) {
@@ -1222,16 +1218,23 @@ const StructDecl* Lowerer::sumDecl(const Item* item) {
     return decl != nullptr && !decl->variants.empty() ? decl : nullptr;
 }
 
+bool Lowerer::sameVariants(const StructDecl& named, const StructDecl& scrutinee) {
+    if (&named == &scrutinee) {
+        return true;
+    }
+    // A case names the declaration (`Result.Ok`), the scrutinized value is one instance of it
+    // (`Result<i32, E>`): same enum name before the arguments, same variants.
+    const std::string base = scrutinee.name.substr(0, scrutinee.name.find('<'));
+    return named.name == base && std::ranges::equal(named.variants,
+                                                    scrutinee.variants,
+                                                    std::equal_to<>(),
+                                                    &SumVariant::name,
+                                                    &SumVariant::name);
+}
+
 std::optional<Lowerer::Sum> Lowerer::sumOfEntry(const ScopeEntry& head) {
     if (head.kind != ScopeEntry::Kind::Type || head.item == nullptr) {
         return std::nullopt;
-    }
-    // A generic enum named as a type (`local x: Result<i32, E>`) points at its instance; the
-    // instance's own aggregate is the sum layout.
-    if (!head.instance_type.path.empty()) {
-        if (const auto s = sumOfType(head.instance_type)) {
-            return s;
-        }
     }
     const StructDecl* decl = sumDecl(head.item);
     if (decl == nullptr) {
@@ -1241,15 +1244,9 @@ std::optional<Lowerer::Sum> Lowerer::sumOfEntry(const ScopeEntry& head) {
 }
 
 std::optional<Lowerer::Sum> Lowerer::sumOfType(const Type& t) {
-    if (t.kind == TypeKind::Named) {
-        // A generic enum: `Result<i32, E>` has its tag and payload structs in the instance.
-        const auto resolved = resolvedIn(s_, t);
-        if (resolved.kind == TypeKind::Struct) {
-            return sumOfType(resolved);
-        }
-        return std::nullopt;
-    }
-    if (t.kind != TypeKind::Struct) {
+    // A generic enum: `Result<i32, E>` is a `Struct` whose name is the instance of `Result`; its
+    // variant list came with the instance (see `instantiateItem`).
+    if (t.kind != TypeKind::Struct && t.kind != TypeKind::Named) {
         return std::nullopt;
     }
     const auto ref = entityOfType(t);
@@ -1264,7 +1261,15 @@ std::optional<Lowerer::Sum> Lowerer::sumOfType(const Type& t) {
 }
 
 Type Lowerer::sumPart(const Sum& sum, std::string_view suffix, const Span& span) {
-    Type named = Type::makeNamed({sum.decl->name + std::string(suffix)});
+    // An instance is named `Result<i32, E>`; its union and its payload structs keep the arguments
+    // after the suffix (`Result$Data<i32, E>`, `Result$Ok<i32, E>`), while the tag enum is the same
+    // value enum for every instance of the declaration (`Result$Tag`).
+    const std::string base = sum.decl->name;
+    const std::size_t cut = base.find('<');
+    const bool per_instance = cut != std::string::npos && suffix != "$Tag";
+    Type named =
+        Type::makeNamed({per_instance ? base.substr(0, cut) + std::string(suffix) + base.substr(cut)
+                                      : base.substr(0, cut) + std::string(suffix)});
     named.span = span;
     return resolvedIn(*sum.owner, named);
 }
@@ -1289,7 +1294,11 @@ Lowerer::EP Lowerer::sumConstruct(const Sum& sum,
                                   std::vector<EP> values,
                                   const Span& span) {
     const SumVariant& v = sum.decl->variants[variant];
-    EP lit = mk(hir::ExprKind::StructLit, sumPart(sum, "", span), span);
+    // The literal is the enum itself (`Result<i32, E>`, a struct), built from its two parts.
+    Type whole = Type::makeNamed({sum.owner->qualify(sum.decl->name)});
+    whole.kind = TypeKind::Struct;
+    whole.span = span;
+    EP lit = mk(hir::ExprKind::StructLit, whole, span);
     lit->fields.push_back({"tag", 0, intConst(variant, sumPart(sum, "$Tag", span), span)});
     if (v.payload.empty()) {
         return lit;
@@ -1459,7 +1468,9 @@ void Lowerer::lowerSumSwitch(const Stmt& s, EP scrutinee, std::vector<hir::Stmt>
             const ScopeEntry* head =
                 pattern.kind == Expr::Kind::Field ? chainEntry(*pattern.lhs) : nullptr;
             const auto named = head != nullptr ? sumOfEntry(*head) : std::nullopt;
-            if (!named || named->decl != sum.decl) {
+            // The pattern names the enum; the scrutinee may be one instance of it (`Result<i32, E>`
+            // built its own aggregate), so the compared part is the declaration's variant list.
+            if (!named || !sameVariants(*named->decl, *sum.decl)) {
                 err("E0749",
                     value->span,
                     std::format("`case` of a `{}` switch must name one of its variants",
@@ -1891,7 +1902,10 @@ void Lowerer::lowerAggregate(const Item& item) {
         }
         for (const FieldDecl& f : st->fields) {
             const Type ft = resolved(f.type);
-            if (needsDrop(ft)) {
+            // A payload struct and the union that holds it are dropped by the enum's own glue,
+            // which drops the live variant only, so a droppable payload is allowed there. Such a
+            // struct is never a field of anything else and has no name a program can write.
+            if (needsDrop(ft) && !st->is_payload && !st->is_union) {
                 err("E0721",
                     f.span,
                     std::format("`{}` needs drop and cannot be a struct field", typeToString(ft)),
@@ -2043,8 +2057,13 @@ void Lowerer::lowerBatch(const std::vector<const Item*>& items) {
     for (const Item* ip : items) {
         const Item& item = *ip;
         s_.setCurrentInstance(ip);
-        if (!Sema::genericParamsOf(item).empty() || Sema::isPackFn(item)) {
+        if (!s_.genericParamsOf(item).empty() || Sema::isPackFn(item)) {
             continue; // a generic or pack declaration is lowered per instance
+        }
+        if (!s_.genericParamsOf(s_.genericEnumOf(declBase(item).name)).empty() &&
+            std::holds_alternative<StructDecl>(item.decl) &&
+            std::get<StructDecl>(item.decl).is_payload) {
+            continue; // a payload struct of a generic enum is lowered per instance
         }
         if (std::holds_alternative<ImplDecl>(item.decl)) {
             // Only a generic impl instance is lowered here; the module's impls are in lowerImpls.
@@ -2109,7 +2128,7 @@ void Lowerer::lowerBatch(const std::vector<const Item*>& items) {
     for (const Item* ip : items) {
         const Item& item = *ip;
         s_.setCurrentInstance(ip);
-        if (!Sema::genericParamsOf(item).empty()) {
+        if (!s_.genericParamsOf(item).empty()) {
             continue;
         }
         if (const auto* cl = std::get_if<ClassDecl>(&item.decl)) {
@@ -2242,11 +2261,42 @@ Lowerer::EP Lowerer::intConst(std::uint64_t v, Type type, const Span& span) cons
 }
 
 Type Lowerer::resolvedIn(Sema& sema, const Type& t) {
-    auto r = sema.resolve(t);
+    // A part of a generic payload enum names its type: `Sema::resolve` needs the arguments written
+    // (`Result<i32, E>`), so the enum's instance is filled in here (`Result<i32, E>$Ok`).
+    const Type named = sumPartResolved(sema, t);
+    auto r = sema.resolve(named);
     if (!r) {
         return lower::unknownType();
     }
     return normalized(sema, *r);
+}
+
+/// `t` with the envelope of a generic payload enum applied: `Result$Ok<A, B>` names the part of
+/// the instance `Result<A, B>`, so it reads `Result<A, B>$Ok`. Every other type is returned
+/// unchanged.
+Type Lowerer::sumPartResolved(Sema& sema, const Type& t) {
+    if (t.kind != TypeKind::Named || t.path.size() != 1 || t.args.empty()) {
+        return t;
+    }
+    const std::string& name = t.path.front();
+    // The envelope is `Result<A, B>` of `Result$Part<A, B>`; the declaration's arguments are its
+    // parameters (`A`, `B`), so the search is textual and is skipped for user types that carry
+    // arguments of their own but have no such base.
+    const std::size_t cut = name.rfind('$');
+    if (cut == std::string::npos) {
+        return t;
+    }
+    const auto ref = sema.entityByQName(name.substr(0, cut));
+    if (!ref || ref->sym->item == nullptr ||
+        !std::holds_alternative<StructDecl>(ref->sym->item->decl)) {
+        return t;
+    }
+    if (std::get<StructDecl>(ref->sym->item->decl).variants.empty()) {
+        return t; // not a payload enum: nothing to move inside the name
+    }
+    Type inst = t;
+    inst.path = {ref->qname() + "$" + name.substr(cut + 1)};
+    return inst;
 }
 
 Type Lowerer::globalType(Sema& sema, const GlobalDecl& g) {
@@ -2373,8 +2423,7 @@ bool Lowerer::instantiateImpls() {
             const auto ref = decl.target.path.size() == 1
                                  ? t.owner->lookupEntity(decl.target.path.front())
                                  : t.owner->lookupQualified(decl.target.path);
-            if (!ref || ref->sym->item == nullptr ||
-                Sema::genericParamsOf(*ref->sym->item).empty()) {
+            if (!ref || ref->sym->item == nullptr || s_.genericParamsOf(*ref->sym->item).empty()) {
                 continue;
             }
             const std::string generic = ref->qname();

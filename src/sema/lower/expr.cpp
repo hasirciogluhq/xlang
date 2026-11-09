@@ -354,7 +354,7 @@ Lowerer::EP Lowerer::nameExpr(const Expr& e, const Type* expected) {
 Lowerer::EP Lowerer::genericFnValue(const ScopeEntry& entry, const Expr& at, const Type* expected) {
     Sema& owner = entry.owner != nullptr ? *entry.owner : s_;
     const Item* item = entry.overloads.empty() ? entry.item : entry.overloads.front();
-    const std::vector<std::string> names = Sema::genericParamsOf(*item);
+    const std::vector<std::string> names = owner.genericParamsOf(*item);
     if (entry.overloads.size() > 1 || names.empty()) {
         err("E0724",
             at.span,
@@ -503,14 +503,67 @@ Lowerer::EP Lowerer::fromEntry(const ScopeEntry& entry, const Expr& at, const Ty
     return nullptr;
 }
 
+std::optional<Type> Lowerer::instancesOf(const Type* expected, const std::string& qname) {
+    if (expected == nullptr) {
+        return std::nullopt;
+    }
+    const Type t = resolved(*expected);
+    // A payload enum's instance is a `Struct`; a value enum's is an `Enum`. Both are named
+    // `Result<i32, E>`, so the name of the expected type is what is compared.
+    if (t.kind != TypeKind::Struct && t.kind != TypeKind::Enum) {
+        return std::nullopt;
+    }
+    const std::string base = t.path.front().substr(0, t.path.front().find('<'));
+    return base == qname ? std::optional<Type>(t) : std::nullopt;
+}
+
+std::optional<Lowerer::Sum>
+Lowerer::sumFor(const ScopeEntry& head, const Type* expected, const Span& at) {
+    // `Result.Ok(v)` of a generic enum names a member of one instance, chosen by the type the
+    // surrounding expression expects; the declaration's own variant list has parameter types and
+    // no instance to build.
+    Sema& owner = head.owner != nullptr ? *head.owner : s_;
+    if (head.kind == ScopeEntry::Kind::Type && head.item != nullptr &&
+        !owner.genericParamsOf(*head.item).empty()) {
+        const std::string name = declBase(*head.item).name;
+        const auto instance = instancesOf(expected, owner.qualify(name));
+        if (!instance) {
+            err("E0724",
+                at,
+                std::format("`{}` is generic and takes {} type argument(s), none given",
+                            name,
+                            owner.genericParamsOf(*head.item).size()),
+                std::format("name the instance in the type of the value, as in\n"
+                            "    local r: {}<...> = {}.Variant",
+                            name,
+                            name));
+            return std::nullopt;
+        }
+        return sumOfType(*instance);
+    }
+    return sumOfEntry(head);
+}
+
+bool Lowerer::isGenericPayloadEnum(const ScopeEntry& head) const {
+    if (head.kind != ScopeEntry::Kind::Type || head.item == nullptr ||
+        sumDecl(head.item) == nullptr) {
+        return false;
+    }
+    const Sema& owner = head.owner != nullptr ? *head.owner : s_;
+    return !owner.genericParamsOf(*head.item).empty();
+}
+
 Lowerer::EP Lowerer::fieldExpr(const Expr& e, const Type* expected) {
     if (const ScopeEntry* head = chainEntry(*e.lhs)) {
         if (head->kind == ScopeEntry::Kind::Namespace) {
             const ScopeEntry* member = namespaceMember(*head, e.text, e.span, true);
             return member != nullptr ? fromEntry(*member, e, nullptr) : nullptr;
         }
-        if (const auto sum = sumOfEntry(*head)) {
+        if (const auto sum = sumFor(*head, expected, e.span)) {
             return sumVariantValue(*sum, e);
+        }
+        if (isGenericPayloadEnum(*head)) {
+            return nullptr; // diagnosed by `sumFor`
         }
         if (head->kind == ScopeEntry::Kind::Type && head->item != nullptr &&
             std::holds_alternative<EnumDecl>(head->item->decl)) {
@@ -519,14 +572,15 @@ Lowerer::EP Lowerer::fieldExpr(const Expr& e, const Type* expected) {
             // `Result.Ok` of a generic enum names a member of the instance the surrounding
             // expression expects (`local r: Result<i32, E> = Result.Ok(1)`); without that type the
             // instance is unknown (E0724).
-            if (const Item* item = head->item; !Sema::genericParamsOf(*item).empty()) {
-                if (expected == nullptr || expected->kind != TypeKind::Enum ||
-                    expected->path.front() != owner.qualify(name)) {
+            if (const std::vector<std::string> params = owner.genericParamsOf(*head->item);
+                !params.empty()) {
+                const std::optional<Type> instance = instancesOf(expected, owner.qualify(name));
+                if (!instance) {
                     err("E0724",
                         e.span,
                         std::format("`{}` is generic and takes {} type argument(s), none given",
                                     name,
-                                    Sema::genericParamsOf(*item).size()),
+                                    params.size()),
                         std::format("name the instance in the type of the value, as in\n"
                                     "    local r: {}<...> = {}.{}",
                                     name,
@@ -534,18 +588,20 @@ Lowerer::EP Lowerer::fieldExpr(const Expr& e, const Type* expected) {
                                     e.text));
                     return nullptr;
                 }
-                EP out = fromConst(
-                    *owner.enumMember(expected->path.front(), e.text, e.span), nullptr, e.span);
-                if (out) {
-                    // The head now stands for the instance, so a later `switch` finds its sum
-                    // layout.
-                    if (!head->instance_type.path.empty()) {
-                        const_cast<ScopeEntry*>(head)->instance_type = *expected;
-                    }
+                // `enumMember` finds a type by its local name, so the module qualifier of the
+                // instance path is dropped before the lookup.
+                const std::string local = instance->path.front().substr(
+                    instance->path.front().rfind("::") == std::string::npos
+                        ? 0
+                        : instance->path.front().rfind("::") + 2);
+                const auto v = owner.enumMember(local, e.text, e.span);
+                if (!v) {
+                    return nullptr;
                 }
+                EP out = fromConst(*v, nullptr, e.span);
                 if (out && out->kind != hir::ExprKind::FloatConst &&
                     out->kind != hir::ExprKind::BoolConst) {
-                    out->type = *expected;
+                    out->type = *instance;
                 }
                 return out;
             }
@@ -1649,7 +1705,7 @@ Lowerer::EP Lowerer::callEntry(const Expr& e, const ScopeEntry& entry, const std
         bool generic = false;
         bool pack = false;
         for (const Item* item : items) {
-            generic = generic || !Sema::genericParamsOf(*item).empty();
+            generic = generic || !s_.genericParamsOf(*item).empty();
             pack = pack || Sema::isPackFn(*item);
         }
         const bool many = items.size() > 1 || generic || pack;
@@ -1744,7 +1800,8 @@ Lowerer::EP Lowerer::callExpr(const Expr& e, const Type* expected) {
         }
         if (entry != nullptr && entry->kind == ScopeEntry::Kind::Type && entry->item != nullptr &&
             std::holds_alternative<ClassDecl>(entry->item->decl)) {
-            if (!Sema::genericParamsOf(*entry->item).empty()) {
+            const Sema& holder = entry->owner != nullptr ? *entry->owner : s_;
+            if (!holder.genericParamsOf(*entry->item).empty()) {
                 return genericConstruct(e, callee, *entry); // `Vec<i32>(args)`
             }
             return constructCall(e, *entry); // `T(args)` builds a class
@@ -1769,8 +1826,11 @@ Lowerer::EP Lowerer::callExpr(const Expr& e, const Type* expected) {
     } else if (callee.kind == Expr::Kind::Field) {
         // `ns.fn(...)` (module namespace), `Enum.Variant(...)` or `value.method(...)`.
         if (const ScopeEntry* head = chainEntry(*callee.lhs); head != nullptr) {
-            if (const auto sum = sumOfEntry(*head)) {
+            if (const auto sum = sumFor(*head, expected, e.span)) {
                 return sumVariantCall(*sum, e);
+            }
+            if (isGenericPayloadEnum(*head)) {
+                return nullptr; // diagnosed by `sumFor`
             }
         }
         if (const ScopeEntry* head = chainEntry(*callee.lhs);

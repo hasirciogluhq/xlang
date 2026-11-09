@@ -15,6 +15,22 @@ namespace xlang {
 // ---------------------------------------------------------------------------------------------
 // Enums
 
+const Item& Sema::genericEnumOf(const std::string& name) const {
+    const std::size_t cut = name.find('$');
+    if (cut != std::string::npos) {
+        if (const Symbol* whole = find(name.substr(0, cut));
+            whole != nullptr && whole->item != nullptr &&
+            std::holds_alternative<StructDecl>(whole->item->decl)) {
+            return *whole->item; // the enum itself; its parameters are what the part needs
+        }
+    }
+    // Not a part: the declaration whose own parameters decide.
+    if (const Symbol* self = find(name); self != nullptr && self->item != nullptr) {
+        return *self->item;
+    }
+    return memory_order_item_;
+}
+
 std::optional<ConstValue>
 Sema::enumMember(const std::string& enum_name, const std::string& member, const Span& at) {
     const Symbol* sym = find(enum_name);

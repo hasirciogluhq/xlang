@@ -1,0 +1,109 @@
+// End-to-end: generic payload enums. One instance of the whole enum is made per argument list, so
+// `Result<i32, MyErr>` and `Result<String, i32>` are different types, each with its own tag, union
+// and payload structs. Exits with the number of failed checks.
+from "std" import print, String
+
+enum Option<T> {
+    None
+    Some(T)
+}
+
+enum Result<T, E> {
+    Ok(T)
+    Err(E)
+}
+
+struct MyErr {
+    code: i32
+}
+
+global failures: i32 = 0
+
+fn check(name: *ui8, got: i64, want: i64) {
+    if got != want {
+        failures += 1
+        print("FAIL ")
+        print(name)
+        print(": ")
+        print(got)
+        print("\n")
+    }
+}
+
+fn describe(o: Option<i32>) -> i64 {
+    switch o {
+        case Option.None { return -1 }
+        case Option.Some(v) { return v }
+    }
+    return -2
+}
+
+fn unwrapOr(r: Result<i32, MyErr>, fallback: i32) -> i64 {
+    switch r {
+        case Result.Ok(v) { return v }
+        case Result.Err(e) { return (e.code + fallback) as i64 }
+    }
+    return fallback
+}
+
+// A two-parameter instance whose payload is a `str`: the argument list, not the shape, picks it.
+fn textOf(r: Result<str, i32>) -> i64 {
+    switch r {
+        case Result.Ok(s) { return s.len as i64 }
+        case Result.Err(c) { return c as i64 }
+    }
+    return -3
+}
+
+// A droppable payload: `String` owns its buffer, so the enum owns it and the drop glue of the live
+// variant frees it exactly once. The value is moved out by the `case` binding.
+fn take(r: Result<String, i32>) -> i64 {
+    switch r {
+        case Result.Ok(s) { return s.len as i64 }
+        case Result.Err(c) { return c as i64 }
+    }
+    return -4
+}
+
+fn cover(o: Option<i32>) -> i64 {
+    switch o {
+        case Option.Some(v) { return v }
+        default { return 0 }
+    }
+    return -5
+}
+
+@entry fn main() -> i32 {
+    // single type parameter, both variants
+    check("option-none", describe(Option.None), -1)
+    check("option-some", describe(Option.Some(7)), 7)
+    local o: Option<i32> = Option.Some(9)
+    check("option-local", describe(o), 9)
+
+    // two type parameters
+    check("ok", unwrapOr(Result.Ok(5), 0), 5)
+    check("err", unwrapOr(Result.Err(MyErr { code: 40 }), 2), 42)
+
+    // the same declaration at another argument list is another type
+    check("str-ok", textOf(Result.Ok("abc")), 3)
+    check("str-err", textOf(Result.Err(11)), 11)
+
+    // a droppable payload is dropped with the enum
+    check("string-ok", take(Result.Ok(String("hello"))), 5)
+    check("string-err", take(Result.Err(6)), 6)
+
+    // copies behave like any value: the copy is independent of the original
+    local a: Result<i32, MyErr> = Result.Ok(1)
+    local b: Result<i32, MyErr> = a
+    a = Result.Ok(2)
+    check("copy-a", unwrapOr(a, 0), 2)
+    check("copy-b", unwrapOr(b, 0), 1)
+
+    // `default` covers the variants a `case` group does not name
+    check("default", cover(Option.None), 0)
+
+    if failures == 0 {
+        print("generic_enums ok\n")
+    }
+    return failures
+}

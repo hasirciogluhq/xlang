@@ -720,6 +720,61 @@ void testGenerics() {
     }
 }
 
+// ---- generic payload enums: `enum Boxed<T> { Empty Full(T) }` is one type per argument list
+
+void testGenericPayloadEnums() {
+    constexpr std::string_view boxed =
+        "enum Boxed<T> {\n Empty\n Full(T)\n}\n"
+        "fn f(b: Boxed<i32>) -> i32 {\n"
+        "    switch b {\n"
+        "        case Boxed.Empty { return 0 }\n"
+        "        case Boxed.Full(v) { return v }\n"
+        "    }\n"
+        "    return -1\n"
+        "}\n";
+    {
+        // Constructing, matching and binding a single-parameter instance.
+        Lowered ok(std::string(boxed) +
+                   "fn main() -> i32 { return f(Boxed.Full(7)) }\n");
+        CHECK(!ok.diag->hasErrors());
+    }
+    {
+        // Two parameters, and a variant without data used as a plain value.
+        Lowered ok("enum Result<T, E> {\n Ok(T)\n Err(E)\n}\n"
+                   "fn g(r: Result<i32, i32>) -> i32 {\n"
+                   "    switch r {\n"
+                   "        case Result.Ok(v) { return v }\n"
+                   "        case Result.Err(e) { return e }\n"
+                   "    }\n"
+                   "    return 0\n"
+                   "}\n"
+                   "fn main() -> i32 { return g(Result.Ok(1)) }\n");
+        CHECK(!ok.diag->hasErrors());
+    }
+    {
+        // A droppable payload: the enum's glue drops only the live variant's value.
+        Lowered ok("class Res {\n fn drop(self) { }\n}\n"
+                   "enum Boxed<T> {\n Empty\n Full(T)\n}\n"
+                   "fn f(b: Boxed<Res>) -> i32 {\n"
+                   "    switch b {\n"
+                   "        case Boxed.Empty { return 0 }\n"
+                   "        case Boxed.Full(v) { return 1 }\n"
+                   "    }\n"
+                   "    return -1\n"
+                   "}\n"
+                   "fn main() -> i32 { return 0 }\n");
+        CHECK(!ok.diag->hasErrors());
+    }
+    CHECK(Lowered(std::string(boxed) + "fn main() -> i32 { return f(Boxed.Full) }\n")
+              .failedWith("E0751"));
+    CHECK(Lowered(std::string(boxed) + "fn main() -> i32 { local b: Boxed<i32> = Boxed.Full }\n"
+              "fn g() -> i32 { return 0 }\n")
+              .failedWith("E0751"));
+    CHECK(Lowered("enum Boxed<T> {\n Empty\n Full(T)\n}\n"
+                  "fn main() -> i32 { local b: Boxed<i32, i32> = Boxed.Empty\n return 0 }\n")
+              .failedWith("E0724"));
+}
+
 void testRawMoves() {
     {
         Lowered r("fn main() -> i32 {\n local x: i32 = 0\n __builtin_write(&x, 1)\n"
@@ -975,6 +1030,7 @@ void runLowerTests() {
     testImportsAreExternal();
     testEnumsAndStaticAssertInBodies();
     testPayloadEnums();
+    testGenericPayloadEnums();
     testModulesImportAndExport();
     testCyclicModules();
     testModulesShareTypes();

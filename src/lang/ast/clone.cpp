@@ -181,6 +181,19 @@ Item instantiateItem(const Item& generic, const TypeEnv& env, const std::string&
             c.fields.push_back(std::move(n));
         }
         c.opaque = s->opaque;
+        c.is_union = s->is_union;
+        c.is_payload = s->is_payload;
+        // The variant list of a payload enum is data of the type, not of its text: an instance
+        // `Result<i32, E>` needs it to be matched like the declaration, with its payload types
+        // substituted (`Ok(T)` is `Ok(i32)` there).
+        for (const SumVariant& v : s->variants) {
+            SumVariant n;
+            n.name = v.name;
+            for (const Type& p : v.payload) {
+                n.payload.push_back(substituteType(p, env));
+            }
+            c.variants.push_back(std::move(n));
+        }
         out.decl = std::move(c);
     } else if (const auto* cl = std::get_if<ClassDecl>(&generic.decl)) {
         ClassDecl c;

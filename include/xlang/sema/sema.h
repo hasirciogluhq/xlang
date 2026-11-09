@@ -149,6 +149,15 @@ class Sema {
     instantiate(const EntityRef& generic, const std::vector<Type>& args, const Span& at);
     [[nodiscard]] EntityRef
     instanceOf(const EntityRef& generic, const std::vector<Type>& args, const Span& at);
+    /// Interns `item` as the instance named `local` (`item_instance_`, `instance_info_`, the
+    /// pending queue) and returns its symbol. The caller has already pushed `item` into
+    /// `instances_`; `instantiate` uses it for every item of a payload enum, so that an enum
+    /// instance and the instances of its tag, union and payload structs are made as a unit.
+    [[nodiscard]] const Symbol* internInstance(const Item& item,
+                                               const std::string& local,
+                                               const std::string& origin,
+                                               const std::vector<Type>& args,
+                                               const Span& at);
     /// The module key of the generic declaration that `local` instantiates (`key()` itself when
     /// `local` is not an instance).
     [[nodiscard]] std::string genericOwnerKey(const std::string& local) const;
@@ -183,7 +192,7 @@ class Sema {
     /// can name the instantiation chain.
     void setCurrentInstance(const Item* item);
     /// Names of the type parameters of a `fn`, `struct` or `class` (empty when not generic).
-    [[nodiscard]] static std::vector<std::string> genericParamsOf(const Item& item);
+    [[nodiscard]] std::vector<std::string> genericParamsOf(const Item& item) const;
     /// `fn f(a: T, ..args)`: a function with an untyped trailing parameter pack. It has no code of
     /// its own; each call instantiates a copy for the pack's argument types (see variadic.cpp).
     [[nodiscard]] static bool isPackFn(const Item& item);
@@ -214,6 +223,9 @@ class Sema {
     void checkAggregate(const Item& item);
     void checkStaticAssert(const TopLevelCallDecl& call);
     void checkStaticAssertCall(const Expr& call);
+    /// The generic payload enum whose generated item `name` is (`Result$Ok` and `Result$Data`
+    /// both belong to `enum Result<T, E>`); `some_decl` itself when it is not such a part.
+    [[nodiscard]] const Item& genericEnumOf(const std::string& name) const;
 
     [[nodiscard]] const Symbol* find(const std::string& name) const;
 
@@ -261,6 +273,10 @@ class Sema {
     std::map<std::pair<const Item*, std::size_t>, std::unique_ptr<PackTemplate>> pack_templates_;
     [[nodiscard]] const PackTemplate& packTemplate(const Item& generic, std::size_t count);
     std::map<std::string, InstanceInfo> instance_info_; ///< instance local name -> origin
+    /// Parts of a payload enum written with the declaration's arguments (`Result$Ok<T, E>`,
+    /// which reads `Result<T, E>$Ok`): they have no symbol of their own, so the enum they belong
+    /// to answers. The entries keep their addresses while the map lives.
+    std::map<std::string, EntityRef> instance_aliases_;
     std::map<const Item*, std::string> item_instance_;  ///< instance item -> its local name
     std::string current_instance_; ///< local name of the instance whose body is lowered
     std::vector<const Item*> pending_instances_;

@@ -230,6 +230,10 @@ struct StructDecl : DeclBase {
     bool opaque{false};  ///< `declare struct S` without a body
     /// Set only on the compiler-made `Name$Data` of a payload enum: all fields share offset 0.
     bool is_union{false};
+    /// Set only on the compiler-made `Name$Variant` of a payload enum: a struct of `_0`, `_1`, ...
+    /// that holds one variant's payload. It is never dropped on its own; the enum's drop glue
+    /// drops the live variant, so a droppable payload field is allowed here.
+    bool is_payload{false};
     /// Non-empty on the struct a payload enum lowers to (`{ tag: Name$Tag, data: Name$Data }`).
     std::vector<SumVariant> variants;
 };

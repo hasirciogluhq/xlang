@@ -174,8 +174,9 @@ constexpr std::size_t kLeadWidth = 40;
          "A class with an `init` cannot be built with a field literal, because the literal would skip "
          "the constructor. Build it with `T(...)` or allocate it with `new T(...)`."},
         {"E0724", Severity::Error, "wrong or missing type arguments",
-         "A generic declaration needs one type argument per type parameter. A non-generic declaration "
-         "takes none, and a generic function value needs its type arguments written out."},
+         "A generic declaration (`fn`, `struct`, `class`, `interface`, `enum` or `type`) needs one type "
+         "argument per type parameter. A non-generic declaration takes none, and a generic function "
+         "value needs its type arguments written out."},
         {"E0725", Severity::Error, "generic instantiation too deep",
          "The type arguments of a generic instance nest more than 64 levels. Use a simpler type "
          "argument."},

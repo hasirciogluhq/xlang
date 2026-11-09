@@ -5,12 +5,14 @@
 #include <functional>
 #include <numeric>
 #include <random>
+#include <ranges>
 
 namespace xlang {
 
 // Generic instances (plan 6): `instantiate`, method instances and the queues the lowering
 // pass drains. Each instance is a cloned `Item` interned in `instances_` and named
-// `f<i32, str>`.
+// `f<i32, str>`. A generic payload enum is several items (`E`, `E$Tag`, `E$Data`, `E$V`), so
+// instantiating `E` also interns the instance of each part, named `E<i32>$V` after it.
 
 using sema_detail::typeNesting;
 
@@ -51,38 +53,111 @@ Sema::instantiate(const EntityRef& generic, const std::vector<Type>& args, const
         shown += (i != 0 ? ", " : "") + spelled;
     }
     const std::string local = generic.local + "<" + shown + ">";
-    if (owner.symbols_.find(local) == owner.symbols_.end()) {
-        TypeEnv env;
-        for (std::size_t i = 0; i < params.size(); ++i) {
-            env[params[i]] = args[i];
-        }
-        owner.instances_.push_back(instantiateItem(gitem, env, local));
-        const Item* item = &owner.instances_.back();
-        Symbol sym;
-        sym.item = item;
-        if (std::holds_alternative<ClassDecl>(item->decl)) {
-            sym.kind = Symbol::Kind::Class;
-            owner.aggregate_order_.push_back(local);
-        } else if (std::holds_alternative<StructDecl>(item->decl)) {
-            sym.kind = Symbol::Kind::Struct;
-            owner.aggregate_order_.push_back(local);
-        } else if (std::holds_alternative<InterfaceDecl>(item->decl)) {
-            sym.kind = Symbol::Kind::Interface;
-        } else if (std::holds_alternative<EnumDecl>(item->decl)) {
-            // `enum E<T>`: the tag and the union of a generic payload enum are enums too, and a
-            // generic value enum keeps being an enum. None of them owns a layout.
-            sym.kind = Symbol::Kind::Enum;
-        } else {
-            sym.kind = Symbol::Kind::Fn;
-            sym.overloads = {item};
-        }
-        owner.symbols_.emplace(local, std::move(sym));
-        owner.instance_info_[local] =
-            InstanceInfo{generic.qname(), args, at, current_instance_, this};
-        owner.item_instance_[item] = local;
-        owner.pending_instances_.push_back(item);
+    if (owner.symbols_.find(local) != owner.symbols_.end()) {
+        return EntityRef{&owner, &owner.symbols_.at(local), local};
     }
-    return EntityRef{&owner, &owner.symbols_.at(local), local};
+    TypeEnv env;
+    for (std::size_t i = 0; i < params.size(); ++i) {
+        env[params[i]] = args[i];
+    }
+    // The parts of an enum instance keep the declaration's naming scheme with the arguments after
+    // the `$` suffix: `Result$Ok<T, E>` becomes `Result$Ok<i32, MyErr>`, which is exactly what
+    // `Lowerer::sumPart` builds from the instance name `Result<i32, MyErr>`.
+    const auto partName = [&](std::string_view suffix) {
+        return generic.local + std::string(suffix) + "<" + shown + ">";
+    };
+    const auto make = [&](const Item& from, const std::string& instance_name) {
+        owner.instances_.push_back(instantiateItem(from, env, instance_name));
+        return &owner.instances_.back();
+    };
+    const Item* item = make(gitem, local);
+    const Symbol* sym = owner.internInstance(*item, local, generic.qname(), args, at);
+    if (const auto* sum = std::get_if<StructDecl>(&item->decl);
+        sum != nullptr && !sum->variants.empty()) {
+        // A payload enum is one type made of several items: `E`, `E$Tag`, `E$Data` and one
+        // `E$Variant` per variant with data. An instance of `E` is built out of the instances of
+        // the others (its fields are typed with them), so they are made here, in the module that
+        // owns `E`, with the same arguments: the instance of `E` is never half-made.
+        if (const std::string data = partName("$Data");
+            owner.symbols_.find(data) == owner.symbols_.end()) {
+            // The union is rebuilt from the declaration with the instance name: it has no item of
+            // the enum to be cloned from without its payload structs.
+            Item union_of;
+            union_of.modifiers = gitem.modifiers;
+            StructDecl union_decl;
+            static_cast<DeclBase&>(union_decl) = declBase(gitem);
+            union_decl.name = data;
+            union_decl.is_payload = false;
+            union_decl.is_union = true;
+            for (const SumVariant& v : sum->variants) {
+                if (!v.payload.empty()) {
+                    union_decl.fields.push_back({v.name,
+                                                 Type::makeNamed({partName("$" + v.name)}),
+                                                 {},
+                                                 declBase(gitem).span});
+                }
+            }
+            union_of.decl = std::move(union_decl);
+            (void)owner.internInstance(*make(union_of, data), data, generic.qname(), args, at);
+        }
+        for (const SumVariant& v : sum->variants) {
+            if (v.payload.empty()) {
+                continue;
+            }
+            const std::string part = partName("$" + v.name);
+            if (owner.symbols_.find(part) != owner.symbols_.end()) {
+                continue;
+            }
+            // The payload struct is cloned from the declaration item itself: its fields are the
+            // enum's payload types, which the substitution makes concrete.
+            Item payload_of;
+            payload_of.modifiers = gitem.modifiers;
+            StructDecl payload_decl;
+            static_cast<DeclBase&>(payload_decl) = declBase(gitem);
+            payload_decl.name = part;
+            payload_decl.is_union = false;
+            payload_decl.is_payload = true;
+            for (const std::size_t i : std::views::iota(std::size_t{0}, v.payload.size())) {
+                payload_decl.fields.push_back(
+                    {std::format("_{}", i), v.payload[i], {}, declBase(gitem).span});
+            }
+            payload_of.decl = std::move(payload_decl);
+            (void)owner.internInstance(*make(payload_of, part), part, generic.qname(), args, at);
+        }
+    }
+    return EntityRef{&owner, sym, local};
+}
+
+const Sema::Symbol* Sema::internInstance(const Item& item,
+                                         const std::string& local,
+                                         const std::string& origin,
+                                         const std::vector<Type>& args,
+                                         const Span& at) {
+    Symbol sym;
+    sym.item = &item;
+    if (std::holds_alternative<ClassDecl>(item.decl)) {
+        sym.kind = Symbol::Kind::Class;
+        aggregate_order_.push_back(local);
+    } else if (std::holds_alternative<StructDecl>(item.decl)) {
+        sym.kind = Symbol::Kind::Struct;
+        aggregate_order_.push_back(local);
+    } else if (std::holds_alternative<InterfaceDecl>(item.decl)) {
+        sym.kind = Symbol::Kind::Interface;
+    } else if (std::holds_alternative<EnumDecl>(item.decl)) {
+        // `enum E<T>`: the tag and the union of a generic payload enum are enums too, and a
+        // generic value enum keeps being an enum. None of them owns a layout.
+        sym.kind = Symbol::Kind::Enum;
+    } else {
+        sym.kind = Symbol::Kind::Fn;
+        sym.overloads = {&item};
+    }
+    const auto [it, inserted] = symbols_.emplace(local, std::move(sym));
+    if (inserted) {
+        instance_info_[local] = InstanceInfo{origin, args, at, current_instance_, this};
+        item_instance_[&item] = local;
+        pending_instances_.push_back(&item);
+    }
+    return &it->second;
 }
 
 // The module key of the generic declaration an instance comes from: the instance's origin is

@@ -254,7 +254,13 @@ std::optional<Sema::EntityRef> Sema::resolveFnAlias(const std::vector<std::strin
     }
 }
 
-std::vector<std::string> Sema::genericParamsOf(const Item& item) {
+std::vector<std::string> Sema::genericParamsOf(const Item& item) const {
+    // An instance names its type parameters nowhere: it is the declaration with the arguments
+    // already substituted. The generated parts of a payload enum have no parameters of their own
+    // either; they exist only inside an instance of the enum.
+    if (const auto it = item_instance_.find(&item); it != item_instance_.end()) {
+        return {};
+    }
     if (const auto* f = std::get_if<FnDecl>(&item.decl)) {
         return f->generic_params;
     }
@@ -273,6 +279,9 @@ std::vector<std::string> Sema::genericParamsOf(const Item& item) {
     if (const auto* e = std::get_if<EnumDecl>(&item.decl)) {
         return e->generic_params;
     }
+    // A payload enum's payload struct (`E$V`, the fields are `_0`, `_1`, ...) is only ever
+    // instantiated as part of `E`'s instance, which substitutes these fields; a bare `E$V` names
+    // the declaration, whose field types are the enum's parameters.
     return {};
 }
 
