@@ -6,7 +6,7 @@
 // surrogate at the end of the input, a lone low surrogate, and a buffer too small for the next code point.
 from "std" import println
 from "std/encoding/utf16" import toUtf8, toUtf8Exact, utf8LenOf, valid, fromUtf8, fromWideC
-from "std/str" import findByte, findLastByte, findLast, view
+from "std/str" import findByte, findLastByte, findLast, view, fromParts
 from "std/str" import splitAsciiWhitespace, copyTruncated
 from "std/collections/vec" import Vec
 from "std/str/string" import String
@@ -124,7 +124,7 @@ fn same(out: *ui8, n: usize, want: *ui8) -> bool {
     if i != 10 || n != 10 { fail("round trip") }
 
     // Byte-level find: one-byte forms and the last-occurrence forms of std/str.
-    local line: str = view("1 (bash) S 2 3 4", 0, 14)
+    local line: str = view("1 (bash) S 2 3 4", 0, 16)
     if findByte(line, 41) != 7 { fail("findByte ')'") }
     if findLastByte(line, 41) != 7 { fail("findLastByte ')'") }
     if findByte(line, 122) != -1 { fail("findByte absent") }
@@ -134,19 +134,22 @@ fn same(out: *ui8, n: usize, want: *ui8) -> bool {
     if findLast(line, "zz") != -1 { fail("findLast absent") }
 
     // splitAsciiWhitespace: a run of whitespace is one separator, leading and trailing runs vanish.
-    local words: Vec<String> = splitAsciiWhitespace(view("  alpha \t beta\n gamma  ", 0, 24))
+    local words: Vec<String> = splitAsciiWhitespace(view("  alpha \t beta\n gamma  ", 0, 23))
     if words.len != 3 { fail("split count") }
     if words.len == 3 {
         if !eqWord(&words, 0, "alpha") { fail("split 0") }
         if !eqWord(&words, 1, "beta") { fail("split 1") }
         if !eqWord(&words, 2, "gamma") { fail("split 2") }
     }
-    local none: Vec<String> = splitAsciiWhitespace(view(" \t\n ", 0, 4))
+    local none: Vec<String> = splitAsciiWhitespace(view(" \t\n ", 0, 5))
     if none.len != 0 { fail("split whitespace only") }
 
     // copyTruncated: a cut backs up to the previous character boundary, never into the middle of one.
+    // The bytes are é (C3 A9), € (E2 82 AC) and 😀 (F0 9F 98 80): 2 + 3 + 4 = 9.
     local buf: [ui8; 8]
-    local src: str = view("\xc3\xa9\xe2\x82\xac\xf0\x9f\x98\x80", 0, 9)   // é € 😀 = 2 + 3 + 4 bytes    if copyTruncated(src, &buf[0], 8) != 9 { fail("copyTruncated fits") }
+    local raw: [ui8; 9] = [0xc3, 0xa9, 0xe2, 0x82, 0xac, 0xf0, 0x9f, 0x98, 0x80]
+    local src: str = fromParts(&raw[0], 9)
+    if copyTruncated(src, &buf[0], 8) != 9 { fail("copyTruncated fits") }
     // Cap 4 lands inside "€"; the result is just "é" (2 bytes).
     if copyTruncated(src, &buf[0], 4) != 2 { fail("copyTruncated backs up to é") }
     // Cap 5 lands inside "€" too (é=2, then 2 of 3), so again 2.
