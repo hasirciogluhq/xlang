@@ -1,5 +1,7 @@
 #include "sema/lower/lower.hpp"
 
+#include <utility>
+
 namespace xlang::lower {
 
 // Module scope, registrations, impls, vtables and every declaration (`lower_items` part of the

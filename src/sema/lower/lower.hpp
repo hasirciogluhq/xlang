@@ -183,7 +183,7 @@ static bool astHasSideEffects(const Expr& e) {
     return false;
 }
 
-static ExprPtr astName(const std::string& name, const Span& span) {
+inline ExprPtr astName(const std::string& name, const Span& span) {
     auto e = std::make_unique<Expr>();
     e->kind = Expr::Kind::Name;
     e->text = name;
@@ -191,7 +191,7 @@ static ExprPtr astName(const std::string& name, const Span& span) {
     return e;
 }
 
-static ExprPtr astUnary(UnaryOp op, ExprPtr operand, const Span& span) {
+inline ExprPtr astUnary(UnaryOp op, ExprPtr operand, const Span& span) {
     auto e = std::make_unique<Expr>();
     e->kind = Expr::Kind::Unary;
     e->unary_op = op;
@@ -200,7 +200,7 @@ static ExprPtr astUnary(UnaryOp op, ExprPtr operand, const Span& span) {
     return e;
 }
 
-static ExprPtr astBinary(BinaryOp op, ExprPtr lhs, ExprPtr rhs, const Span& span) {
+inline ExprPtr astBinary(BinaryOp op, ExprPtr lhs, ExprPtr rhs, const Span& span) {
     auto e = std::make_unique<Expr>();
     e->kind = Expr::Kind::Binary;
     e->binary_op = op;
