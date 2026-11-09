@@ -1905,7 +1905,10 @@ void Lowerer::lowerAggregate(const Item& item) {
             // A payload struct and the union that holds it are dropped by the enum's own glue,
             // which drops the live variant only, so a droppable payload is allowed there. Such a
             // struct is never a field of anything else and has no name a program can write.
-            if (needsDrop(ft) && !st->is_payload && !st->is_union) {
+            // A sum (`E` itself) and its parts are dropped by `E`'s glue, which drops the live
+            // variant only, so a droppable payload is allowed there.
+            const bool in_sum = !st->variants.empty() || st->is_payload || st->is_union;
+            if (needsDrop(ft) && !in_sum) {
                 err("E0721",
                     f.span,
                     std::format("`{}` needs drop and cannot be a struct field", typeToString(ft)),

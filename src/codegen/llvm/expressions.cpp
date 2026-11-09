@@ -29,7 +29,8 @@ llvm::Value* Gen::genAddr(const hir::Expr& e) {
         return genScalar(*e.lhs);
     case hir::ExprKind::Field: {
         llvm::Value* base = e.through_pointer ? genScalar(*e.lhs) : genAddr(*e.lhs);
-        const Type agg = e.through_pointer ? *e.lhs->type.elem : e.lhs->type;
+        const Type agg =
+            e.through_pointer && e.lhs->type.elem != nullptr ? *e.lhs->type.elem : e.lhs->type;
         return fieldAddr(base, agg, e.index);
     }
     case hir::ExprKind::Index: {
@@ -207,9 +208,9 @@ void Gen::genInto(const hir::Expr& e, llvm::Value* dest) {
         return;
     }
     case hir::ExprKind::Slice: {
-        // `{ ptr, len }`: the data pointer moves to the first in-range byte, `len` becomes the span.
-        // Every offset is computed in 64 bits and clamped at 0, so a negative `lo`/`hi` (from an
-        // `i64` bound) cannot wrap into a huge `usize`.
+        // `{ ptr, len }`: the data pointer moves to the first in-range byte, `len` becomes the
+        // span. Every offset is computed in 64 bits and clamped at 0, so a negative `lo`/`hi` (from
+        // an `i64` bound) cannot wrap into a huge `usize`.
         llvm::Type* i64 = llvm::Type::getInt64Ty(ctx_);
         const unsigned align = ptrBits() / 8;
         const auto toI64 = [&](llvm::Value* v, const Type& t) {
@@ -246,9 +247,10 @@ void Gen::genInto(const hir::Expr& e, llvm::Value* dest) {
             len = B_.getInt64(l != nullptr && elem_size != 0 ? l->size / elem_size : 0);
             step = elem_size;
         }
-        llvm::Value* lo = e.args.empty() ? B_.getInt64(0)
-                                         : atLeastZero(toI64(genScalar(*e.args[0]), e.args[0]->type),
-                                                       B_.getInt64(0));
+        llvm::Value* lo =
+            e.args.empty()
+                ? B_.getInt64(0)
+                : atLeastZero(toI64(genScalar(*e.args[0]), e.args[0]->type), B_.getInt64(0));
         llvm::Value* hi = e.rhs ? atLeastZero(toI64(genScalar(*e.rhs), e.rhs->type), len) : len;
         if (e.checked) {
             checkedBranch(B_.CreateICmpUGT(lo, hi), "slice start past its end");
@@ -256,9 +258,9 @@ void Gen::genInto(const hir::Expr& e, llvm::Value* dest) {
         }
         llvm::Value* bytes = B_.CreateSub(hi, lo);
         llvm::Value* byte_off = B_.CreateMul(lo, B_.getInt64(step));
-        B_.CreateAlignedStore(
-            B_.CreateInBoundsGEP(llvm::Type::getInt8Ty(ctx_), data, {byte_off}), dest,
-            llvm::Align(align));
+        B_.CreateAlignedStore(B_.CreateInBoundsGEP(llvm::Type::getInt8Ty(ctx_), data, {byte_off}),
+                              dest,
+                              llvm::Align(align));
         B_.CreateAlignedStore(B_.CreateTrunc(bytes, sty(Type::makeInt(0, false))),
                               byteOffset(dest, align),
                               llvm::Align(align));
