@@ -100,7 +100,8 @@ target("xlang-frontend")
         "$(projectdir)/src/hir/hir.cpp",
         "$(projectdir)/src/hir/prune.cpp",
         "$(projectdir)/src/util/source.cpp",
-        "$(projectdir)/src/util/diagnostics.cpp"
+        "$(projectdir)/src/util/diagnostics.cpp",
+        "$(projectdir)/src/util/program.cpp"
     )
     add_includedirs("$(projectdir)/include", {public = true})
     -- Internal headers live in the area directory (`src/sema/lower/lower.hpp`) and are included
@@ -127,6 +128,7 @@ target("xlang")
     set_default(not cross)
     set_enabled(not cross)
     add_files("$(projectdir)/src/cli/app/main.cpp", "$(projectdir)/src/cli/tests/runner.cpp",
+              "$(projectdir)/src/cli/console.cpp", "$(projectdir)/src/cli/process.cpp",
               "$(projectdir)/src/cli/update/update.cpp", "$(projectdir)/src/cli/completions/completions.cpp",
               "$(projectdir)/src/cli/package/package.cpp")
     add_deps("xlang-codegen", "xlang-frontend")
