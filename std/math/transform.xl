@@ -80,8 +80,8 @@ export class Transform {
     /// negative translation divided by the scale, the rotation is the conjugate and the scale is the reciprocal of each
     /// component.
     ///   `applyPoint(p) = R * (S * p) + t`; undoing it is `p = S^-1 * (R^-1 * (p' - t))`. The translation is undone
-    /// first and the scale is divided out last, in the same order as `applyPoint`; the division is componentwise
-    /// because the scale is, so undoing the scale before the rotation would only be right for a uniform scale.
+    /// first, then the rotation, then the componentwise division by the scale, which is the exact reverse of the order
+    /// the forward placement applies them in.
     fn inverse(self, out: *Transform) -> bool {
         if self.scale.x == 0.0 || self.scale.y == 0.0 || self.scale.z == 0.0 {
             return false
@@ -90,14 +90,13 @@ export class Transform {
         local sy: f64 = self.scale.y
         local sz: f64 = self.scale.z
         local neg: Vec3 = Vec3(0.0 - self.position.x, 0.0 - self.position.y, 0.0 - self.position.z)
+        // The forward placement rotates by `q`; undoing it rotates by the inverse rotation, which is the conjugate of a
+        // unit quaternion (x, y, z negated, w kept).
+        local conj: Quat = self.rotation.conjugate()
         local unrotated: Vec3 = Vec3(0.0, 0.0, 0.0)
-        self.rotation.rotateVec(&neg, &unrotated)
+        conj.rotateVec(&neg, &unrotated)
         local newPos: Vec3 = Vec3(unrotated.x / sx, unrotated.y / sy, unrotated.z / sz)
-        local iw: f64 = self.rotation.w
-        local ix: f64 = self.rotation.x
-        local iy: f64 = self.rotation.y
-        local iz: f64 = self.rotation.z
-        local newRot: Quat = Quat(iw, 0.0 - ix, 0.0 - iy, 0.0 - iz)
+        local newRot: Quat = conj
         local newScale: Vec3 = Vec3(1.0 / sx, 1.0 / sy, 1.0 / sz)
         out.position = newPos
         out.rotation = newRot
