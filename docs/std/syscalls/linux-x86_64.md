@@ -85,7 +85,7 @@ generic table, recorded in `linux-arm64.md`.
 
 The table also lists x32 ABI entries (ioctl 514, sendmsg 518, recvmsg 519, sendmmsg 538). They belong to the x32 ABI, not to x86-64, and must not be used for the x86-64 target.
 
-The `SYS_*` constants in `std/sys/linux.xl` for x86-64 match this table (checked: PIPE2 293, GETTID 186, CLONE 56, NANOSLEEP 35, EPOLL_CREATE1 291, EPOLL_CTL 233, EPOLL_WAIT 232).
+The `SYS_*` constants in `std/sys/linux.xl` for x86-64 match this table (checked: PIPE2 293, GETTID 186, CLONE 56, NANOSLEEP 35, EPOLL_CREATE1 291, EPOLL_CTL 233, EPOLL_WAIT 232, READ 0, WRITE 1, MMAP 9, MUNMAP 11, SCHED_YIELD 24, EXIT 60, EXIT_GROUP 231, FUTEX 202, GETRANDOM 318, CLOCK_GETTIME 228, OPEN 2, CLOSE 3, LSEEK 8, UNLINK 87, GETDENTS64 217, IOCTL 16, MPROTECT 10), as do the numbers in `std/sys/sock.xl` (SOCKET 41, CONNECT 42, ACCEPT 43, BIND 49, LISTEN 50, SETSOCKOPT 54, RT_SIGACTION 13), `std/os/process.xl` (GETPID 39, KILL 62, WAIT4 61, CLONE 56, EXECVE 59, EXIT 60), `std/io/stat.xl` (STATX 332) and `std/sys/uring.xl` (IO_URING_SETUP 425, IO_URING_ENTER 426).
 
 ## Not yet verified
 

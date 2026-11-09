@@ -4,11 +4,11 @@ Four small modules read facts the operating system already publishes. None of th
 
 | Module | Functions | Source |
 |---|---|---|
-| `std/cpu` | `cpuFeatures()` (CPU feature flags) | CPUID and XGETBV on x86-64 (Intel SDM Vol. 2; the same on every OS, since they are processor instructions); `AT_HWCAP` on arm64 Linux (kernel `hwcap.h`); `sysctlbyname("hw.optional.*")` on arm64 macOS; `IsProcessorFeaturePresent` on arm64 Windows |
-| `std/hw` | `hwCpuModel`, `hwMemoryBytes`, `hwProductName` | `/proc/cpuinfo`, `/proc/meminfo` and `/sys/class/dmi/id/product_name` on Linux; `machdep.cpu.brand_string`, `hw.memsize`, `hw.model` on macOS; `PROCESSOR_IDENTIFIER` (`GetEnvironmentVariableW`) and `GlobalMemoryStatusEx` on Windows |
+| `std/cpu` | `cpuFeatures()` (CPU feature flags), `cpuCount()`, `cpuRelax()`, `stackPointer()` | CPUID and XGETBV on x86-64 (Intel SDM Vol. 2; the same on every OS, since they are processor instructions); `AT_HWCAP` on arm64 Linux (kernel `hwcap.h`); `sysctlbyname("hw.optional.*")` on arm64 macOS; `IsProcessorFeaturePresent` on arm64 Windows; `cpuCount` reads `sched_getaffinity` on Linux |
+| `std/hw` | `hwCpuModel`, `hwMemoryBytes`, `hwProductName`, `hwCacheLineSize` | `/proc/cpuinfo`, `/proc/meminfo`, `/sys/class/dmi/id/product_name` and the sysfs coherency line size on Linux; `machdep.cpu.brand_string`, `hw.memsize`, `hw.model` and `hw.cachelinesize` on macOS; `PROCESSOR_IDENTIFIER` (`GetEnvironmentVariableW`, through `std/sys/windows` `sysGetEnvW`), `GlobalMemoryStatusEx` and a fixed 64 on Windows |
 | `std/gpu` | `gpuDrmDevices`, `gpuAvailable` | DRM render nodes `/dev/dri/renderD*` on Linux, queried with `DRM_IOCTL_VERSION` (0xC0406400) |
 | `std/io/dir` | `fsListDir` | `getdents64` on Linux (x86-64 217, arm64 61); `opendir`/`readdir`/`closedir` on macOS; `FindFirstFileW`/`FindNextFileW`/`FindClose` on Windows |
-| `std/sys` | `envGet(name, out, cap)` | `/proc/self/environ` on Linux; `getenv` from libSystem on macOS |
+| `std/sys` | `envGet(name, out, cap)` | `/proc/self/environ` on Linux; `getenv` from libSystem on macOS; `GetEnvironmentVariableW` (through `sysGetEnvW`) on Windows |
 
 ```xlang
 {% include system-info.xl %}
@@ -35,8 +35,8 @@ macOS has no GPU enumeration (Metal and IOKit are deferred). The CPU flags do no
 AMX and the AVX-512 subsets beyond F, CD, DQ, BW and VL are not reported). Sysfs fields other than `product_name` are not read.
 
 Environment variables: `envGet` reads the process environment (Linux from `/proc/self/environ`, which is the environment the
-process started with; macOS through `getenv`). Checked with a variable set in a container and on macOS. Windows is not
-implemented.
+process started with; macOS through `getenv`; Windows through `GetEnvironmentVariableW`, which takes the ASCII bytes of the
+value to `out`). Checked with a variable set in a container and on macOS; the Windows path is not covered by an e2e entry.
 
 ## Processes, file metadata, guarded stacks and io_uring
 
