@@ -39,6 +39,7 @@ tests=(
   "enums|0|enums ok|0|1"
   "tuple_return|0|tuple return ok|0|1"
   "tuple_destructure|0|tuple destructuring ok|0|1"
+  "proc_list|0|pid|0|1"
   "router|0|router ok|0|1"
   "stdlib|0|499500|0|1"
   "fsjson|0||0|1"

@@ -185,7 +185,7 @@ export fn procListFrom(out: *ProcInfo, max: usize, firstPid: i32) -> usize {
 /// Reads /proc/<pid>/stat into `info`; false when the pid does not exist.
 fn procRead(pid: i32, info: *ProcInfo) -> bool {
     local path: [ui8; 64]
-    local at: usize = putPath(&path[0], "/proc/")
+    local at: usize = putPath(&path[0], 0, "/proc/")
     at = putInt(&path[0], at, pid as i64)
     at = putPath(&path[0], at, "/stat")
     path[at] = 0
@@ -242,13 +242,14 @@ fn procRead(pid: i32, info: *ProcInfo) -> bool {
     return true
 }
 
-fn putPath(buf: *ui8, s: *ui8) -> usize {
+/// Copies the NUL-terminated `s` into `buf` at `at`; returns the position after the last byte copied.
+fn putPath(buf: *ui8, at: usize, s: *ui8) -> usize {
     local i: usize = 0
     while s[i] != 0 {
-        buf[i] = s[i]
+        buf[at + i] = s[i]
         i = i + 1
     }
-    return i
+    return at + i
 }
 
 fn putInt(buf: *ui8, at: usize, v: i64) -> usize {
@@ -285,39 +286,53 @@ fn parseInt(buf: *ui8, len: usize) -> i64 {
 
 @library("System") declare fn sysctl(mib: *i32, mibLen: ui32, old: *void, oldLen: *usize, newp: *void, newLen: usize) -> i32
 
-// KERN_PROC / KERN_PROC_ALL from <sys/sysctl.h>: {CTL_KERN, KERN_PROC, KERN_PROC_ALL}. The `kinfo_proc` array they
-// return is a fixed-size record whose offsets are ABI (XNU bsd/sys/proc.h):
-//   struct extern_proc kp_proc   0..136   (p_pid at 8, p_ppid at 16 inside it on 64-bit XNU)
-//   struct eproc       kp_eproc ...
-// Because kinfo_proc's exact layout differs between XNU versions, only kp_proc.p_pid and p_ppid are read, at the
-// offsets below, and the name comes from the *process id* through proc_name(3) instead of the struct.
+// KERN_PROC / KERN_PROC_ALL from <sys/sysctl.h>: {CTL_KERN, KERN_PROC, KERN_PROC_ALL, 0}. The MIB has four elements,
+// not three: sysctl(3) documents that KERN_PROC takes one further argument, and the trailing 0 asks for every process.
+// A three-element MIB fails with EINVAL.
+//
+// The array is `struct kinfo_proc` (XNU bsd/sys/proc.h, sys/sysctl.h), one record of exactly 648 bytes on x86_64 and
+// arm64 XNU, verified with offsetof against the installed SDK:
+//   struct extern_proc kp_proc   offset 0     (p_pid at 40)
+//   struct eproc       kp_eproc  offset 296   (e_ppid at 560)
+//   PID_MAX so far 99999, p_comm[17]: covered by the two offsets below.
+// Both fields are read through these offsets, so no struct crosses the FFI boundary and no by-value layout is assumed.
 define CTL_KERN = 1
 define KERN_PROC = 14
 define KERN_PROC_ALL = 0
 define KINFO_SIZE = 648          // sizeof(struct kinfo_proc) on x86_64/arm64 XNU
-define KINFO_PID = 8
-define KINFO_PPID = 16
+define KINFO_PID = 40            // offsetof(kinfo_proc, kp_proc.p_pid)
+define KINFO_PPID = 560          // offsetof(kinfo_proc, kp_eproc.e_ppid)
 
 @library("System") declare fn proc_name(pid: i32, buf: *ui8, size: ui32) -> i32
 
-/// Lists up to `max` processes into `out`; returns how many were written. The array is fetched twice: once with a
-/// zero size to learn the byte count (sysctl reports it in oldLen even when it fails with ENOMEM), then once into a
-/// buffer. The buffer is a stack array capped at 256 records so std/sys needs no heap.
+/// Lists up to `max` processes into `out`; returns how many were written. The array is fetched in two calls, the
+/// documented sysctl(3) pattern: a NULL probe fills `size` with the byte count the whole table needs, then the second
+/// call fills a buffer at least that large. Passing the probe size straight back fails with ENOMEM (errno 12) whenever
+/// a process appeared in between, so a little headroom is added and the pair is retried a few times. The buffer is a
+/// stack array of 1100 records (about 700 KiB), which is more than the ~600 a current macOS reports, and the caller's
+/// own `max` is applied on the way out, so std/sys needs no heap.
+define PROC_STACK_RECORDS = 1100
+
 export fn procList(out: *ProcInfo, max: usize) -> usize {
-    local mib: [i32; 3]
+    local mib: [i32; 4]
     mib[0] = CTL_KERN
     mib[1] = KERN_PROC
     mib[2] = KERN_PROC_ALL
-    local size: usize = 0
-    if sysctl(&mib[0], 3, nil, &size, nil, 0) != 0 && size == 0 { return 0 }
-    // Cap the fetch at what the caller can take, and never more than the stack buffer below.
-    local capRecords: usize = max
-    if capRecords > 256 { capRecords = 256 }
-    local want: usize = capRecords * KINFO_SIZE
-    if want > size { want = size }
-    if want == 0 { return 0 }
-    local buf: [ui8; 256 * 648]
-    if sysctl(&mib[0], 3, &buf[0] as *void, &want, nil, 0) != 0 { return 0 }
+    mib[3] = 0
+    local buf: [ui8; PROC_STACK_RECORDS * KINFO_SIZE]
+    local want: usize = 0
+    local tries: i32 = 0
+    local r: i32 = -1
+    while tries < 5 {
+        local size: usize = 0
+        if sysctl(&mib[0], 4, nil, &size, nil, 0) != 0 || size == 0 { return 0 }
+        want = size + KINFO_SIZE * 8          // headroom for processes that appear between the two calls
+        if want > PROC_STACK_RECORDS * KINFO_SIZE { want = PROC_STACK_RECORDS * KINFO_SIZE }
+        r = sysctl(&mib[0], 4, &buf[0] as *void, &want, nil, 0)
+        if r == 0 { break }
+        tries = tries + 1
+    }
+    if r != 0 { return 0 }
     local n: usize = want / KINFO_SIZE
     local count: usize = 0
     local i: usize = 0
