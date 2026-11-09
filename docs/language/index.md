@@ -198,6 +198,7 @@ do { ... } while cond
 for local i: i64 = 0; i < 10; i++ { ... }
 for local i := 0; i < 10; i++ { ... }        // type inferred from the initializer
 for i in 0..10 { ... }                    // upper bound exclusive, evaluated once
+for i in 0..=10 { ... }                   // upper bound inclusive: runs for 0 through 10
 
 outer: for i in 0..5 {
     for j in 0..5 {
@@ -216,6 +217,7 @@ defer cleanup(p)
 ```
 
 - Conditions need no parentheses; bodies always use braces.
+- `for` has three forms. `for init; cond; step { }` is the C-style loop; any of the three parts may be left out (`for ; cond; step`, `for init; ; step`, `for init; cond; { }`), and leaving out the condition makes an infinite loop. `for name in lo..hi { }` counts from `lo` up to but not including `hi`, and `for name in lo..=hi { }` includes `hi`. A range loop evaluates both bounds once, before the first iteration, so changing them in the body does not move the end. The loop variable's type is the bounds' integer type; an untyped integer literal on one side takes the type of the other, so `for i in 0..limit()` works without a written `as`. A reversed range (`5..2`) is empty and runs zero times. `for name in pack { }` unrolls a parameter pack; see the variadic rule under Functions. Every form takes an optional label (`outer: for ...`), and `break outer` / `continue outer` leave or advance that loop.
 - `switch` works on integers, bools and enums, has no fallthrough, and a `break` inside it leaves the enclosing loop.
 - `defer stmt` runs when the enclosing block is left; see [defer.md]({{ site.baseurl }}/language/defer.html).
 - `cond ? a : b` is the conditional expression.

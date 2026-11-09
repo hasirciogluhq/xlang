@@ -202,7 +202,11 @@ private:
         case ';': single(TokenKind::Semicolon); return;
         case '.':
             if (peek(1) == '.') {
-                single(TokenKind::DotDot, 2);
+                if (peek(2) == '=') {
+                    single(TokenKind::DotDotEq, 3);
+                } else {
+                    single(TokenKind::DotDot, 2);
+                }
             } else {
                 single(TokenKind::Dot);
             }
@@ -631,6 +635,7 @@ const char* tokenKindName(TokenKind kind) {
     case TokenKind::AndAnd: return "&&";
     case TokenKind::OrOr: return "||";
     case TokenKind::DotDot: return "..";
+    case TokenKind::DotDotEq: return "..=";
     case TokenKind::Question: return "?";
     case TokenKind::PlusAssign: return "+=";
     case TokenKind::MinusAssign: return "-=";

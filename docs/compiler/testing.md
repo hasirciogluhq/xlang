@@ -1,14 +1,40 @@
 # Testing
 
-The compiler has two test suites, both run with xmake.
+The repository has three test suites.
 
-## Frontend and semantic checks
+## Frontend and semantic checks (C++)
 
 ```
 xmake build xlang-tests && xmake run xlang-tests
 ```
 
-`test/` holds the C++ tests for the lexer, parser, semantic analysis and HIR lowering. They are fast (a few seconds) and every compiler change is expected to pass them.
+`test/compiler/` holds the C++ tests for the lexer, parser, semantic analysis and HIR lowering. They are fast (a few seconds) and every compiler change is expected to pass them.
+
+## Language unit tests (`*.test.xl`)
+
+```
+xlang test test/unit/
+xlang test test/unit/for.test.xl        # one file
+xlang test 're:^for$'                   # by name
+xlang test --parallel                   # all of them at once
+```
+
+`test/unit/` holds suites written in xlang itself, using `std/testing`. A file is a test when it is named `*.test.xl` and has an `@entry fn main() -> i32` that ends in `suiteRun(&s)`; a non-zero exit status fails the file. The runner accepts a file, a directory, a glob (`**`, `*`, `?`), `re:<regex>` or a path substring.
+
+```xlang
+from "std/testing" import Suite, T, suiteInit, test, suiteRun, expectEq
+
+fn addWorks(t: *T) { expectEq(t, 1 + 2, 3) }
+
+@entry fn main() -> i32 {
+    local s: Suite
+    suiteInit(&s)
+    test(&s, "add works", addWorks)
+    return suiteRun(&s)
+}
+```
+
+The matchers are typed functions (`expect`, `expectTrue`, `expectEq`, `expectEqUInt`, `expectEqStr`, `expectNear`, `expectGt`, `expectNil`, ...). There is no discovery and no chained matcher syntax. These suites run on the host only; the cross-OS legs belong to the e2e programs.
 
 ## End-to-end programs
 

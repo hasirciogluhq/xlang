@@ -4,7 +4,7 @@
 `cpuFeatures()`, which returns a `CpuFeatures` struct of flags. Nothing is cached: each call asks the processor again.
 
 ```xlang
-{% include_relative ../examples/cpu-features.xl %}
+{% include cpu-features.xl %}
 ```
 
 ## Where the flags come from

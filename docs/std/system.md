@@ -11,7 +11,7 @@ Four small modules read facts the operating system already publishes. None of th
 | `std/sys` | `envGet(name, out, cap)` | `/proc/self/environ` on Linux; `getenv` from libSystem on macOS |
 
 ```xlang
-{% include_relative ../examples/system-info.xl %}
+{% include system-info.xl %}
 ```
 
 ## What was checked

@@ -35,6 +35,7 @@ echo "e2e: $XLANG_E2E_JOBS concurrent legs${XLANG_E2E_FILTER:+, filter '$XLANG_E
 tests=(
   "language|0||0|1"
   "controlflow|0|controlflow ok|0|1"
+  "for|0|for ok|0|1"
   "enums|0|enums ok|0|1"
   "tuple_return|0|tuple return ok|0|1"
   "tuple_destructure|0|tuple destructuring ok|0|1"

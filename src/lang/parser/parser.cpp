@@ -1485,7 +1485,10 @@ class Parser {
                 return stmt;
             }
             stmt.kind = Stmt::Kind::ForRange;
-            expect(TokenKind::DotDot, "`..` between the bounds of the range");
+            if (!match(TokenKind::DotDot)) {
+                expect(TokenKind::DotDotEq, "`..` or `..=` between the bounds of the range");
+                stmt.range_inclusive = true;
+            }
             stmt.expr2 = parseExpr();
             no_struct_ = saved_no_struct;
             stmt.body = parseBlockPtr();

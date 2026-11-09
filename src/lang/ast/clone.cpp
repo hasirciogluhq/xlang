@@ -31,6 +31,7 @@ Stmt cloneStmt(const Stmt& s, const TypeEnv& env) {
         c.expr2 = cloneExpr(*s.expr2, env);
     }
     c.has_compound_op = s.has_compound_op;
+    c.range_inclusive = s.range_inclusive;
     c.compound_op = s.compound_op;
     if (s.body) {
         c.body = std::make_unique<Block>(cloneBlock(*s.body, env));

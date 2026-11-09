@@ -120,7 +120,7 @@ struct Stmt {
         While,   ///< [label:] while expr { body }
         DoWhile, ///< [label:] do { body } while expr
         For,     ///< [label:] for [init]; [cond]; [step] { body }
-        ForRange,///< [label:] for name in expr .. rhs { body }   (rhs exclusive)
+        ForRange,///< [label:] for name in expr .. rhs { body }   (rhs exclusive; `..=` inclusive)
         ForPack, ///< [label:] for name in pack { body }   (expr = the pack's name; unrolled per element)
         Switch,  ///< switch expr { case a, b { } ... default { } }
         Defer,   ///< defer stmt (runs when the enclosing block is left)
@@ -147,6 +147,8 @@ struct Stmt {
     ExprPtr expr2;     ///< ForRange: exclusive upper bound
     bool has_compound_op{false};
     BinaryOp compound_op{BinaryOp::Add};
+    /// ForRange: the range is inclusive (`in a..=b` instead of `in a..b`).
+    bool range_inclusive{false};
     std::unique_ptr<Block> body;       ///< If: then block; loops/Unsafe/Block: the block
     std::unique_ptr<Block> else_body;  ///< If: else block (an `else if` is a block holding one If)
     bool else_is_if{false};

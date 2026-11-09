@@ -1,0 +1,186 @@
+// Unit: the `for` family — three-clause, range (exclusive and inclusive), labeled jumps.
+// Every loop is written so that a wrong bound shows up as a concrete number, not a hang.
+from "std/testing" import Suite, T, suiteInit, test, suiteRun, expectEq
+
+// A bound from a call: exclusive and inclusive must differ by exactly one iteration.
+fn limit() -> i64 {
+    return 4
+}
+
+fn exclusive(t: *T) {
+    local sum: i64 = 0
+    local count: i64 = 0
+    for i in 0..5 {
+        sum += i
+        count += 1
+    }
+    expectEq(t, sum, 10)
+    expectEq(t, count, 5)
+}
+
+fn inclusive(t: *T) {
+    local sum: i64 = 0
+    local count: i64 = 0
+    for i in 0..=5 {
+        sum += i
+        count += 1
+    }
+    expectEq(t, sum, 15)
+    expectEq(t, count, 6)
+}
+
+fn inclusiveSingle(t: *T) {
+    // `a..=a` runs exactly once; `a..a` runs zero times.
+    local one: i64 = 0
+    for i in 3..=3 { one += 1 }
+    expectEq(t, one, 1)
+    local none: i64 = 0
+    for i in 3..3 { none += 1 }
+    expectEq(t, none, 0)
+}
+
+fn emptyRange(t: *T) {
+    // A reversed range is empty and must not run: the condition is `i < end` from the start.
+    local ran: i64 = 0
+    for i in 5..2 { ran += 1 }
+    expectEq(t, ran, 0)
+}
+
+fn varBounds(t: *T) {
+    local lo: i64 = 2
+    local hi: i64 = 6
+    local sum: i64 = 0
+    for i in lo..hi { sum += i }
+    expectEq(t, sum, 2 + 3 + 4 + 5)
+    local sumInc: i64 = 0
+    for i in lo..=hi { sumInc += i }
+    expectEq(t, sumInc, 2 + 3 + 4 + 5 + 6)
+}
+
+fn callBound(t: *T) {
+    // A literal lower bound takes the type of the upper bound: no `as` is needed.
+    local exclusiveCount: i64 = 0
+    for i in 0..limit() { exclusiveCount += 1 }
+    expectEq(t, exclusiveCount, 4)
+    local inclusiveCount: i64 = 0
+    for i in 0..=limit() { inclusiveCount += 1 }
+    expectEq(t, inclusiveCount, 5)
+}
+
+fn boundEvaluatedOnce(t: *T) {
+    // The upper bound is computed before the loop starts, so a body that would change it cannot.
+    local calls: i64 = 0
+    local seen: i64 = 0
+    for i in 0..limit() {
+        calls += 1
+        seen = i
+    }
+    expectEq(t, calls, 4)
+    expectEq(t, seen, 3)
+}
+
+fn everyIntWidth(t: *T) {
+    // The loop variable has the bounds' integer type, so a small width works too.
+    local lo8: ui8 = 0
+    local hi8: ui8 = 3
+    local small: ui64 = 0
+    for i in lo8..hi8 { small += i as ui64 }
+    expectEq(t, small as i64, 3)
+
+    local wide: i64 = 0
+    local zero: i64 = 0
+    local four: i64 = 4
+    for i in zero..four { wide += i }
+    expectEq(t, wide, 6)
+
+    local wideInc: i64 = 0
+    local three: i64 = 3
+    for i in zero..=three { wideInc += i }
+    expectEq(t, wideInc, 6)
+}
+
+fn threeClause(t: *T) {
+    // init / cond / step, and each part may be left out.
+    local a: i64 = 0
+    for local i: i64 = 0; i < 4; i++ { a += i }
+    expectEq(t, a, 6)
+
+    local b: i64 = 0
+    for ; b < 3; b++ { }
+    expectEq(t, b, 3)
+
+    local c: i64 = 0
+    for local i: i64 = 0; i < 3; {
+        c += 1
+        i++
+    }
+    expectEq(t, c, 3)
+
+    local d: i64 = 0
+    for local i: i64 = 0; ; i++ {
+        if i == 3 { break }
+        d += 1
+    }
+    expectEq(t, d, 3)
+}
+
+fn stepOrder(t: *T) {
+    // The step runs after the body, so the loop variable keeps the last body value at `break`.
+    local last: i64 = -1
+    for local i: i64 = 0; i < 10; i++ {
+        if i == 4 { break }
+        last = i
+    }
+    expectEq(t, last, 3)
+}
+
+fn labeledRange(t: *T) {
+    // `continue` on an outer label starts the next iteration of that loop, skipping the inner one's
+    // remaining rounds; `break` on an outer label leaves both.
+    local sum: i64 = 0
+    outer: for i in 0..3 {
+        for j in 0..10 {
+            if j == 2 { continue outer }
+            sum += 1
+        }
+    }
+    expectEq(t, sum, 6)
+
+    local after: i64 = 0
+    outer2: for i in 0..5 {
+        for j in 0..5 {
+            if i == 2 { break outer2 }
+            after += 1
+        }
+    }
+    expectEq(t, after, 10)
+}
+
+fn nestedRanges(t: *T) {
+    // Nested ranges each keep their own bound.
+    local count: i64 = 0
+    for i in 0..=2 {
+        for j in 0..=1 {
+            count += 1
+        }
+    }
+    expectEq(t, count, 3 * 2)
+}
+
+@entry fn main() -> i32 {
+    local s: Suite
+    suiteInit(&s)
+    test(&s, "range exclusive", exclusive)
+    test(&s, "range inclusive", inclusive)
+    test(&s, "inclusive and exclusive at one point", inclusiveSingle)
+    test(&s, "empty range", emptyRange)
+    test(&s, "variable bounds", varBounds)
+    test(&s, "call bound and literal inference", callBound)
+    test(&s, "bound evaluated once", boundEvaluatedOnce)
+    test(&s, "every integer width", everyIntWidth)
+    test(&s, "three-clause forms", threeClause)
+    test(&s, "step order", stepOrder)
+    test(&s, "labeled jumps out of ranges", labeledRange)
+    test(&s, "nested ranges", nestedRanges)
+    return suiteRun(&s)
+}

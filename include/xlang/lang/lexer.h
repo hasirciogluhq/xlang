@@ -97,6 +97,7 @@ enum class TokenKind {
     AndAnd,
     OrOr,
     DotDot,        ///< `..` (range in `for i in a..b`)
+    DotDotEq,      ///< `..=` (inclusive range in `for i in a..=b`)
     Question,      ///< `?` (ternary)
     PlusAssign,    ///< `+=`
     MinusAssign,   ///< `-=`

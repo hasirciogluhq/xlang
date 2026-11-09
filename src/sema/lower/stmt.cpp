@@ -776,7 +776,21 @@ void Lowerer::lowerFor(const Stmt& s, std::vector<hir::Stmt>& out) {
 
 void Lowerer::lowerForRange(const Stmt& s, std::vector<hir::Stmt>& out) {
     const Type boolean = Type::makeBool();
-    EP lo = expr(*s.expr, nullptr);
+    // An untyped integer literal on either side takes its type from the other bound, so `0..n`
+    // works for any integer type of `n` without a written `as`. A typed bound wins; when both are
+    // literals the lower one's default type (i32, or i64 when it does not fit) is used.
+    const bool lo_literal = s.expr->kind == Expr::Kind::IntLiteral;
+    const bool hi_literal = s.expr2->kind == Expr::Kind::IntLiteral;
+    Type hint;
+    bool have_hint = false;
+    if (lo_literal && !hi_literal) {
+        EP probe = expr(*s.expr2, nullptr);
+        if (probe && !lower::isUnknown(probe->type) && probe->type.kind == TypeKind::Int) {
+            hint = probe->type;
+            have_hint = true;
+        }
+    }
+    EP lo = expr(*s.expr, have_hint ? &hint : nullptr);
     if (!lo) {
         (void)expr(*s.expr2, nullptr);
         return;
@@ -828,7 +842,8 @@ void Lowerer::lowerForRange(const Stmt& s, std::vector<hir::Stmt>& out) {
     loop.kind = hir::StmtKind::While;
     loop.span = s.span;
     EP cond = mk(hir::ExprKind::Binary, boolean, s.span);
-    cond->binary_op = BinaryOp::Lt;
+    // `in a..b` runs while `i < b`; `in a..=b` runs while `i <= b`.
+    cond->binary_op = s.range_inclusive ? BinaryOp::Le : BinaryOp::Lt;
     cond->lhs = ref(var);
     cond->rhs = ref(end);
     loop.value = std::move(cond);
