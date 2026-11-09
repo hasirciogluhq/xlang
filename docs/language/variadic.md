@@ -46,6 +46,6 @@ println(fmt: str, ..args)
 sprintf(fmt: str, ..args) -> String
 ```
 
-`print` adds no newline and `println` adds one `\n`. `{}` takes the next argument, `{{` and `}}` print braces, and a count mismatch panics. See [Strings]({{ site.baseurl }}/std/strings.html) for the formatting rules.
+`print` adds no newline and `println` adds one `\n`. {% raw %}`{}` takes the next argument, `{{` and `}}` print braces{% endraw %}, and a count mismatch panics. See [Strings]({{ site.baseurl }}/std/strings.html) for the formatting rules.
 
 `syscall(nr, args...)` is the one builtin with a variable argument count; it is not a pack function, and its maximum argument count is checked against the target at compile time.

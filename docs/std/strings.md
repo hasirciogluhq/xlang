@@ -71,7 +71,7 @@ With a format string, any number of arguments may follow it (the functions are v
 println("{} and {}", 1, "two")
 ```
 
-`{}` takes the next argument and `{{`/`}}` print braces. A format whose placeholder count differs from its argument count panics before anything is written. `f64` prints with six decimals.
+{% raw %}`{}` takes the next argument and `{{`/`}}` print braces.{% endraw %} A format whose placeholder count differs from its argument count panics before anything is written. `f64` prints with six decimals.
 
 | Function | Result |
 |---|---|
