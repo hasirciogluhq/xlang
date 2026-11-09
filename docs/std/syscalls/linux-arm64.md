@@ -46,7 +46,7 @@ The numbers differ from x86-64 for the same call. Never copy a number between th
 
 `__NR_syscalls` is 473 in this table.
 
-The `SYS_*` constants in `std/sys/linux.xl` for aarch64 are all confirmed by this table: EPOLL_CREATE1 20, EPOLL_CTL 21, GETRANDOM 278, CLOCK_GETTIME 113, PIPE2 59, GETTID 178, CLONE 220, NANOSLEEP 101.
+The `SYS_*` constants in `std/sys/linux.xl` for aarch64 are all confirmed by this table: EPOLL_CREATE1 20, EPOLL_CTL 21, EPOLL_WAIT 22, GETRANDOM 278, CLOCK_GETTIME 113, PIPE2 59, GETTID 178, CLONE 220, NANOSLEEP 101, MMAP 222, MUNMAP 215, SCHED_YIELD 124, EXIT 93, EXIT_GROUP 94, FUTEX 98, READ 63, WRITE 64, IOCTL 29, GETDENTS64 61, MPROTECT 226; the open family uses OPENAT 56, CLOSE 57, LSEEK 62, UNLINKAT 35.
 
 arm64 has no `epoll_wait` entry; `epoll_pwait` (22) is the call to use, with a null sigmask. Any code path that names `SYS_EPOLL_WAIT` on arm64 must map to 22 and document the sigmask argument. The `SYS_EPOLL_WAIT = 22` constant in `linux.xl` is therefore correct only with that sigmask rule.
 

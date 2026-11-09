@@ -41,8 +41,7 @@ Not implemented: will messages, username and password, AUTH, user properties, to
 | Module | Functions | Specification |
 |---|---|---|
 | `std/net/proto/ntpclient` | `ntpQuery(ip, port, timeoutMs)` returns the offset and delay | RFC 5905 sections 7.3 and 8 (UDP, the clock has whole-second resolution) |
-| `std/net/proto/dnswire` | `dnsBuildQueryEdns` | RFC 6891 section 6.1.2 (OPT record in the additional section) |
-| `std/net/proto/dnstransport` | `dnsFrameTcp`, `dnsUnframeTcp`, `dohRequestTarget` | RFC 1035 section 4.2.2 (DNS over TCP framing, used by DNS over TLS, RFC 7858), RFC 8484 section 4.1 (GET with `dns=` base64url) |
+| `std/net/proto/dnstransport` | `dnsBuildQueryEdns`, `dnsFrameTcp`, `dnsUnframeTcp`, `dohRequestTarget` | RFC 6891 section 6.1.2 (OPT record in the additional section), RFC 1035 section 4.2.2 (DNS over TCP framing, used by DNS over TLS, RFC 7858), RFC 8484 section 4.1 (GET with `dns=` base64url) |
 | `std/net/proto/stun` | `stunBindingRequest`, `stunMappedAddress` | RFC 8489 sections 6 and 14.2 (IPv4 XOR-MAPPED-ADDRESS, MAPPED-ADDRESS fallback) |
 | `std/net/proto/dhcp` | `dhcpDiscover`, `dhcpParseReply` | RFC 2131 sections 2 and 3, RFC 2132 options 1, 3, 51, 53, 54, 55 |
 

@@ -7,6 +7,7 @@ The encoding modules are in `std/encoding`. Each encoder writes into a caller bu
 | Hexadecimal | `hexEncode`, `hexDecode`, `base16Encode`, `base16Decode` | RFC 4648, section 8 |
 | Base64 | `base64Encode`, `base64Decode` | RFC 4648, section 4 |
 | Base64url | `base64UrlEncode`, `base64UrlDecode` | RFC 4648, section 5 |
+| Base64url, unpadded | `base64UrlEncodeRaw`, `base64UrlDecodeRaw` | RFC 4648, section 5, without the padding (the JOSE form) |
 | Base32 | `base32Encode`, `base32Decode` | RFC 4648, section 6 (padded, canonical decoding) |
 | Base32hex | `base32HexEncode`, `base32HexDecode` | RFC 4648, section 7 |
 | Base85 | `base85Encode`, `base85Decode` | RFC 1924 (no padding; the IPv6 alphabet) |

@@ -10,9 +10,9 @@ title: HTTP
 | `context.xl` | `Context`: the request and the response of one exchange |
 | `server.xl` | `routerServe` and `routerServeTls`: the connection loop |
 | `middleware.xl` | `Logger`, `Recovery`, `Cors` |
-| `client.xl` | `Client`, `Request`, `Response`, `Headers`, and the streaming calls |
+| `client.xl` | `Client`, `Request`, `Response`, `Headers` and `Header` |
 | `multipart.xl` | multipart form parsing |
-| `url.xl`, `util.xl` | URL parsing and header helpers |
+| `url.xl`, `util.xl` | URL parsing (`Url`, `fetchErrorText`) and header helpers |
 
 ## Server
 
@@ -42,6 +42,7 @@ fn hello(c: *Context) {
 | `Use(mw)` | add middleware to every route registered after it |
 | `Group(prefix)` | a `*RouterGroup` with that prefix, copying the middleware in effect |
 | `NoRoute(handler)`, `NoMethod(handler)` | replace the 404 and 405 handlers |
+| `Serve(c *Context)` | route one request (the handler the connection loop calls) |
 | `Run(port)`, `RunTLS(port, &credentials)` | serve until the process ends |
 
 A `RouterGroup` has the same route methods and `Use`/`Group`, all relative to its prefix.
@@ -92,19 +93,18 @@ from "std" import Client, Request, Response, println
     req.SetBody("{}")
     req.Header().Set("Content-Type", "application/json")
     local resp: Response = c.Do(&req)
-    println("{} {}", resp.Status(), resp.Body().Text())
+    println("{} {}", resp.status, resp.Text())
     return 0
 }
 ```
 
 | Type | Members |
 |---|---|
-| `Client` | `Do(&req) -> Response`, `followRedirects(bool)` |
-| `Request` | `Get`, `Post`, `Put`, `Patch`, `Delete`, `Head` to set the URL and method; `SetBody`, `Header()` |
+| `Client` | `Do(&req) -> Response`, `Get(url)`, `Head(url)`, `Delete(url)`, `Post(url, contentType, body)`, `Put(url, contentType, body)`, `followRedirects(status)`; fields `timeoutMs`, `maxRedirects`, `userAgent` |
+| `Request` | `Request(method, url)`; `SetBody(text)`; field `headers` |
 | `Headers` | `Add`, `Set`, `Remove`, `Get`, `Has`, `Length`, `Write` |
-| `Response` | `Status()`, `Body()`, `Header()`, `Text()`, `Ok()` |
-| streaming | `httpOpen`, `httpRead`, `httpClose`, `httpHeader`; a request body may come from a buffer or a chunked `source` callback |
+| `Response` | `Header(name)`, `Text()`, `Ok()`; fields `status`, `reason`, `headers`, `body`, `error`, `finalUrl` |
 
-`clientErrorText(code)` turns a failure code into a message.
+`clientErrorText(code)` turns a failure code into a message; `fetchErrorText(code)` does the same for the `FETCH_ERR_*` codes.
 
 Limits are listed in [Known limitations]({{ site.baseurl }}/known-limitations.html).

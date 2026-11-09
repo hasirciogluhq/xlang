@@ -11,6 +11,7 @@ arm64 BSD calls (read from `bsd/dev/arm/systemcalls.c`, function `arm_get_syscal
 - Errors: `x0` holds the errno and the carry bit (`PSR64_CF`) of `cpsr` is set. Success: the result is in `x0`; for two-register return types `x1` is also used; the carry bit is cleared before the call.
 - The trap instruction and its immediate (`svc #0x80` is the value commonly used, not yet read from the source): todo.
 - `ERESTART` moves the program counter back by 4 bytes (one `svc`).
+- There is no BSD `mprotect` entry in this table: the guarded mapping uses BSD number 74, as recorded in the comment in `std/sys/macos.xl`.
 
 Mach traps are a separate table (`osfmk/mach/syscall_sw.h`) and are not recorded here: todo.
 
@@ -41,7 +42,7 @@ Mach traps are a separate table (`osfmk/mach/syscall_sw.h`) and are not recorded
 | thread_selfid | 372 |
 | getentropy | 500 |
 
-Also verified in the same table: munmap 73, bsdthread_create 360, bsdthread_terminate 361, unlink 10, lseek 199, gettimeofday 116, exit 1, read 3, write 4, open 5, close 6.
+Also verified in the same table: munmap 73, bsdthread_create 360, bsdthread_terminate 361, unlink 10, lseek 199, gettimeofday 116, exit 1, read 3, write 4, open 5, close 6. The socket calls are in the table too: socket 97, connect 98, bind 104, setsockopt 105, listen 106, accept 30 (used by `std/sys/sock.xl`).
 
 `sched_yield` is absent by name from this table; the former `SYS_SCHED_YIELD = 331` in `std/sys/macos.xl` was removed because no entry was verified. Yield on macOS is a no-op until a verified call is recorded.
 

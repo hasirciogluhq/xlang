@@ -13,12 +13,12 @@ to a server built from `std/http`.
 | HEAD gets the headers and the `Content-Length` of the GET response, without a body | RFC 9110 section 9.3.2 | Passes (`isHead`) |
 | Header names compare case-insensitively | RFC 9110 section 5.1 | Passes (`lower` in `headerAt`) |
 | Request line: method, target, and `HTTP/1.1` or `HTTP/1.0` | RFC 9112 section 3 | Passes for the two versions; other versions are not refused |
-| Several `Content-Length` headers with different values are refused | RFC 9112 section 6.3 | Open: the first value is used |
+| Several `Content-Length` headers with different values are refused | RFC 9112 section 6.3 | Fixed: `400 Bad Request` (`contentLengthConflict`) |
 | `Expect: 100-continue` gets an interim `100` before the body is read | RFC 9110 section 10.1.1 | Fixed: `HTTP/1.1 100 Continue` is sent when the body is still missing |
-| Persistent connections (keep-alive) | RFC 9112 section 9.3 | Open: every response says `Connection: close`; the server is correct but slower |
+| Persistent connections (keep-alive) | RFC 9112 section 9.3 | Passes (`keepAliveWanted`, `Context.keepAlive`): the response says `Connection: keep-alive` or `Connection: close` to match |
 | Chunked request bodies are decoded (chunk extensions are skipped, trailers are read and dropped) | RFC 9112 section 7.1 | Fixed: decoded in place before routing; a malformed body gets `400` |
 | The request target is percent-decoded before routing | RFC 3986 section 2.4 | Fixed: `%XX` becomes the byte XX, before routing |
-| Target-form validation (absolute path, absolute URI, `*`) | RFC 9112 section 3.2 | Open: any target is routed as a path |
+| Target-form validation (origin form, `*`, absolute URI) | RFC 9112 section 3.2 | Fixed: any other form gets `400` (`targetValid`) |
 
 ## How the fixes were checked
 
