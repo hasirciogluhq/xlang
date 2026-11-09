@@ -2242,11 +2242,6 @@ class Parser {
                 std::format("enum `{}` mixes payload variants with constant values", decl.name),
                 "a payload enum has no `: T` and no `= value`; the tag is numbered by position");
         }
-        const auto named = [&](std::string name, const Span& span) {
-            Type t = Type::makeNamed({std::move(name)});
-            t.span = span;
-            return t;
-        };
         const auto base = [&](DeclBase& out, std::string name) {
             out.name = std::move(name);
             out.attributes = {};
@@ -2255,6 +2250,26 @@ class Parser {
         };
         const std::string tag_name = decl.name + "$Tag";
         const std::string data_name = decl.name + "$Data";
+
+        // A generic enum's generated items name each other through the enum's type arguments:
+        // `Result<T, E>` becomes `{ tag: Result$Tag<T, E>, data: Result$Data<T, E> }`. The text
+        // scheme `Result$Tag<T, E>` is what the instance local name `Result$Tag<i32, i32>` and
+        // `typeToString` use, so a generic enum needs no rewriting of the instance.
+        const auto selfArgs = [&](std::string_view suffix) {
+            Type t = Type::makeNamed({decl.name + std::string(suffix)});
+            if (decl.generic_params.empty()) {
+                return t;
+            }
+            for (const std::string& param : decl.generic_params) {
+                t.args.push_back(Type::makeNamed({param}));
+            }
+            return t;
+        };
+        const auto part = [&](std::string_view suffix, const Span& span) {
+            Type t = selfArgs(suffix);
+            t.span = span;
+            return t;
+        };
 
         EnumDecl tag;
         base(tag, tag_name);
@@ -2268,8 +2283,8 @@ class Parser {
         base(sum, decl.name);
         sum.generic_params = decl.generic_params;
         sum.attributes = decl.attributes;
-        sum.fields.push_back({"tag", named(tag_name, decl.name_span), {}, decl.name_span});
-        sum.fields.push_back({"data", named(data_name, decl.name_span), {}, decl.name_span});
+        sum.fields.push_back({"tag", part("$Tag", decl.name_span), {}, decl.name_span});
+        sum.fields.push_back({"data", part("$Data", decl.name_span), {}, decl.name_span});
 
         std::vector<StructDecl> payloads;
         for (EnumMember& m : decl.members) {
@@ -2284,7 +2299,7 @@ class Parser {
             for (const std::size_t i : std::views::iota(std::size_t{0}, m.payload.size())) {
                 p.fields.push_back({std::format("_{}", i), m.payload[i], {}, m.span});
             }
-            data.fields.push_back({m.name, named(p.name, m.span), {}, m.span});
+            data.fields.push_back({m.name, part("$" + m.name, m.span), {}, m.span});
         }
         addItem(program, s, std::move(tag));
         for (StructDecl& p : payloads) {
