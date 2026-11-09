@@ -1,0 +1,29 @@
+// proc_list: lists the live process table through kernel32's toolhelp snapshot (CreateToolhelp32Snapshot /
+// Process32FirstW / Process32NextW / CloseHandle), reached through std/sys `procList`. Each row shows the pid, the
+// parent pid, the thread count and the executable name. On Linux and macOS the same call reads /proc and sysctl.
+//
+// Build:   xlang build test/e2e/proc_list.xl --target x86_64-pc-windows-msvc -o proc_list.exe
+// Run:     proc_list.exe            (Windows: native or under Wine/CrossOver)
+from "std" import println
+from "std/sys" import procList, ProcInfo
+
+define MAX_PROCS = 512
+
+@entry fn main() -> i32 {
+    // ProcInfo holds a 256-byte name, so the table is a stack array of 512 records (about 140 KiB).
+    local table: [ProcInfo; MAX_PROCS]
+    local n: usize = procList(&table[0], MAX_PROCS)
+    if n == 0 {
+        println("no processes reported (the OS call failed)")
+        return 1
+    }
+    println("pid\tppid\tthreads\tname")
+    local i: usize = 0
+    while i < n {
+        local p: ProcInfo = table[i]
+        println("{}\t{}\t{}\t{}", p.pid, p.ppid, p.threads, &p.name[0])
+        i = i + 1
+    }
+    println("{} processes", n)
+    return 0
+}

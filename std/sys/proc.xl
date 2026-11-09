@@ -1,0 +1,346 @@
+// std/sys/proc: the live process table. One area, three bodies: Windows reads it through the kernel32 toolhelp
+// snapshot, Linux through /proc/<pid>/stat, macOS through sysctl(KERN_PROC).
+//
+// Every OS fills the same ProcInfo and reports the same fields, so a caller passes one fixed-size buffer and gets a
+// count back. A field an OS cannot supply is left zero and documented per OS in the understanded initializer below.
+//
+// Windows: CreateToolhelp32Snapshot / Process32FirstW / Process32NextW / CloseHandle (tlhelp32.h and handleapi.h)
+//   https://learn.microsoft.com/en-us/windows/win32/api/tlhelp32/nf-tlhelp32-createtoolhelp32snapshot
+//   https://learn.microsoft.com/en-us/windows/win32/api/tlhelp32/nf-tlhelp32-process32firstw
+//   https://learn.microsoft.com/en-us/windows/win32/api/tlhelp32/nf-tlhelp32-process32nextw
+//   https://learn.microsoft.com/en-us/windows/win32/api/handleapi/nf-handleapi-closehandle
+// Linux: /proc/<pid>/stat (proc(5)), /proc/<pid>/status for Uid: and VmRSS:.
+// macOS: sysctl(3) with KERN_PROC_ALL (sysctl.h), documented in `man 3 sysctl` and <sys/sysctl.h>.
+
+/// One process. `name` is UTF-8, NUL terminated, and cut to 255 bytes; a longer name is truncated, never split in the
+/// middle of a code point. `ppid`, `threads`, `rss` and `startTime` are 0 when the OS does not report them.
+export struct ProcInfo {
+    pid: i32
+    ppid: i32
+    threads: i32
+    rss: ui64          // resident set size in bytes
+    startTime: ui64    // seconds since the Unix epoch, 0 when unknown
+    name: [ui8; 256]
+}
+
+#if os == "windows"
+
+// Toolhelp snapshot. Kernel32 offers no plain "list processes" call; the documented pair is a snapshot taken with
+// TH32CS_SNAPPROCESS and then walked with Process32FirstW/Process32NextW. The snapshot is a kernel handle, so it is
+// closed with CloseHandle and not NtClose.
+//   TH32CS_SNAPPROCESS = 0x00000002 (tlhelp32.h)
+//   INVALID_HANDLE_VALUE = -1
+// A snapshot of a *running* system cannot fully fail on a memory error: the remarks say ERROR_BAD_LENGTH is retried.
+define TH32CS_SNAPPROCESS = 2
+define INVALID_HANDLE_VALUE = 18446744073709551615
+
+// PROCESSENTRY32W (tlhelp32.h), in documented field order on x86-64 and arm64 Windows:
+//   DWORD     dwSize              0..4
+//   DWORD     cntUsage            4..8
+//   DWORD     th32ProcessID       8..12
+//   ULONG_PTR th32DefaultHeapID  12..20   (pointer sized: 8 bytes on 64-bit, so the DWORD above is followed by 4 bytes
+//                                          of padding before this field)
+//   DWORD     th32ModuleID       20..24
+//   DWORD     cntThreads         24..28
+//   DWORD     th32ParentProcessID 28..32
+//   LONG      pcPriClassBase     32..36
+//   DWORD     dwFlags            36..40
+//   WCHAR     szExeFile[260]     40..560   520 bytes
+// sizeof = 560. dwSize must be set to sizeof(PROCESSENTRY32W) before the first call; the field is read back through
+// these offsets rather than a struct, so the layout stays visible and no struct-by-value crossing is needed.
+define PE_SIZE = 560
+define PE_PROCESS_ID = 8
+define PE_THREADS = 24
+define PE_PARENT_ID = 28
+define PE_EXE_FILE = 40
+
+@library("kernel32") declare fn CreateToolhelp32Snapshot(flags: ui32, processId: ui32) -> *void
+@library("kernel32") declare fn Process32FirstW(snapshot: *void, entry: *ui8) -> i32
+@library("kernel32") declare fn Process32NextW(snapshot: *void, entry: *ui8) -> i32
+@library("kernel32") declare fn CloseHandle(handle: *void) -> i32
+
+// UTF-16 -> UTF-8 for the process name. Written here instead of importing std/encoding keeps std/sys free of the
+// encoding area (the sys layer is below it). A lone surrogate becomes U+FFFD, the same rule std/encoding/utf8 uses.
+fn wideName(src: *ui16, out: *ui8, cap: usize) -> usize {
+    local used: usize = 0
+    local i: usize = 0
+    while src[i] != 0 {
+        local u: ui32 = src[i] as ui32
+        i = i + 1
+        local cp: i32 = u as i32
+        if u >= 0xd800 && u <= 0xdbff && src[i] != 0 {
+            local lo: ui32 = src[i] as ui32
+            if lo >= 0xdc00 && lo <= 0xdfff {
+                cp = ((((u - 0xd800) << 10) | (lo - 0xdc00)) + 0x10000) as i32
+                i = i + 1
+            } else {
+                cp = 0xfffd
+            }
+        } else if u >= 0xdc00 && u <= 0xdfff {
+            cp = 0xfffd
+        }
+        // Encode one code point into at most 4 bytes (UTF-8, RFC 3629, https://www.rfc-editor.org/rfc/rfc3629).
+        local enc: [ui8; 4]
+        local n: usize = 0
+        if cp < 0x80 {
+            enc[0] = cp as ui8
+            n = 1
+        } else if cp < 0x800 {
+            enc[0] = (0xc0 | (cp >> 6)) as ui8
+            enc[1] = (0x80 | (cp & 0x3f)) as ui8
+            n = 2
+        } else if cp < 0x10000 {
+            enc[0] = (0xe0 | (cp >> 12)) as ui8
+            enc[1] = (0x80 | ((cp >> 6) & 0x3f)) as ui8
+            enc[2] = (0x80 | (cp & 0x3f)) as ui8
+            n = 3
+        } else {
+            enc[0] = (0xf0 | (cp >> 18)) as ui8
+            enc[1] = (0x80 | ((cp >> 12) & 0x3f)) as ui8
+            enc[2] = (0x80 | ((cp >> 6) & 0x3f)) as ui8
+            enc[3] = (0x80 | (cp & 0x3f)) as ui8
+            n = 4
+        }
+        // Stop before the terminating byte is needed, and never split a multi-byte sequence.
+        if used + n + 1 > cap { break }
+        local k: usize = 0
+        while k < n {
+            out[used] = enc[k]
+            used = used + 1
+            k = k + 1
+        }
+    }
+    out[used] = 0
+    return used
+}
+
+/// Lists up to `max` processes into `out`; returns how many were written (0 when the snapshot cannot be taken).
+/// The Windows snapshot cannot report threads' start time or RSS without opening each process, so those stay 0 here;
+/// `threads`, `pid` and `ppid` come straight from PROCESSENTRY32W.
+export fn procList(out: *ProcInfo, max: usize) -> usize {
+    local snap: *void = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0)
+    if (snap as usize) == INVALID_HANDLE_VALUE { return 0 }
+    local entry: [ui8; PE_SIZE]
+    // dwSize must be sizeof(PROCESSENTRY32W) before the first call (the API rejects any other value).
+    local sizeField: *ui32 = &entry[0] as *ui32
+    sizeField[0] = PE_SIZE
+    local count: usize = 0
+    local ok: i32 = Process32FirstW(snap, &entry[0])
+    while ok != 0 && count < max {
+        local info: ProcInfo
+        info.pid = ((&entry[0] as usize + PE_PROCESS_ID) as *ui32)[0] as i32
+        info.ppid = ((&entry[0] as usize + PE_PARENT_ID) as *ui32)[0] as i32
+        info.threads = ((&entry[0] as usize + PE_THREADS) as *ui32)[0] as i32
+        local namep: *ui16 = (&entry[0] as usize + PE_EXE_FILE) as *ui16
+        wideName(namep, &info.name[0], 256)
+        out[count] = info
+        count = count + 1
+        // The enumerator's own entry id is reused per call, so dwSize must be reset before every Process32NextW.
+        sizeField = &entry[0] as *ui32
+        sizeField[0] = PE_SIZE
+        ok = Process32NextW(snap, &entry[0])
+    }
+    CloseHandle(snap)
+    return count
+}
+
+#elif os == "linux"
+
+from "linux" import sysOpenRead, sysRead, sysClose
+
+// /proc/<pid>/stat (proc(5), https://man7.org/linux/man-pages/man5/proc_pid_stat.5.html): one line of space separated
+// fields. Field 1 is the pid and field 2 is the command in parentheses; the command may itself contain spaces and
+// parentheses, so field counting starts after the *last* ')'. From there:
+//   state(3) ppid(4) pgrp(5) session(6) tty_nr(7) tpgid(8) flags(9) minflt(10) cminflt(11) majflt(12) cmajflt(13)
+//   utime(14) stime(15) cutime(16) cstime(17) priority(18) nice(19) num_threads(20) itrealvalue(21) starttime(22) ...
+// `num_threads` is field 20 and `starttime` (22) is in clock ticks since boot, so it is not converted here.
+/// Lists up to `max` processes into `out`; returns how many were written. `threads` and `ppid` come from stat, `name`
+/// from the command field, `rss` stays 0 (proc(5) reports RSS in statm, which is a second open per process).
+export fn procList(out: *ProcInfo, max: usize) -> usize {
+    // /proc/<pid> is discovered by scanning /proc for numeric entries. std/sys has no directory reader, so the scan
+    // goes through the same fsListDir-free path as the other areas: read /proc as a list is not available here, hence
+    // the pid space is walked from 1 upward and a missing /proc/<pid> ends nothing (pids are not contiguous). The
+    // caller-side loop in std/os/process stops when a contiguous run of misses is seen.
+    return procListFrom(out, max, 1)
+}
+
+/// Lists processes whose pid is >= `from`, up to `max` entries and `span` pid numbers. Split out so a caller that
+/// already knows the pid range (a child tree) can start where it likes.
+export fn procListFrom(out: *ProcInfo, max: usize, from: i32) -> usize {
+    local count: usize = 0
+    local pid: i32 = from
+    local misses: i32 = 0
+    while count < max && misses < 4096 {
+        if procRead(pid, &out[count]) {
+            count = count + 1
+            misses = 0
+        } else {
+            misses = misses + 1
+        }
+        pid = pid + 1
+    }
+    return count
+}
+
+/// Reads /proc/<pid>/stat into `info`; false when the pid does not exist.
+fn procRead(pid: i32, info: *ProcInfo) -> bool {
+    local path: [ui8; 64]
+    local at: usize = putPath(&path[0], "/proc/")
+    at = putInt(&path[0], at, pid as i64)
+    at = putPath(&path[0], at, "/stat")
+    path[at] = 0
+    local fd: i32 = sysOpenRead(&path[0])
+    if fd < 0 { return false }
+    local buf: [ui8; 2048]
+    local n: isize = sysRead(fd, &buf[0], 2048)
+    sysClose(fd)
+    if n <= 0 { return false }
+    local len: usize = n as usize
+    // The command is the last ')' in the line; parentheses inside it are legal.
+    local close: usize = len
+    local i: usize = len
+    while i > 0 {
+        i = i - 1
+        if buf[i] == 41 {                      // ')'
+            close = i
+            break
+        }
+    }
+    // The command is between the first '(' and that ')'.
+    local open: usize = 0
+    while open < close && buf[open] != 40 { open = open + 1 }   // '('
+    local nameStart: usize = open + 1
+    local nameLen: usize = 0
+    if close > nameStart { nameLen = close - nameStart }
+    local k: usize = 0
+    while k < nameLen && k < 255 {
+        info.name[k] = buf[nameStart + k]
+        k = k + 1
+    }
+    info.name[k] = 0
+    info.pid = pid
+    // Field 3 (state) starts right after ") "; ppid is field 4, num_threads field 20.
+    local p: usize = close + 2
+    local field: i32 = 3
+    local ppid: i32 = 0
+    local threads: i32 = 0
+    while p < len && field <= 20 {
+        local start: usize = p
+        while p < len && buf[p] != 32 { p = p + 1 }
+        if field == 4 {
+            ppid = parseInt(&buf[start], p - start) as i32
+        } else if field == 20 {
+            threads = parseInt(&buf[start], p - start) as i32
+        }
+        p = p + 1
+        field = field + 1
+    }
+    info.ppid = ppid
+    info.threads = threads
+    info.rss = 0
+    info.startTime = 0
+    return true
+}
+
+fn putPath(buf: *ui8, s: *ui8) -> usize {
+    local i: usize = 0
+    while s[i] != 0 {
+        buf[i] = s[i]
+        i = i + 1
+    }
+    return i
+}
+
+fn putInt(buf: *ui8, at: usize, v: i64) -> usize {
+    local n: i64 = v
+    local digits: usize = 1
+    local t: i64 = n
+    while t >= 10 {
+        t = t / 10
+        digits = digits + 1
+    }
+    local k: usize = at + digits
+    while k > at {
+        k = k - 1
+        buf[k] = ((n % 10) as ui8) + 48
+        n = n / 10
+    }
+    return at + digits
+}
+
+/// Decimal digits in `buf[0..len]`; 0 for a non-numeric field.
+fn parseInt(buf: *ui8, len: usize) -> i64 {
+    local v: i64 = 0
+    local i: usize = 0
+    while i < len {
+        local c: ui8 = buf[i]
+        if c < 48 || c > 57 { return 0 }
+        v = v * 10 + (c - 48) as i64
+        i = i + 1
+    }
+    return v
+}
+
+#elif os == "macos"
+
+@library("System") declare fn sysctl(mib: *i32, mibLen: ui32, old: *void, oldLen: *usize, newp: *void, newLen: usize) -> i32
+
+// KERN_PROC / KERN_PROC_ALL from <sys/sysctl.h>: {CTL_KERN, KERN_PROC, KERN_PROC_ALL}. The `kinfo_proc` array they
+// return is a fixed-size record whose offsets are ABI (XNU bsd/sys/proc.h):
+//   struct extern_proc kp_proc   0..136   (p_pid at 8, p_ppid at 16 inside it on 64-bit XNU)
+//   struct eproc       kp_eproc ...
+// Because kinfo_proc's exact layout differs between XNU versions, only kp_proc.p_pid and p_ppid are read, at the
+// offsets below, and the name comes from the *process id* through proc_name(3) instead of the struct.
+define CTL_KERN = 1
+define KERN_PROC = 14
+define KERN_PROC_ALL = 0
+define KINFO_SIZE = 648          // sizeof(struct kinfo_proc) on x86_64/arm64 XNU
+define KINFO_PID = 8
+define KINFO_PPID = 16
+
+@library("System") declare fn proc_name(pid: i32, buf: *ui8, size: ui32) -> i32
+
+/// Lists up to `max` processes into `out`; returns how many were written. The array is fetched twice: once with a
+/// zero size to learn the byte count (sysctl reports it in oldLen even when it fails with ENOMEM), then once into a
+/// buffer. The buffer is a stack array capped at 256 records so std/sys needs no heap.
+export fn procList(out: *ProcInfo, max: usize) -> usize {
+    local mib: [i32; 3]
+    mib[0] = CTL_KERN
+    mib[1] = KERN_PROC
+    mib[2] = KERN_PROC_ALL
+    local size: usize = 0
+    if sysctl(&mib[0], 3, nil, &size, nil, 0) != 0 && size == 0 { return 0 }
+    // Cap the fetch at what the caller can take, and never more than the stack buffer below.
+    local capRecords: usize = max
+    if capRecords > 256 { capRecords = 256 }
+    local want: usize = capRecords * KINFO_SIZE
+    if want > size { want = size }
+    if want == 0 { return 0 }
+    local buf: [ui8; 256 * 648]
+    if sysctl(&mib[0], 3, &buf[0], &want, nil, 0) != 0 { return 0 }
+    local n: usize = want / KINFO_SIZE
+    local count: usize = 0
+    local i: usize = 0
+    while i < n && count < max {
+        local base: usize = i * KINFO_SIZE
+        local info: ProcInfo
+        info.pid = ((&buf[0] as usize + base + KINFO_PID) as *i32)[0]
+        info.ppid = ((&buf[0] as usize + base + KINFO_PPID) as *i32)[0]
+        proc_name(info.pid, &info.name[0], 256)
+        info.threads = 0
+        info.rss = 0
+        info.startTime = 0
+        out[count] = info
+        count = count + 1
+        i = i + 1
+    }
+    return count
+}
+
+#else
+
+export fn procList(out: *ProcInfo, max: usize) -> usize {
+    return 0
+}
+
+#endif
