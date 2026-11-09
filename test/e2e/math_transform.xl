@@ -1,0 +1,239 @@
+// std/math transforms: the identity, the matrix form of a known TRS placement, applyPoint (with the translation) and
+// applyVector (without), compose followed by applyPoint against the value computed by hand, applyPoint of the inverse
+// giving the original point, the refusal to invert a zero scale and the near comparison.
+//   Conventions: the point is scaled first, then rotated, then translated (M = T * R * S), radians.
+from "std" import print, assert
+from "std/math" import Transform, Vec3, Quat, Mat4, Vec4, transformIdentity, quatFromAxisAngle, quatIdentity, mat4Translation, mat4RotationZ, mat4Scale, MATH_PI
+
+define EPS = 0.000000001
+
+@entry fn main() -> i32 {
+    identityCases()
+    matrixCases()
+    applyCases()
+    composeCases()
+    inverseCases()
+    mutateCases()
+    print("math_transform ok\n")
+    return 0
+}
+
+fn identityCases() {
+    local t: Transform = Transform()
+    local id: Transform = transformIdentity()
+    assert!(t.nearDefault(&id))
+    assert!(t.rotation.isIdentity(EPS))
+
+    // The identity leaves a point and a vector where they are.
+    local p: Vec3 = Vec3(1.0, 2.0, 3.0)
+    local out: Vec3 = Vec3(0.0, 0.0, 0.0)
+    t.applyPoint(&p, &out)
+    assert!(equal3(&out, 1.0, 2.0, 3.0))
+    t.applyVector(&p, &out)
+    assert!(equal3(&out, 1.0, 2.0, 3.0))
+
+    // A position-only transform.
+    local at: Vec3 = Vec3(4.0, 5.0, 6.0)
+    local moved: Transform = Transform(&at)
+    assert!(equal3(&moved.position, 4.0, 5.0, 6.0))
+    assert!(moved.rotation.isIdentity(EPS))
+    assert!(equal3(&moved.scale, 1.0, 1.0, 1.0))
+}
+
+fn matrixCases() {
+    // Position (1, 2, 3), a quarter turn about z, scale (2, 2, 2): M = T * Rz(90) * S(2).
+    local pos: Vec3 = Vec3(1.0, 2.0, 3.0)
+    local zAxis: Vec3 = Vec3(0.0, 0.0, 1.0)
+    local rot: Quat = quatFromAxisAngle(&zAxis, MATH_PI / 2.0)
+    local sc: Vec3 = Vec3(2.0, 2.0, 2.0)
+    local t: Transform = Transform(&pos, &rot, &sc)
+    local m: Mat4 = t.toMat4()
+
+    // The linear block is Rz(90) with each column scaled by 2: [0 -2 0; 2 0 0; 0 0 2].
+    assert!(near(m.at(0, 0), 0.0) && near(m.at(0, 1), -2.0))
+    assert!(near(m.at(1, 0), 2.0) && near(m.at(1, 1), 0.0))
+    assert!(near(m.at(2, 2), 2.0))
+    // The last column is the position and the last row is (0, 0, 0, 1).
+    assert!(near(m.at(0, 3), 1.0) && near(m.at(1, 3), 2.0) && near(m.at(2, 3), 3.0))
+    assert!(near(m.at(3, 0), 0.0) && near(m.at(3, 3), 1.0))
+
+    // The matrix of the identity transform is the 4x4 identity.
+    local id: Transform = transformIdentity()
+    local im: Mat4 = id.toMat4()
+    assert!(im.isIdentity())
+
+    // The matrix product of the three parts is the same matrix: T * R * S.
+    local tm: Mat4 = mat4Translation(1.0, 2.0, 3.0)
+    local rm: Mat4 = mat4RotationZ(MATH_PI / 2.0)
+    local sm: Mat4 = mat4Scale(2.0, 2.0, 2.0)
+    local rs: Mat4 = rm.mul(&sm)
+    local product: Mat4 = tm.mul(&rs)
+    assert!(m.nearDefault(&product))
+}
+
+fn applyCases() {
+    // The same placement: the point (1, 0, 0) is scaled to (2, 0, 0), turned to (0, 2, 0), moved to (1, 4, 3).
+    local pos: Vec3 = Vec3(1.0, 2.0, 3.0)
+    local zAxis: Vec3 = Vec3(0.0, 0.0, 1.0)
+    local rot: Quat = quatFromAxisAngle(&zAxis, MATH_PI / 2.0)
+    local sc: Vec3 = Vec3(2.0, 2.0, 2.0)
+    local t: Transform = Transform(&pos, &rot, &sc)
+    local p: Vec3 = Vec3(1.0, 0.0, 0.0)
+    local out: Vec3 = Vec3(0.0, 0.0, 0.0)
+    t.applyPoint(&p, &out)
+    assert!(equal3(&out, 1.0, 4.0, 3.0))
+
+    // applyPoint agrees with the matrix form: M * (p, 1).
+    local m: Mat4 = t.toMat4()
+    local hp: Vec4 = Vec4(1.0, 0.0, 0.0, 1.0)
+    local viaM: Vec4 = Vec4(0.0, 0.0, 0.0, 0.0)
+    m.mulVec(&hp, &viaM)
+    assert!(near(viaM.x, out.x) && near(viaM.y, out.y) && near(viaM.z, out.z))
+
+    // applyVector ignores the translation: the same input as a direction gives (0, 2, 0).
+    local v: Vec3 = Vec3(1.0, 0.0, 0.0)
+    local vOut: Vec3 = Vec3(0.0, 0.0, 0.0)
+    t.applyVector(&v, &vOut)
+    assert!(equal3(&vOut, 0.0, 2.0, 0.0))
+
+    // A translation-only transform moves a point and leaves a direction alone.
+    local mover: Transform = Transform(&pos)
+    local moved: Vec3 = Vec3(0.0, 0.0, 0.0)
+    mover.applyPoint(&p, &moved)
+    assert!(equal3(&moved, 2.0, 2.0, 3.0))
+    local kept: Vec3 = Vec3(0.0, 0.0, 0.0)
+    mover.applyVector(&p, &kept)
+    assert!(equal3(&kept, 1.0, 0.0, 0.0))
+}
+
+fn composeCases() {
+    // A child at (1, 0, 0) with no rotation under a parent at (10, 0, 0): the child's world position is (11, 0, 0)
+    // and a child-local point (0, 1, 0) lands at (11, 1, 0).
+    local childPos: Vec3 = Vec3(1.0, 0.0, 0.0)
+    local parentPos: Vec3 = Vec3(10.0, 0.0, 0.0)
+    local child: Transform = Transform(&childPos)
+    local parent: Transform = Transform(&parentPos)
+    local world: Transform = Transform()
+    child.compose(&parent, &world)
+    assert!(equal3(&world.position, 11.0, 0.0, 0.0))
+    local localPoint: Vec3 = Vec3(0.0, 1.0, 0.0)
+    local worldPoint: Vec3 = Vec3(0.0, 0.0, 0.0)
+    world.applyPoint(&localPoint, &worldPoint)
+    assert!(equal3(&worldPoint, 11.0, 1.0, 0.0))
+
+    // A parent rotated by a quarter turn about z puts a child at (1, 0, 0) at (0, 1, 0).
+    local zAxis: Vec3 = Vec3(0.0, 0.0, 1.0)
+    local parentRot: Quat = quatFromAxisAngle(&zAxis, MATH_PI / 2.0)
+    local parentScale: Vec3 = Vec3(1.0, 1.0, 1.0)
+    local origin: Vec3 = Vec3(0.0, 0.0, 0.0)
+    local rotatedParent: Transform = Transform(&origin, &parentRot, &parentScale)
+    local world2: Transform = Transform()
+    child.compose(&rotatedParent, &world2)
+    assert!(near(world2.position.x, 0.0) && near(world2.position.y, 1.0) && near(world2.position.z, 0.0))
+    // The composed rotation is the parent's.
+    assert!(near(world2.rotation.w, parentRot.w) && near(world2.rotation.z, parentRot.z))
+
+    // Scales multiply componentwise.
+    local sA: Vec3 = Vec3(2.0, 3.0, 4.0)
+    local sB: Vec3 = Vec3(5.0, 6.0, 7.0)
+    local noRot: Quat = quatIdentity()
+    local scaledChild: Transform = Transform(&origin, &noRot, &sA)
+    local scaledParent: Transform = Transform(&origin, &noRot, &sB)
+    local scaledWorld: Transform = Transform()
+    scaledChild.compose(&scaledParent, &scaledWorld)
+    assert!(equal3(&scaledWorld.scale, 10.0, 18.0, 28.0))
+
+    // The composition matrix equals parent.M * child.M for a rotation-only, uniform-scale case.
+    local p3: Vec3 = Vec3(3.0, -1.0, 2.0)
+    local yAxis: Vec3 = Vec3(0.0, 1.0, 0.0)
+    local pRot: Quat = quatFromAxisAngle(&yAxis, 0.6)
+    local pS: Vec3 = Vec3(1.0, 1.0, 1.0)
+    local c3: Vec3 = Vec3(0.5, 2.0, -1.5)
+    local cRot: Quat = quatFromAxisAngle(&zAxis, -0.4)
+    local cS: Vec3 = Vec3(1.0, 1.0, 1.0)
+    local pt: Transform = Transform(&p3, &pRot, &pS)
+    local ct: Transform = Transform(&c3, &cRot, &cS)
+    local wt: Transform = Transform()
+    ct.compose(&pt, &wt)
+    local wmA: Mat4 = wt.toMat4()
+    local pm: Mat4 = pt.toMat4()
+    local cm: Mat4 = ct.toMat4()
+    local wmB: Mat4 = pm.mul(&cm)
+    assert!(wmA.nearDefault(&wmB))
+}
+
+fn inverseCases() {
+    // The inverse applied to the image of a point gives the point back.
+    local pos: Vec3 = Vec3(1.0, 2.0, 3.0)
+    local zAxis: Vec3 = Vec3(0.0, 0.0, 1.0)
+    local rot: Quat = quatFromAxisAngle(&zAxis, MATH_PI / 2.0)
+    local sc: Vec3 = Vec3(2.0, 2.0, 2.0)
+    local t: Transform = Transform(&pos, &rot, &sc)
+    local inv: Transform = Transform()
+    assert!(t.inverse(&inv))
+
+    local p: Vec3 = Vec3(1.0, 2.0, 3.0)
+    local forward: Vec3 = Vec3(0.0, 0.0, 0.0)
+    t.applyPoint(&p, &forward)
+    local back: Vec3 = Vec3(0.0, 0.0, 0.0)
+    inv.applyPoint(&forward, &back)
+    assert!(equal3(&back, 1.0, 2.0, 3.0))
+
+    // The inverse scale is the reciprocal and the inverse rotation the conjugate.
+    assert!(near(inv.scale.x, 0.5) && near(inv.scale.y, 0.5) && near(inv.scale.z, 0.5))
+    assert!(near(inv.rotation.w, rot.w) && near(inv.rotation.z, -rot.z))
+
+    // The inverse matrix is the matrix of the inverse transform for a uniform scale.
+    local mInv: Mat4 = Mat4()
+    local m: Mat4 = t.toMat4()
+    assert!(m.inverse(&mInv))
+    local invM: Mat4 = inv.toMat4()
+    assert!(invM.nearDefault(&mInv))
+
+    // A zero scale has no inverse: false, and the destination is untouched.
+    local flat: Transform = Transform()
+    flat.scale = Vec3(1.0, 0.0, 1.0)
+    local untouched: Transform = Transform()
+    untouched.position = Vec3(7.0, 7.0, 7.0)
+    assert!(!flat.inverse(&untouched))
+    assert!(equal3(&untouched.position, 7.0, 7.0, 7.0))
+}
+
+fn mutateCases() {
+    // translate moves the position in the parent frame.
+    local t: Transform = transformIdentity()
+    t.translate(1.0, 2.0, 3.0)
+    assert!(equal3(&t.position, 1.0, 2.0, 3.0))
+    t.translate(-1.0, 0.0, 0.0)
+    assert!(equal3(&t.position, 0.0, 2.0, 3.0))
+
+    // rotate left-multiplies the rotation: a quarter turn about z then a quarter turn about z is a half turn.
+    local zAxis: Vec3 = Vec3(0.0, 0.0, 1.0)
+    local q: Quat = quatFromAxisAngle(&zAxis, MATH_PI / 2.0)
+    local r: Transform = transformIdentity()
+    r.rotate(&q)
+    r.rotate(&q)
+    assert!(near(r.rotation.w, 0.0) && near(r.rotation.z, 1.0))
+    // The position is unaffected by a rotation.
+    assert!(equal3(&r.position, 0.0, 0.0, 0.0))
+
+    // near compares every part.
+    local pa: Vec3 = Vec3(1.0, 2.0, 3.0)
+    local pb: Vec3 = Vec3(1.0, 2.0, 3.0)
+    local pc: Vec3 = Vec3(1.0, 2.0, 4.0)
+    local a: Transform = Transform(&pa)
+    local b: Transform = Transform(&pb)
+    assert!(a.near(&b, EPS))
+    local far: Transform = Transform(&pc)
+    assert!(!a.near(&far, EPS))
+}
+
+fn equal3(v: *Vec3, x: f64, y: f64, z: f64) -> bool {
+    return near(v.x, x) && near(v.y, y) && near(v.z, z)
+}
+
+fn near(a: f64, b: f64) -> bool {
+    local d: f64 = a - b
+    if d < 0.0 { d = 0.0 - d }
+    return d < EPS
+}

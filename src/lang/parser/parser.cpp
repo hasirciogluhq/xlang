@@ -95,8 +95,16 @@ class Parser {
     }
 
     /// The current token may continue the expression/statement being parsed: it is on the same
-    /// line, or we are inside `(...)`/`[...]` where line breaks do not end anything.
-    [[nodiscard]] bool continues() const { return !cur().newline_before || nl_depth_ > 0; }
+    /// line, or we are inside `(...)`/`[...]` where line breaks do not end anything. While a prefix
+    /// `*` or `&` operand is being parsed, the operand's own `(...)` is not counted, so a newline
+    /// in front of a binary `&`/`*` ends the operand instead of turning the next argument into its
+    /// right side.
+    [[nodiscard]] bool continues() const {
+        if (cur().newline_before && prefix_operand_) {
+            return nl_depth_ > prefix_nl_base_;
+        }
+        return !cur().newline_before || nl_depth_ > 0;
+    }
 
     [[nodiscard]] static bool adjacent(const Token& a, const Token& b) {
         return a.span.end_line == b.span.line && a.span.end_column == b.span.column;
@@ -682,7 +690,16 @@ class Parser {
         }
         if (op) {
             advance();
+            // `*` and `&` are binary as well, so the operand of a prefix `*`/`&` stops at the end
+            // of its line: in `T {\n &A()\n &B() }` the second `&` starts the next argument, not
+            // the right side of a `&` term.
+            const bool saved_operand = prefix_operand_;
+            const int saved_base = prefix_nl_base_;
+            prefix_operand_ = true;
+            prefix_nl_base_ = nl_depth_;
             ExprPtr operand = parseUnary();
+            prefix_operand_ = saved_operand;
+            prefix_nl_base_ = saved_base;
             ExprPtr e = makeExpr(Expr::Kind::Unary, Span::merge(start, operand->span));
             e->unary_op = *op;
             e->lhs = std::move(operand);
@@ -2375,6 +2392,10 @@ class Parser {
     DiagnosticEngine& diag_;
     std::size_t pos_{0};
     int nl_depth_{0};
+    /// A prefix `*`/`&` operand is being parsed: `continues()` ignores the parentheses opened
+    /// inside it, so a newline in front of a binary `&`/`*` ends the operand at its line.
+    bool prefix_operand_{false};
+    int prefix_nl_base_{0};
     bool no_struct_{false};
     bool for_header_{false}; ///< parsing the init/step statements of a `for` header
     std::vector<Item>

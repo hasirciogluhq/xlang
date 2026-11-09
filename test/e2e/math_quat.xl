@@ -1,0 +1,282 @@
+// std/math quaternions: the known result of a quarter turn (axis-angle and the Hamilton product), slerp at t = 0 and
+// t = 1, slerp of a half turn in the middle of the arc, conjugate * q = identity, q -> mat3 -> q round trip (with the
+// sign ambiguity), the Euler round trip, the matrix round trip and the singular cases.
+//   Conventions: unit quaternions, (w, x, y, z), the Hamilton product applies o after self, radians, ZYX Euler order.
+from "std" import print, assert
+from "std/math" import Quat, Vec3, Mat3, mat3Identity, mat3RotationZ, quatIdentity, quatFromAxisAngle, quatFromEuler, quatToEuler, quatFromMat3, quatLookRotation, MATH_PI
+
+define EPS = 0.000000001
+
+@entry fn main() -> i32 {
+    construction()
+    axisAngleCases()
+    productCases()
+    conjugateCases()
+    slerpCases()
+    matrixRoundTrip()
+    eulerCases()
+    lookRotationCases()
+    print("math_quat ok\n")
+    return 0
+}
+
+fn construction() {
+    local q: Quat = Quat()
+    assert!(q.w == 1.0 && q.x == 0.0 && q.y == 0.0 && q.z == 0.0)
+    assert!(q.isIdentity(EPS))
+    assert!(near(q.length(), 1.0))
+
+    local ident: Quat = quatIdentity()
+    assert!(ident.isIdentity(EPS))
+
+    local r: Quat = Quat(2.0, 0.0, 0.0, 0.0)
+    assert!(near(r.lengthSquared(), 4.0))
+    local unit: Quat = r.normalized()
+    assert!(near(unit.w, 1.0) && near(unit.length(), 1.0))
+
+    // The zero quaternion normalizes to the identity, not to NaN, and has no inverse.
+    local zero: Quat = Quat(0.0, 0.0, 0.0, 0.0)
+    local zeroUnit: Quat = zero.normalized()
+    assert!(zeroUnit.isIdentity(EPS))
+    local zeroInv: Quat = zero.inverse()
+    assert!(near(zeroInv.w, 0.0) && near(zeroInv.length(), 0.0))
+}
+
+fn axisAngleCases() {
+    // A quarter turn about z is (cos 45, 0, 0, sin 45) = (sqrt(2)/2, 0, 0, sqrt(2)/2), and it turns x into y.
+    local zAxis: Vec3 = Vec3(0.0, 0.0, 1.0)
+    local q: Quat = quatFromAxisAngle(&zAxis, MATH_PI / 2.0)
+    local h: f64 = 0.7071067811865476
+    assert!(near(q.w, h) && near(q.x, 0.0) && near(q.y, 0.0) && near(q.z, h))
+    assert!(near(q.length(), 1.0))
+
+    local ex: Vec3 = Vec3(1.0, 0.0, 0.0)
+    local out: Vec3 = Vec3(0.0, 0.0, 0.0)
+    q.rotateVec(&ex, &out)
+    assert!(near(out.x, 0.0) && near(out.y, 1.0) && near(out.z, 0.0))
+
+    // The same turn about x maps y to z, about y maps z to x.
+    local xAxis: Vec3 = Vec3(1.0, 0.0, 0.0)
+    local qx: Quat = quatFromAxisAngle(&xAxis, MATH_PI / 2.0)
+    local ey: Vec3 = Vec3(0.0, 1.0, 0.0)
+    local rotated: Vec3 = Vec3(0.0, 0.0, 0.0)
+    qx.rotateVec(&ey, &rotated)
+    assert!(near(rotated.y, 0.0) && near(rotated.z, 1.0))
+
+    local yAxis: Vec3 = Vec3(0.0, 1.0, 0.0)
+    local qy: Quat = quatFromAxisAngle(&yAxis, MATH_PI / 2.0)
+    local ez: Vec3 = Vec3(0.0, 0.0, 1.0)
+    local rotated2: Vec3 = Vec3(0.0, 0.0, 0.0)
+    qy.rotateVec(&ez, &rotated2)
+    assert!(near(rotated2.x, 1.0) && near(rotated2.z, 0.0))
+
+    // A full turn is the negated identity (-1, 0, 0, 0): the same rotation, a different quaternion.
+    local full: Quat = quatFromAxisAngle(&zAxis, MATH_PI * 2.0)
+    assert!(near(full.w, -1.0) && near(full.length(), 1.0))
+
+    // The zero axis has no direction: the identity.
+    local noAxis: Vec3 = Vec3(0.0, 0.0, 0.0)
+    local none: Quat = quatFromAxisAngle(&noAxis, 1.0)
+    assert!(none.isIdentity(EPS))
+}
+
+fn productCases() {
+    // Two quarter turns about z make a half turn: (h, 0, 0, h)^2 = (0, 0, 0, 1).
+    local zAxis: Vec3 = Vec3(0.0, 0.0, 1.0)
+    local q: Quat = quatFromAxisAngle(&zAxis, MATH_PI / 2.0)
+    local squared: Quat = q.mul(&q)
+    assert!(near(squared.w, 0.0) && near(squared.z, 1.0))
+
+    // Hamilton's multiplication is not commutative: i * j = k, j * i = -k.
+    local i: Quat = Quat(0.0, 1.0, 0.0, 0.0)
+    local j: Quat = Quat(0.0, 0.0, 1.0, 0.0)
+    local ij: Quat = i.mul(&j)
+    assert!(near(ij.z, 1.0) && near(ij.w, 0.0))
+    local ji: Quat = j.mul(&i)
+    assert!(near(ji.z, -1.0))
+
+    // The product of two rotations applies o after self: (Rx then Rz) must equal Rz * Rx through toMat3.
+    local xAxis: Vec3 = Vec3(1.0, 0.0, 0.0)
+    local qx: Quat = quatFromAxisAngle(&xAxis, 0.5)
+    local qz: Quat = quatFromAxisAngle(&zAxis, 0.5)
+    local bothQ: Quat = qz.mul(&qx)
+    local bothM: Mat3 = bothQ.toMat3()
+    local mx: Mat3 = qx.toMat3()
+    local mz: Mat3 = qz.toMat3()
+    local bothByMatrix: Mat3 = mz.mul(&mx)
+    assert!(bothM.nearDefault(&bothByMatrix))
+
+    // The product into the left operand is still the product.
+    local aliased: Quat = Quat(0.0, 1.0, 0.0, 0.0)
+    aliased.mulTo(&j, &aliased)
+    assert!(near(aliased.z, 1.0) && near(aliased.w, 0.0))
+
+    // add, sub and scale are componentwise.
+    local a: Quat = Quat(1.0, 2.0, 3.0, 4.0)
+    local b: Quat = Quat(5.0, 6.0, 7.0, 8.0)
+    local sum: Quat = a.add(&b)
+    assert!(near(sum.w, 6.0) && near(sum.z, 12.0))
+    local diff: Quat = b.sub(&a)
+    assert!(near(diff.w, 4.0) && near(diff.z, 4.0))
+    local scaled: Quat = a.scale(2.0)
+    assert!(near(scaled.w, 2.0) && near(scaled.z, 8.0))
+
+    // The dot product of a unit quaternion with itself is 1.
+    local zq: Quat = quatFromAxisAngle(&zAxis, 1.2)
+    assert!(near(zq.dot(&zq), 1.0))
+}
+
+fn conjugateCases() {
+    // q * conjugate(q) = (|q|^2, 0, 0, 0), which is the identity for a unit quaternion.
+    local axis: Vec3 = Vec3(1.0, 2.0, 3.0)
+    local q: Quat = quatFromAxisAngle(&axis, 1.0)
+    local c: Quat = q.conjugate()
+    local product: Quat = q.mul(&c)
+    assert!(near(product.w, 1.0) && near(product.lengthSquared(), 1.0))
+    local ident: Quat = quatIdentity()
+    assert!(product.nearDefault(&ident))
+
+    // The inverse of a unit quaternion is its conjugate, and it undoes the rotation.
+    local inv: Quat = q.inverse()
+    assert!(inv.nearDefault(&c))
+    local v: Vec3 = Vec3(1.0, 0.0, 0.0)
+    local rotated: Vec3 = Vec3(0.0, 0.0, 0.0)
+    q.rotateVec(&v, &rotated)
+    local back: Vec3 = Vec3(0.0, 0.0, 0.0)
+    inv.rotateVec(&rotated, &back)
+    assert!(near(back.x, 1.0) && near(back.y, 0.0) && near(back.z, 0.0))
+
+    // A non-unit quaternion inverts to 1/q, not to the conjugate.
+    local scaled: Quat = Quat(2.0, 0.0, 0.0, 0.0)
+    local sInv: Quat = scaled.inverse()
+    assert!(near(sInv.w, 0.5))
+}
+
+fn slerpCases() {
+    local zAxis: Vec3 = Vec3(0.0, 0.0, 1.0)
+    local a: Quat = quatFromAxisAngle(&zAxis, 0.0)
+    local b: Quat = quatFromAxisAngle(&zAxis, MATH_PI / 2.0)
+
+    // The endpoints are exactly a and b.
+    local at0: Quat = a.slerp(&b, 0.0)
+    assert!(at0.nearDefault(&a))
+    local at1: Quat = a.slerp(&b, 1.0)
+    assert!(at1.nearDefault(&b))
+
+    // The middle of a quarter turn is the eighth turn: (cos 22.5, 0, 0, sin 22.5).
+    local mid: Quat = a.slerp(&b, 0.5)
+    local h: f64 = 0.3826834323650898
+    assert!(near(mid.w, 0.9238795325112867) && near(mid.z, h))
+    assert!(near(mid.length(), 1.0))
+
+    // Interpolating against the negated b takes the same (shortest) arc: -b is the same rotation.
+    local nb: Quat = Quat(0.0 - b.w, 0.0 - b.x, 0.0 - b.y, 0.0 - b.z)
+    local midNeg: Quat = a.slerp(&nb, 0.5)
+    assert!(near(midNeg.w, mid.w) && near(midNeg.z, mid.z))
+
+    // A 180 degree turn interpolated from the identity: the middle is a quarter turn.
+    local half: Quat = quatFromAxisAngle(&zAxis, MATH_PI)
+    local ident0: Quat = quatIdentity()
+    local quarter: Quat = ident0.slerp(&half, 0.5)
+    assert!(near(quarter.w, 0.7071067811865476) && near(quarter.z, 0.7071067811865476))
+
+    // Slerp between equal quaternions is that quaternion (the t == 1 case is the parallel fallback).
+    local same: Quat = a.slerp(&a, 0.7)
+    assert!(same.nearDefault(&a))
+}
+
+fn matrixRoundTrip() {
+    // q -> mat3 -> q gives q back, up to the sign (q and -q are the same rotation).
+    local axis: Vec3 = Vec3(1.0, 2.0, -0.5)
+    local q: Quat = quatFromAxisAngle(&axis, 1.2345)
+    local m: Mat3 = q.toMat3()
+    local back: Quat = quatFromMat3(&m)
+    assert!(sameRotation(&back, &q))
+
+    // The matrix of a rotation is orthogonal with det 1.
+    local mt: Mat3 = m.transposed()
+    local ortho: Mat3 = m.mul(&mt)
+    local ident: Mat3 = mat3Identity()
+    assert!(ortho.nearDefault(&ident))
+    assert!(near(m.det(), 1.0))
+
+    // The quaternion of an identity matrix is the identity (w = 1).
+    local idm: Mat3 = mat3Identity()
+    local idq: Quat = quatFromMat3(&idm)
+    assert!(idq.isIdentity(EPS))
+
+    // The 180 degree case (trace -1) round-trips too: about z it is (0, 0, 0, 1).
+    local zAxis: Vec3 = Vec3(0.0, 0.0, 1.0)
+    local half: Quat = quatFromAxisAngle(&zAxis, MATH_PI)
+    local halfM: Mat3 = half.toMat3()
+    local halfBack: Quat = quatFromMat3(&halfM)
+    assert!(sameRotation(&halfBack, &half))
+
+    // toMat3 agrees with mat3RotationZ for a z rotation.
+    local quarter: Quat = quatFromAxisAngle(&zAxis, MATH_PI / 2.0)
+    local qm: Mat3 = quarter.toMat3()
+    local rz: Mat3 = mat3RotationZ(MATH_PI / 2.0)
+    assert!(qm.nearDefault(&rz))
+}
+
+fn eulerCases() {
+    // A single-axis rotation round-trips through the Euler angles.
+    local zAxis: Vec3 = Vec3(0.0, 0.0, 1.0)
+    local q: Quat = quatFromAxisAngle(&zAxis, 0.7)
+    local e: Vec3 = quatToEuler(&q)
+    assert!(near(e.x, 0.0) && near(e.y, 0.0) && near(e.z, 0.7))
+
+    // A full ZYX triple round-trips as the same rotation.
+    local x: f64 = 0.3
+    local y: f64 = -0.4
+    local z: f64 = 1.1
+    local fromEuler: Quat = quatFromEuler(x, y, z)
+    local back: Vec3 = quatToEuler(&fromEuler)
+    assert!(near(back.x, x) && near(back.y, y) && near(back.z, z))
+    assert!(near(fromEuler.length(), 1.0))
+
+    // The ZYX order is R = Rz(z) * Ry(y) * Rx(x): x first, then y, then z. The same product built from three
+    // single-axis quaternions must give the same matrix.
+    local m: Mat3 = fromEuler.toMat3()
+    local axX: Vec3 = Vec3(1.0, 0.0, 0.0)
+    local axY: Vec3 = Vec3(0.0, 1.0, 0.0)
+    local axZ: Vec3 = Vec3(0.0, 0.0, 1.0)
+    local qxOnly: Quat = quatFromAxisAngle(&axX, x)
+    local qyOnly: Quat = quatFromAxisAngle(&axY, y)
+    local qzOnly: Quat = quatFromAxisAngle(&axZ, z)
+    local mx: Mat3 = qxOnly.toMat3()
+    local my: Mat3 = qyOnly.toMat3()
+    local mz: Mat3 = qzOnly.toMat3()
+    local yx: Mat3 = my.mul(&mx)
+    local product: Mat3 = mz.mul(&yx)
+    assert!(m.nearDefault(&product))
+}
+
+fn lookRotationCases() {
+    // Looking down -z from the origin with up = y is the identity rotation.
+    local forward: Vec3 = Vec3(0.0, 0.0, -1.0)
+    local up: Vec3 = Vec3(0.0, 1.0, 0.0)
+    local q: Quat = quatLookRotation(&forward, &up)
+    local ident: Quat = quatIdentity()
+    assert!(sameRotation(&q, &ident))
+
+    // Looking down +x with up = y is the quarter turn about y that maps -z to +x.
+    local forwardX: Vec3 = Vec3(1.0, 0.0, 0.0)
+    local qx: Quat = quatLookRotation(&forwardX, &up)
+    local minusZ: Vec3 = Vec3(0.0, 0.0, -1.0)
+    local rotated: Vec3 = Vec3(0.0, 0.0, 0.0)
+    qx.rotateVec(&minusZ, &rotated)
+    assert!(near(rotated.x, 1.0) && near(rotated.y, 0.0) && near(rotated.z, 0.0))
+}
+
+// True when the two quaternions describe the same rotation: they are equal or exact negatives.
+fn sameRotation(a: *Quat, b: *Quat) -> bool {
+    local neg: Quat = Quat(0.0 - b.w, 0.0 - b.x, 0.0 - b.y, 0.0 - b.z)
+    return a.near(b, EPS) || a.near(&neg, EPS)
+}
+
+fn near(a: f64, b: f64) -> bool {
+    local d: f64 = a - b
+    if d < 0.0 { d = 0.0 - d }
+    return d < EPS
+}

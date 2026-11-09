@@ -4974,6 +4974,26 @@ Lowerer::EP Lowerer::fieldExpr(const Expr& e) {
     return nullptr;
 }
 
+/// True when a constant arithmetic expression must not be folded here, because the folded value would be
+/// emitted without the conversion back to the expression's type: `-2.0 * count` with `count: f64` folded to
+/// `0.0 - 2.0` yields an `i32` constant -2 that the float-printing path reads as a double bit pattern.
+/// Comparisons and `&&`/`||` stay folded: they produce a bool and are always correct.
+[[nodiscard]] static bool arithmeticFoldUnsafe(const Expr& e) {
+    switch (e.kind) {
+    case Expr::Kind::Unary:
+        return e.unary_op == UnaryOp::Neg || e.unary_op == UnaryOp::BitNot;
+    case Expr::Kind::Binary:
+        return e.binary_op != BinaryOp::Lt && e.binary_op != BinaryOp::Le &&
+               e.binary_op != BinaryOp::Gt && e.binary_op != BinaryOp::Ge &&
+               e.binary_op != BinaryOp::Eq && e.binary_op != BinaryOp::Ne &&
+               e.binary_op != BinaryOp::And && e.binary_op != BinaryOp::Or;
+    case Expr::Kind::Cast:
+        return true;
+    default:
+        return false;
+    }
+}
+
 Lowerer::EP Lowerer::unaryExpr(const Expr& e, const Type* expected) {
     switch (e.unary_op) {
     case UnaryOp::Neg: {
