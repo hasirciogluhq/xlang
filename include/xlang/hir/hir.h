@@ -50,6 +50,9 @@ enum class ExprKind {
     Field,  ///< lhs.text; `through_pointer` when lhs is a pointer to the aggregate; index = field
             ///< index
     Index,  ///< lhs[rhs]; `checked` for arrays under --safety=checked
+    Slice,  ///< `lhs[lo..hi]`: a `str` view of the bytes from `lo` up to `hi`; `rhs` = `hi` (null when
+            ///< the slice runs to the end), `args[0]` = `lo` (null for `[..hi]`). `checked`
+            ///< under --safety=checked: both bounds are compared against the base length.
     Deref,  ///< *lhs
     AddrOf, ///< &lhs
     ArrayList,   ///< [args...]

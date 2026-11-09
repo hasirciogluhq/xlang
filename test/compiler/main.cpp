@@ -265,6 +265,34 @@ void testLexerErrors() {
     CHECK(engine.errorCount() == 4);
 }
 
+// `b'x'`: one byte per literal, every escape form, and `b'` never read as the identifier `b`.
+void testByteLiteralLexing() {
+    Fixture f("local a = b')'\nlocal b = b'\\n'\nlocal c = b'\\x7f'\nlocal d = b'\\0'\n"
+              "local e = b'\\\\'\nlocal g = b'\\''\nlocal h = b'a'\nlocal b1 = 1\n");
+    DiagnosticEngine engine(f.sources, f.out);
+    const std::vector<Token> tokens = lex(f.sources, f.file, engine);
+    CHECK(!engine.hasErrors());
+    std::vector<std::uint64_t> bytes;
+    int idents = 0;
+    for (const Token& t : tokens) {
+        if (t.kind == TokenKind::ByteLit) {
+            bytes.push_back(t.int_value);
+        }
+        idents += t.kind == TokenKind::Ident && t.text.rfind("b", 0) == 0 ? 1 : 0;
+    }
+    CHECK(bytes.size() == 7);
+    CHECK(bytes == (std::vector<std::uint64_t>{')', '\n', 0x7f, 0, '\\', '\'', 'a'}));
+    CHECK(idents == 2);  // `b` and `b1` stay ordinary identifiers
+}
+
+// A malformed byte literal is one diagnostic per literal, and lexing continues after it.
+void testByteLiteralErrors() {
+    Fixture f("local a = b'ab'\nlocal b = b'\nlocal c = b'\\q'\nlocal d = 1\n");
+    DiagnosticEngine engine(f.sources, f.out);
+    (void)lex(f.sources, f.file, engine);
+    CHECK(engine.errorCount() >= 3);
+}
+
 void testParsesFunctionsAndTypes() {
     Parsed p("fn apply(f: fn(i32) -> i32, v: i32) -> i32 {\n"
              "    local a: [i32; 4] = [1, 2, 3, 4]\n"
@@ -470,6 +498,39 @@ void testOperatorPrecedenceAndCasts() {
     CHECK(e.lhs->lhs->lhs->rhs->binary_op == BinaryOp::Mul);
     CHECK(e.lhs->lhs->lhs->rhs->rhs->kind == Expr::Kind::Cast);  // `as` binds tighter than `*`
 }
+    CHECK(e.lhs->lhs->lhs->rhs->rhs->kind == Expr::Kind::Cast);  // `as` binds tighter than `*`
+}
+
+// A byte literal reaches the AST as a `ByteLiteral` holding the byte, not as an integer or a name.
+void testByteLiteralParsesAsExpr() {
+    Parsed p("fn f() -> ui8 { return b')' }\n");
+    CHECK(!p.engine.hasErrors());
+    const auto& fn = std::get<FnDecl>(p.program.items[0].decl);
+    const Expr& e = *fn.body.statements[0].expr;
+    CHECK(e.kind == Expr::Kind::ByteLiteral);
+    CHECK(e.int_value == ')');
+}
+
+// `a[lo..hi]`, `a[lo..]` and `a[..hi]` parse to a `Slice`; `a[i]` stays an `Index`.
+void testSliceParsing() {
+    Parsed p("fn f(s: str) -> str {\n"
+             "    local a = s[1..3]\n"
+             "    local b = s[2..]\n"
+             "    local c = s[..4]\n"
+             "    local d = s[0]\n"
+             "    return a\n"
+             "}\n");
+    CHECK(!p.engine.hasErrors());
+    const auto& fn = std::get<FnDecl>(p.program.items[0].decl);
+    const Expr& a = *fn.body.statements[0].expr;
+    const Expr& b = *fn.body.statements[1].expr;
+    const Expr& c = *fn.body.statements[2].expr;
+    const Expr& d = *fn.body.statements[3].expr;
+    CHECK(a.kind == Expr::Kind::Slice && a.args.size() == 1 && a.rhs != nullptr);
+    CHECK(b.kind == Expr::Kind::Slice && b.args.size() == 1 && b.rhs == nullptr);
+    CHECK(c.kind == Expr::Kind::Slice && c.args.empty() && c.rhs != nullptr);
+    CHECK(d.kind == Expr::Kind::Index);
+}
 
 }  // namespace
 
@@ -491,6 +552,8 @@ int main() {
     testRegistry();
     testLexer();
     testLexerErrors();
+    testByteLiteralLexing();
+    testByteLiteralErrors();
     testParsesFunctionsAndTypes();
     testNewlinesEndStatements();
     testIfConditionDoesNotTakeStructLiteral();
@@ -505,6 +568,8 @@ int main() {
     testRecoveryReportsSeveralErrors();
     testDirectivesAreRejectedByTheParser();
     testOperatorPrecedenceAndCasts();
+    testByteLiteralParsesAsExpr();
+    testSliceParsing();
 
     if (xlang_test::failures() != 0) {
         std::cerr << xlang_test::failures() << " check(s) failed\n";

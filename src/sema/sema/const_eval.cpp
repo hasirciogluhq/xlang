@@ -41,6 +41,8 @@ std::optional<ConstValue> Sema::evalConst(const Expr& expr) {
         return ConstValue::makeBool(expr.bool_value);
     case Expr::Kind::StringLiteral:
         return ConstValue::makeString(expr.text);
+    case Expr::Kind::ByteLiteral:
+        return ConstValue::makeInt(static_cast<Int128>(expr.int_value));
     case Expr::Kind::Name: {
         // `-D NAME=...` and builtins (`os`, `pointerWidth`, ...) come first: CLI wins over
         // `define`.

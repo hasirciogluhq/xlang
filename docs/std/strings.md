@@ -35,6 +35,8 @@ toI64(s: str, out: *i64) -> bool
 
 A `str` converts to `*ui8` only through `.ptr`; `as` cannot convert it. `s[i]` reads one byte and, under `--safety=checked`, panics when `i >= len`. Writing through a `str` (`s[i] = x`, `s.len = n`) is `E0716`.
 
+`view(s, lo, hi)` and the slice operator `s[lo..hi]` do the same job: both return a `str` that starts at byte `lo` with length `hi - lo`, without copying. Prefer the operator in new code. `s[a..]` runs to the end and `s[..b]` starts at 0; both bounds are checked under `--safety=checked`, and an array of bytes can be sliced the same way. A byte literal `b'x'` is a `ui8` constant, so `s[i] == b'x'` needs no `as`.
+
 ## `String` — owned text
 
 `String` is an owned, growable byte string that allocates through `currentAllocator` and frees itself when dropped. It needs drop, so it is move-only.

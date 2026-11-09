@@ -92,6 +92,15 @@ Lowerer::EP Lowerer::coerce(EP value, const Type& to, const Span& at) {
     if (lower::isUnknown(value->type) || lower::isUnknown(to)) {
         return value;
     }
+    // `[]mut T` degrades to `[]T` with no code: the two are the same two-word layout, only the
+    // permission differs. The reverse (`[]T` to `[]mut T`) is not implicit and needs `as`.
+    if (value->type.kind == TypeKind::Slice && to.kind == TypeKind::Slice &&
+        value->type.is_mutable && !to.is_mutable && value->type.elem && to.elem &&
+        lower::sameType(*value->type.elem, *to.elem)) {
+        EP v = std::move(value);
+        v->type = to;
+        return v;
+    }
     if (value->kind == hir::ExprKind::Nil) {
         if (to.kind == TypeKind::Pointer || to.kind == TypeKind::FnPtr) {
             value->type = to;
@@ -266,6 +275,8 @@ Lowerer::EP Lowerer::expr(const Expr& e, const Type* expected) {
     }
     case Expr::Kind::StringLiteral:
         return stringLiteral(e.text, expected, e.span);
+    case Expr::Kind::ByteLiteral:
+        return intConst(e.int_value, Type::makeInt(8, false), e.span);
     case Expr::Kind::Name:
         return nameExpr(e, expected);
     case Expr::Kind::Field:
@@ -282,6 +293,8 @@ Lowerer::EP Lowerer::expr(const Expr& e, const Type* expected) {
         return callExpr(e, expected);
     case Expr::Kind::Index:
         return indexExpr(e);
+    case Expr::Kind::Slice:
+        return sliceExpr(e);
     case Expr::Kind::ArrayList:
     case Expr::Kind::ArrayRepeat:
         return arrayExpr(e, expected);
@@ -533,19 +546,22 @@ Lowerer::EP Lowerer::fieldExpr(const Expr& e) {
         through = true;
         agg = *agg.elem;
     }
-    if (agg.kind == TypeKind::Str) {
-        // `str` has two read-only fields: `ptr` (index 0) and `len` (index 1).
+    if (agg.kind == TypeKind::Str || agg.kind == TypeKind::Slice) {
+        // `str` and a slice both have two read-only fields: `ptr` (index 0) and `len` (index 1).
+        // `str.ptr` narrows to `*ui8`; a slice's `ptr` carries the element type.
         Type field_type;
         std::uint32_t index = 0;
         if (e.text == "ptr") {
-            field_type = Type::makePointer(Type::makeInt(8, false));
+            field_type = agg.kind == TypeKind::Slice && agg.elem
+                             ? Type::makePointer(*agg.elem)
+                             : Type::makePointer(Type::makeInt(8, false));
         } else if (e.text == "len") {
             field_type = Type::makeInt(0, false);
             index = 1;
         } else {
             err("E0709",
                 e.span,
-                std::format("`str` has no field `{}`", e.text),
+                std::format("`{}` has no field `{}`", typeToString(agg), e.text),
                 "the fields are `ptr` and `len`");
             return nullptr;
         }
@@ -1808,6 +1824,21 @@ Lowerer::EP Lowerer::indexExpr(const Expr& e) {
         i->rhs = std::move(idx);
         return i;
     }
+    if (base->type.kind == TypeKind::Slice) {
+        // A slice is `{ ptr, len }` over `elem`: check against `len`, then index `elem` at `ptr`.
+        // A `[]mut T` element is a place (a write lands in the owner's storage); a `[]T` element is
+        // a copy out of the view, like a `str` byte, so it is not a place.
+        if (!base->type.elem) {
+            return nullptr;
+        }
+        EP i = mk(hir::ExprKind::Index, *base->type.elem, e.span);
+        i->checked = s_.config_.safety == "checked";
+        i->lvalue = base->type.is_mutable && base->lvalue;
+        i->readonly = base->readonly;
+        i->lhs = std::move(base);
+        i->rhs = std::move(idx);
+        return i;
+    }
     if (base->type.kind != TypeKind::Array && base->type.kind != TypeKind::Pointer) {
         err("E0709",
             e.span,
@@ -1842,6 +1873,85 @@ Lowerer::EP Lowerer::indexExpr(const Expr& e) {
     i->lhs = std::move(base);
     i->rhs = std::move(idx);
     return i;
+}
+
+/// `base[lo..hi]` / `base[lo..]` / `base[..hi]` / `base[..]`: a `str` view over the bytes `lo` up to
+/// `hi`, never a copy. `str` and `[ui8; N]` are the bases: a `str` is already a byte view, and an
+/// array of bytes borrows its storage. Both bounds are optional and default to 0 and the length.
+/// Under --safety=checked the node carries `checked`, so both bounds are compared against the base
+/// length at run time (`E0` at compile time only for constant bounds, below).
+Lowerer::EP Lowerer::sliceExpr(const Expr& e) {
+    EP base = expr(*e.lhs, nullptr);
+    if (!base) {
+        return nullptr;
+    }
+    const auto slicing_is_bytes = [](const Type& t) {
+        return t.kind == TypeKind::Str ||
+               (t.kind == TypeKind::Array && t.elem && t.elem->kind == TypeKind::Int &&
+                t.elem->bits == 8);
+    };
+    // Slicing yields a slice type: `str`/`[ui8; N]` keeps its old `str` result for source
+    // compatibility, while an array or an existing slice yields `[]T` over its element type.
+    bool yields_str = false;
+    Type result = Type::makeStr();
+    if (!lower::isUnknown(base->type)) {
+        if (slicing_is_bytes(base->type)) {
+            yields_str = true;
+            result = Type::makeStr();
+        } else if (base->type.kind == TypeKind::Array && base->type.elem) {
+            // A slice is writable only when the owner is a writable place and not `const`.
+            result = Type::makeSlice(*base->type.elem, base->lvalue && !base->readonly);
+        } else if (base->type.kind == TypeKind::Slice && base->type.elem) {
+            result = Type::makeSlice(*base->type.elem,
+                                     base->type.is_mutable && base->lvalue && !base->readonly);
+        } else {
+            err("E0709",
+                e.span,
+                std::format("`{}` cannot be sliced", typeToString(base->type)),
+                "only `str`, arrays and slices can be sliced");
+            return nullptr;
+        }
+    }
+    const Type usize = Type::makeInt(0, false);
+    EP lo = e.args.empty() ? nullptr : expr(*e.args[0], &usize);
+    lo = lo ? coerce(std::move(lo), usize, e.args[0]->span) : nullptr;
+    EP hi = e.rhs ? expr(*e.rhs, &usize) : nullptr;
+    hi = hi ? coerce(std::move(hi), usize, e.rhs->span) : nullptr;
+    if ((!e.args.empty() && !lo) || (e.rhs != nullptr && !hi)) {
+        return nullptr;
+    }
+    if (lower::isUnknown(base->type)) {
+        EP s = mk(hir::ExprKind::Slice, lower::unknownType(), e.span);
+        s->lhs = std::move(base);
+        s->rhs = std::move(hi);
+        if (lo) {
+            s->args.push_back(std::move(lo));
+        }
+        return s;
+    }
+    // Constant bounds on a constant-length array are a compile-time range check, like indexing.
+    if (base->type.kind == TypeKind::Array) {
+        if (const auto len = arrayLength(s_, base->type); len && e.rhs != nullptr &&
+            e.rhs->kind == Expr::Kind::IntLiteral && e.rhs->int_value > *len) {
+            err("E0701",
+                e.rhs->span,
+                std::format("slice end {} is past the length {} of `{}`",
+                            e.rhs->int_value,
+                            *len,
+                            typeToString(base->type)),
+                "the end bound counts from the start");
+            return nullptr;
+        }
+    }
+    (void)yields_str;
+    EP s = mk(hir::ExprKind::Slice, result, e.span);    s->checked = s_.config_.safety == "checked";
+    s->lvalue = false;
+    s->rhs = std::move(hi);
+    s->lhs = std::move(base);
+    if (lo) {
+        s->args.push_back(std::move(lo));
+    }
+    return s;
 }
 
 Lowerer::EP Lowerer::arrayExpr(const Expr& e, const Type* expected) {

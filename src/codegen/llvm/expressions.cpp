@@ -35,24 +35,32 @@ llvm::Value* Gen::genAddr(const hir::Expr& e) {
     case hir::ExprKind::Index: {
         const bool is_array = e.lhs->type.kind == TypeKind::Array;
         const bool is_str = e.lhs->type.kind == TypeKind::Str;
-        llvm::Value* base = is_array || is_str ? genAddr(*e.lhs) : genScalar(*e.lhs);
+        const bool is_slice = e.lhs->type.kind == TypeKind::Slice;
+        llvm::Value* base = is_array || is_str || is_slice ? genAddr(*e.lhs) : genScalar(*e.lhs);
         llvm::Value* idx = genScalar(*e.rhs);
         const bool idx_signed = isSigned(e.rhs->type);
         llvm::Type* i64 = llvm::Type::getInt64Ty(ctx_);
         if (idx->getType()->getIntegerBitWidth() != 64) {
             idx = idx_signed ? B_.CreateSExt(idx, i64) : B_.CreateZExt(idx, i64);
         }
-        if (is_str) {
-            // `str` is { ptr, len }: check the index against len, then index the bytes at ptr.
+        if (is_str || is_slice) {
+            // `{ ptr, len }`: check the index against len, then index the bytes at ptr.
             llvm::Value* len = B_.CreateZExt(B_.CreateAlignedLoad(sty(Type::makeInt(0, false)),
                                                                   byteOffset(base, ptrBits() / 8),
                                                                   llvm::Align(ptrBits() / 8)),
                                              i64);
             if (e.checked) {
-                checkedBranch(B_.CreateICmpUGE(idx, len), "str index out of bounds");
+                checkedBranch(B_.CreateICmpUGE(idx, len),
+                              is_str ? "str index out of bounds" : "slice index out of bounds");
             }
             llvm::Value* data = B_.CreateAlignedLoad(ptrTy(), base, llvm::Align(ptrBits() / 8));
-            return B_.CreateInBoundsGEP(llvm::Type::getInt8Ty(ctx_), data, {idx});
+            if (is_str) {
+                return B_.CreateInBoundsGEP(llvm::Type::getInt8Ty(ctx_), data, {idx});
+            }
+            // A slice steps by `sizeof(elem)`, not one byte.
+            const auto elem_size = sizeAlign(*e.lhs->type.elem).first;
+            llvm::Value* off = B_.CreateMul(idx, B_.getInt64(elem_size));
+            return B_.CreateInBoundsGEP(llvm::Type::getInt8Ty(ctx_), data, {off});
         }
         if (is_array && e.checked) {
             const TypeLayout* l = layoutOf(e.lhs->type);
@@ -196,6 +204,64 @@ void Gen::genInto(const hir::Expr& e, llvm::Value* dest) {
         B_.CreateAlignedStore(B_.getInt64(e.text.size()),
                               byteOffset(dest, ptrBits() / 8),
                               llvm::Align(ptrBits() / 8));
+        return;
+    }
+    case hir::ExprKind::Slice: {
+        // `{ ptr, len }`: the data pointer moves to the first in-range byte, `len` becomes the span.
+        // Every offset is computed in 64 bits and clamped at 0, so a negative `lo`/`hi` (from an
+        // `i64` bound) cannot wrap into a huge `usize`.
+        llvm::Type* i64 = llvm::Type::getInt64Ty(ctx_);
+        const unsigned align = ptrBits() / 8;
+        const auto toI64 = [&](llvm::Value* v, const Type& t) {
+            llvm::Value* x = v;
+            const unsigned w = x->getType()->getIntegerBitWidth();
+            if (w != 64) {
+                x = isSigned(t) ? B_.CreateSExt(x, i64) : B_.CreateZExt(x, i64);
+            }
+            return x;
+        };
+        const auto atLeastZero = [&](llvm::Value* v, llvm::Value* fallback) {
+            return B_.CreateSelect(B_.CreateICmpSLT(v, B_.getInt64(0)), fallback, v);
+        };
+        // The base: a `str`/slice view, or an array whose storage is used directly. `step` is the
+        // byte size of one element (1 for `str` bytes); array/slice bounds are in elements and the
+        // offsets are multiplied by `step`.
+        llvm::Value* data = nullptr;
+        llvm::Value* len = nullptr;
+        std::uint64_t step = 1;
+        if (e.lhs->type.kind == TypeKind::Str || e.lhs->type.kind == TypeKind::Slice) {
+            llvm::Value* base = genAddr(*e.lhs);
+            data = B_.CreateAlignedLoad(ptrTy(), base, llvm::Align(align));
+            len = B_.CreateZExt(B_.CreateAlignedLoad(sty(Type::makeInt(0, false)),
+                                                     byteOffset(base, align),
+                                                     llvm::Align(align)),
+                                i64);
+            if (e.lhs->type.kind == TypeKind::Slice) {
+                step = sizeAlign(*e.lhs->type.elem).first;
+            }
+        } else {
+            const TypeLayout* l = layoutOf(e.lhs->type);
+            const auto elem_size = sizeAlign(*e.lhs->type.elem).first;
+            data = genAddr(*e.lhs);
+            len = B_.getInt64(l != nullptr && elem_size != 0 ? l->size / elem_size : 0);
+            step = elem_size;
+        }
+        llvm::Value* lo = e.args.empty() ? B_.getInt64(0)
+                                         : atLeastZero(toI64(genScalar(*e.args[0]), e.args[0]->type),
+                                                       B_.getInt64(0));
+        llvm::Value* hi = e.rhs ? atLeastZero(toI64(genScalar(*e.rhs), e.rhs->type), len) : len;
+        if (e.checked) {
+            checkedBranch(B_.CreateICmpUGT(lo, hi), "slice start past its end");
+            checkedBranch(B_.CreateICmpUGT(hi, len), "slice end past the length");
+        }
+        llvm::Value* bytes = B_.CreateSub(hi, lo);
+        llvm::Value* byte_off = B_.CreateMul(lo, B_.getInt64(step));
+        B_.CreateAlignedStore(
+            B_.CreateInBoundsGEP(llvm::Type::getInt8Ty(ctx_), data, {byte_off}), dest,
+            llvm::Align(align));
+        B_.CreateAlignedStore(B_.CreateTrunc(bytes, sty(Type::makeInt(0, false))),
+                              byteOffset(dest, align),
+                              llvm::Align(align));
         return;
     }
     default: {

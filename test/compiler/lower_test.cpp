@@ -902,6 +902,59 @@ void testVariadicPacks() {
     }
 }
 
+// A byte literal lowers to a `ui8` constant, and it takes any integer context through the normal
+// widening: `0x1f`-style masks and `eq`-style comparisons need no `as`.
+void testByteLiterals() {
+    Lowered r("fn f() -> ui8 { return b')' }\n"
+              "fn g() -> i32 {\n local c = b'\\n'\n local n: i64 = b'x'\n"
+              " local m: ui8 = b')'\n return n as i32\n}\n");
+    CHECK(!r.diag->hasErrors());
+    CHECK(r.has("41:ui8"));            // `b')'` is 0x29 = 41
+    CHECK(r.has("local c#0: ui8 = 10")); // `b'\\n'`
+    CHECK(r.has("120:ui8"));            // `b'x'`
+    {
+        Lowered bad("fn f() { local n: ui8 = 300 }\n");
+        CHECK(bad.failedWith("E0708"));  // narrowing still needs `as`, byte literals are not special
+    }
+}
+
+// `s[lo..hi]` lowers to a `Slice` of type `str`: a view, never a place. Bounds stay checked under
+// --safety=checked, and a base that is not `str`/`[ui8; N]` is rejected.
+void testSlices() {
+    {
+        Lowered r("fn f(s: str) -> str {\n return s[1..3]\n}\n");
+        CHECK(!r.diag->hasErrors());
+        CHECK(r.has("slice.checked"));
+        CHECK(r.has("):str"));
+    }
+    {
+        BuildConfig unchecked;
+        unchecked.safety = "none";
+        Lowered r("fn f(s: str) -> str {\n return s[1..3]\n}\n", unchecked);
+        CHECK(!r.diag->hasErrors());
+        CHECK(r.has("(slice "));
+        CHECK(!r.has("slice.checked"));
+    }
+    {
+        // Open-ended and array bases take the same node; a constant end past the array is E0701.
+        Lowered r("fn f(s: str, b: [ui8; 4]) {\n local x = s[2..]\n local y = b[..2]\n local z = b[0..]\n}\n");
+        CHECK(!r.diag->hasErrors());
+    }
+    {
+        Lowered bad("fn f(b: [ui8; 4]) {\n local x = b[0..5]\n}\n");
+        CHECK(bad.failedWith("E0701"));
+    }
+    {
+        Lowered bad("fn f(p: *ui8) {\n local x = p[0..2]\n}\n");
+        CHECK(bad.failedWith("E0709"));
+    }
+    {
+        // A slice is a `str` value, so writing through it is the same error as writing through a `str`.
+        Lowered bad("fn f(s: str) {\n s[0..1] = \"x\"\n}\n");
+        CHECK(bad.failedWith("E0716"));
+    }
+}
+
 }  // namespace
 
 void runLowerTests() {
@@ -935,4 +988,6 @@ void runLowerTests() {
     testRawMoves();
     testGenerics();
     testVariadicPacks();
+    testByteLiterals();
+    testSlices();
 }

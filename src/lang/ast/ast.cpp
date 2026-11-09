@@ -193,6 +193,8 @@ class Dumper {
             return e.bool_value ? "true" : "false";
         case Expr::Kind::StringLiteral:
             return "\"" + escape(e.text) + "\"";
+        case Expr::Kind::ByteLiteral:
+            return std::format("b'\\x{:02x}'", e.int_value);
         case Expr::Kind::Name:
             return e.text;
         case Expr::Kind::Unary:
@@ -210,6 +212,11 @@ class Dumper {
             return std::format("({} ? {} : {})", expr(*e.lhs), expr(*e.rhs), expr(*e.args[0]));
         case Expr::Kind::Index:
             return std::format("{}[{}]", expr(*e.lhs), expr(*e.rhs));
+        case Expr::Kind::Slice:
+            return std::format("{}[{}..{}]",
+                               expr(*e.lhs),
+                               e.args.empty() ? std::string() : expr(*e.args[0]),
+                               e.rhs ? expr(*e.rhs) : std::string());
         case Expr::Kind::Field:
             return std::format(
                 "{}.{}", expr(*e.lhs), e.text.empty() ? std::to_string(e.int_value) : e.text);
@@ -417,6 +424,14 @@ class Dumper {
         }
         case Stmt::Kind::ForPack: {
             line(std::format("{}{}for {} in {}", attrs, labelPrefix(s), s.name, expr(*s.expr)));
+            Scope scope(*this);
+            block(*s.body);
+            break;
+        }
+        case Stmt::Kind::ForEach: {
+            const std::string var =
+                s.names.empty() ? s.name : std::format("{}, {}", s.name, s.names[0]);
+            line(std::format("{}{}for {} in {}", attrs, labelPrefix(s), var, expr(*s.expr)));
             Scope scope(*this);
             block(*s.body);
             break;

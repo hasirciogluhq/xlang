@@ -470,6 +470,17 @@ class Parser {
         case TokenKind::LBracket: {
             advance();
             ++nl_depth_;
+            // `[]T` / `[]mut T` is a slice type; `[T; N]` needs the semicolon and length below.
+            // `mut` is not a keyword: it is an identifier, so it is matched by its text.
+            if (match(TokenKind::RBracket)) {
+                --nl_depth_;
+                const bool is_mut = at(TokenKind::Ident) && cur().text == "mut";
+                if (is_mut) {
+                    advance();
+                }
+                type = Type::makeSlice(parseType(), is_mut);
+                break;
+            }
             Type element = parseType();
             expect(TokenKind::Semicolon, "`;` between the element type and the length");
             const bool saved_no_struct = no_struct_;
@@ -882,14 +893,42 @@ class Parser {
                 ++nl_depth_;
                 const bool saved_no_struct = no_struct_;
                 no_struct_ = false;
-                ExprPtr index = makeExpr(Expr::Kind::Index, expr->span);
-                index->rhs = parseExpr();
-                no_struct_ = saved_no_struct;
-                --nl_depth_;
-                expect(TokenKind::RBracket, "`]` closing the index");
-                index->span = spanFrom(expr->span);
-                index->lhs = std::move(expr);
-                expr = std::move(index);
+                // `base[lo..hi]` and `base[lo..]` are slices; `..=` is not a slice, because a view
+                // has no defined inclusive end (`base[lo..=hi]` would be off by one).
+                if (at(TokenKind::DotDot)) {
+                    advance();
+                    ExprPtr slice = makeExpr(Expr::Kind::Slice, expr->span);
+                    slice->rhs = parseExpr();  // `hi`; absent when the bracket closes here
+                    no_struct_ = saved_no_struct;
+                    --nl_depth_;
+                    expect(TokenKind::RBracket, "`]` closing the slice");
+                    slice->span = spanFrom(expr->span);
+                    slice->lhs = std::move(expr);
+                    expr = std::move(slice);
+                } else {
+                    ExprPtr first = parseExpr();
+                    if (at(TokenKind::DotDot)) {
+                        advance();
+                        ExprPtr slice = makeExpr(Expr::Kind::Slice, expr->span);
+                        slice->args.push_back(std::move(first));  // `lo`
+                        slice->rhs = parseExpr();                 // `hi`; absent when the bracket closes
+                        no_struct_ = saved_no_struct;
+                        --nl_depth_;
+                        expect(TokenKind::RBracket, "`]` closing the slice");
+                        slice->span = spanFrom(expr->span);
+                        slice->lhs = std::move(expr);
+                        expr = std::move(slice);
+                    } else {
+                        ExprPtr index = makeExpr(Expr::Kind::Index, expr->span);
+                        index->rhs = std::move(first);
+                        no_struct_ = saved_no_struct;
+                        --nl_depth_;
+                        expect(TokenKind::RBracket, "`]` closing the index");
+                        index->span = spanFrom(expr->span);
+                        index->lhs = std::move(expr);
+                        expr = std::move(index);
+                    }
+                }
             } else if (at(TokenKind::Dot) && continues()) {
                 advance();
                 if (at(TokenKind::Int)) {
@@ -978,6 +1017,12 @@ class Parser {
         case TokenKind::String: {
             ExprPtr e = makeExpr(Expr::Kind::StringLiteral, start);
             e->text = tok.text;
+            advance();
+            return e;
+        }
+        case TokenKind::ByteLit: {
+            ExprPtr e = makeExpr(Expr::Kind::ByteLiteral, start);
+            e->int_value = tok.int_value;
             advance();
             return e;
         }
@@ -1474,15 +1519,31 @@ class Parser {
         const bool saved_no_struct = no_struct_;
         const bool saved_header = for_header_;
         no_struct_ = true;
-        if (at(TokenKind::Ident) && peekKind(1) == TokenKind::Ident && peek(1).text == "in") {
+        if (at(TokenKind::Ident) &&
+            (peekKind(1) == TokenKind::Ident || peekKind(1) == TokenKind::Comma) &&
+            (peek(1).text == "in" || peekKind(1) == TokenKind::Comma)) {
+            // `for x in expr { }`, `for x, i in expr { }` or `for i in lo..hi { }`.
             stmt.name = advance().text;
-            advance(); // 'in'
+            const bool has_index = match(TokenKind::Comma);
+            if (has_index) {
+                if (!at(TokenKind::Ident)) {
+                    expected("the index name after `,`");
+                }
+                stmt.names.push_back(advance().text);
+            }
+            if (!(at(TokenKind::Ident) && cur().text == "in")) {
+                expected("`in` after the loop variable");
+            }
+            advance(); // `in`
             stmt.expr = parseExpr();
-            if (at(TokenKind::LBrace)) { // `for a in args { }` iterates a parameter pack
-                stmt.kind = Stmt::Kind::ForPack;
+            if (at(TokenKind::LBrace)) { // iterates a collection or a parameter pack
+                stmt.kind = Stmt::Kind::ForEach;
                 no_struct_ = saved_no_struct;
                 stmt.body = parseBlockPtr();
                 return stmt;
+            }
+            if (has_index) {
+                expected("`{` after the iterable; `for x, i in ...` needs a collection, not a range");
             }
             stmt.kind = Stmt::Kind::ForRange;
             if (!match(TokenKind::DotDot)) {

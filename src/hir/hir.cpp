@@ -105,6 +105,9 @@ void dumpExpr(std::ostream& out, const Function* fn, const Expr& e) {
     case ExprKind::Index:
         sub(e.checked ? "index.checked" : "index");
         break;
+    case ExprKind::Slice:
+        sub(e.checked ? "slice.checked" : "slice");
+        break;
     case ExprKind::Deref:
         sub("deref");
         break;

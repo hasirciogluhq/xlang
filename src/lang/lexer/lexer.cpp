@@ -174,6 +174,11 @@ private:
     void scanToken() {
         const char c = peek();
 
+        // `b'x'`: a byte literal. Checked before the identifier rule, because `b` is a letter.
+        if (c == 'b' && peek(1) == '\'') {
+            scanByte();
+            return;
+        }
         if (isIdentStart(c)) {
             scanWord();
             return;
@@ -374,6 +379,69 @@ private:
         emit(std::move(t));
     }
 
+    /// `b'x'`: exactly one byte, written as a printable character, a `\` escape, a `\xHH` pair or a
+    /// `\u{...}` code point below 128. The byte lands in `int_value` (0..255), so the parser makes a
+    /// `ui8` literal from it without touching `text`.
+    void scanByte() {
+        Token t = begin(TokenKind::ByteLit);
+        advance();  // 'b'
+        advance();  // opening quote
+        const Span at = here(1);
+        std::uint64_t value = 0;
+        if (pos_ >= text_.size() || peek() == '\n') {
+            error(at, "unterminated byte literal", "write one byte as `b'x'`");
+        } else if (peek() == '\\') {
+            advance();
+            const char e = peek();
+            advance();
+            switch (e) {
+            case 'n': value = '\n'; break;
+            case 't': value = '\t'; break;
+            case 'r': value = '\r'; break;
+            case '0': value = 0; break;
+            case '\\': value = '\\'; break;
+            case '\'': value = '\''; break;
+            case '"': value = '"'; break;
+            case 'x': {
+                const int hi = hexValue(peek());
+                const int lo = hi >= 0 ? hexValue(peek(1)) : -1;
+                if (hi < 0 || lo < 0) {
+                    error(at, "malformed `\\x` escape in a byte literal", "expected two hex digits");
+                } else {
+                    advance();
+                    advance();
+                    value = static_cast<std::uint64_t>(hi * 16 + lo);
+                }
+                break;
+            }
+            default:
+                error(at, std::format("unknown escape `\\{}` in a byte literal", printable(e)),
+                      "valid escapes: \\n \\t \\r \\0 \\\\ \\' \\\" \\xHH");
+            }
+        } else {
+            const unsigned char raw = static_cast<unsigned char>(advance());
+            if (raw >= 0x80) {
+                error(at, "a byte literal holds one ASCII character",
+                      "write non-ASCII bytes as `b'\\xHH'`");
+            }
+            value = raw;
+        }
+        if (pos_ < text_.size() && peek() != '\'') {
+            error(at, "a byte literal holds exactly one byte", "write `b'x'`, or use a string literal");
+            while (pos_ < text_.size() && peek() != '\'' && peek() != '\n') {
+                advance();
+            }
+        }
+        if (pos_ >= text_.size() || peek() != '\'') {
+            error(at, "unterminated byte literal", "close it with `'`");
+        } else {
+            advance();
+        }
+        finish(t);
+        t.int_value = value;
+        emit(std::move(t));
+    }
+
     void scanString() {
         Token t = begin(TokenKind::String);
         advance();  // opening quote
@@ -560,6 +628,7 @@ const char* tokenKindName(TokenKind kind) {
     case TokenKind::Int: return "integer literal";
     case TokenKind::Float: return "float literal";
     case TokenKind::String: return "string literal";
+    case TokenKind::ByteLit: return "byte literal";
     case TokenKind::Fn: return "fn";
     case TokenKind::Local: return "local";
     case TokenKind::Return: return "return";
@@ -668,6 +737,7 @@ std::string describeToken(const Token& token) {
     case TokenKind::Int:
     case TokenKind::Float: return std::format("number `{}`", token.text);
     case TokenKind::String: return "string literal";
+    case TokenKind::ByteLit: return std::format("byte literal `{}`", token.int_value);
     default: return std::format("`{}`", tokenKindName(token.kind));
     }
 }

@@ -135,6 +135,23 @@ std::optional<TypeLayout> Sema::layoutOf(const Type& type, const Span& at) {
                                          .align = word});
         return out;
     }
+    case TypeKind::Slice: {
+        // `[]T` and `[]mut T` are `{ ptr: *T, len: usize }`: the same two words as `str`, with the
+        // element type in `ptr` so indexing steps by `sizeof(T)`.
+        const std::uint64_t word = config_.target.pointer_width / 8;
+        out.align = word;
+        out.size = 2 * word;
+        out.data_size = out.size;
+        const Type elem = t.elem ? *t.elem : Type::makeInt(8, false);
+        out.fields.push_back(
+            FieldLayout{.name = "ptr", .type = Type::makePointer(elem), .offset = 0, .size = word, .align = word});
+        out.fields.push_back(FieldLayout{.name = "len",
+                                         .type = Type::makeInt(0, false),
+                                         .offset = word,
+                                         .size = word,
+                                         .align = word});
+        return out;
+    }
     case TypeKind::Named:
         error("E0703",
               at,

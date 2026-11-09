@@ -36,6 +36,8 @@ fn addWorks(t: *T) { expectEq(t, 1 + 2, 3) }
 
 The matchers are typed functions (`expect`, `expectTrue`, `expectEq`, `expectEqUInt`, `expectEqStr`, `expectNear`, `expectGt`, `expectNil`, ...). There is no discovery and no chained matcher syntax. These suites run on the host only; the cross-OS legs belong to the e2e programs.
 
+The suites `slices.test.xl` and `for_iter.test.xl` cover slices (`[]T`, `[]mut T`, `buffer[lo..hi]`) and the iterating `for` (`for x in s`, `for x, i in s`); the matching e2e program is `for_iter`.
+
 ## End-to-end programs
 
 ```

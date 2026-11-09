@@ -90,9 +90,18 @@ namespace lower {
 }
 
 /// `s[i]`, `s.ptr` or `s.len` where `s` is a `str` (or a pointer to one): never assignable.
+/// A `[]T` slice is the same fat pointer: `s.len` is read-only, and `s.ptr` reads the data pointer.
+/// `s[i]` on a `[]mut T` *is* a place (see `indexExpr`), so it is not covered here.
 [[nodiscard]] bool isStrPlace(const hir::Expr& e) {
+    const auto isView = [](const Type& t) {
+        return t.kind == TypeKind::Str || t.kind == TypeKind::Slice;
+    };
     if (e.kind == hir::ExprKind::Index) {
-        return e.lhs && e.lhs->type.kind == TypeKind::Str;
+        return e.lhs && (e.lhs->type.kind == TypeKind::Str ||
+                         (e.lhs->type.kind == TypeKind::Slice && !e.lhs->type.is_mutable));
+    }
+    if (e.kind == hir::ExprKind::Slice) {
+        return true;  // a slice yields a `str` value, not a place
     }
     if (e.kind == hir::ExprKind::Field && e.lhs) {
         const Type* owner = &e.lhs->type;
@@ -102,7 +111,7 @@ namespace lower {
             }
             owner = e.lhs->type.elem.get();
         }
-        return owner->kind == TypeKind::Str;
+        return isView(*owner);
     }
     return false;
 }
@@ -643,6 +652,7 @@ class Lowerer {
     void lowerCompound(const Stmt& s, std::vector<hir::Stmt>& out);
     void lowerFor(const Stmt& s, std::vector<hir::Stmt>& out);
     void lowerForRange(const Stmt& s, std::vector<hir::Stmt>& out);
+    void lowerForEach(const Stmt& s, std::vector<hir::Stmt>& out);
     void lowerSwitch(const Stmt& s, std::vector<hir::Stmt>& out);
     void lowerJump(const Stmt& s, std::vector<hir::Stmt>& out);
     /// Appends clones of the deferred statements of the frames `[from, defers_.size())`, innermost
@@ -673,6 +683,7 @@ class Lowerer {
     EP asmCall(const Expr& e);
     std::optional<std::uint32_t> memoryOrder(const Expr& arg);
     EP indexExpr(const Expr& e);
+    EP sliceExpr(const Expr& e);
     EP arrayExpr(const Expr& e, const Type* expected);
     EP tupleExpr(const Expr& e, const Type* expected);
     EP structLiteral(const Expr& e);

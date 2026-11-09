@@ -18,6 +18,7 @@ enum class TokenKind {
     Int,
     Float,
     String,
+    ByteLit,   ///< `b')'`: one byte (0..255) in `int_value`, typed `ui8`
 
     // Keywords
     Fn,

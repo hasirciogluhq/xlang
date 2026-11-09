@@ -57,11 +57,13 @@ struct Expr {
         FloatLiteral,
         BoolLiteral,
         StringLiteral,
+        ByteLiteral,   ///< `b')'`: one byte, typed `ui8`; int_value holds the byte
         Name,          ///< identifier, including `self`
         Unary,
         Binary,
         Call,          ///< lhs(args...)
         Index,         ///< lhs[rhs]
+        Slice,         ///< `base[lo..hi]` / `base[lo..]`: a view of the bytes `lo` up to `hi`
         Field,         ///< lhs.text
         Cast,          ///< lhs as type
         ArrayList,     ///< [args...]
@@ -122,6 +124,7 @@ struct Stmt {
         For,     ///< [label:] for [init]; [cond]; [step] { body }
         ForRange,///< [label:] for name in expr .. rhs { body }   (rhs exclusive; `..=` inclusive)
         ForPack, ///< [label:] for name in pack { body }   (expr = the pack's name; unrolled per element)
+        ForEach, ///< [label:] for name[, index] in iterable { body }   (arrays, slices, `str`, `Vec<T>`)
         Switch,  ///< switch expr { case a, b { } ... default { } }
         Defer,   ///< defer stmt (runs when the enclosing block is left)
         Try,     ///< try { body } catch [name] { else_body }  (name = the message binding, empty = none)
@@ -135,15 +138,17 @@ struct Stmt {
     std::vector<Attribute> attributes;
     /// Local/ForRange: the variable. Break/Continue: the target label (empty = innermost loop).
     /// Local: for the tuple form `local (a, b) = expr` this is empty and `names` holds the targets.
+    /// ForEach: the element name (`names[0]` is the index when `for x, i in ...` is written).
     std::string name;
     /// Local with a tuple target: one name per element, in order. Empty for a plain `local`.
+    /// ForEach with an index: `names[0]` holds the index name (one element).
     std::vector<std::string> names;
     /// While/DoWhile/For/ForRange: the label written before the loop (empty = none).
     std::string label;
     bool has_type{false};
     Type type;
     ExprPtr target;
-    ExprPtr expr;      ///< Assign value / conditions / ForRange lower bound / Switch scrutinee
+    ExprPtr expr;      ///< Assign value / conditions / ForRange lower bound / Switch scrutinee / ForEach iterable
     ExprPtr expr2;     ///< ForRange: exclusive upper bound
     bool has_compound_op{false};
     BinaryOp compound_op{BinaryOp::Add};

@@ -38,6 +38,15 @@ std::optional<Type> Sema::resolve(const Type& type) {
         out.elem = std::make_shared<const Type>(std::move(*inner));
         return out;
     }
+    case TypeKind::Slice: {
+        auto inner = resolve(*type.elem);
+        if (!inner) {
+            return std::nullopt;
+        }
+        Type out = type;
+        out.elem = std::make_shared<const Type>(std::move(*inner));
+        return out;
+    }
     case TypeKind::Tuple: {
         Type out = type;
         out.args.clear();

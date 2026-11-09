@@ -51,12 +51,19 @@ private:
 
     void statements(std::vector<Stmt>& list) {
         for (Stmt& s : list) {
-            if (s.kind == Stmt::Kind::ForPack) {
+            if (s.kind == Stmt::Kind::ForPack || isPackLoop(s)) {
                 s = unroll(s);
             } else {
                 stmt(s);
             }
         }
+    }
+
+    /// A `for x in <pack> { }` written with the collection form but naming the pack is a pack loop:
+    /// there is no index form and the iterable is exactly the pack's name.
+    [[nodiscard]] bool isPackLoop(const Stmt& s) const {
+        return s.kind == Stmt::Kind::ForEach && s.names.empty() && s.expr &&
+               s.expr->kind == Expr::Kind::Name && s.expr->text == pack_;
     }
 
     void stmt(Stmt& s) {
@@ -193,6 +200,7 @@ private:
         case Stmt::Kind::For:
         case Stmt::Kind::ForRange:
         case Stmt::Kind::ForPack:
+        case Stmt::Kind::ForEach:
             if (s.body) {
                 retarget(*s.body, labels, loops + 1, switches);
             }

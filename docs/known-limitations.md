@@ -112,6 +112,39 @@ The original plan is implemented except the items below, which are intentionally
   and must be written with a typed local. Nested overloaded calls cost time linear in their size. Class-to-base pointer
   conversion is not an implicit conversion in this language, so it does not count as a candidate. Virtual methods are not
   overloadable (`E0405`); `init` constructors are.
+- **Slices (`[]T`, `[]mut T`, `buffer[..]`) and the iterating `for` (`for x in s`, `for x, i in s`): done,
+  with open edges below.** A slice is a non-owning fat pointer `{ ptr: *T, len: usize }`, the same two
+  words as `str` (`sizeOf([]T) == sizeOf(str)`, `ptr` at offset 0, `len` at offset 8). `[]mut T` has the
+  same layout: `mut` is a permission, not a second representation. Semantics as implemented:
+  (a) a slice never owns its bytes, so it needs no drop; a slice element type that needs drop is allowed
+  in a read-only view but cannot be moved out (`E0720`, the `*p` rule);
+  (b) a slice cannot be a field of an `@repr(c)` struct and cannot cross an `export(c)` boundary
+  (`cCompatible` returns false, so it is a clear error, not a silent ABI change);
+  (c) `buffer[..]`, `buffer[lo..hi]`, `buffer[..hi]` and `buffer[lo..]` build a slice; slicing a
+  non-byte array or an existing slice yields `[]T` over its element type, and slicing a mutable
+  owner (a local array, a `[]mut T`) yields `[]mut T`; `str` and `[ui8; N]` keep their old `str` result;
+  (d) an empty slice is `len == 0` in practice; a slice value produced from `buf[1..1]` reads `ptr` as
+  the base plus one element (not `nil`), because the lowering keeps the owner's data pointer; a truly
+  nil slice can be written by hand and is legal to index `0` times;
+  (e) indexing a slice is bounds-checked under `--safety=checked` (a panic, like an array); a `[]mut T`
+  element is a place (`s[i] = v` writes the owner), a `[]T` element is read through the view;
+  (f) `str` stays the read-only byte slice with a UTF-8 contract; the `[]ui8`-to-`str` bridge and the
+  reverse are still `std/str` functions (`fromParts`, `view`), not compiler conversions.
+  **The iterating `for`:** `for x in s { }` walks a `[T; N]`, a `[]T`, a `[]mut T` or a `str`; `for x, i
+  in s { }` adds the index. Rules as implemented: the element is a pointer into the storage (`*T`, so
+  nothing is copied and `x.field = v` writes the owner), and over `str` the element is `*ui8` (a byte;
+  a rune form is a later decision); the index is a `usize` and comes *second* (Zig/Odin and `enumerate`
+  order, not Go's `i, v` value-copy order); the bound is read once, so changing a length in the body
+  does not move the end; `break`/`continue` and a label work as in the other loop forms. It is a pure
+  compiler lowering to the hand-written index loop, no vtable and no `Iter` protocol.
+  **Open edges:** a user-defined type is not iterable (an `Iter` protocol must choose between an
+  `interface` call per element and a monomorphized generic, and there are no constraints, so it is
+  deferred); `for x in vec` over a `Vec<T>` is **not** supported yet, because the compiler must not name
+  a runtime type — `Vec` will be iterable once it can hand out a slice (`vec[..]`), which needs a stdlib
+  `asSlice`; a `[]mut T` is a writable view with no alias or lifetime guarantee (there is no borrow
+  checker), so `mut` marks intent, it does not forbid a second view of the same bytes;
+  `for i, x in s` (index first) is rejected, the index is always second. Tests: `test/unit/slices.test.xl`,
+  `test/unit/for_iter.test.xl` and `test/e2e/for_iter.xl`.
 - `str` (phase 1 of the core-language work): no `==`/`!=` in the compiler (`eq` in std), no implicit or `as`
   conversion to `*ui8` (only `.ptr`), no way to make a `str` from a pointer except `std/str` (`strFromParts` reinterprets a
   `@repr(c)` two-word struct). A `str` view does not keep its bytes alive: the caller must. Writing through the `*ui8` of a

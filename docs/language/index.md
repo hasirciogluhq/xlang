@@ -11,19 +11,20 @@ This document describes the syntax, types, module system and compiler-provided f
 3. [Types](#types)
 4. [Variables and globals](#variables-and-globals)
 5. [Pointers and conversions](#pointers-and-conversions)
-6. [Functions](#functions)
-7. [Control flow](#control-flow)
-8. [Expressions and operators](#expressions-and-operators)
-9. [Structs, classes, interfaces and enums](#structs-classes-interfaces-and-enums)
-10. [Memory and `new`](#memory-and-new)
-11. [Modules and import](#modules-and-import)
-12. [Attributes, `declare` and external linking](#attributes-declare-and-external-linking)
-13. [Conditional compilation, constants and macros](#conditional-compilation-constants-and-macros)
-14. [Compiler builtins](#compiler-builtins)
-15. [Standard library](#standard-library)
-16. [Testing](#testing)
-17. [Command line](#command-line)
-18. [Limitations](#limitations)
+6. [Slices and the iterating `for`](#slices-and-the-iterating-for)
+7. [Functions](#functions)
+8. [Control flow](#control-flow)
+9. [Expressions and operators](#expressions-and-operators)
+10. [Structs, classes, interfaces and enums](#structs-classes-interfaces-and-enums)
+11. [Memory and `new`](#memory-and-new)
+12. [Modules and import](#modules-and-import)
+13. [Attributes, `declare` and external linking](#attributes-declare-and-external-linking)
+14. [Conditional compilation, constants and macros](#conditional-compilation-constants-and-macros)
+15. [Compiler builtins](#compiler-builtins)
+16. [Standard library](#standard-library)
+17. [Testing](#testing)
+18. [Command line](#command-line)
+19. [Limitations](#limitations)
 
 ---
 
@@ -94,6 +95,7 @@ export fn add(a: i32, b: i32) -> i32 {
 | `[T; N]` | Fixed-size array; `N` is a compile-time constant |
 | `(A, B, ...)` | Tuple: the elements in order, laid out like `@repr(c)`; `()` is the empty tuple |
 | `str` | Built-in read-only view `{ ptr: *ui8, len: usize }`; it never owns its bytes |
+| `[]T`, `[]mut T` | A non-owning slice: a fat pointer `{ ptr: *T, len: usize }`, the same two words as `str`. `[]mut T` is the writable view (same layout, `mut` is a permission). See [Slices and the iterating `for`](#slices-and-the-iterating-for) |
 | `Name` | A `struct`, `class`, `interface` or `enum` |
 
 There is no owned string type in the language; `String` lives in the standard library. There are no character literals; write the byte value (`97`). `type Name = T` declares a transparent alias.
@@ -111,6 +113,10 @@ A string literal takes its type from the place it is written in:
 | anything else, including no expected type | `str` | `.rodata`, with a trailing NUL that is not in `len` | no |
 
 `local buf: [ui8; 8] = "Jones"` copies the bytes into the array; a literal longer than `N` is error `E0717`. A `str` literal's `len` is the number of decoded bytes, so `"Jo\0nes".len` is 6. The `str` fields are `ptr` (type `*ui8`) and `len` (type `usize`); both are read-only. `s[i]` reads one byte and, under `--safety=checked`, panics when `i >= len`. Assigning through a `str` (`s[i] = x`, `s.len = n`) is error `E0716`. `==` and `!=` are not defined on `str`; use `eq` from the standard library (`import eq from "std/str"`). A `str` converts to `*ui8` only through `.ptr`; `as` cannot convert it either.
+
+A byte literal `b'x'` is a single `ui8` constant, so it needs no `as` in a byte context: `if c == b')' { }`. Printable characters, the escapes `\n \t \r \0 \\ \' \"` and `\xHH` all work, and a byte above 127 is written only as `b'\xHH'`. Exactly one byte goes between the quotes; `b'ab'` is an error. `b` followed by anything other than a quote is still an ordinary identifier.
+
+A slice is a view of bytes, never a copy: `s[a..b]` yields the `str` that starts at byte `a` and has length `b - a`. Both bounds are optional (`s[a..]` runs to the end, `s[..b]` starts at 0, `s[..]` is the whole thing), and both are `usize`-compatible integer expressions. The base is a `str` or a `[ui8; N]`; an array's storage is borrowed, so a write through the array is visible through the view, and the array must outlive the view just as a `str`'s bytes must. Under `--safety=checked` both bounds are checked at run time and a start past the end or an end past the length panics; on a constant-length array a constant end past the length is error `E0701`. Slicing anything else (a `*ui8`, an `[i32; N]`) is `E0709`, and a slice is a value, so assigning to it (`s[0..1] = "x"`) is `E0716` like any other `str` write.
 
 The `std/str` module provides `eq`, `fromC` (view of a NUL-terminated C string), `fromParts` (view of `n` bytes at a pointer) and `view` (checked sub-range, no copy). Functions that return text return an owned `String` instead: `slice`, `trim`, `trimStart`, `trimEnd`, `split` (returns `Vec<String>`), `replace`, `replaceAll`, `repeat`. A `str` view does not keep its bytes alive; the owner of the bytes must outlive it.
 
@@ -160,6 +166,32 @@ Assignment is `target = value` and `target op= value` for `+ - * / % & | ^ << >>
 - Implicit conversions: same-signedness integer widening only. A signed integer converting to a float warns (`W0601`). Unsigned to signed (and the reverse) is an error (`E0601`). Narrowing always needs `as`.
 - An `unsafe { ... }` block allows implicit integer conversions that change signedness when the target is the same width or wider, and unsigned to float (still `W0601`); narrowing always needs `as`.
 - Arithmetic on fixed-width integers wraps (`u + 10` with `u: ui8 = 250` gives 4). Division by zero and out-of-range array indexes call the registered `panic` under `--safety=checked`.
+
+---
+
+## Slices and the iterating `for`
+
+A slice is a non-owning view: a data pointer and a length, laid out exactly like `str` (`ptr` at offset 0, `len` at offset 8, `sizeOf([]T) == sizeOf(str)`). It never owns its bytes and needs no drop.
+
+```
+local buf: [i32; 6] = [1, 2, 3, 4, 5, 6]
+local all: []i32 = buf[..]          // whole array
+local mid: []i32 = buf[1..5]        // elements 1..4
+local tail: []i32 = buf[4..]        // to the end
+local head: []i32 = buf[..2]        // from the start
+local v: []mut i32 = buf[1..5]      // writable view of a local array
+v[0] = 100                          // writes buf[1]
+
+for x in all { ... }                // x: *i32, points into buf
+for x, i in all { ... }             // i: usize, the index
+for b in "abcd" { ... }             // str walks bytes, b: *ui8
+```
+
+- The brackets hold a range: `[..]`, `[lo..hi]`, `[lo..]`, `[..hi]` (upper bound excluded). Slicing a non-byte array or an existing slice yields a slice of its element type. A slice is writable (`[]mut T`) only when the owner is a writable place and not `const`; otherwise it is `[]T`. Slicing `str` or `[ui8; N]` yields a `str`.
+- `.len` is the number of elements and `.ptr` the data pointer (`*T`). Indexing is bounds-checked under `--safety=checked`. Writing an element (`s[i] = v`) needs a `[]mut T`: on a read-only `[]T` it is `E0716` ("cannot write through a read-only slice"). A `[]mut T` element is a place; a `[]T` element reads through the view.
+- `[]mut T` marks a writable view only. It is what a read-only `[]T` must be upcast to in order to write; the reverse (`[]mut T` to `[]T`) is implicit and free. There is no borrow checker, so `mut` is not an aliasing or lifetime guarantee: two views of the same bytes may exist.
+- A `for x in s` element is a pointer into the storage, so nothing is copied and `x.field = v` writes the owner. The bound is read once, before the first turn. `break`, `continue` and a label behave as in the other `for` forms. The form is a compiler lowering to an index loop, not a method call.
+- A slice cannot be a field of an `@repr(c)` struct and cannot cross an `export(c)` boundary (C has no fat pointer).
 
 ---
 
@@ -218,6 +250,7 @@ defer cleanup(p)
 
 - Conditions need no parentheses; bodies always use braces.
 - `for` has three forms. `for init; cond; step { }` is the C-style loop; any of the three parts may be left out (`for ; cond; step`, `for init; ; step`, `for init; cond; { }`), and leaving out the condition makes an infinite loop. `for name in lo..hi { }` counts from `lo` up to but not including `hi`, and `for name in lo..=hi { }` includes `hi`. A range loop evaluates both bounds once, before the first iteration, so changing them in the body does not move the end. The loop variable's type is the bounds' integer type; an untyped integer literal on one side takes the type of the other, so `for i in 0..limit()` works without a written `as`. A reversed range (`5..2`) is empty and runs zero times. `for name in pack { }` unrolls a parameter pack; see the variadic rule under Functions. Every form takes an optional label (`outer: for ...`), and `break outer` / `continue outer` leave or advance that loop.
+- The iterating `for` (`for x in s`, `for x, i in s`) walks a `[T; N]`, a `[]T`, a `[]mut T` or a `str`. The element is a pointer into the storage (`*T`, so nothing is copied and `x.field = v` writes the owner); over `str` the element is `*ui8`. The index is a `usize` and comes second (`for x, i in s`), never first. It lowers to a plain index loop (no vtable, no `Iter` protocol), reads the bound once, and takes a label, `break` and `continue` like the other loops. A `Vec<T>` is not iterable directly yet (see [Known limitations]({{ site.baseurl }}/known-limitations.html)).
 - `switch` works on integers, bools and enums, has no fallthrough, and a `break` inside it leaves the enclosing loop.
 - `defer stmt` runs when the enclosing block is left; see [defer.md]({{ site.baseurl }}/language/defer.html).
 - `cond ? a : b` is the conditional expression.

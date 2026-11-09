@@ -25,6 +25,8 @@ enum class TypeKind {
     Class,
     Interface,
     Str,      ///< built-in immutable view `{ ptr: *ui8, len: usize }`; never owns its bytes
+    Slice,    ///< `[]T` / `[]mut T`: a non-owning fat pointer `{ ptr: *T, len: usize }` over `elem`;
+              ///< `is_mutable` tells the two views apart (see docs/language/index.md)
     Tuple,    ///< `(A, B, ...)`: the product of `args` in declaration order; laid out like `@repr(c)`
     Named,    ///< unresolved reference to a user type or alias; sema resolves it to one of the above
 };
@@ -36,6 +38,8 @@ struct Type {
     /// Int: 8/16/32/64, or 0 for the pointer-width types `isize`/`usize`. Float: 32/64.
     unsigned bits{0};
     bool is_signed{false};
+    /// Slice: `[]mut T` (writable view) when true, `[]T` (read-only) when false.
+    bool is_mutable{false};
     /// Named/Struct/Class/Interface/Enum: qualified name (`io.Writer` = {"io", "Writer"}).
     std::vector<std::string> path;
     /// Pointer/Array: pointee or element type. Enum: underlying type.
@@ -54,6 +58,7 @@ struct Type {
     [[nodiscard]] bool isInteger() const { return kind == TypeKind::Int; }
     [[nodiscard]] bool isFloat() const { return kind == TypeKind::Float; }
     [[nodiscard]] bool isPointer() const { return kind == TypeKind::Pointer; }
+    [[nodiscard]] bool isSlice() const { return kind == TypeKind::Slice; }
 
     [[nodiscard]] static Type makeVoid();
     [[nodiscard]] static Type makeBool();
@@ -62,6 +67,8 @@ struct Type {
     [[nodiscard]] static Type makePointer(Type pointee);
     [[nodiscard]] static Type makeFnPtr(std::vector<Type> params, Type ret);
     [[nodiscard]] static Type makeArray(Type element, std::shared_ptr<const Expr> length);
+    /// `[]T` (read-only) or `[]mut T` (writable); both are the same fat pointer over `element`.
+    [[nodiscard]] static Type makeSlice(Type element, bool is_mutable = false);
     [[nodiscard]] static Type makeNamed(std::vector<std::string> path);
     [[nodiscard]] static Type makeStr();
     [[nodiscard]] static Type makeTuple(std::vector<Type> elements);

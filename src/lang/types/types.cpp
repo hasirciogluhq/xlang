@@ -69,6 +69,14 @@ Type Type::makeStr() {
     return t;
 }
 
+Type Type::makeSlice(Type element, bool is_mutable) {
+    Type t;
+    t.kind = TypeKind::Slice;
+    t.elem = std::make_shared<const Type>(std::move(element));
+    t.is_mutable = is_mutable;
+    return t;
+}
+
 Type Type::makeTuple(std::vector<Type> elements) {
     Type t;
     t.kind = TypeKind::Tuple;
@@ -145,6 +153,9 @@ std::string typeToString(const Type& type) {
     case TypeKind::Void: return "void";
     case TypeKind::Bool: return "bool";
     case TypeKind::Str: return "str";
+    case TypeKind::Slice:
+        return std::format("[]{}{}", type.is_mutable ? "mut " : "",
+                           type.elem ? typeToString(*type.elem) : "?");
     case TypeKind::Int:
         if (type.bits == 0) {
             return type.is_signed ? "isize" : "usize";
@@ -198,6 +209,10 @@ std::string mangleType(const Type& type) {
     case TypeKind::Void: return "void";
     case TypeKind::Bool: return "bool";
     case TypeKind::Str: return "str";
+    case TypeKind::Slice:
+        // `[]T` is `S<T>`, `[]mut T` is `M<T>`: distinct link names, the same element mangling.
+        return (type.is_mutable ? "M" : "S") +
+               (type.elem ? mangleType(*type.elem) : std::string("void"));
     case TypeKind::Int:
         if (type.bits == 0) {
             return type.is_signed ? "isize" : "usize";

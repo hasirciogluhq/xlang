@@ -60,6 +60,7 @@ tests=(
   "ecdsa|0|ecdsa ok|0|1"
   "strings|0|strings ok|0|1"
   "strtools|0|strtools ok|0|1"
+  "for_iter|0|for_iter ok|0|1"
   "overload|0|overload ok|0|1"
   "raii|0|raii ok|0|1"
   "generics|0|generics ok|0|1"
@@ -297,6 +298,7 @@ diags=(
   "diag_init_args||E0729"
   "diag_static_entry|--emit=static|E0754"
   "diag_shared_args|--emit=shared|E0755"
+  "diag_slice_readonly||E0716"
   "entry_order|--emit=ir|ok"
   "shared_hook|--emit=static|ok"
 )
