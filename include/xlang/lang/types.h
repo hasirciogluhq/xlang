@@ -25,6 +25,7 @@ enum class TypeKind {
     Class,
     Interface,
     Str,      ///< built-in immutable view `{ ptr: *ui8, len: usize }`; never owns its bytes
+    Tuple,    ///< `(A, B, ...)`: the product of `args` in declaration order; laid out like `@repr(c)`
     Named,    ///< unresolved reference to a user type or alias; sema resolves it to one of the above
 };
 
@@ -42,7 +43,8 @@ struct Type {
     /// FnPtr: parameter and return types.
     std::vector<Type> params;
     std::shared_ptr<const Type> ret;
-    /// Named/Struct/Class: generic arguments (`Vec<i32>`); resolved instances keep them too.
+    /// Named/Struct/Class: generic arguments (`Vec<i32>`). Tuple: the element types:
+    /// `(i32, i64)` holds {i32, i64}, and `()` is the empty tuple (a distinct value with no fields).
     std::vector<Type> args;
     /// Array: compile-time constant length expression.
     std::shared_ptr<const Expr> length;
@@ -62,17 +64,19 @@ struct Type {
     [[nodiscard]] static Type makeArray(Type element, std::shared_ptr<const Expr> length);
     [[nodiscard]] static Type makeNamed(std::vector<std::string> path);
     [[nodiscard]] static Type makeStr();
+    [[nodiscard]] static Type makeTuple(std::vector<Type> elements);
 };
 
 /// `i32`, `ui8`, `usize`, `f64`, `bool`, `void` -> the type; nullopt for any other name.
 [[nodiscard]] std::optional<Type> primitiveFromName(std::string_view name);
 [[nodiscard]] bool isPrimitiveTypeName(std::string_view name);
 
-/// Source-like spelling: `*ui8`, `[i32; 4]`, `fn(i32) -> i32`, `io.Writer`.
+/// Source-like spelling: `*ui8`, `[i32; 4]`, `fn(i32) -> i32`, `(i32, i64)`, `io.Writer`.
 [[nodiscard]] std::string typeToString(const Type& type);
 
-/// Symbol-safe spelling for link names: no spaces, `[`, `;`, `*`, `(` or `<`. `*T` is `P<T>`,
-/// `[T; N]` is `A<N>_<T>`, `fn(A, B) -> R` is `F<A><B>R<R>E`, a named type is `N<len><name>`.
+/// Symbol-safe spelling for link names: no spaces, `[`, `;`, `*`, `(`, `,` or `<`. `*T` is `P<T>`,
+/// `[T; N]` is `A<N>_<T>`, `fn(A, B) -> R` is `F<A><B>R<R>E`, `(A, B)` is `T<A><B>E` and `()` is
+/// `T E`, a named type is `N<len><name>`.
 [[nodiscard]] std::string mangleType(const Type& type);
 
 }  // namespace xlang

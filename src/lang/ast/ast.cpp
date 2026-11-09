@@ -9,35 +9,58 @@ namespace xlang {
 
 const char* unaryOpName(UnaryOp op) {
     switch (op) {
-    case UnaryOp::Neg: return "-";
-    case UnaryOp::Not: return "!";
-    case UnaryOp::Deref: return "*";
-    case UnaryOp::AddrOf: return "&";
-    case UnaryOp::BitNot: return "~";
+    case UnaryOp::Neg:
+        return "-";
+    case UnaryOp::Not:
+        return "!";
+    case UnaryOp::Deref:
+        return "*";
+    case UnaryOp::AddrOf:
+        return "&";
+    case UnaryOp::BitNot:
+        return "~";
     }
     return "?";
 }
 
 const char* binaryOpName(BinaryOp op) {
     switch (op) {
-    case BinaryOp::Add: return "+";
-    case BinaryOp::Sub: return "-";
-    case BinaryOp::Mul: return "*";
-    case BinaryOp::Div: return "/";
-    case BinaryOp::Mod: return "%";
-    case BinaryOp::Eq: return "==";
-    case BinaryOp::Ne: return "!=";
-    case BinaryOp::Lt: return "<";
-    case BinaryOp::Le: return "<=";
-    case BinaryOp::Gt: return ">";
-    case BinaryOp::Ge: return ">=";
-    case BinaryOp::And: return "&&";
-    case BinaryOp::Or: return "||";
-    case BinaryOp::BitAnd: return "&";
-    case BinaryOp::BitOr: return "|";
-    case BinaryOp::BitXor: return "^";
-    case BinaryOp::Shl: return "<<";
-    case BinaryOp::Shr: return ">>";
+    case BinaryOp::Add:
+        return "+";
+    case BinaryOp::Sub:
+        return "-";
+    case BinaryOp::Mul:
+        return "*";
+    case BinaryOp::Div:
+        return "/";
+    case BinaryOp::Mod:
+        return "%";
+    case BinaryOp::Eq:
+        return "==";
+    case BinaryOp::Ne:
+        return "!=";
+    case BinaryOp::Lt:
+        return "<";
+    case BinaryOp::Le:
+        return "<=";
+    case BinaryOp::Gt:
+        return ">";
+    case BinaryOp::Ge:
+        return ">=";
+    case BinaryOp::And:
+        return "&&";
+    case BinaryOp::Or:
+        return "||";
+    case BinaryOp::BitAnd:
+        return "&";
+    case BinaryOp::BitOr:
+        return "|";
+    case BinaryOp::BitXor:
+        return "^";
+    case BinaryOp::Shl:
+        return "<<";
+    case BinaryOp::Shr:
+        return ">>";
     }
     return "?";
 }
@@ -49,7 +72,9 @@ const DeclBase& declBase(const Item& item) {
 const char* declKindName(const Decl& decl) {
     struct Visitor {
         const char* operator()(const FnDecl&) const { return "function"; }
-        const char* operator()(const GlobalDecl& g) const { return g.is_const ? "const" : "global"; }
+        const char* operator()(const GlobalDecl& g) const {
+            return g.is_const ? "const" : "global";
+        }
         const char* operator()(const StructDecl&) const { return "struct"; }
         const char* operator()(const ClassDecl&) const { return "class"; }
         const char* operator()(const InterfaceDecl&) const { return "interface"; }
@@ -70,12 +95,10 @@ const char* declKindName(const Decl& decl) {
 namespace {
 
 class Dumper {
-public:
+  public:
     explicit Dumper(std::ostream& out) : out_(out) {}
 
-    void line(std::string_view text) {
-        out_ << std::string(indent_ * 2, ' ') << text << '\n';
-    }
+    void line(std::string_view text) { out_ << std::string(indent_ * 2, ' ') << text << '\n'; }
 
     struct Scope {
         Dumper& d;
@@ -94,7 +117,8 @@ public:
             out += "declare ";
         }
         if (m.registered) {
-            out += m.register_role.empty() ? "register " : std::format("register({}) ", m.register_role);
+            out += m.register_role.empty() ? "register "
+                                           : std::format("register({}) ", m.register_role);
         }
         return out;
     }
@@ -114,9 +138,15 @@ public:
                         out += arg.key + " = ";
                     }
                     switch (arg.kind) {
-                    case AttributeArg::Kind::Ident: out += arg.text; break;
-                    case AttributeArg::Kind::Int: out += std::to_string(arg.number); break;
-                    case AttributeArg::Kind::String: out += "\"" + arg.text + "\""; break;
+                    case AttributeArg::Kind::Ident:
+                        out += arg.text;
+                        break;
+                    case AttributeArg::Kind::Int:
+                        out += std::to_string(arg.number);
+                        break;
+                    case AttributeArg::Kind::String:
+                        out += "\"" + arg.text + "\"";
+                        break;
                     }
                 }
                 out += ")";
@@ -132,7 +162,8 @@ public:
             if (i != 0) {
                 out += ", ";
             }
-            out += ps[i].is_self ? "self" : std::format("{}: {}", ps[i].name, typeToString(ps[i].type));
+            out += ps[i].is_self ? "self"
+                                 : std::format("{}: {}", ps[i].name, typeToString(ps[i].type));
         }
         return out;
     }
@@ -149,7 +180,8 @@ public:
 
     std::string expr(const Expr& e) {
         switch (e.kind) {
-        case Expr::Kind::IntLiteral: return std::to_string(e.int_value);
+        case Expr::Kind::IntLiteral:
+            return std::to_string(e.int_value);
         case Expr::Kind::FloatLiteral: {
             std::string text = std::format("{}", e.float_value);
             if (text.find_first_of(".en") == std::string::npos) {
@@ -157,10 +189,14 @@ public:
             }
             return text;
         }
-        case Expr::Kind::BoolLiteral: return e.bool_value ? "true" : "false";
-        case Expr::Kind::StringLiteral: return "\"" + escape(e.text) + "\"";
-        case Expr::Kind::Name: return e.text;
-        case Expr::Kind::Unary: return std::format("({}{})", unaryOpName(e.unary_op), expr(*e.lhs));
+        case Expr::Kind::BoolLiteral:
+            return e.bool_value ? "true" : "false";
+        case Expr::Kind::StringLiteral:
+            return "\"" + escape(e.text) + "\"";
+        case Expr::Kind::Name:
+            return e.text;
+        case Expr::Kind::Unary:
+            return std::format("({}{})", unaryOpName(e.unary_op), expr(*e.lhs));
         case Expr::Kind::Binary:
             return std::format("({} {} {})", expr(*e.lhs), binaryOpName(e.binary_op), expr(*e.rhs));
         case Expr::Kind::Call: {
@@ -172,9 +208,13 @@ public:
         }
         case Expr::Kind::Ternary:
             return std::format("({} ? {} : {})", expr(*e.lhs), expr(*e.rhs), expr(*e.args[0]));
-        case Expr::Kind::Index: return std::format("{}[{}]", expr(*e.lhs), expr(*e.rhs));
-        case Expr::Kind::Field: return std::format("{}.{}", expr(*e.lhs), e.text);
-        case Expr::Kind::Cast: return std::format("({} as {})", expr(*e.lhs), typeToString(e.type));
+        case Expr::Kind::Index:
+            return std::format("{}[{}]", expr(*e.lhs), expr(*e.rhs));
+        case Expr::Kind::Field:
+            return std::format(
+                "{}.{}", expr(*e.lhs), e.text.empty() ? std::to_string(e.int_value) : e.text);
+        case Expr::Kind::Cast:
+            return std::format("({} as {})", expr(*e.lhs), typeToString(e.type));
         case Expr::Kind::ArrayList: {
             std::string out = "[";
             for (std::size_t i = 0; i < e.args.size(); ++i) {
@@ -182,12 +222,27 @@ public:
             }
             return out + "]";
         }
-        case Expr::Kind::ArrayRepeat: return std::format("[{}; {}]", expr(*e.lhs), expr(*e.rhs));
-        case Expr::Kind::StructLiteral: return typeToString(e.type) + fieldInits(e);
+        case Expr::Kind::ArrayRepeat:
+            return std::format("[{}; {}]", expr(*e.lhs), expr(*e.rhs));
+        case Expr::Kind::TupleLiteral: {
+            std::string out = "(";
+            for (std::size_t i = 0; i < e.args.size(); ++i) {
+                out += (i != 0 ? ", " : "") + expr(*e.args[i]);
+            }
+            if (e.args.size() == 1) {
+                out += ',';
+            }
+            return out + ")";
+        }
+        case Expr::Kind::StructLiteral:
+            return typeToString(e.type) + fieldInits(e);
         case Expr::Kind::New:
-            return std::format("new{} {}{}", e.lhs ? "(" + expr(*e.lhs) + ")" : std::string(),
-                               typeToString(e.type), fieldInits(e));
-        case Expr::Kind::Spread: return ".." + e.text;
+            return std::format("new{} {}{}",
+                               e.lhs ? "(" + expr(*e.lhs) + ")" : std::string(),
+                               typeToString(e.type),
+                               fieldInits(e));
+        case Expr::Kind::Spread:
+            return ".." + e.text;
         case Expr::Kind::AsmOperand:
             return std::format("{}({}) {}", e.text, expr(*e.lhs), expr(*e.rhs));
         case Expr::Kind::MacroCall: {
@@ -218,8 +273,10 @@ public:
         case TokenKind::Ident:
         case TokenKind::PrimType:
         case TokenKind::Int:
-        case TokenKind::Float: return t.text;
-        default: return tokenKindName(t.kind);
+        case TokenKind::Float:
+            return t.text;
+        default:
+            return tokenKindName(t.kind);
         }
     }
 
@@ -235,13 +292,26 @@ public:
         std::string out;
         for (const char c : s) {
             switch (c) {
-            case '\n': out += "\\n"; break;
-            case '\t': out += "\\t"; break;
-            case '\r': out += "\\r"; break;
-            case '\0': out += "\\0"; break;
-            case '"': out += "\\\""; break;
-            case '\\': out += "\\\\"; break;
-            default: out += c;
+            case '\n':
+                out += "\\n";
+                break;
+            case '\t':
+                out += "\\t";
+                break;
+            case '\r':
+                out += "\\r";
+                break;
+            case '\0':
+                out += "\\0";
+                break;
+            case '"':
+                out += "\\\"";
+                break;
+            case '\\':
+                out += "\\\\";
+                break;
+            default:
+                out += c;
             }
         }
         return out;
@@ -255,7 +325,9 @@ public:
         const std::string attrs = attributes(s.attributes);
         switch (s.kind) {
         case Stmt::Kind::Local:
-            line(std::format("{}local {}{}{}", attrs, s.name,
+            line(std::format("{}local {}{}{}",
+                             attrs,
+                             s.name,
                              s.has_type ? ": " + typeToString(s.type) : std::string(),
                              s.expr ? " = " + expr(*s.expr) : std::string()));
             break;
@@ -263,13 +335,18 @@ public:
             line(std::format("{}delete {}", attrs, expr(*s.expr)));
             break;
         case Stmt::Kind::Const:
-            line(std::format("{}const {}{}{}", attrs, s.name,
+            line(std::format("{}const {}{}{}",
+                             attrs,
+                             s.name,
                              s.has_type ? ": " + typeToString(s.type) : std::string(),
                              s.expr ? " = " + expr(*s.expr) : std::string()));
             break;
         case Stmt::Kind::Assign:
-            line(std::format("{}{} {}= {}", attrs, expr(*s.target),
-                             s.has_compound_op ? binaryOpName(s.compound_op) : "", expr(*s.expr)));
+            line(std::format("{}{} {}= {}",
+                             attrs,
+                             expr(*s.target),
+                             s.has_compound_op ? binaryOpName(s.compound_op) : "",
+                             expr(*s.expr)));
             break;
         case Stmt::Kind::Return:
             line(std::format("{}return{}", attrs, s.expr ? " " + expr(*s.expr) : std::string()));
@@ -328,7 +405,11 @@ public:
             break;
         }
         case Stmt::Kind::ForRange: {
-            line(std::format("{}{}for {} in {} .. {}", attrs, labelPrefix(s), s.name, expr(*s.expr),
+            line(std::format("{}{}for {} in {} .. {}",
+                             attrs,
+                             labelPrefix(s),
+                             s.name,
+                             expr(*s.expr),
                              expr(*s.expr2)));
             Scope scope(*this);
             block(*s.body);
@@ -414,19 +495,25 @@ public:
             const DeclBase& base;
 
             void operator()(const FnDecl& fn) const {
-                d.line(std::format("{}{}{}", head, signature(fn), fn.has_body ? "" : "  [no body]"));
+                d.line(
+                    std::format("{}{}{}", head, signature(fn), fn.has_body ? "" : "  [no body]"));
                 d.fnBody(fn);
             }
             void operator()(const GlobalDecl& g) const {
                 const std::string type = g.has_type ? ": " + typeToString(g.type) : std::string();
-                d.line(std::format("{}{} {}{}{}", head, g.is_const ? "const" : "global", g.name,
-                                   type, g.init ? " = " + d.expr(*g.init) : std::string()));
+                d.line(std::format("{}{} {}{}{}",
+                                   head,
+                                   g.is_const ? "const" : "global",
+                                   g.name,
+                                   type,
+                                   g.init ? " = " + d.expr(*g.init) : std::string()));
             }
             void operator()(const StructDecl& s) const {
                 d.line(std::format("{}struct {}{}", head, s.name, s.opaque ? "  [opaque]" : ""));
                 Scope scope(d);
                 for (const FieldDecl& f : s.fields) {
-                    d.line(std::format("{}{}: {}", attributes(f.attributes), f.name, typeToString(f.type)));
+                    d.line(std::format(
+                        "{}{}: {}", attributes(f.attributes), f.name, typeToString(f.type)));
                 }
             }
             void operator()(const ClassDecl& c) const {
@@ -434,12 +521,15 @@ public:
                 for (std::size_t i = 0; i < c.base.size(); ++i) {
                     base_name += (i != 0 ? "." : "") + c.base[i];
                 }
-                d.line(std::format("{}class {}{}{}", head, c.name,
+                d.line(std::format("{}class {}{}{}",
+                                   head,
+                                   c.name,
                                    c.has_base ? " : " + base_name : std::string(),
                                    c.opaque ? "  [opaque]" : ""));
                 Scope scope(d);
                 for (const FieldDecl& f : c.fields) {
-                    d.line(std::format("{}{}: {}", attributes(f.attributes), f.name, typeToString(f.type)));
+                    d.line(std::format(
+                        "{}{}: {}", attributes(f.attributes), f.name, typeToString(f.type)));
                 }
                 for (const FnDecl& m : c.methods) {
                     d.method(m);
@@ -486,8 +576,11 @@ public:
             void operator()(const DefineMacroDecl& m) const {
                 std::string ps;
                 for (std::size_t i = 0; i < m.params.size(); ++i) {
-                    static constexpr const char* kinds[] = {"expr", "type", "ident", "block", "items"};
-                    ps += std::format("{}{}: {}", i != 0 ? ", " : "", m.params[i].name,
+                    static constexpr const char* kinds[] = {
+                        "expr", "type", "ident", "block", "items"};
+                    ps += std::format("{}{}: {}",
+                                      i != 0 ? ", " : "",
+                                      m.params[i].name,
                                       kinds[static_cast<int>(m.params[i].kind)]);
                 }
                 d.line(std::format("{}define {}({}) {{ {} }}", head, m.name, ps, tokens(m.body)));
@@ -495,8 +588,8 @@ public:
             void operator()(const ImportDecl& i) const {
                 switch (i.form) {
                 case ImportDecl::Form::Module:
-                    d.line(std::format("import \"{}\"{}", i.module,
-                                       i.alias.empty() ? "" : " as " + i.alias));
+                    d.line(std::format(
+                        "import \"{}\"{}", i.module, i.alias.empty() ? "" : " as " + i.alias));
                     break;
                 case ImportDecl::Form::Star:
                     d.line(std::format("import * from \"{}\"", i.module));
@@ -512,7 +605,8 @@ public:
             void operator()(const ExportFromDecl& e) const {
                 switch (e.form) {
                 case ExportFromDecl::Form::Star:
-                    d.line(std::format("export * from \"{}\"{}", e.module,
+                    d.line(std::format("export * from \"{}\"{}",
+                                       e.module,
                                        e.except.empty() ? "" : " except " + names(e.except)));
                     break;
                 case ExportFromDecl::Form::StarAs:
@@ -530,9 +624,7 @@ public:
                 }
                 d.line(std::format("{}{}!({})", head, m.name, args));
             }
-            void operator()(const TopLevelCallDecl& c) const {
-                d.line(head + d.expr(*c.call));
-            }
+            void operator()(const TopLevelCallDecl& c) const { d.line(head + d.expr(*c.call)); }
 
             static std::string names(const std::vector<ImportName>& ns) {
                 std::string out;
@@ -560,12 +652,12 @@ public:
         fnBody(m);
     }
 
-private:
+  private:
     std::ostream& out_;
     std::size_t indent_{0};
 };
 
-}  // namespace
+} // namespace
 
 void dumpProgram(std::ostream& out, const Program& program, bool summary) {
     Dumper d(out);
@@ -607,4 +699,4 @@ void dumpProgram(std::ostream& out, const Program& program, bool summary) {
     }
 }
 
-}  // namespace xlang
+} // namespace xlang

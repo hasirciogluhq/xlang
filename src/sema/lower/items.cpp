@@ -184,9 +184,9 @@ const ScopeEntry* Lowerer::lookupName(const std::string& name) {
     return nullptr;
 }
 
-/// The entry a name chain (`a`, `a.b`, `a.b.c`) names: the last step is looked up inside the namespace
-/// the step before it named. A chain that starts outside a namespace (a local, a field of a struct) has
-/// no entry, and a chain whose base is not a namespace has none either.
+/// The entry a name chain (`a`, `a.b`, `a.b.c`) names: the last step is looked up inside the
+/// namespace the step before it named. A chain that starts outside a namespace (a local, a field of
+/// a struct) has no entry, and a chain whose base is not a namespace has none either.
 const ScopeEntry* Lowerer::chainEntry(const Expr& e) {
     if (e.kind == Expr::Kind::Name) {
         return lookupName(e.text);
@@ -2431,6 +2431,7 @@ bool Lowerer::isConstValue(const hir::Expr& e, const hir::Expr** offender) const
     case hir::ExprKind::Binary:
         return e.lhs && e.rhs && isConstValue(*e.lhs, offender) && isConstValue(*e.rhs, offender);
     case hir::ExprKind::ArrayList:
+    case hir::ExprKind::TupleLit:
         return std::ranges::all_of(
             e.args, [&](const hir::ExprPtr& a) { return isConstValue(*a, offender); });
     case hir::ExprKind::ArrayRepeat:

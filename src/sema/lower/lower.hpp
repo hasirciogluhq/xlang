@@ -17,12 +17,12 @@
 
 namespace xlang {
 
-/// Lowers every module of one compilation: module scopes first, then the items of each, then the generic
-/// instances they requested (which can belong to another module), then the init/fini order.
-/// `std_modules` marks the modules of the standard library group, which the language treats specially.
-/// The definition is in `src/sema/lower/items.cpp` (`sema/lower`), and it is qualified there as
-/// `xlang::lowerProgram`: it sits in the outer namespace, because that is the name the compilation
-/// driver calls and the one the pass has always had.
+/// Lowers every module of one compilation: module scopes first, then the items of each, then the
+/// generic instances they requested (which can belong to another module), then the init/fini order.
+/// `std_modules` marks the modules of the standard library group, which the language treats
+/// specially. The definition is in `src/sema/lower/items.cpp` (`sema/lower`), and it is qualified
+/// there as `xlang::lowerProgram`: it sits in the outer namespace, because that is the name the
+/// compilation driver calls and the one the pass has always had.
 hir::Module lowerProgram(const std::vector<Sema*>& modules,
                          const std::vector<Sema*>& init_order,
                          const std::set<const Sema*>& std_modules);
@@ -672,6 +672,7 @@ class Lowerer {
     std::optional<std::uint32_t> memoryOrder(const Expr& arg);
     EP indexExpr(const Expr& e);
     EP arrayExpr(const Expr& e, const Type* expected);
+    EP tupleExpr(const Expr& e, const Type* expected);
     EP structLiteral(const Expr& e);
     EP newExpr(const Expr& e);
     EP constExpr(const Expr& e, const Type* expected);

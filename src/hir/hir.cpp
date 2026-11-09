@@ -35,58 +35,134 @@ void dumpExpr(std::ostream& out, const Function* fn, const Expr& e) {
     case ExprKind::IntConst:
         out << std::format("{}:{}", static_cast<std::int64_t>(e.int_value), typeName(e.type));
         return;
-    case ExprKind::FloatConst: out << std::format("{}:{}", e.float_value, typeName(e.type)); return;
-    case ExprKind::BoolConst: out << (e.bool_value ? "true" : "false"); return;
-    case ExprKind::StrConst: out << '"' << e.text << '"'; return;
-    case ExprKind::Nil: out << "nil:" << typeName(e.type); return;
-    case ExprKind::LocalRef:
-        out << (fn != nullptr && e.local < fn->locals.size() ? fn->locals[e.local].name : "?") << '#'
-            << e.local;
+    case ExprKind::FloatConst:
+        out << std::format("{}:{}", e.float_value, typeName(e.type));
         return;
-    case ExprKind::GlobalRef: out << '@' << e.text; return;
-    case ExprKind::FuncRef: out << "&fn " << e.text; return;
-    case ExprKind::External: out << "external(" << e.text << '.' << e.member << ')'; return;
-    case ExprKind::Construct: out << "construct " << typeName(e.target) << ' ' << e.text; break;
-    case ExprKind::Move: out << "move#" << e.local; break;
-    case ExprKind::Materialize: out << "materialize#" << e.local << " live#" << e.index; break;
-    case ExprKind::Unary: sub(unaryOpName(e.unary_op)); break;
-    case ExprKind::Binary: sub(binaryOpName(e.binary_op)); break;
-    case ExprKind::Cast: sub(e.implicit ? "cast.implicit" : "cast"); break;
-    case ExprKind::Call: sub("call", true); break;
-    case ExprKind::CallIndirect: sub("call.indirect"); break;
+    case ExprKind::BoolConst:
+        out << (e.bool_value ? "true" : "false");
+        return;
+    case ExprKind::StrConst:
+        out << '"' << e.text << '"';
+        return;
+    case ExprKind::Nil:
+        out << "nil:" << typeName(e.type);
+        return;
+    case ExprKind::LocalRef:
+        out << (fn != nullptr && e.local < fn->locals.size() ? fn->locals[e.local].name : "?")
+            << '#' << e.local;
+        return;
+    case ExprKind::GlobalRef:
+        out << '@' << e.text;
+        return;
+    case ExprKind::FuncRef:
+        out << "&fn " << e.text;
+        return;
+    case ExprKind::External:
+        out << "external(" << e.text << '.' << e.member << ')';
+        return;
+    case ExprKind::Construct:
+        out << "construct " << typeName(e.target) << ' ' << e.text;
+        break;
+    case ExprKind::Move:
+        out << "move#" << e.local;
+        break;
+    case ExprKind::Materialize:
+        out << "materialize#" << e.local << " live#" << e.index;
+        break;
+    case ExprKind::Unary:
+        sub(unaryOpName(e.unary_op));
+        break;
+    case ExprKind::Binary:
+        sub(binaryOpName(e.binary_op));
+        break;
+    case ExprKind::Cast:
+        sub(e.implicit ? "cast.implicit" : "cast");
+        break;
+    case ExprKind::Call:
+        sub("call", true);
+        break;
+    case ExprKind::CallIndirect:
+        sub("call.indirect");
+        break;
     case ExprKind::CallVirtual:
         out << std::format("(call.virtual {}[{}]", e.text, e.index);
         break;
     case ExprKind::CallItable:
         out << std::format("(call.itable {}[{}]", e.text, e.index);
         break;
-    case ExprKind::ExternalCall: out << "(call.external " << e.text << '.' << e.member; break;
-    case ExprKind::Syscall: sub("syscall"); break;
-    case ExprKind::Field: out << std::format("(field{} {}", e.through_pointer ? ".ptr" : "", e.text); break;
-    case ExprKind::Select: sub("select"); break;
-    case ExprKind::Index: sub(e.checked ? "index.checked" : "index"); break;
-    case ExprKind::Deref: sub("deref"); break;
-    case ExprKind::RawRead: sub("rawRead"); break;
-    case ExprKind::AddrOf: sub("addr"); break;
-    case ExprKind::ArrayList: sub("array"); break;
-    case ExprKind::ArrayRepeat: out << std::format("(array.repeat {}", e.int_value); break;
-    case ExprKind::StructLit: out << "(struct " << typeName(e.type); break;
+    case ExprKind::ExternalCall:
+        out << "(call.external " << e.text << '.' << e.member;
+        break;
+    case ExprKind::Syscall:
+        sub("syscall");
+        break;
+    case ExprKind::Field:
+        out << std::format("(field{} {}", e.through_pointer ? ".ptr" : "", e.text);
+        break;
+    case ExprKind::Select:
+        sub("select");
+        break;
+    case ExprKind::Index:
+        sub(e.checked ? "index.checked" : "index");
+        break;
+    case ExprKind::Deref:
+        sub("deref");
+        break;
+    case ExprKind::RawRead:
+        sub("rawRead");
+        break;
+    case ExprKind::AddrOf:
+        sub("addr");
+        break;
+    case ExprKind::ArrayList:
+        sub("array");
+        break;
+    case ExprKind::TupleLit:
+        sub("tuple");
+        break;
+    case ExprKind::ArrayRepeat:
+        out << std::format("(array.repeat {}", e.int_value);
+        break;
+    case ExprKind::StructLit:
+        out << "(struct " << typeName(e.type);
+        break;
     case ExprKind::New:
         out << "(new " << typeName(e.target) << (e.registered ? " registered" : "");
         break;
-    case ExprKind::ToInterface: out << "(to.interface " << e.text; break;
-    case ExprKind::AtomicLoad: out << "(atomic.load order=" << e.index; break;
-    case ExprKind::AtomicStore: out << "(atomic.store order=" << e.index; break;
-    case ExprKind::AtomicXchg: out << "(atomic.xchg order=" << e.index; break;
-    case ExprKind::AtomicCas: out << "(atomic.cas order=" << e.index; break;
-    case ExprKind::AtomicAdd: out << "(atomic.add order=" << e.index; break;
-    case ExprKind::Fence: out << "(fence order=" << e.index; break;
-    case ExprKind::UnwindPads: out << "(unwind.pads"; break;
-    case ExprKind::UnwindPadCount: out << "(unwind.pad.count"; break;
+    case ExprKind::ToInterface:
+        out << "(to.interface " << e.text;
+        break;
+    case ExprKind::AtomicLoad:
+        out << "(atomic.load order=" << e.index;
+        break;
+    case ExprKind::AtomicStore:
+        out << "(atomic.store order=" << e.index;
+        break;
+    case ExprKind::AtomicXchg:
+        out << "(atomic.xchg order=" << e.index;
+        break;
+    case ExprKind::AtomicCas:
+        out << "(atomic.cas order=" << e.index;
+        break;
+    case ExprKind::AtomicAdd:
+        out << "(atomic.add order=" << e.index;
+        break;
+    case ExprKind::Fence:
+        out << "(fence order=" << e.index;
+        break;
+    case ExprKind::UnwindPads:
+        out << "(unwind.pads";
+        break;
+    case ExprKind::UnwindPadCount:
+        out << "(unwind.pad.count";
+        break;
     case ExprKind::Asm:
-        out << "(asm \"" << e.text << "\"" << (e.nomem ? " nomem" : "") << (e.noreturn ? " noreturn" : "");
+        out << "(asm \"" << e.text << "\"" << (e.nomem ? " nomem" : "")
+            << (e.noreturn ? " noreturn" : "");
         for (const AsmOperand& op : e.asm_operands) {
-            out << (op.kind == AsmOperand::Kind::In ? " in(" : op.kind == AsmOperand::Kind::Out ? " out(" : " inout(")
+            out << (op.kind == AsmOperand::Kind::In    ? " in("
+                    : op.kind == AsmOperand::Kind::Out ? " out("
+                                                       : " inout(")
                 << op.reg << ") ";
             dumpExpr(out, fn, *op.value);
         }
@@ -118,7 +194,8 @@ void dumpStmt(std::ostream& out, const Function& fn, const Stmt& s, int indent) 
     out << pad;
     switch (s.kind) {
     case StmtKind::Local:
-        out << "local " << fn.locals[s.local].name << '#' << s.local << ": " << typeName(fn.locals[s.local].type);
+        out << "local " << fn.locals[s.local].name << '#' << s.local << ": "
+            << typeName(fn.locals[s.local].type);
         if (s.value) {
             out << " = ";
             dumpExpr(out, &fn, *s.value);
@@ -165,17 +242,20 @@ void dumpStmt(std::ostream& out, const Function& fn, const Stmt& s, int indent) 
         }
         break;
     case StmtKind::Continue:
-        out << "continue" << (s.depth != 0 ? std::format(" depth={}", s.depth) : std::string()) << '\n';
+        out << "continue" << (s.depth != 0 ? std::format(" depth={}", s.depth) : std::string())
+            << '\n';
         break;
     case StmtKind::Break:
-        out << "break" << (s.depth != 0 ? std::format(" depth={}", s.depth) : std::string()) << '\n';
+        out << "break" << (s.depth != 0 ? std::format(" depth={}", s.depth) : std::string())
+            << '\n';
         break;
     case StmtKind::Block:
         out << "block\n";
         dumpStmts(out, fn, s.body, indent + 1);
         break;
     case StmtKind::Try:
-        out << "try snapshot=" << fn.locals[s.local].name << '#' << s.local << " message=" << s.msg_local << '\n';
+        out << "try snapshot=" << fn.locals[s.local].name << '#' << s.local
+            << " message=" << s.msg_local << '\n';
         dumpStmts(out, fn, s.body, indent + 1);
         out << pad << "catch\n";
         dumpStmts(out, fn, s.else_body, indent + 1);
@@ -189,7 +269,7 @@ void dumpStmts(std::ostream& out, const Function& fn, const std::vector<Stmt>& b
     }
 }
 
-}  // namespace
+} // namespace
 
 void dumpModule(std::ostream& out, const Module& m) {
     if (!m.panic_function.empty()) {
@@ -213,7 +293,8 @@ void dumpModule(std::ostream& out, const Module& m) {
     for (const Enum& e : m.enums) {
         out << "enum " << e.name << ": " << typeName(e.underlying) << '\n';
         for (const EnumMemberValue& v : e.members) {
-            out << "  " << v.name << " = " << (v.text.empty() ? std::to_string(v.int_value) : v.text) << '\n';
+            out << "  " << v.name << " = "
+                << (v.text.empty() ? std::to_string(v.int_value) : v.text) << '\n';
         }
     }
     for (const Aggregate& a : m.aggregates) {
@@ -261,4 +342,4 @@ void dumpModule(std::ostream& out, const Module& m) {
     }
 }
 
-}  // namespace xlang::hir
+} // namespace xlang::hir

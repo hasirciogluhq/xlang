@@ -13,7 +13,7 @@ using gen_detail::isUnknownType;
 
 bool Gen::isMem(const Type& t) const {
     return t.kind == TypeKind::Struct || t.kind == TypeKind::Class || t.kind == TypeKind::Array ||
-           t.kind == TypeKind::Interface || t.kind == TypeKind::Str;
+           t.kind == TypeKind::Interface || t.kind == TypeKind::Str || t.kind == TypeKind::Tuple;
 }
 
 bool Gen::isSigned(const Type& t) const {

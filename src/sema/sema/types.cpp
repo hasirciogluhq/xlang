@@ -15,7 +15,6 @@ using sema_detail::joinDotted;
 // Type resolution (plan 2.5): `Named` -> Struct/Class/Interface/Enum, alias expansion
 // (E0704 on a cycle), generic arguments (E0724) and the alias-substitution path.
 
-
 // ---------------------------------------------------------------------------------------------
 // Types
 
@@ -37,6 +36,18 @@ std::optional<Type> Sema::resolve(const Type& type) {
         }
         Type out = type;
         out.elem = std::make_shared<const Type>(std::move(*inner));
+        return out;
+    }
+    case TypeKind::Tuple: {
+        Type out = type;
+        out.args.clear();
+        for (const Type& a : type.args) {
+            auto r = resolve(a);
+            if (!r) {
+                return std::nullopt;
+            }
+            out.args.push_back(std::move(*r));
+        }
         return out;
     }
     case TypeKind::FnPtr: {
@@ -224,5 +235,4 @@ std::optional<Type> Sema::resolve(const Type& type) {
     }
 }
 
-
-}  // namespace xlang
+} // namespace xlang

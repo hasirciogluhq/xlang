@@ -1,0 +1,141 @@
+// End-to-end: tuple types and multiple return values.
+// A tuple `(A, B)` is a product type laid out like `@repr(c)`; a function may return one, and the
+// caller takes it apart with `.0`, `.1`, ... or passes it on by value.
+// Exits with the number of failed checks and prints "tuple return ok" when all pass.
+
+from "std" import print
+
+fn divMod(a: i64, b: i64) -> (i64, i64) {
+    return (a / b, a % b)
+}
+
+fn minMax(a: i32, b: i32) -> (i32, i32) {
+    if a < b {
+        return (a, b)
+    }
+    return (b, a)
+}
+
+fn pairOf(x: f64) -> (f64, f64) {
+    return (x, x * x)
+}
+
+fn passThrough(p: (i32, i32)) -> (i32, i32) {
+    return p
+}
+
+fn sumOf(p: (i32, i32)) -> i32 {
+    return p.0 + p.1
+}
+
+fn unit() -> () {
+    return ()
+}
+
+struct Point {
+    x: i32
+    y: i32
+}
+
+fn splitPoint(p: Point) -> (i32, i32) {
+    return (p.x, p.y)
+}
+
+fn makePoint(a: i32, b: i32) -> Point {
+    return Point { x: a, y: b }
+}
+
+fn triple() -> (i32, f64, bool) {
+    return (7, 2.5, true)
+}
+
+@entry fn main() -> i32 {
+    local failures: i32 = 0
+
+    local q: i64 = 0
+    local r: i64 = 0
+
+    local dm: (i64, i64) = divMod(17, 5)
+    q = dm.0
+    r = dm.1
+    if q != 3 {
+        print("divMod quotient: expected 3, got {q}\n")
+        failures++
+    }
+    if r != 2 {
+        print("divMod remainder: expected 2, got {r}\n")
+        failures++
+    }
+
+    local mm: (i32, i32) = minMax(9, 4)
+    if mm.0 != 4 {
+        print("minMax low: expected 4, got {mm.0}\n")
+        failures++
+    }
+    if mm.1 != 9 {
+        print("minMax high: expected 9, got {mm.1}\n")
+        failures++
+    }
+
+    local sq: (f64, f64) = pairOf(1.5)
+    if sq.0 != 1.5 {
+        print("pairOf value: expected 1.5, got {sq.0}\n")
+        failures++
+    }
+    if sq.1 != 2.25 {
+        print("pairOf square: expected 2.25, got {sq.1}\n")
+        failures++
+    }
+
+    local p: (i32, i32) = (10, 20)
+    if sumOf(p) != 30 {
+        print("sumOf: expected 30, got {sumOf(p)}\n")
+        failures++
+    }
+    local back: (i32, i32) = passThrough(p)
+    if back.0 != 10 || back.1 != 20 {
+        print("passThrough: expected (10, 20), got ({back.0}, {back.1})\n")
+        failures++
+    }
+
+    unit()
+
+    local pt: Point = makePoint(3, -4)
+    local xy: (i32, i32) = splitPoint(pt)
+    if xy.0 != 3 || xy.1 != -4 {
+        print("splitPoint: expected (3, -4), got ({xy.0}, {xy.1})\n")
+        failures++
+    }
+
+    local t: (i32, f64, bool) = triple()
+    if t.0 != 7 {
+        print("triple.0: expected 7, got {t.0}\n")
+        failures++
+    }
+    if t.1 != 2.5 {
+        print("triple.1: expected 2.5, got {t.1}\n")
+        failures++
+    }
+    if !t.2 {
+        print("triple.2: expected true\n")
+        failures++
+    }
+
+    // A tuple used as a place: its elements are assignable when the tuple is a local.
+    local acc: (i32, i32) = (0, 0)
+    acc.0 = 5
+    acc.1 = acc.0 * 2
+    if acc.0 + acc.1 != 15 {
+        print("tuple place write: expected 15, got {acc.0 + acc.1}\n")
+        failures++
+    }
+
+    // The empty tuple is a distinct value with no elements; it has no fields to read.
+    local e: () = ()
+    local e2: () = unit()
+
+    if failures == 0 {
+        print("tuple return ok\n")
+    }
+    return failures
+}

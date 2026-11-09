@@ -49,6 +49,10 @@ void Sema::checkType(const Type& type, const Span& at) {
             if (t.ret) {
                 walk(*t.ret);
             }
+        } else if (t.kind == TypeKind::Tuple) {
+            for (const Type& a : t.args) {
+                walk(a);
+            }
         }
     };
     walk(type);

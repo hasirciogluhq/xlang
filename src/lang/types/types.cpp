@@ -69,6 +69,13 @@ Type Type::makeStr() {
     return t;
 }
 
+Type Type::makeTuple(std::vector<Type> elements) {
+    Type t;
+    t.kind = TypeKind::Tuple;
+    t.args = std::move(elements);
+    return t;
+}
+
 std::optional<Type> primitiveFromName(std::string_view name) {
     struct Entry {
         std::string_view name;
@@ -162,6 +169,21 @@ std::string typeToString(const Type& type) {
     case TypeKind::Array:
         return std::format("[{}; {}]", type.elem ? typeToString(*type.elem) : "?",
                            lengthToString(type.length.get()));
+    case TypeKind::Tuple: {
+        // `()` is the empty tuple; a one-element tuple keeps its trailing comma so that it is not
+        // read as a parenthesized type.
+        std::string out = "(";
+        for (std::size_t i = 0; i < type.args.size(); ++i) {
+            if (i != 0) {
+                out += ", ";
+            }
+            out += typeToString(type.args[i]);
+        }
+        if (type.args.size() == 1) {
+            out += ',';
+        }
+        return out + ")";
+    }
     case TypeKind::Enum:
     case TypeKind::Struct:
     case TypeKind::Class:
@@ -195,6 +217,13 @@ std::string mangleType(const Type& type) {
         const std::uint64_t len =
             type.length && type.length->kind == Expr::Kind::IntLiteral ? type.length->int_value : 0;
         return std::format("A{}_", len) + (type.elem ? mangleType(*type.elem) : "void");
+    }
+    case TypeKind::Tuple: {
+        std::string out = "T";
+        for (const Type& a : type.args) {
+            out += mangleType(a);
+        }
+        return out + "E";
     }
     case TypeKind::Enum:
     case TypeKind::Struct:

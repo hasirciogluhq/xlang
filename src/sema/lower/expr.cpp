@@ -115,9 +115,9 @@ Lowerer::EP Lowerer::coerce(EP value, const Type& to, const Span& at) {
                 "different interfaces");
             return nullptr;
         }
-        const bool agg =
-            lower::isAggregate(value->type) || (value->type.kind == TypeKind::Pointer &&
-                                         value->type.elem && lower::isAggregate(*value->type.elem));
+        const bool agg = lower::isAggregate(value->type) ||
+                         (value->type.kind == TypeKind::Pointer && value->type.elem &&
+                          lower::isAggregate(*value->type.elem));
         if (agg) {
             return toInterface(std::move(value), to, at);
         }
@@ -188,7 +188,8 @@ Lowerer::EP Lowerer::fromConst(const ConstValue& v, const Type* expected, const 
         e->bool_value = v.bool_value;
         return e;
     }
-    case ConstValue::Kind::String: return stringLiteral(v.string_value, expected, span);
+    case ConstValue::Kind::String:
+        return stringLiteral(v.string_value, expected, span);
     }
     return nullptr;
 }
@@ -200,11 +201,12 @@ Lowerer::EP Lowerer::constExpr(const Expr& e, const Type* expected) {
 
 /// A string literal takes its type from the context (see docs/language/index.md, "Strings"):
 /// `*ui8` (raw NUL-terminated bytes), `[ui8; N]` (a mutable zero-padded copy) or `str`.
-Lowerer::EP Lowerer::stringLiteral(const std::string& text, const Type* expected, const Span& span) {
+Lowerer::EP
+Lowerer::stringLiteral(const std::string& text, const Type* expected, const Span& span) {
     const Type want = expected != nullptr ? resolved(*expected) : lower::unknownType();
     const Type byte = Type::makeInt(8, false);
-    const bool raw = want.kind == TypeKind::Pointer ||
-                     (want.kind == TypeKind::Enum && want.elem && want.elem->kind == TypeKind::Pointer);
+    const bool raw = want.kind == TypeKind::Pointer || (want.kind == TypeKind::Enum && want.elem &&
+                                                        want.elem->kind == TypeKind::Pointer);
     if (raw) {
         EP p = mk(hir::ExprKind::StrConst, Type::makePointer(byte), span);
         p->text = text;
@@ -262,7 +264,8 @@ Lowerer::EP Lowerer::expr(const Expr& e, const Type* expected) {
         b->bool_value = e.bool_value;
         return b;
     }
-    case Expr::Kind::StringLiteral: return stringLiteral(e.text, expected, e.span);
+    case Expr::Kind::StringLiteral:
+        return stringLiteral(e.text, expected, e.span);
     case Expr::Kind::Name:
         return nameExpr(e, expected);
     case Expr::Kind::Field:
@@ -282,6 +285,8 @@ Lowerer::EP Lowerer::expr(const Expr& e, const Type* expected) {
     case Expr::Kind::ArrayList:
     case Expr::Kind::ArrayRepeat:
         return arrayExpr(e, expected);
+    case Expr::Kind::TupleLiteral:
+        return tupleExpr(e, expected);
     case Expr::Kind::StructLiteral:
         return structLiteral(e);
     case Expr::Kind::New:
@@ -432,9 +437,8 @@ Lowerer::EP Lowerer::fromEntry(const ScopeEntry& entry, const Expr& at, const Ty
                 } else {
                     err("E0404",
                         at.span,
-                        std::format("no overload of `{}` has type `{}`",
-                                    entry.name,
-                                    typeToString(want)),
+                        std::format(
+                            "no overload of `{}` has type `{}`", entry.name, typeToString(want)),
                         "the expected type must match one overload");
                 }
                 return nullptr;
@@ -444,7 +448,9 @@ Lowerer::EP Lowerer::fromEntry(const ScopeEntry& entry, const Expr& at, const Ty
         if (sh_.isHook(cands[pick].key)) {
             err("E0727",
                 at.span,
-                std::format("`{}` is an `@init`, `@fini` or `@entry` function and cannot be used as a value", entry.name),
+                std::format("`{}` is an `@init`, `@fini` or `@entry` function and cannot be used "
+                            "as a value",
+                            entry.name),
                 "hook functions are started by the generated code; take a normal function instead");
             return nullptr;
         }
@@ -551,12 +557,32 @@ Lowerer::EP Lowerer::fieldExpr(const Expr& e) {
         f->lhs = std::move(base);
         return f;
     }
-    if (!lower::isAggregate(agg)) {
+    if (!lower::isAggregate(agg) && agg.kind != TypeKind::Tuple) {
         err("E0709",
             e.span,
             std::format("`{}` has no field `{}`", typeToString(base->type), e.text),
-            "only structs and classes have fields");
+            "only structs, classes and tuples have fields");
         return nullptr;
+    }
+    if (agg.kind == TypeKind::Tuple) {
+        // `t.0`, `t.1`, ...: the element at that position (`text` is empty for a tuple access).
+        if (e.int_value >= agg.args.size()) {
+            err("E0709",
+                e.span,
+                std::format("`{}` has {} element(s), so `.{}` is out of range",
+                            typeToString(agg),
+                            agg.args.size(),
+                            e.int_value),
+                "write an element index below the element count");
+            return nullptr;
+        }
+        EP f = mk(hir::ExprKind::Field, agg.args[e.int_value], e.span);
+        f->index = static_cast<std::uint32_t>(e.int_value);
+        f->through_pointer = through;
+        f->lvalue = through || base->lvalue;
+        f->readonly = !through && base->readonly;
+        f->lhs = std::move(base);
+        return f;
     }
     std::vector<FieldInfo> fields;
     collectFields(agg.path.front(), fields);
@@ -580,10 +606,11 @@ Lowerer::EP Lowerer::fieldExpr(const Expr& e) {
     return nullptr;
 }
 
-/// True when a constant arithmetic expression must not be folded here, because the folded value would be
-/// emitted without the conversion back to the expression's type: `-2.0 * count` with `count: f64` folded to
-/// `0.0 - 2.0` yields an `i32` constant -2 that the float-printing path reads as a double bit pattern.
-/// Comparisons and `&&`/`||` stay folded: they produce a bool and are always correct.
+/// True when a constant arithmetic expression must not be folded here, because the folded value
+/// would be emitted without the conversion back to the expression's type: `-2.0 * count` with
+/// `count: f64` folded to `0.0 - 2.0` yields an `i32` constant -2 that the float-printing path
+/// reads as a double bit pattern. Comparisons and `&&`/`||` stay folded: they produce a bool and
+/// are always correct.
 [[nodiscard]] static bool arithmeticFoldUnsafe(const Expr& e) {
     switch (e.kind) {
     case Expr::Kind::Unary:
@@ -979,7 +1006,8 @@ Lowerer::EP Lowerer::builtinCall(const Expr& e, const std::string& name) {
         return nullptr;
     }
     if (name == "__builtin_read") {
-        // `__builtin_read(p)`: the value at `p`, copied out. Nothing is dropped or moved; the caller owns the copy.
+        // `__builtin_read(p)`: the value at `p`, copied out. Nothing is dropped or moved; the
+        // caller owns the copy.
         if (e.args.size() != 1) {
             err("E0710", e.span, "`__builtin_read` takes one pointer", "wrong number of arguments");
             return nullptr;
@@ -996,7 +1024,10 @@ Lowerer::EP Lowerer::builtinCall(const Expr& e, const std::string& name) {
             return nullptr;
         }
         if (p->type.elem->isVoid()) {
-            err("E0709", e.args[0]->span, "`__builtin_read` cannot read a `void`", "pass a pointer to a typed value");
+            err("E0709",
+                e.args[0]->span,
+                "`__builtin_read` cannot read a `void`",
+                "pass a pointer to a typed value");
             return nullptr;
         }
         EP r = mk(hir::ExprKind::RawRead, *p->type.elem, e.span);
@@ -1042,12 +1073,16 @@ Lowerer::EP Lowerer::builtinCall(const Expr& e, const std::string& name) {
     }
     if (name == "__builtin_unwindPads" || name == "__builtin_unwindPadCount") {
         if (!e.args.empty()) {
-            err("E0710", e.span, std::format("`{}` takes no arguments", name), "wrong number of arguments");
+            err("E0710",
+                e.span,
+                std::format("`{}` takes no arguments", name),
+                "wrong number of arguments");
             return nullptr;
         }
         const bool pads = name == "__builtin_unwindPads";
         return mk(pads ? hir::ExprKind::UnwindPads : hir::ExprKind::UnwindPadCount,
-                  pads ? Type::makePointer(Type::makeInt(0, false)) : Type::makeInt(0, false), e.span);
+                  pads ? Type::makePointer(Type::makeInt(0, false)) : Type::makeInt(0, false),
+                  e.span);
     }
     if (name == "__builtin_fence") {
         if (e.args.size() != 1) {
@@ -1604,8 +1639,10 @@ Lowerer::EP Lowerer::callEntry(const Expr& e, const ScopeEntry& entry, const std
         if (sh_.isHook(cand.key)) {
             err("E0727",
                 e.span,
-                std::format("`{}` is an `@init`, `@fini` or `@entry` function and cannot be called", name),
-                "hook functions are started by the generated code; move the shared code into a normal "
+                std::format("`{}` is an `@init`, `@fini` or `@entry` function and cannot be called",
+                            name),
+                "hook functions are started by the generated code; move the shared code into a "
+                "normal "
                 "function and call that");
             return nullptr;
         }
@@ -1658,9 +1695,9 @@ Lowerer::EP Lowerer::callExpr(const Expr& e, const Type* expected) {
         if (entry != nullptr && entry->kind == ScopeEntry::Kind::Type && entry->item != nullptr &&
             std::holds_alternative<ClassDecl>(entry->item->decl)) {
             if (!Sema::genericParamsOf(*entry->item).empty()) {
-                return genericConstruct(e, callee, *entry);  // `Vec<i32>(args)`
+                return genericConstruct(e, callee, *entry); // `Vec<i32>(args)`
             }
-            return constructCall(e, *entry);  // `T(args)` builds a class
+            return constructCall(e, *entry); // `T(args)` builds a class
         }
         if (entry != nullptr) {
             if (EP c = callEntry(e, *entry, name)) {
@@ -1881,6 +1918,36 @@ Lowerer::EP Lowerer::arrayExpr(const Expr& e, const Type* expected) {
     return out;
 }
 
+Lowerer::EP Lowerer::tupleExpr(const Expr& e, const Type* expected) {
+    // `(a, b)`: every element takes its type from the expected tuple's matching element (so an
+    // untyped literal like `0` becomes `f64` when the destination says so) or stands alone.
+    const Type want = expected != nullptr ? resolved(*expected) : lower::unknownType();
+    const bool hinted = want.kind == TypeKind::Tuple && want.args.size() == e.args.size();
+    std::vector<EP> items;
+    bool ok = true;
+    for (std::size_t i = 0; i < e.args.size(); ++i) {
+        EP v = expr(*e.args[i], hinted ? &want.args[i] : nullptr);
+        if (v && hinted) {
+            v = coerce(std::move(v), want.args[i], e.args[i]->span);
+        }
+        if (!v) {
+            ok = false;
+            continue;
+        }
+        items.push_back(std::move(v));
+    }
+    if (!ok) {
+        return nullptr;
+    }
+    std::vector<Type> elements;
+    for (const EP& v : items) {
+        elements.push_back(v->type);
+    }
+    EP out = mk(hir::ExprKind::TupleLit, Type::makeTuple(std::move(elements)), e.span);
+    out->args = std::move(items);
+    return out;
+}
+
 void Lowerer::lowerFields(const Expr& e, const Type& agg, std::vector<hir::FieldInit>& out) {
     std::vector<FieldInfo> fields;
     collectFields(agg.path.front(), fields);
@@ -1937,7 +2004,8 @@ Lowerer::EP Lowerer::structLiteral(const Expr& e) {
     if (t.kind == TypeKind::Class && hasInit(t.path.front())) {
         err("E0723",
             e.span,
-            std::format("`{}` has an `init`; build it with `{}(...)`", typeToString(t), typeToString(t)),
+            std::format(
+                "`{}` has an `init`; build it with `{}(...)`", typeToString(t), typeToString(t)),
             "a class literal would skip the constructor");
         return nullptr;
     }
@@ -1964,7 +2032,9 @@ Lowerer::EP Lowerer::newExpr(const Expr& e) {
         if (!e.has_call_args) {
             err("E0723",
                 e.span,
-                std::format("`{}` has an `init`; allocate it with `new {}(...)`", typeToString(t), typeToString(t)),
+                std::format("`{}` has an `init`; allocate it with `new {}(...)`",
+                            typeToString(t),
+                            typeToString(t)),
                 "a field literal would skip the constructor");
             return nullptr;
         }
@@ -1980,7 +2050,8 @@ Lowerer::EP Lowerer::newExpr(const Expr& e) {
     }
     lowerFields(e, t, out->fields);
     if (e.lhs) {
-        // Placement: `new(p) T { ... }` initializes the memory `p` points at; no allocation happens.
+        // Placement: `new(p) T { ... }` initializes the memory `p` points at; no allocation
+        // happens.
         EP a = expr(*e.lhs, nullptr);
         if (!a) {
             return nullptr;
@@ -1988,8 +2059,10 @@ Lowerer::EP Lowerer::newExpr(const Expr& e) {
         if (!lower::isUnknown(a->type) && a->type.kind != TypeKind::Pointer) {
             err("E0709",
                 e.lhs->span,
-                std::format("`new(p) T` needs a pointer to the memory, found `{}`", typeToString(a->type)),
-                "pass the memory as a pointer, for example `new(allocator.alloc(sizeOf(T), alignOf(T))) T { }`");
+                std::format("`new(p) T` needs a pointer to the memory, found `{}`",
+                            typeToString(a->type)),
+                "pass the memory as a pointer, for example `new(allocator.alloc(sizeOf(T), "
+                "alignOf(T))) T { }`");
             return nullptr;
         }
         out->lhs = std::move(a);
@@ -2010,4 +2083,4 @@ Lowerer::EP Lowerer::newExpr(const Expr& e) {
     return out;
 }
 
-}  // namespace xlang::lower
+} // namespace xlang::lower

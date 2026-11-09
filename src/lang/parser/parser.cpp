@@ -482,6 +482,29 @@ class Parser {
                 Type::makeArray(std::move(element), std::shared_ptr<const Expr>(std::move(length)));
             break;
         }
+        case TokenKind::LParen: {
+            // Tuple type: `()` is the empty tuple, `(A,)` a one-element tuple, `(A, B)` a product.
+            advance();
+            ++nl_depth_;
+            std::vector<Type> elements;
+            bool trailing_comma = false;
+            while (!at(TokenKind::RParen)) {
+                elements.push_back(parseType());
+                if (!match(TokenKind::Comma)) {
+                    break;
+                }
+                trailing_comma = at(TokenKind::RParen);
+            }
+            --nl_depth_;
+            expect(TokenKind::RParen, "`)` closing the tuple type");
+            if (elements.size() == 1 && !trailing_comma) {
+                // `(T)` is not a tuple: it is the type `T` in parentheses.
+                type = std::move(elements.front());
+            } else {
+                type = Type::makeTuple(std::move(elements));
+            }
+            break;
+        }
         case TokenKind::Ident: {
             std::vector<std::string> path;
             path.push_back(advance().text);
@@ -869,6 +892,16 @@ class Parser {
                 expr = std::move(index);
             } else if (at(TokenKind::Dot) && continues()) {
                 advance();
+                if (at(TokenKind::Int)) {
+                    // `.0`, `.1`, ... in a tuple: the element at that position. The index travels
+                    // in `int_value`; `text` stays empty, so nothing mistakes it for a field name.
+                    ExprPtr elem = makeExpr(Expr::Kind::Field, expr->span);
+                    elem->int_value = advance().int_value;
+                    elem->span = spanFrom(expr->span);
+                    elem->lhs = std::move(expr);
+                    expr = std::move(elem);
+                    continue;
+                }
                 if (!at(TokenKind::Ident)) {
                     expected("a member name after `.`");
                 }
@@ -978,16 +1011,33 @@ class Parser {
             return e;
         }
         case TokenKind::LParen: {
+            // A tuple value: `()` (empty), `(x,)` (one element) or `(a, b, ...)`, with an
+            // optional trailing comma. `(x)` stays a parenthesized expression.
             advance();
             ++nl_depth_;
             const bool saved_no_struct = no_struct_;
             no_struct_ = false;
-            ExprPtr inner = parseExpr();
+            std::vector<ExprPtr> elements;
+            bool trailing_comma = false;
+            while (!at(TokenKind::RParen)) {
+                elements.push_back(parseExpr());
+                if (!match(TokenKind::Comma)) {
+                    break;
+                }
+                trailing_comma = at(TokenKind::RParen);
+            }
             no_struct_ = saved_no_struct;
             --nl_depth_;
             expect(TokenKind::RParen, "`)`");
-            inner->span = spanFrom(start);
-            return inner;
+            if (elements.size() == 1 && !trailing_comma) {
+                ExprPtr inner = std::move(elements.front());
+                inner->span = spanFrom(start);
+                return inner;
+            }
+            ExprPtr tuple = makeExpr(Expr::Kind::TupleLiteral, start);
+            tuple->args = std::move(elements);
+            tuple->span = spanFrom(start);
+            return tuple;
         }
         case TokenKind::Fn:
             return parseFnLiteral();

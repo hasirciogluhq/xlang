@@ -114,6 +114,24 @@ void Gen::genInto(const hir::Expr& e, llvm::Value* dest) {
         }
         return;
     }
+    case hir::ExprKind::TupleLit: {
+        // A tuple is laid out like `@repr(c)`: element `i` sits at the i-th field offset.
+        const TypeLayout* l = layoutOf(e.type);
+        if (l == nullptr) {
+            error(e.span, std::format("no layout for `{}`", typeToString(e.type)));
+            return;
+        }
+        zeroMem(dest, l->size, l->align);
+        for (std::size_t i = 0; i < e.args.size(); ++i) {
+            llvm::Value* addr = byteOffset(dest, l->fields[i].offset);
+            if (isMem(e.args[i]->type)) {
+                genInto(*e.args[i], addr);
+            } else {
+                storeScalar(e.args[i]->type, genScalar(*e.args[i]), addr);
+            }
+        }
+        return;
+    }
     case hir::ExprKind::ArrayRepeat: {
         const auto [esize, ealign] = sizeAlign(*e.type.elem);
         (void)ealign;

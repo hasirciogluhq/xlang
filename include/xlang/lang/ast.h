@@ -66,6 +66,7 @@ struct Expr {
         Cast,          ///< lhs as type
         ArrayList,     ///< [args...]
         ArrayRepeat,   ///< [lhs; rhs]
+        TupleLiteral,  ///< (args...): a tuple value; `()` has no arguments, `(x,)` one
         StructLiteral, ///< type { fields }
         New,           ///< new T { fields } / new(lhs) T { fields }; lhs = memory pointer (placement); null = the `register(alloc)` function
         Ternary,       ///< lhs ? rhs : args[0]

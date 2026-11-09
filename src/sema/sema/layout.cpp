@@ -17,7 +17,6 @@ using sema_detail::joinDotted;
 // Layouts (plan 3.3): primitive sizes, `str`, arrays, and the aggregate layout (scheme v1,
 // `@repr(c)`, `@packed`, `@align`, `@layout`, recorded layouts of `declare`d types).
 
-
 // ---------------------------------------------------------------------------------------------
 // Layout
 
@@ -92,6 +91,31 @@ std::optional<TypeLayout> Sema::layoutOf(const Type& type, const Span& at) {
             return std::nullopt;
         }
         return ref->owner->layoutOfName(ref->local, at);
+    }
+    case TypeKind::Tuple: {
+        // A tuple is laid out like `@repr(c)` with the elements in order: no scheme reordering, so
+        // `(A, B)` and `(B, A)` differ and `.0` always names element 0. `()` has size 0.
+        std::uint64_t cursor = 0;
+        std::uint64_t align = 1;
+        for (std::size_t i = 0; i < t.args.size(); ++i) {
+            auto element = layoutOf(t.args[i], at);
+            if (!element) {
+                return std::nullopt;
+            }
+            const std::uint64_t off = alignUp(cursor, element->align);
+            out.fields.push_back(FieldLayout{.name = std::to_string(i),
+                                             .type = t.args[i],
+                                             .offset = off,
+                                             .size = element->size,
+                                             .align = element->align});
+            cursor = off + element->size;
+            align = std::max(align, element->align);
+        }
+        out.align = align;
+        out.data_size = cursor;
+        out.size = alignUp(cursor, align);
+        out.repr_c = true;
+        return out;
     }
     case TypeKind::Str: {
         // `str` is `{ ptr, len }`; the fields are visible to `s.ptr` and `s.len`.
@@ -373,5 +397,4 @@ Sema::aggregateLayout(const std::string& name, const Item& item, const Span& at)
     return out;
 }
 
-
-}  // namespace xlang
+} // namespace xlang
