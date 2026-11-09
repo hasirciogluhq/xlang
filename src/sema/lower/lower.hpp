@@ -680,7 +680,9 @@ class Lowerer {
     /// A generic `fn` named as a value: its type arguments are written (`f<i32>`) or taken from
     /// the expected `fn(...)` type.
     EP genericFnValue(const ScopeEntry& entry, const Expr& at, const Type* expected);
-    EP fieldExpr(const Expr& e);
+    /// `a.b`: a namespace member, an enum member or a variant of a payload enum (both are
+    /// resolved through the expected type when the enum is generic), or a field of a value.
+    EP fieldExpr(const Expr& e, const Type* expected = nullptr);
     EP unaryExpr(const Expr& e, const Type* expected);
     EP binaryExpr(const Expr& e, const Type* expected);
     EP castExpr(const Expr& e);

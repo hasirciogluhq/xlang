@@ -27,6 +27,9 @@ struct ScopeEntry {
     std::string module;              ///< Namespace: module key; External: module path as written
     Sema* owner{nullptr};            ///< module that owns the declaration (item)
     std::string qname;               ///< qualified name of the entity
+    /// Type: the enum instance behind the name when a generic enum was named for a type
+    /// (`switch r` of `Result<i32, E>` resolves `Result` to the instance and records its type).
+    Type instance_type;
     std::string member;              ///< External: name inside `module` (empty for a whole module)
     bool readonly{false};            ///< Global: a `const` (its places cannot be written)
     std::vector<const Item*> overloads;  ///< Function: every overload of the name (else empty)

@@ -191,7 +191,6 @@ std::optional<Type> Sema::resolve(const Type& type) {
         return out;
     }
     if (ref->sym->item != nullptr && !genericParamsOf(*ref->sym->item).empty()) {
-        // A generic struct, class, interface or enum names no type until its arguments are written.
         error("E0724",
               type.span,
               std::format("`{}` is generic and takes {} type argument(s), none given",

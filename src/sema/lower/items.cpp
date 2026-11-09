@@ -140,6 +140,13 @@ void Lowerer::buildModuleScope() {
                    std::holds_alternative<EnumDecl>(item.decl) ||
                    std::holds_alternative<TypeAliasDecl>(item.decl)) {
             e.kind = ScopeEntry::Kind::Type;
+            if (const auto* en = std::get_if<EnumDecl>(&item.decl);
+                en != nullptr && !en->generic_params.empty()) {
+                // A generic enum names no type until its arguments are written. Remembering the
+                // bare name lets `Result<i32, E>` set `instance_type` and lets a generic enum
+                // used without arguments report E0724 instead of looking like a plain name.
+                e.type = Type::makeNamed({base.name});
+            }
         } else {
             continue;
         }
@@ -1185,9 +1192,8 @@ void Lowerer::lowerEnum(const EnumDecl& decl) {
     out.name = s_.qualify(decl.name);
     out.underlying = resolved(decl.underlying);
     // The member values of an instance are computed by the module that owns the generic enum.
-    Sema* owner_ref = s_.compilation() != nullptr
-                          ? s_.compilation()->semaOf(s_.genericOwnerKey(decl.name))
-                          : &s_;
+    Sema* owner_ref =
+        s_.compilation() != nullptr ? s_.compilation()->semaOf(s_.genericOwnerKey(decl.name)) : &s_;
     Sema& owner = owner_ref != nullptr ? *owner_ref : s_;
     for (const EnumMember& m : decl.members) {
         hir::EnumMemberValue v;
@@ -1218,8 +1224,15 @@ const StructDecl* Lowerer::sumDecl(const Item* item) {
 }
 
 std::optional<Lowerer::Sum> Lowerer::sumOfEntry(const ScopeEntry& head) {
-    if (head.kind != ScopeEntry::Kind::Type) {
+    if (head.kind != ScopeEntry::Kind::Type || head.item == nullptr) {
         return std::nullopt;
+    }
+    // A generic enum named as a type (`local x: Result<i32, E>`) points at its instance; the
+    // instance's own aggregate is the sum layout.
+    if (!head.instance_type.path.empty()) {
+        if (const auto s = sumOfType(head.instance_type)) {
+            return s;
+        }
     }
     const StructDecl* decl = sumDecl(head.item);
     if (decl == nullptr) {
@@ -1229,11 +1242,22 @@ std::optional<Lowerer::Sum> Lowerer::sumOfEntry(const ScopeEntry& head) {
 }
 
 std::optional<Lowerer::Sum> Lowerer::sumOfType(const Type& t) {
+    if (t.kind == TypeKind::Named) {
+        // A generic enum: `Result<i32, E>` has its tag and payload structs in the instance.
+        const auto resolved = resolvedIn(s_, t);
+        if (resolved.kind == TypeKind::Struct) {
+            return sumOfType(resolved);
+        }
+        return std::nullopt;
+    }
     if (t.kind != TypeKind::Struct) {
         return std::nullopt;
     }
     const auto ref = entityOfType(t);
-    const StructDecl* decl = ref ? sumDecl(ref->sym->item) : nullptr;
+    if (!ref) {
+        return std::nullopt;
+    }
+    const StructDecl* decl = sumDecl(ref->sym->item);
     if (decl == nullptr) {
         return std::nullopt;
     }

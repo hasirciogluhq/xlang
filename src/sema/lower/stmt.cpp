@@ -297,7 +297,7 @@ void Lowerer::emitSumDropGlue(const std::string& qname, const StructDecl& sum, c
         root.kind = hir::StmtKind::If;
         root.span = span;
         root.value = std::move(eq);
-        root.body = std::move(body);
+        root.body.push_back(std::move(body));
         if (has_chain) {
             root.else_body.push_back(std::move(chain));
         }
@@ -1187,7 +1187,12 @@ void Lowerer::lowerForEach(const Stmt& s, std::vector<hir::Stmt>& out) {
 void Lowerer::lowerSwitch(const Stmt& s, std::vector<hir::Stmt>& out) {
     const Type boolean = Type::makeBool();
     EP scrutinee = expr(*s.expr, nullptr);
-    if (scrutinee && sumOfType(scrutinee->type)) {
+    // The head names the sum type: `switch r` of a generic enum instance (`Result<i32, E>`) is
+    // matched here, because `sumOfType` only sees the tag and the payload structs of an instance.
+    const ScopeEntry* head = scrutinee ? chainEntry(*s.expr) : nullptr;
+    const auto sum = scrutinee ? sumOfType(scrutinee->type)
+                              : (head != nullptr ? sumOfEntry(*head) : std::nullopt);
+    if (scrutinee && sum) {
         lowerSumSwitch(s, std::move(scrutinee), out);
         return;
     }

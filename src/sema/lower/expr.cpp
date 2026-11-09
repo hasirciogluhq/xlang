@@ -280,7 +280,7 @@ Lowerer::EP Lowerer::expr(const Expr& e, const Type* expected) {
     case Expr::Kind::Name:
         return nameExpr(e, expected);
     case Expr::Kind::Field:
-        return fieldExpr(e);
+        return fieldExpr(e, expected);
     case Expr::Kind::Unary:
         return unaryExpr(e, expected);
     case Expr::Kind::Binary:
@@ -503,7 +503,7 @@ Lowerer::EP Lowerer::fromEntry(const ScopeEntry& entry, const Expr& at, const Ty
     return nullptr;
 }
 
-Lowerer::EP Lowerer::fieldExpr(const Expr& e) {
+Lowerer::EP Lowerer::fieldExpr(const Expr& e, const Type* expected) {
     if (const ScopeEntry* head = chainEntry(*e.lhs)) {
         if (head->kind == ScopeEntry::Kind::Namespace) {
             const ScopeEntry* member = namespaceMember(*head, e.text, e.span, true);
@@ -515,11 +515,45 @@ Lowerer::EP Lowerer::fieldExpr(const Expr& e) {
         if (head->kind == ScopeEntry::Kind::Type && head->item != nullptr &&
             std::holds_alternative<EnumDecl>(head->item->decl)) {
             Sema& owner = head->owner != nullptr ? *head->owner : s_;
-            const auto v = owner.enumMember(declBase(*head->item).name, e.text, e.span);
+            const std::string name = declBase(*head->item).name;
+            // `Result.Ok` of a generic enum names a member of the instance the surrounding
+            // expression expects (`local r: Result<i32, E> = Result.Ok(1)`); without that type the
+            // instance is unknown (E0724).
+            if (const Item* item = head->item; !Sema::genericParamsOf(*item).empty()) {
+                if (expected == nullptr || expected->kind != TypeKind::Enum ||
+                    expected->path.front() != owner.qualify(name)) {
+                    err("E0724",
+                        e.span,
+                        std::format("`{}` is generic and takes {} type argument(s), none given",
+                                    name,
+                                    Sema::genericParamsOf(*item).size()),
+                        std::format("name the instance in the type of the value, as in\n"
+                                    "    local r: {}<...> = {}.{}",
+                                    name,
+                                    name,
+                                    e.text));
+                    return nullptr;
+                }
+                EP out = fromConst(
+                    *owner.enumMember(expected->path.front(), e.text, e.span), nullptr, e.span);
+                if (out) {
+                    // The head now stands for the instance, so a later `switch` finds its sum
+                    // layout.
+                    if (!head->instance_type.path.empty()) {
+                        const_cast<ScopeEntry*>(head)->instance_type = *expected;
+                    }
+                }
+                if (out && out->kind != hir::ExprKind::FloatConst &&
+                    out->kind != hir::ExprKind::BoolConst) {
+                    out->type = *expected;
+                }
+                return out;
+            }
+            const auto v = owner.enumMember(name, e.text, e.span);
             if (!v) {
                 return nullptr;
             }
-            Type et = Type::makeNamed({declBase(*head->item).name});
+            Type et = Type::makeNamed({name});
             et.span = e.span;
             const Type enum_type = resolvedIn(owner, et);
             EP out = fromConst(*v, nullptr, e.span);
@@ -1875,9 +1909,9 @@ Lowerer::EP Lowerer::indexExpr(const Expr& e) {
     return i;
 }
 
-/// `base[lo..hi]` / `base[lo..]` / `base[..hi]` / `base[..]`: a `str` view over the bytes `lo` up to
-/// `hi`, never a copy. `str` and `[ui8; N]` are the bases: a `str` is already a byte view, and an
-/// array of bytes borrows its storage. Both bounds are optional and default to 0 and the length.
+/// `base[lo..hi]` / `base[lo..]` / `base[..hi]` / `base[..]`: a `str` view over the bytes `lo` up
+/// to `hi`, never a copy. `str` and `[ui8; N]` are the bases: a `str` is already a byte view, and
+/// an array of bytes borrows its storage. Both bounds are optional and default to 0 and the length.
 /// Under --safety=checked the node carries `checked`, so both bounds are compared against the base
 /// length at run time (`E0` at compile time only for constant bounds, below).
 Lowerer::EP Lowerer::sliceExpr(const Expr& e) {
@@ -1886,9 +1920,8 @@ Lowerer::EP Lowerer::sliceExpr(const Expr& e) {
         return nullptr;
     }
     const auto slicing_is_bytes = [](const Type& t) {
-        return t.kind == TypeKind::Str ||
-               (t.kind == TypeKind::Array && t.elem && t.elem->kind == TypeKind::Int &&
-                t.elem->bits == 8);
+        return t.kind == TypeKind::Str || (t.kind == TypeKind::Array && t.elem &&
+                                           t.elem->kind == TypeKind::Int && t.elem->bits == 8);
     };
     // Slicing yields a slice type: `str`/`[ui8; N]` keeps its old `str` result for source
     // compatibility, while an array or an existing slice yields `[]T` over its element type.
@@ -1932,7 +1965,8 @@ Lowerer::EP Lowerer::sliceExpr(const Expr& e) {
     // Constant bounds on a constant-length array are a compile-time range check, like indexing.
     if (base->type.kind == TypeKind::Array) {
         if (const auto len = arrayLength(s_, base->type); len && e.rhs != nullptr &&
-            e.rhs->kind == Expr::Kind::IntLiteral && e.rhs->int_value > *len) {
+                                                          e.rhs->kind == Expr::Kind::IntLiteral &&
+                                                          e.rhs->int_value > *len) {
             err("E0701",
                 e.rhs->span,
                 std::format("slice end {} is past the length {} of `{}`",
@@ -1944,7 +1978,8 @@ Lowerer::EP Lowerer::sliceExpr(const Expr& e) {
         }
     }
     (void)yields_str;
-    EP s = mk(hir::ExprKind::Slice, result, e.span);    s->checked = s_.config_.safety == "checked";
+    EP s = mk(hir::ExprKind::Slice, result, e.span);
+    s->checked = s_.config_.safety == "checked";
     s->lvalue = false;
     s->rhs = std::move(hi);
     s->lhs = std::move(base);
