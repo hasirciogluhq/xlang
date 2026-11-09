@@ -60,6 +60,7 @@ tests=(
   "ecdsa|0|ecdsa ok|0|1"
   "strings|0|strings ok|0|1"
   "strtools|0|strtools ok|0|1"
+  "utf16|0|utf16 ok|0|1"
   "for_iter|0|for_iter ok|0|1"
   "overload|0|overload ok|0|1"
   "raii|0|raii ok|0|1"

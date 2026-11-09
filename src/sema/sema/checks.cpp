@@ -147,7 +147,10 @@ void Sema::analyze() {
     for (const Item& item : program_.items) {
         const DeclBase& base = declBase(item);
         if (const auto* e = std::get_if<EnumDecl>(&item.decl)) {
-            checkEnum(*e);
+            // A generic enum is checked per instance, when it is instantiated.
+            if (e->generic_params.empty()) {
+                checkEnum(*e);
+            }
         } else if (const auto* a = std::get_if<TypeAliasDecl>(&item.decl)) {
             // A generic alias has no concrete target until it is used; each use resolves it.
             if (a->generic_params.empty()) {

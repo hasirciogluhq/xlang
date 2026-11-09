@@ -267,6 +267,7 @@ struct EnumMember {
 };
 
 struct EnumDecl : DeclBase {
+    std::vector<std::string> generic_params;  ///< `enum Result<T, E>`
     bool has_underlying{false};
     Type underlying;  ///< `i32` when no `: T` was written
     std::vector<EnumMember> members;

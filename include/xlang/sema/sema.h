@@ -147,6 +147,11 @@ class Sema {
     /// E0724 on a wrong argument count, E0725 when the nesting of arguments is too deep).
     [[nodiscard]] std::optional<EntityRef>
     instantiate(const EntityRef& generic, const std::vector<Type>& args, const Span& at);
+    [[nodiscard]] EntityRef
+    instanceOf(const EntityRef& generic, const std::vector<Type>& args, const Span& at);
+    /// The module key of the generic declaration that `local` instantiates (`key()` itself when
+    /// `local` is not an instance).
+    [[nodiscard]] std::string genericOwnerKey(const std::string& local) const;
     /// Instances created since the last call, for lowering.
     [[nodiscard]] std::vector<const Item*> takePendingInstances();
     /// Origin of an instance by its local name (nullptr when `local` is not an instance).

@@ -62,7 +62,7 @@ void Lowerer::rejectDroppableArray(const Type& t, const Span& at, const char* wh
 }
 
 bool Lowerer::needsDrop(const Type& t) {
-    if (t.kind != TypeKind::Class || t.path.empty()) {
+    if ((t.kind != TypeKind::Class && t.kind != TypeKind::Struct) || t.path.empty()) {
         return false;
     }
     const std::string& qname = t.path.front();
@@ -72,16 +72,30 @@ bool Lowerer::needsDrop(const Type& t) {
     needs_drop_[qname] = false; // guards against a cycle
     bool result = false;
     if (const auto ref = s_.entityByQName(qname)) {
+        Sema& owner = *ref->owner;
         if (const auto* c = std::get_if<ClassDecl>(&ref->sym->item->decl)) {
             for (const FnDecl& m : c->methods) {
                 result = result || m.name == "drop";
             }
             for (const FieldDecl& f : c->fields) {
-                result = result || needsDrop(resolvedIn(*ref->owner, f.type));
+                result = result || needsDrop(resolvedIn(owner, f.type));
             }
             if (c->has_base) {
-                if (const auto base = ref->owner->resolve(Type::makeNamed(c->base))) {
+                if (const auto base = owner.resolve(Type::makeNamed(c->base))) {
                     result = result || needsDrop(*base);
+                }
+            }
+        } else if (const auto* st = std::get_if<StructDecl>(&ref->sym->item->decl)) {
+            if (!st->variants.empty()) {
+                // A payload enum owns its payload: it needs drop when one of its variants does.
+                for (const SumVariant& v : st->variants) {
+                    result = result || std::ranges::any_of(v.payload, [&](const Type& p) {
+                                 return needsDrop(resolvedIn(owner, p));
+                             });
+                }
+            } else {
+                for (const FieldDecl& f : st->fields) {
+                    result = result || needsDrop(resolvedIn(owner, f.type));
                 }
             }
         }
@@ -194,6 +208,108 @@ void Lowerer::emitDropGlue(const std::string& qname, const ClassDecl& c, const S
     mod_.functions.push_back(std::move(g));
 }
 
+/// The drop glue of a payload enum `E` (it is a struct `{ tag: E$Tag, data: E$Data }`):
+///
+///   E$dropGlue(p: *E) {
+///       switch p.tag { case E.Variant { drop(&p.data.Variant._i) ... } }
+///   }
+///
+/// Only the payload of the live variant is touched, so the bytes of the other variants stay
+/// unread. A variant without a droppable payload gets no case; the switch is a chain of `if`s,
+/// and the tag is compared against the variant's position, exactly as `switch` on the enum
+/// builds it.
+void Lowerer::emitSumDropGlue(const std::string& qname, const StructDecl& sum, const Span& span) {
+    Type self = Type::makeNamed({qname});
+    self.kind = TypeKind::Struct;
+    if (!needsDrop(self)) {
+        return;
+    }
+    const Type ptr = Type::makePointer(self);
+    const Type tag_type = sumPart(Sum{&s_, &sum}, "$Tag", span);
+    hir::Function g;
+    g.name = dropGlueName(qname);
+    g.symbol = g.name;
+    g.module = s_.key_;
+    g.exported = true;
+    g.has_body = true;
+    g.span = span;
+    g.ret = Type::makeVoid();
+    g.locals.push_back(hir::Local{"p", ptr, true, span});
+    g.param_count = 1;
+    const auto self_ptr = [&] { return localRef(0, ptr, span); };
+    const auto statement = [&](EP value) {
+        hir::Stmt s;
+        s.kind = hir::StmtKind::Expr;
+        s.span = span;
+        s.value = std::move(value);
+        return s;
+    };
+    /// `p.<name>`: a field of the enum itself (`tag`, `data`) or, when `through` is set, of the
+    /// object `p` points at.
+    const auto field = [&](EP base, const std::string& name, std::uint32_t index, Type type) {
+        EP f = mk(hir::ExprKind::Field, std::move(type), span);
+        f->text = name;
+        f->index = index;
+        f->through_pointer = true;
+        f->lvalue = true;
+        f->lhs = std::move(base);
+        return f;
+    };
+    const std::string data_type = qname + "$Data";
+    EP tag = field(self_ptr(), "tag", 0, tag_type);
+    hir::Stmt chain;
+    bool has_chain = false;
+    for (const std::size_t i : std::views::iota(std::size_t{0}, sum.variants.size())) {
+        const SumVariant& v = sum.variants[i];
+        std::vector<std::pair<std::size_t, Type>> droppable;
+        for (const std::size_t k : std::views::iota(std::size_t{0}, v.payload.size())) {
+            Type ft = resolvedIn(s_, v.payload[k]);
+            rejectDroppableArray(ft, span, "a payload value");
+            if (needsDrop(ft)) {
+                droppable.emplace_back(k, std::move(ft));
+            }
+        }
+        if (droppable.empty()) {
+            continue;
+        }
+        hir::Stmt body;
+        body.kind = hir::StmtKind::Block;
+        body.span = span;
+        for (const auto& [k, ft] : droppable) {
+            EP data = field(self_ptr(), "data", 1, Type::makeNamed({data_type}));
+            EP payload = field(std::move(data),
+                               v.name,
+                               static_cast<std::uint32_t>(sumDataIndex(Sum{&s_, &sum}, i)),
+                               Type::makeNamed({qname + "$" + v.name}));
+            EP value = field(std::move(payload),
+                             std::format("_{}", k),
+                             static_cast<std::uint32_t>(k),
+                             ft);
+            EP addr = mk(hir::ExprKind::AddrOf, Type::makePointer(ft), span);
+            addr->lhs = std::move(value);
+            body.body.push_back(statement(dropCallOn(std::move(addr), ft, span)));
+        }
+        EP eq = mk(hir::ExprKind::Binary, Type::makeBool(), span);
+        eq->binary_op = BinaryOp::Eq;
+        eq->lhs = i == 0 ? std::move(tag) : field(self_ptr(), "tag", 0, tag_type);
+        eq->rhs = intConst(i, tag_type, span);
+        hir::Stmt root;
+        root.kind = hir::StmtKind::If;
+        root.span = span;
+        root.value = std::move(eq);
+        root.body = std::move(body);
+        if (has_chain) {
+            root.else_body.push_back(std::move(chain));
+        }
+        chain = std::move(root);
+        has_chain = true;
+    }
+    if (has_chain) {
+        g.body.push_back(std::move(chain));
+    }
+    mod_.functions.push_back(std::move(g));
+}
+
 Lowerer::EP Lowerer::localRef(hir::LocalId id, const Type& type, const Span& span) {
     EP r = mk(hir::ExprKind::LocalRef, type, span);
     r->local = id;
@@ -258,7 +374,7 @@ void Lowerer::registerDrop(hir::LocalId var,
     }
 }
 
-Lowerer::EP Lowerer::moveOut(EP value) {
+Lowerer::EP Lowerer::moveOut(EP value, bool fromSum) {
     if (!value || !needsDrop(value->type)) {
         return value;
     }
@@ -274,6 +390,12 @@ Lowerer::EP Lowerer::moveOut(EP value) {
     }
     if (value->kind == hir::ExprKind::Field || value->kind == hir::ExprKind::Index ||
         value->kind == hir::ExprKind::Deref) {
+        // The payload of a `case` pattern of a payload enum: the switch owns the scrutinee and the
+        // glue drops only the live variant, so the binding takes the value and the owner is
+        // consumed afterwards.
+        if (fromSum) {
+            return value;
+        }
         err("E0720",
             value->span,
             "cannot move out of a field, element or pointer",
@@ -282,7 +404,6 @@ Lowerer::EP Lowerer::moveOut(EP value) {
     }
     return value;
 }
-
 Lowerer::EP Lowerer::materializeTemp(EP value, const Span& span) {
     if (defers_.empty()) {
         return value;
@@ -878,16 +999,18 @@ void Lowerer::lowerForRange(const Stmt& s, std::vector<hir::Stmt>& out) {
     out.push_back(std::move(block));
 }
 
-/// `for x in s { }` / `for x, i in s { }`: a compile-time lowering to the index loop a caller writes
-/// by hand, with no vtable and no `Iter` protocol. The iterable is an array, a slice or a `str`; the
-/// element is a pointer into the storage (`*T`, so nothing is copied and a write reaches the owner)
-/// and the index is a `usize`. The bound is read once. `Vec<T>` stays stdlib: it is iterated once it
-/// can hand out a slice, so the compiler never names a runtime type (CLAUDE.md, compiler/runtime).
+/// `for x in s { }` / `for x, i in s { }`: a compile-time lowering to the index loop a caller
+/// writes by hand, with no vtable and no `Iter` protocol. The iterable is an array, a slice or a
+/// `str`; the element is a pointer into the storage (`*T`, so nothing is copied and a write reaches
+/// the owner) and the index is a `usize`. The bound is read once. `Vec<T>` stays stdlib: it is
+/// iterated once it can hand out a slice, so the compiler never names a runtime type (CLAUDE.md,
+/// compiler/runtime).
 void Lowerer::lowerForEach(const Stmt& s, std::vector<hir::Stmt>& out) {
     const Type boolean = Type::makeBool();
     const Type usize = Type::makeInt(0, false);
-    // A `for x in <name>` whose iterable is a bare name that names nothing is the leftover of a pack
-    // loop that was not unrolled (the pack rewrite happens before lowering); keep the old `E0735`.
+    // A `for x in <name>` whose iterable is a bare name that names nothing is the leftover of a
+    // pack loop that was not unrolled (the pack rewrite happens before lowering); keep the old
+    // `E0735`.
     if (s.expr->kind == Expr::Kind::Name && lookupName(s.expr->text) == nullptr &&
         !s_.config_.lookup(s.expr->text)) {
         err("E0735",
@@ -914,7 +1037,7 @@ void Lowerer::lowerForEach(const Stmt& s, std::vector<hir::Stmt>& out) {
             "iterate an array, a slice or `str`; a range is `for i in a..b`");
         return;
     }
-    Type elem_type = Type::makeInt(8, false);  // a `str` walks bytes
+    Type elem_type = Type::makeInt(8, false); // a `str` walks bytes
     if (iterable.elem) {
         elem_type = *iterable.elem;
     }
@@ -1016,7 +1139,8 @@ void Lowerer::lowerForEach(const Stmt& s, std::vector<hir::Stmt>& out) {
         index->lvalue = true;
         index->lhs = baseRef();
         index->rhs = ref(idx, usize);
-        // The element is its address in the storage (`*T`), so a write through it reaches the owner.
+        // The element is its address in the storage (`*T`), so a write through it reaches the
+        // owner.
         EP addr = mk(hir::ExprKind::AddrOf, elem_ptr, s.span);
         addr->lhs = std::move(index);
         hir::Stmt d;

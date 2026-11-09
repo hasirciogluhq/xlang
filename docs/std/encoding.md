@@ -21,14 +21,49 @@ The encoding modules are in `std/encoding`. Each encoder writes into a caller bu
 Base32 decoding is canonical: the padding must match the length, and the unused bits of the last character must be zero.
 Base85 (RFC 1924) and ascii85 (Adobe) are different formats. They share only the 4-byte grouping.
 
-## UTF-8 and CSV
+## UTF-8, UTF-16 and CSV
 
 | Module | Functions | Specification |
 |---|---|---|
 | `std/encoding/utf8` | `utf8Decode`, `utf8Valid`, `utf8Encode`, `utf8EncodedLen`, `utf8SeqLen` | RFC 3629 (no overlong forms, no surrogates, at most U+10FFFF) |
+| `std/encoding/utf16` | `toUtf8`, `toUtf8Exact`, `utf8LenOf`, `valid`, `fromUtf8`, `fromWideC` | Unicode standard, chapter 3 (UTF-16, surrogate pairs); RFC 3629 for the UTF-8 side |
 | `std/encoding/csv` | `csvRecord(text, n, pos)` returns the fields of one record as `Vec<String>` | RFC 4180 (quoted fields, doubled quotes, CRLF or LF) |
 
 A CSV record that spans lines needs the caller to join the lines when a quote is still open.
+
+### UTF-16
+
+`std/encoding/utf8` reports invalid input and never replaces it: `utf8Decode` returns -1 and the caller
+decides. That is the right rule for a protocol that must reject, and the wrong one for an OS API (a
+Windows `WCHAR *`), where a conversion has to finish and produce text. Both policies live in
+`std/encoding/utf16`, and each entry point names its own:
+
+| Function | Policy |
+|---|---|
+| `toUtf8(src, n, out, cap, terminate)` | lossy: an unpaired surrogate becomes U+FFFD |
+| `toUtf8Exact(src, n, out, cap, terminate)` | strict: an unpaired surrogate fails the whole conversion (-1) |
+| `utf8LenOf(src, n, cap, terminate)` | how many bytes `toUtf8` would write |
+| `valid(src, n)` | every surrogate is part of a complete pair |
+| `fromUtf8(s, n, out, cap, terminate)` | UTF-8 to UTF-16; an invalid byte becomes U+FFFD |
+| `fromWideC(src)` | the unit count of a NUL-terminated `WCHAR *` |
+
+The contract is the same everywhere:
+
+- **The length is `n`, never a NUL.** A unit with value 0 is an ordinary U+0000 and does not end the input;
+  a C string is measured first with `fromWideC`.
+- **A truncation never splits a code point.** When the next character does not fit, the conversion stops
+  before it and returns a shorter string whose bytes are still valid UTF-8.
+- **The terminator is outside the count.** With `terminate` the function reserves one byte (or unit) for the
+  terminator at `out[written]`, so the capacity must be `written + 1`.
+
+So a Windows call site reads as the intent, not as bit arithmetic:
+
+```xl
+local bytes = toUtf8(namep, fromWideC(namep), &info.name[0], 256, true)
+```
+
+The bit operations of the encoding (`(cp >> 6) & 0x3f`, the surrogate arithmetic) stay in
+`std/encoding/utf16`; the process and directory code names the conversion.
 
 ## JSON (full grammar)
 

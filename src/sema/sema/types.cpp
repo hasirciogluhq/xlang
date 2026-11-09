@@ -173,6 +173,17 @@ std::optional<Type> Sema::resolve(const Type& type) {
         case Symbol::Kind::Interface:
             out.kind = TypeKind::Interface;
             break;
+        case Symbol::Kind::Enum: {
+            // A generic value enum keeps its underlying type, computed once for the instance.
+            const auto& decl = std::get<EnumDecl>(inst->sym->item->decl);
+            out.kind = TypeKind::Enum;
+            auto under = inst->owner->resolve(decl.underlying);
+            if (!under) {
+                return std::nullopt;
+            }
+            out.elem = std::make_shared<const Type>(std::move(*under));
+            break;
+        }
         default:
             out.kind = TypeKind::Struct;
             break;
@@ -180,7 +191,7 @@ std::optional<Type> Sema::resolve(const Type& type) {
         return out;
     }
     if (ref->sym->item != nullptr && !genericParamsOf(*ref->sym->item).empty()) {
-        // A generic struct, class or interface names no type until its arguments are written.
+        // A generic struct, class, interface or enum names no type until its arguments are written.
         error("E0724",
               type.span,
               std::format("`{}` is generic and takes {} type argument(s), none given",

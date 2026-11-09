@@ -484,6 +484,8 @@ class Lowerer {
 
     // --- ownership: drop glue, drop flags, moves (core-language phase 5)
     /// A class needs drop when it has a `drop` method or a field or base class that needs drop.
+    /// A payload enum needs drop when any variant payload type does (only the live variant is
+    /// dropped, see `emitSumDropGlue`).
     [[nodiscard]] bool needsDrop(const Type& t);
     /// An array whose element type needs drop, at any depth of nested arrays.
     [[nodiscard]] bool droppableArray(const Type& t);
@@ -491,6 +493,9 @@ class Lowerer {
     void rejectDroppableArray(const Type& t, const Span& at, const char* where);
     [[nodiscard]] static std::string dropGlueName(const std::string& qname);
     void emitDropGlue(const std::string& qname, const ClassDecl& c, const Span& span);
+    /// The drop glue of a payload enum: `switch` on the tag, then the payload of the live variant
+    /// only. A variant whose payload needs no drop is not entered.
+    void emitSumDropGlue(const std::string& qname, const StructDecl& sum, const Span& span);
     [[nodiscard]] EP localRef(hir::LocalId id, const Type& type, const Span& span);
     [[nodiscard]] EP boolConst(bool value, const Span& span);
     /// `glue(addr)`: runs the drop glue of `t` on the object at `addr`.
@@ -505,8 +510,10 @@ class Lowerer {
                       const Span& span,
                       std::vector<hir::Stmt>& decls);
     /// A droppable value used by value: a local is moved (its flag cleared); a field, element or
-    /// pointer target is E0720; a temporary passes its ownership on.
-    [[nodiscard]] EP moveOut(EP value);
+    /// pointer target is E0720; a temporary passes its ownership on. `fromSum` marks the payload
+    /// of an enum read by a `case` pattern: that value is the live payload of a scrutinee the
+    /// switch owns, so it moves as a whole.
+    [[nodiscard]] EP moveOut(EP value, bool fromSum = false);
     /// A droppable temporary used as a receiver: stored in a hidden local dropped at block end.
     [[nodiscard]] EP materializeTemp(EP value, const Span& span);
     void lowerDropAssign(EP target, EP value, const Span& span, std::vector<hir::Stmt>& out);
@@ -524,7 +531,9 @@ class Lowerer {
     /// The base class constructor a derived `init` runs first (empty = none).
     [[nodiscard]] std::string baseInitKey(const ClassDecl& cl, Sema& owner);
     std::map<hir::LocalId, hir::LocalId> drop_flags_; ///< droppable local -> its drop flag
-    std::map<std::string, bool> needs_drop_;          ///< class qname -> needsDrop
+    /// Any type -> needsDrop. Structs are cached en route to their fields, so a payload enum that
+    /// mentions another payload enum by value terminates instead of recursing.
+    std::map<std::string, bool> needs_drop_;
     std::vector<std::pair<hir::LocalId, hir::LocalId>> entry_temps_; ///< (temp, flag) per function
     /// Cleanup flags (drop flags of locals, `defer` flags) declared `false` at the function head so
     /// a landing pad can read them before the statement that sets them has run.

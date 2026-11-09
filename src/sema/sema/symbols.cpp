@@ -270,6 +270,9 @@ std::vector<std::string> Sema::genericParamsOf(const Item& item) {
     if (const auto* i = std::get_if<InterfaceDecl>(&item.decl)) {
         return i->generic_params;
     }
+    if (const auto* e = std::get_if<EnumDecl>(&item.decl)) {
+        return e->generic_params;
+    }
     return {};
 }
 

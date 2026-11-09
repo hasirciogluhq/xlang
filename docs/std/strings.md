@@ -24,6 +24,7 @@ fromC(p: *ui8) -> str             // view of a NUL-terminated C string
 fromParts(p: *ui8, len: usize) -> str
 view(s: str, first: usize, n: usize) -> str   // no copy; panics outside the string
 find(s: str, needle: str) -> i64  // byte offset, or -1
+findLast(s: str, needle: str) -> i64  // byte offset of the last occurrence, or -1
 contains, startsWith, endsWith
 toU64(s: str, out: *ui64) -> bool
 toI64(s: str, out: *i64) -> bool
@@ -31,7 +32,18 @@ toI64(s: str, out: *i64) -> bool
 
 `view` returns a view without copying, and it is valid only while the bytes it views live. `toU64` and `toI64` parse decimal only, return false on overflow or junk, and leave `out` unchanged then.
 
-`std/str/compare` gives `compare(a, b) -> i32` (-1, 0, 1), `equalIgnoreCase`, `containsAny`, `isSpace` and `globMatch(pattern, text)` (`*` and `?`, no escapes).
+`std/str/compare` gives `compare(a, b) -> i32` (-1, 0, 1), `equalIgnoreCase`, `containsAny`, `isSpace`, `findByte(s, b) -> i64` and `findLastByte(s, b) -> i64` (the one-byte searches, so a delimiter scan names the character instead of building a one-byte `str`), and `globMatch(pattern, text)` (`*` and `?`, no escapes).
+
+Splitting and fixed-size copies (`std/str/string`) return owned values:
+
+```xl
+split(s: str, sep: str) -> Vec<String>          // keeps empty pieces; panics on an empty separator
+splitAsciiWhitespace(s: str) -> Vec<String>     // a run of whitespace is one separator, no empty pieces
+trim, trimStart, trimEnd, replace, replaceAll, repeat
+copyTruncated(s: str, dst: *ui8, cap: usize) -> usize
+```
+
+`splitAsciiWhitespace` is the tokenizer for a field list (`"  a b  "` gives `[a, b]`). `copyTruncated` copies at most `cap` bytes and stops before the code point that would be split, so the result is a shorter valid string, never half a character; it writes no terminator and returns the length. Use it where a buffer has a fixed size (an OS field, a fixed-width table).
 
 A `str` converts to `*ui8` only through `.ptr`; `as` cannot convert it. `s[i]` reads one byte and, under `--safety=checked`, panics when `i >= len`. Writing through a `str` (`s[i] = x`, `s.len = n`) is `E0716`.
 

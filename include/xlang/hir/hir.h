@@ -216,6 +216,8 @@ struct Aggregate {
     std::vector<Field> fields;        ///< own fields (base fields come first in layouts)
     std::vector<std::string> methods; ///< function names of the methods
     bool opaque{false};
+    /// A union: every field sits at offset 0 (the `E$Data` of a payload enum).
+    bool is_union{false};
     Span span;
 };
 

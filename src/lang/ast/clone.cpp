@@ -220,8 +220,30 @@ Item instantiateItem(const Item& generic, const TypeEnv& env, const std::string&
             c.methods.push_back(cloneFn(m, env));
         }
         out.decl = std::move(c);
+    } else if (const auto* e = std::get_if<EnumDecl>(&generic.decl)) {
+        EnumDecl c;
+        static_cast<DeclBase&>(c) = *e;
+        c.name = name;
+        c.has_underlying = e->has_underlying;
+        c.underlying = substituteType(e->underlying, env);
+        for (const EnumMember& m : e->members) {
+            EnumMember n;
+            n.name = m.name;
+            n.has_payload = m.has_payload;
+            n.attributes = m.attributes;
+            n.span = m.span;
+            for (const Type& p : m.payload) {
+                n.payload.push_back(substituteType(p, env));
+            }
+            if (m.value) {
+                n.value = cloneExpr(*m.value, env);
+            }
+            c.members.push_back(std::move(n));
+        }
+        out.decl = std::move(c);
     } else {
-        throw XlangError("internal: only fn, struct, class, interface and impl declarations are instantiated");
+        throw XlangError(
+            "internal: only fn, struct, class, interface, impl and enum declarations are instantiated");
     }
     return out;
 }

@@ -27,6 +27,8 @@ struct TypeLayout {
     bool has_vptr{false};
     bool repr_c{false};
     bool packed{false};
+    /// A union (the compiler-made `E$Data` of a payload enum): every field sits at offset 0.
+    bool is_union{false};
     bool shuffled{false};
     std::uint64_t seed{0};
     std::string scheme{"v1"};

@@ -141,7 +141,7 @@ fn same(out: *ui8, n: usize, want: *ui8) -> bool {
         if !eqWord(&words, 1, "beta") { fail("split 1") }
         if !eqWord(&words, 2, "gamma") { fail("split 2") }
     }
-    local none: Vec<String> = splitAsciiWhitespace(view(" \t\n ", 0, 5))
+    local none: Vec<String> = splitAsciiWhitespace(view(" \t\n ", 0, 4))
     if none.len != 0 { fail("split whitespace only") }
 
     // copyTruncated: a cut backs up to the previous character boundary, never into the middle of one.
@@ -174,7 +174,7 @@ fn same(out: *ui8, n: usize, want: *ui8) -> bool {
 }
 
 fn eqWord(v: *Vec<String>, i: usize, want: *ui8) -> bool {
-    local w: *String = &v.data[i]
+    local w: *String = v.get(i)
     local k: usize = 0
     while want[k] != 0 {
         if k >= w.len || w.ptr[k] != want[k] { return false }

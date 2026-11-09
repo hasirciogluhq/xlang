@@ -223,6 +223,7 @@ Sema::aggregateLayout(const std::string& name, const Item& item, const Span& at)
     const Attribute* repr = findAttr(base_decl.attributes, "repr");
     out.repr_c = repr != nullptr && attrHasIdent(*repr, "c");
     out.packed = findAttr(base_decl.attributes, "packed") != nullptr;
+    out.is_union = is_union;
     if (const Attribute* layout_attr = findAttr(base_decl.attributes, "layout")) {
         if (const AttributeArg* scheme = attrKey(*layout_attr, "scheme")) {
             if (scheme->text != kCurrentLayoutScheme) {

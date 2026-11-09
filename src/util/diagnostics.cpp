@@ -163,8 +163,9 @@ constexpr std::size_t kLeadWidth = 40;
          "through a `clone()` method."},
         {"E0721", Severity::Error, "value that needs drop in a place that cannot own it",
          "A global, a struct field, a local or a parameter has a type that needs drop, or an array "
-         "whose element type needs drop. Structs and globals are plain data, and arrays do not drop "
-         "their elements. Use a class field or a local of a class type."},
+         "whose element type needs drop, or a payload enum holds such a value. Structs and globals "
+         "are plain data, arrays do not drop their elements, and a payload enum needs every payload "
+         "type to be droppable through its variant. Use a class field or a local of a class type."},
         {"E0722", Severity::Error, "invalid `init` or `drop` method",
          "An `init` method takes no return type, and a `drop` method takes only `self`, returns "
          "nothing and cannot be virtual. A class whose `init` needs a base constructor requires that "

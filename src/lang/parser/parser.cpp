@@ -2182,7 +2182,9 @@ class Parser {
         advance(); // 'enum'
         const Token& name_tok = cur();
         const std::string name = expectIdent("an enum name");
-        rejectTypeParams();
+        if (at(TokenKind::Lt)) {
+            decl.generic_params = parseGenericParams();
+        }
         if (match(TokenKind::Colon)) {
             decl.has_underlying = true;
             decl.underlying = parseType();
@@ -2224,7 +2226,8 @@ class Parser {
 
     /// A value enum is one item. A payload enum (`Add(A, B)` members) becomes five kinds of
     /// ordinary items: `Name$Tag` (the tag enum), `Name$Vi` (one struct per variant with data),
-    /// `Name$Data` (their union) and `Name` (`{ tag, data }` plus the variant list).
+    /// `Name$Data` (their union) and `Name` (`{ tag, data }` plus the variant list). Every one of
+    /// them carries the enum's type parameters, so `enum Result<T, E>` instantiates as a unit.
     void addEnum(Program& program, DeclStart& s, EnumDecl decl) {
         if (std::ranges::none_of(decl.members, &EnumMember::has_payload)) {
             addItem(program, s, std::move(decl));
@@ -2255,12 +2258,15 @@ class Parser {
 
         EnumDecl tag;
         base(tag, tag_name);
+        tag.generic_params = decl.generic_params;
         tag.underlying = Type::makeInt(32, true);
         StructDecl data;
         base(data, data_name);
+        data.generic_params = decl.generic_params;
         data.is_union = true;
         StructDecl sum;
         base(sum, decl.name);
+        sum.generic_params = decl.generic_params;
         sum.attributes = decl.attributes;
         sum.fields.push_back({"tag", named(tag_name, decl.name_span), {}, decl.name_span});
         sum.fields.push_back({"data", named(data_name, decl.name_span), {}, decl.name_span});
@@ -2274,6 +2280,7 @@ class Parser {
             }
             StructDecl& p = payloads.emplace_back();
             base(p, std::format("{}${}", decl.name, m.name));
+            p.generic_params = decl.generic_params;
             for (const std::size_t i : std::views::iota(std::size_t{0}, m.payload.size())) {
                 p.fields.push_back({std::format("_{}", i), m.payload[i], {}, m.span});
             }

@@ -11,13 +11,14 @@ namespace xlang {
 std::string formatLayoutRecord(const LayoutRecord& record) {
     const TypeLayout& l = record.layout;
     std::string out =
-        std::format("type {} size={} align={} scheme={} repr={} vptr={} shuffled={} seed={}\n",
+        std::format("type {} size={} align={} scheme={} repr={} vptr={} union={} shuffled={} seed={}\n",
                     record.name,
                     l.size,
                     l.align,
                     l.scheme,
                     l.repr_c ? "c" : "xl",
                     l.has_vptr ? 1 : 0,
+                    l.is_union ? 1 : 0,
                     l.shuffled ? 1 : 0,
                     l.seed);
     for (const FieldLayout& f : l.fields) {
@@ -97,6 +98,7 @@ LayoutHistory LayoutHistory::load(const std::string& path) {
                 current.layout.scheme = valueOf(words, "scheme");
                 current.layout.repr_c = valueOf(words, "repr") == "c";
                 current.layout.has_vptr = valueOf(words, "vptr") == "1";
+                current.layout.is_union = valueOf(words, "union") == "1";
                 current.layout.shuffled = valueOf(words, "shuffled") == "1";
                 current.layout.seed =
                     std::stoull(valueOf(words, "seed").empty() ? "0" : valueOf(words, "seed"));

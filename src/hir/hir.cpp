@@ -301,7 +301,7 @@ void dumpModule(std::ostream& out, const Module& m) {
         }
     }
     for (const Aggregate& a : m.aggregates) {
-        out << (a.is_class ? "class " : "struct ") << a.name;
+        out << (a.is_class ? "class " : (a.is_union ? "union " : "struct ")) << a.name;
         if (!a.base.empty()) {
             out << " : " << a.base;
         }

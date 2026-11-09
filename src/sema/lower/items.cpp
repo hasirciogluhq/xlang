@@ -1184,10 +1184,15 @@ void Lowerer::lowerEnum(const EnumDecl& decl) {
     hir::Enum out;
     out.name = s_.qualify(decl.name);
     out.underlying = resolved(decl.underlying);
+    // The member values of an instance are computed by the module that owns the generic enum.
+    Sema* owner_ref = s_.compilation() != nullptr
+                          ? s_.compilation()->semaOf(s_.genericOwnerKey(decl.name))
+                          : &s_;
+    Sema& owner = owner_ref != nullptr ? *owner_ref : s_;
     for (const EnumMember& m : decl.members) {
         hir::EnumMemberValue v;
         v.name = m.name;
-        if (const auto c = s_.enumMember(decl.name, m.name, m.span)) {
+        if (const auto c = owner.enumMember(decl.name, m.name, m.span)) {
             if (c->kind == ConstValue::Kind::Int) {
                 v.int_value = static_cast<std::int64_t>(c->int_value);
             } else {
@@ -1329,6 +1334,9 @@ Lowerer::EP Lowerer::sumVariantCall(const Sum& sum, const Expr& call) {
         const Type want = resolvedIn(*sum.owner, type);
         EP value = expr(*arg, &want);
         value = value ? coerce(std::move(value), want, arg->span) : nullptr;
+        // The payload owns the value: a droppable argument moves into it (a copy would drop it
+        // twice: once through the enum, once through the local).
+        value = value ? moveOut(std::move(value)) : nullptr;
         ok = ok && value != nullptr;
         values.push_back(std::move(value));
     }
@@ -1485,6 +1493,13 @@ void Lowerer::lowerSumSwitch(const Stmt& s, EP scrutinee, std::vector<hir::Stmt>
                 }
                 EP read = sumPayloadRead(sum, id, self, *variant, i, name.span);
                 const Type field_type = read->type;
+                // The binding owns the value: a droppable payload moves out of the enum. The
+                // switch held the scrutinee; once its live payload is taken the holder is dropped
+                // without it, so exactly one value exists.
+                read = moveOut(std::move(read), true);
+                if (read == nullptr) {
+                    continue;
+                }
                 const hir::LocalId local = addLocal(name.text, field_type, false, name.span);
                 hir::Stmt d;
                 d.kind = hir::StmtKind::Local;
@@ -1841,11 +1856,16 @@ void Lowerer::lowerAggregate(const Item& item) {
         hir::Aggregate a;
         a.name = s_.qualify(st->name);
         a.opaque = st->opaque;
+        a.is_union = st->is_union;
         a.span = st->span;
         const Attribute* repr = lower::findAttribute(st->attributes, "repr");
         a.repr_c = repr != nullptr && std::ranges::any_of(repr->args, [](const AttributeArg& x) {
                        return x.text == "c";
                    });
+        // A payload enum owns its payload: its glue drops only the live variant's values.
+        if (!st->variants.empty()) {
+            emitSumDropGlue(a.name, *st, st->span);
+        }
         for (const FieldDecl& f : st->fields) {
             const Type ft = resolved(f.type);
             if (needsDrop(ft)) {
