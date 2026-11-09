@@ -470,6 +470,8 @@ class Lowerer {
                        bool overloaded = false);
     void lowerGlobal(const GlobalDecl& g, const Modifiers& mods);
     void lowerLocalConst(const Stmt& s);
+    /// `local (a, b) = expr`: the tuple is held once and each name reads one element.
+    void lowerTupleLocal(const Stmt& s, std::vector<hir::Stmt>& out);
 
     // --- ownership: drop glue, drop flags, moves (core-language phase 5)
     /// A class needs drop when it has a `drop` method or a field or base class that needs drop.

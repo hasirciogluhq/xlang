@@ -1312,6 +1312,34 @@ class Parser {
     /// `local x: T := expr` is refused because `:=` already means "infer the type".
     void parseLocalTail(Stmt& stmt) {
         stmt.kind = Stmt::Kind::Local;
+        if (at(TokenKind::LParen)) {
+            // Tuple target: `local (a, b) = expr` takes the tuple apart element by element.
+            advance();
+            ++nl_depth_;
+            while (!at(TokenKind::RParen)) {
+                stmt.names.push_back(expectIdent("a variable name inside the tuple target"));
+                if (!match(TokenKind::Comma)) {
+                    break;
+                }
+            }
+            --nl_depth_;
+            expect(TokenKind::RParen, "`)` closing the tuple target");
+            if (stmt.names.empty()) {
+                expected("at least one name inside `( )`");
+            }
+            if (at(TokenKind::Colon) || at(TokenKind::ColonAssign)) {
+                failAt(cur(),
+                       "a tuple target cannot take a type or `:=`",
+                       "each element takes its type from the tuple",
+                       "The tuple's element types already fix the variables' types.",
+                       "Write `local (a, b) = expr`.");
+            }
+            if (!match(TokenKind::Assign)) {
+                expected("`=` and the tuple value to take apart");
+            }
+            stmt.expr = parseExpr();
+            return;
+        }
         stmt.name = expectIdent("a variable name");
         if (match(TokenKind::Colon)) {
             stmt.has_type = true;

@@ -17,6 +17,7 @@ Stmt cloneStmt(const Stmt& s, const TypeEnv& env) {
     c.span = s.span;
     c.attributes = s.attributes;
     c.name = s.name;
+    c.names = s.names;
     c.label = s.label;
     c.has_type = s.has_type;
     c.type = substituteType(s.type, env);

@@ -181,7 +181,7 @@ fn apply(f: fn(i32) -> i32, v: i32) -> i32 { return f(v) }
 - A call considers a pack function only when no non-pack overload of that name has as many parameters as the call has arguments; otherwise the fixed-arity overload is chosen.
 - There are no default arguments. (`syscall` is the one builtin with a variable argument count.)
 - A function with a return type must end every path in `return`, otherwise `W0701`.
-- A function may return a tuple to give back several values at once: `fn divMod(a: i64, b: i64) -> (i64, i64) { return (a / b, a % b) }`. The caller reads the elements with `.0`, `.1`, ... (`local r: (i64, i64) = divMod(7, 3)` then `r.0` and `r.1`) or passes the tuple on by value. A tuple used as a place is assignable element by element (`r.0 = 5`). The elements are laid out in order like `@repr(c)`, so `(A, B)` and `(B, A)` are different types. `()` is the empty tuple: a distinct value with no fields. A tuple does not need drop: it is copied by value.
+- A function may return a tuple to give back several values at once: `fn divMod(a: i64, b: i64) -> (i64, i64) { return (a / b, a % b) }`. A tuple can be taken apart in one `local`: `local (q, r) = divMod(7, 3)` binds `q` to element 0 and `r` to element 1, with the element types taken from the tuple and the right-hand side evaluated once. The elements can also be read one by one with `.0`, `.1`, ... (`local dm: (i64, i64) = divMod(7, 3)` then `dm.0`), and a tuple used as a place is assignable element by element (`dm.0 = 5`). The elements are laid out in order like `@repr(c)`, so `(A, B)` and `(B, A)` are different types. `()` is the empty tuple: a distinct value with no fields. A tuple does not need drop: it is copied by value.
 - `export fn` makes a function visible to importers; `export(c) fn` additionally keeps the C symbol name unmangled. Names are mangled by default (`--mangle=none` disables it).
 - Methods belong to classes and `impl` blocks (see below); `self` is the first parameter.
 - Naming convention: types `PascalCase`, functions, variables and fields `camelCase`.
@@ -482,4 +482,4 @@ Diagnostics have codes: `E` for errors, `W` for warnings (for example `E0501`, `
 
 ## Limitations
 
-Open decisions and intentional incompleteness are recorded in `KNOWN-LIMITATIONS.md` (tuple destructuring, no generic constraints, flat read-only JSON, TLS 1.3 only, and so on).
+Open decisions and intentional incompleteness are recorded in `KNOWN-LIMITATIONS.md` (nested tuple destructuring, no generic constraints, flat read-only JSON, TLS 1.3 only, and so on).

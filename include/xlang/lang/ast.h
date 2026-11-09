@@ -110,7 +110,7 @@ struct SwitchCase {
 
 struct Stmt {
     enum class Kind {
-        Local,   ///< local name [: type] [= expr]
+        Local,   ///< local name [: type] [= expr]; a tuple target `local (a, b) = expr` fills `names`
         Delete,  ///< delete ptr: runs the drop glue, then frees through the `register(free)` function (expr = pointer)
         Const,   ///< const name [: type] = expr (read-only; the value is a compile-time constant)
         Assign,  ///< target = expr; compound (`+=` ...) when `has_compound_op`
@@ -134,7 +134,10 @@ struct Stmt {
     Span span;
     std::vector<Attribute> attributes;
     /// Local/ForRange: the variable. Break/Continue: the target label (empty = innermost loop).
+    /// Local: for the tuple form `local (a, b) = expr` this is empty and `names` holds the targets.
     std::string name;
+    /// Local with a tuple target: one name per element, in order. Empty for a plain `local`.
+    std::vector<std::string> names;
     /// While/DoWhile/For/ForRange: the label written before the loop (empty = none).
     std::string label;
     bool has_type{false};

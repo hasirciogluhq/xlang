@@ -55,7 +55,8 @@ void Lowerer::rejectDroppableArray(const Type& t, const Span& at, const char* wh
         err("E0721",
             at,
             std::format("`{}` is an array of a type that needs drop and cannot be {}",
-                        typeToString(t), where),
+                        typeToString(t),
+                        where),
             "arrays do not drop their elements; use a class value instead");
     }
 }
@@ -68,7 +69,7 @@ bool Lowerer::needsDrop(const Type& t) {
     if (const auto it = needs_drop_.find(qname); it != needs_drop_.end()) {
         return it->second;
     }
-    needs_drop_[qname] = false;  // guards against a cycle
+    needs_drop_[qname] = false; // guards against a cycle
     bool result = false;
     if (const auto ref = s_.entityByQName(qname)) {
         if (const auto* c = std::get_if<ClassDecl>(&ref->sym->item->decl)) {
@@ -96,9 +97,8 @@ std::string Lowerer::dropGlueName(const std::string& qname) {
 bool Lowerer::hasInit(const std::string& qname) {
     const auto ref = s_.entityByQName(qname);
     const auto* c = ref ? std::get_if<ClassDecl>(&ref->sym->item->decl) : nullptr;
-    return c != nullptr && std::ranges::any_of(c->methods, [](const FnDecl& m) {
-               return m.name == "init";
-           });
+    return c != nullptr &&
+           std::ranges::any_of(c->methods, [](const FnDecl& m) { return m.name == "init"; });
 }
 
 std::string Lowerer::zeroArgInitOf(const std::string& qname) {
@@ -108,7 +108,8 @@ std::string Lowerer::zeroArgInitOf(const std::string& qname) {
         return {};
     }
     for (const FnDecl& m : c->methods) {
-        if (m.name == "init" && std::ranges::all_of(m.params, [](const Param& p) { return p.is_self; })) {
+        if (m.name == "init" &&
+            std::ranges::all_of(m.params, [](const Param& p) { return p.is_self; })) {
             return qname + ".init";
         }
     }
@@ -468,7 +469,8 @@ void Lowerer::lowerTry(const Stmt& s, std::vector<hir::Stmt>& out) {
         err("E0501",
             s.span,
             "`try` has no registered `unwind` function",
-            "register one with `register(unwind) fn ...`; the stdlib registers one (not with `--no-std`)");
+            "register one with `register(unwind) fn ...`; the stdlib registers one (not with "
+            "`--no-std`)");
         return;
     }
     has_try_ = true;
@@ -498,7 +500,8 @@ void Lowerer::lowerTry(const Stmt& s, std::vector<hir::Stmt>& out) {
     t.local = snap;
     t.msg_local = msg;
 
-    // The body: leaving it by any way runs `leave`; cleanups registered inside it also belong to the handler.
+    // The body: leaving it by any way runs `leave`; cleanups registered inside it also belong to
+    // the handler.
     const std::size_t first = unwind_entries_.size();
     scopes_.push(ScopeKind::Block);
     defers_.emplace_back();
@@ -619,17 +622,16 @@ void Lowerer::lowerAssign(const Expr& target_ast,
             "not a place (variable, `*p`, field or element)");
         target.reset();
     }
-    // In a class `init`, `self.f = v` initializes a field that holds zeroed memory, so nothing is dropped.
-    const bool raw = in_ctor_ && target_ast.kind == Expr::Kind::Field && target_ast.lhs != nullptr &&
-                     target_ast.lhs->kind == Expr::Kind::Name && target_ast.lhs->text == "self";
+    // In a class `init`, `self.f = v` initializes a field that holds zeroed memory, so nothing is
+    // dropped.
+    const bool raw = in_ctor_ && target_ast.kind == Expr::Kind::Field &&
+                     target_ast.lhs != nullptr && target_ast.lhs->kind == Expr::Kind::Name &&
+                     target_ast.lhs->text == "self";
     assignTo(std::move(target), value_ast, span, out, raw);
 }
 
-void Lowerer::assignTo(EP target,
-                       const Expr& value_ast,
-                       const Span& span,
-                       std::vector<hir::Stmt>& out,
-                       bool raw) {
+void Lowerer::assignTo(
+    EP target, const Expr& value_ast, const Span& span, std::vector<hir::Stmt>& out, bool raw) {
     const Type want = target ? target->type : lower::unknownType();
     EP value = expr(value_ast, target ? &want : nullptr);
     if (target && value) {
@@ -654,8 +656,8 @@ void Lowerer::assignTo(EP target,
 /// `t op= v`  =>  `t = t op v`; a target with side effects is evaluated once through a pointer.
 void Lowerer::lowerCompound(const Stmt& s, std::vector<hir::Stmt>& out) {
     if (!lower::astHasSideEffects(*s.target)) {
-        const ExprPtr bin =
-            lower::astBinary(s.compound_op, lower::cloneAst(*s.target), lower::cloneAst(*s.expr), s.span);
+        const ExprPtr bin = lower::astBinary(
+            s.compound_op, lower::cloneAst(*s.target), lower::cloneAst(*s.expr), s.span);
         lowerAssign(*s.target, *bin, s.span, out);
         return;
     }
@@ -692,12 +694,13 @@ void Lowerer::lowerCompound(const Stmt& s, std::vector<hir::Stmt>& out) {
     decl.value = std::move(addr);
     out.push_back(std::move(decl));
     bindLocal(name, id, ptr, s.span);
-    const ExprPtr place = lower::astUnary(UnaryOp::Deref, lower::astName(name, s.target->span), s.target->span);
-    const ExprPtr bin =
-        lower::astBinary(s.compound_op,
-                  lower::astUnary(UnaryOp::Deref, lower::astName(name, s.target->span), s.target->span),
-                  lower::cloneAst(*s.expr),
-                  s.span);
+    const ExprPtr place =
+        lower::astUnary(UnaryOp::Deref, lower::astName(name, s.target->span), s.target->span);
+    const ExprPtr bin = lower::astBinary(
+        s.compound_op,
+        lower::astUnary(UnaryOp::Deref, lower::astName(name, s.target->span), s.target->span),
+        lower::cloneAst(*s.expr),
+        s.span);
     lowerAssign(*place, *bin, s.span, out);
 }
 
@@ -909,10 +912,12 @@ void Lowerer::lowerSwitch(const Stmt& s, std::vector<hir::Stmt>& out) {
         }
         ExprPtr cond_ast;
         for (const ExprPtr& v : c.values) {
-            ExprPtr eq = lower::astBinary(BinaryOp::Eq, lower::astName(name, v->span), lower::cloneAst(*v), v->span);
-            cond_ast = cond_ast
-                           ? lower::astBinary(BinaryOp::Or, std::move(cond_ast), std::move(eq), v->span)
-                           : std::move(eq);
+            ExprPtr eq = lower::astBinary(
+                BinaryOp::Eq, lower::astName(name, v->span), lower::cloneAst(*v), v->span);
+            cond_ast =
+                cond_ast
+                    ? lower::astBinary(BinaryOp::Or, std::move(cond_ast), std::move(eq), v->span)
+                    : std::move(eq);
             const auto cv = s_.evalConst(*v);
             if (cv && cv->kind == ConstValue::Kind::Int &&
                 !seen.insert(static_cast<std::uint64_t>(cv->int_value)).second) {
@@ -993,12 +998,80 @@ Lowerer::EP Lowerer::ternaryExpr(const Expr& e, const Type* expected) {
     return sel;
 }
 
+/// `local (a, b) = expr`: pure sugar over `local $t = expr` plus one `local a = $t.0` per name.
+/// The hidden tuple lives in the same block, so the names are visible exactly as if each had been
+/// declared by a plain `local`; the field reads are ordinary `Field` accesses on a `Tuple` type.
+void Lowerer::lowerTupleLocal(const Stmt& s, std::vector<hir::Stmt>& out) {
+    if (!s.expr) {
+        err("E0708", s.span, "a tuple target needs an initializer", "write `local (a, b) = expr`");
+        return;
+    }
+    EP init = expr(*s.expr, nullptr);
+    if (!init) {
+        return;
+    }
+    if (lower::isUnknown(init->type)) {
+        return;
+    }
+    if (init->type.kind != TypeKind::Tuple) {
+        err("E0708",
+            s.expr->span,
+            std::format("cannot take `{}` apart: it is not a tuple", typeToString(init->type)),
+            "a tuple target needs a tuple value on the right");
+        return;
+    }
+    const Type tuple_type = init->type;
+    if (tuple_type.args.size() != s.names.size()) {
+        err("E0708",
+            s.span,
+            std::format("the tuple target names {} variable(s), the value has {}",
+                        s.names.size(),
+                        tuple_type.args.size()),
+            "write one name per tuple element");
+        return;
+    }
+    // The whole tuple is held once, unnamed, so every element is read from one evaluation of the
+    // right-hand side (a call returning the tuple runs exactly once).
+    const hir::LocalId tmp = hiddenLocal("tuple", tuple_type, s.span);
+    hir::Stmt hold;
+    hold.kind = hir::StmtKind::Local;
+    hold.span = s.span;
+    hold.local = tmp;
+    hold.value = std::move(init);
+    out.push_back(std::move(hold));
+
+    // Bind the names only after the value is computed: `local (a, b) = f(a)` reads the outer `a`.
+    for (std::size_t i = 0; i < s.names.size(); ++i) {
+        EP field = mk(hir::ExprKind::Field, tuple_type.args[i], s.span);
+        field->index = static_cast<std::uint32_t>(i);
+        field->lvalue = true;
+        field->lhs = localRef(tmp, tuple_type, s.span);
+
+        const Type t = tuple_type.args[i];
+        hir::Stmt decl;
+        decl.kind = hir::StmtKind::Local;
+        decl.span = s.span;
+        decl.local = addLocal(s.names[i], t, false, s.span);
+        rejectDroppableArray(t, s.span, "a local");
+        if (needsDrop(t)) {
+            registerDrop(decl.local, t, true, s.span, out);
+        }
+        decl.value = std::move(field);
+        out.push_back(std::move(decl));
+        bindLocal(s.names[i], out.back().local, t, s.span);
+    }
+}
+
 void Lowerer::lowerStmt(const Stmt& s, std::vector<hir::Stmt>& out) {
     hir::Stmt h;
     h.span = s.span;
     const Type boolean = Type::makeBool();
     switch (s.kind) {
     case Stmt::Kind::Local: {
+        if (!s.names.empty()) {
+            lowerTupleLocal(s, out);
+            return;
+        }
         Type t;
         EP init;
         if (s.has_type) {
@@ -1045,7 +1118,8 @@ void Lowerer::lowerStmt(const Stmt& s, std::vector<hir::Stmt>& out) {
         if (!p) {
             return;
         }
-        if (p->type.kind != TypeKind::Pointer || !p->type.elem || !lower::isAggregate(*p->type.elem)) {
+        if (p->type.kind != TypeKind::Pointer || !p->type.elem ||
+            !lower::isAggregate(*p->type.elem)) {
             err("E0709",
                 s.expr->span,
                 std::format("`delete` needs a pointer to a struct or class, found `{}`",
@@ -1290,4 +1364,4 @@ void Lowerer::lowerStmt(const Stmt& s, std::vector<hir::Stmt>& out) {
     out.push_back(std::move(h));
 }
 
-}  // namespace xlang::lower
+} // namespace xlang::lower
