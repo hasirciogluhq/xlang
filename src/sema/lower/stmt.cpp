@@ -250,16 +250,20 @@ void Lowerer::emitSumDropGlue(const std::string& qname, const StructDecl& sum, c
     };
     /// `p.<name>`: a field of the enum itself (`tag`, `data`) or, when `through` is set, of the
     /// object `p` points at.
-    const auto field = [&](EP base, const std::string& name, std::uint32_t index, Type type) {
+    const auto field = [&](EP base,
+                           const std::string& name,
+                           std::uint32_t index,
+                           Type type,
+                           bool through = false) {
         EP f = mk(hir::ExprKind::Field, std::move(type), span);
         f->text = name;
         f->index = index;
-        f->through_pointer = true;
+        f->through_pointer = through;
         f->lvalue = true;
         f->lhs = std::move(base);
         return f;
     };
-    EP tag = field(self_ptr(), "tag", 0, tag_type);
+    EP tag = field(self_ptr(), "tag", 0, tag_type, true);
     hir::Stmt chain;
     bool has_chain = false;
     for (const std::size_t i : std::views::iota(std::size_t{0}, sum.variants.size())) {
@@ -279,22 +283,20 @@ void Lowerer::emitSumDropGlue(const std::string& qname, const StructDecl& sum, c
         body.kind = hir::StmtKind::Block;
         body.span = span;
         for (const auto& [k, ft] : droppable) {
-            EP data = field(self_ptr(), "data", 1, sumPart(parts, "$Data", span));
+            EP data = field(self_ptr(), "data", 1, sumPart(parts, "$Data", span), true);
             EP payload = field(std::move(data),
                                v.name,
                                static_cast<std::uint32_t>(sumDataIndex(parts, i)),
                                sumPart(parts, "$" + v.name, span));
-            EP value = field(std::move(payload),
-                             std::format("_{}", k),
-                             static_cast<std::uint32_t>(k),
-                             ft);
+            EP value =
+                field(std::move(payload), std::format("_{}", k), static_cast<std::uint32_t>(k), ft);
             EP addr = mk(hir::ExprKind::AddrOf, Type::makePointer(ft), span);
             addr->lhs = std::move(value);
             body.body.push_back(statement(dropCallOn(std::move(addr), ft, span)));
         }
         EP eq = mk(hir::ExprKind::Binary, Type::makeBool(), span);
         eq->binary_op = BinaryOp::Eq;
-        eq->lhs = i == 0 ? std::move(tag) : field(self_ptr(), "tag", 0, tag_type);
+        eq->lhs = i == 0 ? std::move(tag) : field(self_ptr(), "tag", 0, tag_type, true);
         eq->rhs = intConst(i, tag_type, span);
         hir::Stmt root;
         root.kind = hir::StmtKind::If;

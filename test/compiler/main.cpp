@@ -498,8 +498,6 @@ void testOperatorPrecedenceAndCasts() {
     CHECK(e.lhs->lhs->lhs->rhs->binary_op == BinaryOp::Mul);
     CHECK(e.lhs->lhs->lhs->rhs->rhs->kind == Expr::Kind::Cast);  // `as` binds tighter than `*`
 }
-    CHECK(e.lhs->lhs->lhs->rhs->rhs->kind == Expr::Kind::Cast);  // `as` binds tighter than `*`
-}
 
 // A byte literal reaches the AST as a `ByteLiteral` holding the byte, not as an integer or a name.
 void testByteLiteralParsesAsExpr() {
