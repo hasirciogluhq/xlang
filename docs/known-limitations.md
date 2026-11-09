@@ -184,8 +184,8 @@ Decisions taken when the package system was added ([Packages]({{ site.baseurl }}
   request bodies are not supported); the request buffer is capped by `maxHeaderBytes`/`maxBodyBytes`. There is
   no panic recovery middleware, no body binding and no template/static-file helpers. Routes are matched by a
   linear scan (static first), not a radix tree.
-  The client is `fetch*`/`httpOpen` (http and https, redirects, streaming bodies, every method); it has no
-  cookies, keep-alive, compression, proxy, IPv6 or HTTP/2. Source is split in `std/http/*.xl`.
+  The client is `Client` (`Get`, `Head`, `Delete`, `Post`, `Put`, http and https, redirects); it has no
+  cookies, keep-alive, compression, proxy, IPv6 or HTTP/2, and no streaming bodies. Source is split in `std/http/*.xl`.
 - **`std/tls` is TLS 1.3 only, client and server:** X25519 key exchange, suites `TLS_CHACHA20_POLY1305_SHA256`
   (preferred) and `TLS_AES_128_GCM_SHA256`; no TLS 1.2 or older (a TLS 1.2-only peer fails with `TLS_ERR_VERSION`;
   the server answers it with a `protocol_version` alert), no session resumption/0-RTT/NewSessionTicket, no

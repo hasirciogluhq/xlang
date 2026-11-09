@@ -106,7 +106,11 @@ std::string programOutput(const std::string& program, const std::vector<std::str
 }
 
 int processId() {
-    return ::_getpid();
+#if defined(_WIN32)
+    return ::_getpid();  // <process.h>: MSVC spells it with the underscore
+#else
+    return ::getpid();   // <unistd.h>: POSIX/XNU
+#endif
 }
 
 } // namespace xlang

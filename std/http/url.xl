@@ -106,5 +106,3 @@ export fn urlParse(s: *ui8, u: *Url) -> bool {
     }
     return urlParsePath(u, s, aEnd)
 }
-
-/// Request description for `fetch` and `httpOpen`; initialize with `fetchInit`.

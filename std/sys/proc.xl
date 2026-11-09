@@ -164,11 +164,11 @@ export fn procList(out: *ProcInfo, max: usize) -> usize {
     return procListFrom(out, max, 1)
 }
 
-/// Lists processes whose pid is >= `from`, up to `max` entries and `span` pid numbers. Split out so a caller that
+/// Lists processes whose pid is >= `firstPid`, up to `max` entries and `span` pid numbers. Split out so a caller that
 /// already knows the pid range (a child tree) can start where it likes.
-export fn procListFrom(out: *ProcInfo, max: usize, from: i32) -> usize {
+export fn procListFrom(out: *ProcInfo, max: usize, firstPid: i32) -> usize {
     local count: usize = 0
-    local pid: i32 = from
+    local pid: i32 = firstPid
     local misses: i32 = 0
     while count < max && misses < 4096 {
         if procRead(pid, &out[count]) {
@@ -317,7 +317,7 @@ export fn procList(out: *ProcInfo, max: usize) -> usize {
     if want > size { want = size }
     if want == 0 { return 0 }
     local buf: [ui8; 256 * 648]
-    if sysctl(&mib[0], 3, &buf[0], &want, nil, 0) != 0 { return 0 }
+    if sysctl(&mib[0], 3, &buf[0] as *void, &want, nil, 0) != 0 { return 0 }
     local n: usize = want / KINFO_SIZE
     local count: usize = 0
     local i: usize = 0
