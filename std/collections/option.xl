@@ -1,0 +1,37 @@
+// std/collections/option: `Option<T>`, a value that is either a `T` or nothing.
+//
+// It is an ordinary payload enum: `Some(T)` carries the value, `None` carries none. A switch over
+// it is exhaustive without a default, and the payload is dropped only when the variant is live,
+// so `Option<String>` owns its string exactly once.
+
+export enum Option<T> {
+    None
+    Some(T)
+}
+
+/// The value of a `Some`, or `fallback` for a `None`.
+export fn optionOrElse<T>(o: Option<T>, fallback: T) -> T {
+    switch o {
+        case Option.Some(v) { return v }
+        case Option.None { return fallback }
+    }
+}
+
+/// Whether `o` holds a value.
+export fn optionIsSome<T>(o: Option<T>) -> bool {
+    switch o {
+        case Option.Some(v) { return true }
+        case Option.None { return false }
+    }
+}
+
+/// The value of a `Some` written through `out`, or `false` for a `None`.
+export fn optionTake<T>(o: *Option<T>, out: *T) -> bool {
+    switch *o {
+        case Option.Some(v) {
+            *out = v
+            return true
+        }
+        case Option.None { return false }
+    }
+}

@@ -1,0 +1,57 @@
+// std/collections/result: `Result<T, E>`, a value that is either an `Ok` with the success type `T`
+// or an `Err` with the error type `E`.
+//
+// It is an ordinary payload enum: a switch over both variants is exhaustive, and the live payload
+// is dropped exactly once, so `Result<String, Error>` owns its string while it is an `Ok`.
+//
+// The `?` operator is not part of the language yet (see `docs/known-limitations.md`); code that
+// wants early exit writes the switch out today:
+//
+//     local r: Result<i32, Error> = step()
+//     switch r {
+//         case Result.Err(e) { return Result.Err(e) }
+//         case Result.Ok(v) { /* continue with v */ }
+//     }
+
+export enum Result<T, E> {
+    Ok(T)
+    Err(E)
+}
+
+/// The value of an `Ok`, or `fallback` for an `Err`.
+export fn resultOrElse<T, E>(r: Result<T, E>, fallback: T) -> T {
+    switch r {
+        case Result.Ok(v) { return v }
+        case Result.Err(e) { return fallback }
+    }
+}
+
+/// Whether `r` is an `Ok`.
+export fn resultIsOk<T, E>(r: Result<T, E>) -> bool {
+    switch r {
+        case Result.Ok(v) { return true }
+        case Result.Err(e) { return false }
+    }
+}
+
+/// The success value written through `out`, or `false` when `r` is an `Err`.
+export fn resultTake<T, E>(r: *Result<T, E>, out: *T) -> bool {
+    switch *r {
+        case Result.Ok(v) {
+            *out = v
+            return true
+        }
+        case Result.Err(e) { return false }
+    }
+}
+
+/// The error value written through `out`, or `false` when `r` is an `Ok`.
+export fn resultTakeErr<T, E>(r: *Result<T, E>, out: *E) -> bool {
+    switch *r {
+        case Result.Ok(v) { return false }
+        case Result.Err(e) {
+            *out = e
+            return true
+        }
+    }
+}
