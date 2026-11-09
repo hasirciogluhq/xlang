@@ -1,6 +1,6 @@
 # Compression
 
-The decompression modules are in `std/compress`. Compression (writing compressed data) is not implemented yet.
+The compression modules are in `std/compress`: decoders in `inflate.xl` and encoders in `deflate.xl`.
 
 | Function | Specification |
 |---|---|

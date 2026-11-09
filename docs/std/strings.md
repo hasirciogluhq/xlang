@@ -1,16 +1,82 @@
-# Strings
+---
+title: Strings
+---
 
-A string literal takes its type from the place it is written in, as a pointer to ui8, as a zero-padded ui8 array copy, or otherwise as a read-only str.
-A str is a view of a pointer and a length, and it never owns its bytes.
-The std str module compares and converts str values with eq, fromC and fromParts, and finds and parses them with find, contains, startsWith, endsWith, toI64 and toU64.
-Functions that return text return an owned String, so trim, slice, split and replace give new Strings.
-The view function gives a str without copying, and it is valid only while the bytes it views live.
-The compare module gives three-way order, ASCII case-insensitive equality and shell-style glob matching.
-String is an owned, growable byte string in the stdlib that allocates through currentAllocator and frees itself when dropped.
-String has the methods length, asStr, cstr, at, slice, find, startsWith, endsWith, push, append, equals, clone, clear, reserve, toLowerAscii and toUpperAscii, and its init takes nothing, a str, or a count and a byte.
-Empty strings do not allocate, and appending a view of a String's own buffer is not supported.
-print takes str, *ui8, i64, ui64, f64, bool or *String, and adds no newline.
-println adds one newline after its text, printEndl writes only a newline, and the print family writes to its file descriptor without allocating.
-A format with a placeholder count that differs from its argument count panics before anything is written.
-sprintf and format return a new String, fmtAppend appends to an existing String, and toString converts one value.
-snprintf writes into a caller buffer, stops before the cap, ends with a NUL, and returns the full length.
+The language has no owned string type. It has `str`, a read-only view, and the standard library adds `String`, which owns its bytes. `std/str` holds both: `std/str/str` and `std/str/compare` work on views, `std/str/string` owns text, and `std/str/fmt` does the formatting.
+
+## `str` — the view
+
+A `str` is a pointer and a length, and it never owns its bytes. Its fields are `ptr` (`*ui8`) and `len` (`usize`), both read-only. A string literal takes its type from the place it is written in:
+
+| Context | Type | Bytes live in | Mutable |
+|---|---|---|---|
+| expected `*ui8` (or an enum over `*ui8`) | `*ui8` | `.rodata`, NUL-terminated | no |
+| expected `[ui8; N]` | `[ui8; N]` copy, zero-padded | the array | yes |
+| anything else, including no expected type | `str` | `.rodata`, with a trailing NUL not counted in `len` | no |
+
+`local buf: [ui8; 8] = "Jones"` copies the bytes into the array; a literal longer than `N` is `E0717`. A `str` literal's `len` is the number of decoded bytes, so `"Jo\0nes".len` is 6.
+
+`std/str/str` gives the view helpers:
+
+```xlang
+eq(a, b) -> bool                  // byte equality; `==` is not defined on str
+fromC(p: *ui8) -> str             // view of a NUL-terminated C string
+fromParts(p: *ui8, len: usize) -> str
+view(s: str, first: usize, n: usize) -> str   // no copy; panics outside the string
+find(s: str, needle: str) -> i64  // byte offset, or -1
+contains, startsWith, endsWith
+toU64(s: str, out: *ui64) -> bool
+toI64(s: str, out: *i64) -> bool
+```
+
+`view` returns a view without copying, and it is valid only while the bytes it views live. `toU64` and `toI64` parse decimal only, return false on overflow or junk, and leave `out` unchanged then.
+
+`std/str/compare` gives `compare(a, b) -> i32` (-1, 0, 1), `equalIgnoreCase`, `containsAny`, `isSpace` and `globMatch(pattern, text)` (`*` and `?`, no escapes).
+
+A `str` converts to `*ui8` only through `.ptr`; `as` cannot convert it. `s[i]` reads one byte and, under `--safety=checked`, panics when `i >= len`. Writing through a `str` (`s[i] = x`, `s.len = n`) is `E0716`.
+
+## `String` — owned text
+
+`String` is an owned, growable byte string that allocates through `currentAllocator` and frees itself when dropped. It needs drop, so it is move-only.
+
+```xlang
+from "std" import String, println
+
+@entry fn main() -> i32 {
+    local s: String = String("hello")
+    s.append(" world")
+    println("{}", s.asStr())
+    return 0
+}
+```
+
+| Group | Members |
+|---|---|
+| Constructors | `init()` (empty), `init(str)`, `init(usize, ui8)` (n copies of a byte) |
+| Reading | `length`, `asStr`, `cstr`, `at`, `slice`, `find`, `startsWith`, `endsWith` |
+| Changing | `push`, `append(str)`, `append(*String)`, `clone`, `clear`, `reserve` |
+| Comparing and case | `equals`, `toLowerAscii`, `toUpperAscii` (both return new `String`s) |
+
+Empty strings do not allocate, and there is no small-string optimization. Appending a view of a `String`'s own buffer is not supported.
+
+The text-returning free functions build a new `String` from a view: `slice(s, first, n)`, `trim`, `trimStart`, `trimEnd`, `split(s, sep) -> Vec<String>` (keeps empty pieces; panics on an empty separator), `replace` (first occurrence), `replaceAll` and `repeat`. Functions that return text return an owned `String`; a `str` view does not keep its bytes alive, so the owner of the bytes must outlive it.
+
+## Printing and formatting
+
+`print` takes `str`, `*ui8`, `i64`, `ui64`, `f64`, `bool` or `*String`, and adds no newline. `println` adds one newline after its text; `printEndl` writes only a newline. The print family writes to its file descriptor without allocating. `fprint` and `fprintln` take the fd first.
+
+With a format string, any number of arguments may follow it (the functions are variadic):
+
+```xlang
+println("{} and {}", 1, "two")
+```
+
+`{}` takes the next argument and `{{`/`}}` print braces. A format whose placeholder count differs from its argument count panics before anything is written. `f64` prints with six decimals.
+
+| Function | Result |
+|---|---|
+| `sprintf(fmt, ..args)` | a new `String` |
+| `format(fmt, ..args)` | a new `String` |
+| `fmtAppend(out: *String, fmt, ..args)` | appends to an existing `String` |
+| `snprintf(buf, cap, fmt, ..args) -> usize` | writes at most `cap - 1` bytes plus a NUL into `buf` and returns the full length |
+| `toString(v)` | a new `String` from one `i64`, `ui64`, `f64`, `bool`, `str` or `*ui8` |

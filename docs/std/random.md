@@ -27,8 +27,8 @@ Time is always the caller's: `std/sys` gives seconds only.
 - `ulid(unixMillis) -> String`: 26 Crockford base32 characters (ulid/spec). `UlidGen.next` is monotonic within one millisecond.
 - `cuidV1(unixMillis) -> String`: 25 characters starting with `c` (paralleldrive/cuid). The fingerprint is random per process,
   not a host hash, because no hostname is read.
-- `cuidV2(unixMillis) -> String`: 24 characters (paralleldrive/cuid2). Deviation: the hash is SHA-256 until SHA-3 exists in
-  `std/crypto`, so values differ from the reference. The reference default length is kept.
+- `cuidV2(unixMillis) -> String`: 24 characters (paralleldrive/cuid2). Deviation: the hash is SHA-256, so values differ from
+  the reference, which uses SHA-3. The reference default length is kept.
 - `nanoid(size, alphabet) -> String`: rejection sampling over a mask (ai/nanoid). The reference default alphabet is
   `_-0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ` with size 21.
 - `Snowflake`: 41-bit milliseconds since a custom epoch, 10-bit machine id, 12-bit sequence. Panics on a backwards clock or more than
