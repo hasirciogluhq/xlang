@@ -2475,6 +2475,13 @@ void Lowerer::finish() {
     scopes_.pop();
 }
 
+bool Lowerer::isRegisteredName(const std::string& name) const {
+    if (s_.comp_ != nullptr) {
+        return s_.comp_->findRegistered(name).has_value();
+    }
+    return registered_names_.contains(name);
+}
+
 } // namespace xlang::lower
 
 namespace xlang {

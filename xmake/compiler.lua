@@ -87,7 +87,6 @@ target("xlang-frontend")
         "$(projectdir)/src/sema/compilation/imports.cpp",
         "$(projectdir)/src/sema/compilation/registered.cpp",
         "$(projectdir)/src/sema/compilation/driver.cpp",
-        "$(projectdir)/src/sema/lower/lower.cpp",
         "$(projectdir)/src/sema/lower/items.cpp",
         "$(projectdir)/src/sema/lower/stmt.cpp",
         "$(projectdir)/src/sema/lower/expr.cpp",

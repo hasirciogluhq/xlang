@@ -47,8 +47,7 @@ src/
       registered.cpp   #   `register(role)` names across the compilation, user over stdlib, E0502
       driver.cpp       #   lifecycle, phase order (`finish`/`analyzeAll`/`lowerAll`), `@init` order, W0301
     lower/             # lowering pass (4.2-4.5, 4.8-4.12); `lower.hpp` is the internal header
-      lower.cpp        #   pass entry points and the cross-module orchestration
-      items.cpp        #   items: module scope, registrations, vtables, impls, declarations, payload enum variants (E0749-E0751)
+      items.cpp        #   pass entry points and cross-module orchestration; items: module scope, registrations, vtables, impls, declarations, payload enum variants (E0749-E0751)
       stmt.cpp         #   statements (control flow, `defer`, `try`) and ownership (drop glue, drop flags, moves)
       expr.cpp         #   expressions, calls, overload resolution and conversions
     variadic.cpp       # `..args` packs: per-count instances, args.len folding, unrolled for, pack checks (E0734-E0738)

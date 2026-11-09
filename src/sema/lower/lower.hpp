@@ -29,23 +29,23 @@ hir::Module lowerProgram(const std::vector<Sema*>& modules,
 
 namespace lower {
 
-[[nodiscard]] Type unknownType() {
+[[nodiscard]] inline Type unknownType() {
     return Type::makeNamed({});
 }
 
-[[nodiscard]] bool isUnknown(const Type& t) {
+[[nodiscard]] inline bool isUnknown(const Type& t) {
     return t.kind == TypeKind::Named;
 }
 
-[[nodiscard]] bool isNumeric(const Type& t) {
+[[nodiscard]] inline bool isNumeric(const Type& t) {
     return t.kind == TypeKind::Int || t.kind == TypeKind::Float;
 }
 
-[[nodiscard]] bool sameType(const Type& a, const Type& b) {
+[[nodiscard]] inline bool sameType(const Type& a, const Type& b) {
     return typeToString(a) == typeToString(b);
 }
 
-[[nodiscard]] std::string joinPath(const std::vector<std::string>& path) {
+[[nodiscard]] inline std::string joinPath(const std::vector<std::string>& path) {
     std::string out;
     for (const std::string& p : path) {
         out += out.empty() ? p : "." + p;
@@ -53,13 +53,13 @@ namespace lower {
     return out;
 }
 
-[[nodiscard]] bool isAggregate(const Type& t) {
+[[nodiscard]] inline bool isAggregate(const Type& t) {
     return t.kind == TypeKind::Struct || t.kind == TypeKind::Class;
 }
 
 /// Default type of an untyped `const` from its value: integers i32 (i64 when they do not fit),
 /// floats f64, bools, strings str. nullopt when the value is not a literal constant.
-[[nodiscard]] std::optional<Type> literalConstType(Sema& sema, const Expr& init) {
+[[nodiscard]] inline std::optional<Type> literalConstType(Sema& sema, const Expr& init) {
     const auto v = sema.evalConst(init);
     if (!v) {
         return std::nullopt;
@@ -80,7 +80,7 @@ namespace lower {
 }
 
 /// Name of the variable at the root of a place (`c` for `c.x[1]`), without its module prefix.
-[[nodiscard]] std::string placeRootName(const hir::Expr& e) {
+[[nodiscard]] inline std::string placeRootName(const hir::Expr& e) {
     const hir::Expr* cur = &e;
     while ((cur->kind == hir::ExprKind::Field || cur->kind == hir::ExprKind::Index) && cur->lhs) {
         cur = cur->lhs.get();
@@ -92,7 +92,7 @@ namespace lower {
 /// `s[i]`, `s.ptr` or `s.len` where `s` is a `str` (or a pointer to one): never assignable.
 /// A `[]T` slice is the same fat pointer: `s.len` is read-only, and `s.ptr` reads the data pointer.
 /// `s[i]` on a `[]mut T` *is* a place (see `indexExpr`), so it is not covered here.
-[[nodiscard]] bool isStrPlace(const hir::Expr& e) {
+[[nodiscard]] inline bool isStrPlace(const hir::Expr& e) {
     const auto isView = [](const Type& t) {
         return t.kind == TypeKind::Str || t.kind == TypeKind::Slice;
     };
@@ -118,14 +118,14 @@ namespace lower {
 
 /// Maximum number of syscall arguments (after the number) for the target; nullopt = no fixed
 /// limit in the target table (Windows NT: the compiler spills to the stack, plan 5.3).
-[[nodiscard]] std::optional<unsigned> syscallMaxArgs(const TargetInfo& t) {
+[[nodiscard]] inline std::optional<unsigned> syscallMaxArgs(const TargetInfo& t) {
     if (t.os == "windows") {
         return std::nullopt;
     }
     return 6;
 }
 
-[[nodiscard]] const Attribute* findAttribute(const std::vector<Attribute>& attrs,
+[[nodiscard]] inline const Attribute* findAttribute(const std::vector<Attribute>& attrs,
                                              std::string_view name) {
     for (const Attribute& a : attrs) {
         if (a.name == name) {
@@ -136,7 +136,7 @@ namespace lower {
 }
 
 /// Deep copy of an AST expression (used to desugar `a op= b` and `switch`).
-static ExprPtr cloneAst(const Expr& e) {
+inline ExprPtr cloneAst(const Expr& e) {
     auto c = std::make_unique<Expr>();
     c->kind = e.kind;
     c->span = e.span;
@@ -164,7 +164,7 @@ static ExprPtr cloneAst(const Expr& e) {
 }
 
 /// An expression whose evaluation may have side effects (so it must not be evaluated twice).
-static bool astHasSideEffects(const Expr& e) {
+inline bool astHasSideEffects(const Expr& e) {
     switch (e.kind) {
     case Expr::Kind::Call:
     case Expr::Kind::MacroCall:
@@ -219,7 +219,7 @@ inline ExprPtr astBinary(BinaryOp op, ExprPtr lhs, ExprPtr rhs, const Span& span
     return e;
 }
 
-static hir::ExprPtr cloneHirExpr(const hir::Expr& e) {
+inline hir::ExprPtr cloneHirExpr(const hir::Expr& e) {
     auto c = std::make_unique<hir::Expr>();
     c->kind = e.kind;
     c->type = e.type;
@@ -260,7 +260,7 @@ static hir::ExprPtr cloneHirExpr(const hir::Expr& e) {
     return c;
 }
 
-static hir::Stmt cloneHirStmt(const hir::Stmt& s) {
+inline hir::Stmt cloneHirStmt(const hir::Stmt& s) {
     hir::Stmt c;
     c.kind = s.kind;
     c.span = s.span;
@@ -287,7 +287,7 @@ static hir::Stmt cloneHirStmt(const hir::Stmt& s) {
 }
 
 /// Does `body` contain a `break` that leaves the loop whose body it is (nesting level `level`)?
-static bool breaksOut(const std::vector<hir::Stmt>& body, std::uint32_t level) {
+inline bool breaksOut(const std::vector<hir::Stmt>& body, std::uint32_t level) {
     for (const hir::Stmt& s : body) {
         switch (s.kind) {
         case hir::StmtKind::Break:
@@ -324,7 +324,7 @@ static bool breaksOut(const std::vector<hir::Stmt>& body, std::uint32_t level) {
 
 /// True when control cannot fall off the end of `body` (every path returns, loops forever or
 /// calls a `noreturn` function).
-static bool terminates(const std::vector<hir::Stmt>& body, const std::string& panic_fn) {
+inline bool terminates(const std::vector<hir::Stmt>& body, const std::string& panic_fn) {
     for (const hir::Stmt& s : body) {
         switch (s.kind) {
         case hir::StmtKind::Return:
