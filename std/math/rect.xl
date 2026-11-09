@@ -1,0 +1,210 @@
+// std/math/rect: the axis-aligned 2D rectangle `Rect` as a value class: four f64 fields and methods, no heap.
+//   A Rect is stored as its origin (x, y) plus its extent (w, h), not as two corners: the extent form is what a
+//   layout, a viewport or an image size has, and it keeps a "negative" rectangle (a rectangle with negative extent)
+//   representable and detectable through `isEmpty`, which is what the CSS box model and Skia's SkRect agree to treat
+//   as empty (https://www.w3.org/TR/css-box-3/ , https://api.skia.org/classSkRect.html).
+//   y grows downward in screen coordinates (the usual convention of windowing systems: y = 0 is the top row), and none
+//   of the methods depends on the sign of the y axis: a rectangle union, intersection and containment work the same
+//   in a y-down frame because they compare coordinates directly.
+//   `union` and `intersect` treat an empty operand as "nothing": the union of nothing with r is r, the intersection
+//   is empty, which is the identity a caller expects when it folds a list of rectangles together.
+from "math" import sqrt
+from "vec2" import Vec2
+
+/// An axis-aligned rectangle: origin (x, y), width w and height h.
+/// `Rect(x, y, w, h)` builds it.
+export class Rect {
+    x: f64
+    y: f64
+    w: f64
+    h: f64
+
+    fn init(self, x: f64, y: f64, w: f64, h: f64) {
+        self.x = x
+        self.y = y
+        self.w = w
+        self.h = h
+    }
+
+    /// The rectangle with two opposite corners (x0, y0) and (x1, y1), in either order.
+    fn fromCorners(self, x0: f64, y0: f64, x1: f64, y1: f64) -> Rect {
+        local x: f64 = x0
+        local w: f64 = x1 - x0
+        if w < 0.0 {
+            x = x1
+            w = 0.0 - w
+        }
+        local y: f64 = y0
+        local h: f64 = y1 - y0
+        if h < 0.0 {
+            y = y1
+            h = 0.0 - h
+        }
+        return Rect(x, y, w, h)
+    }
+
+    /// w * h; never negative, because an empty rectangle (a negative extent) has area 0.
+    fn area(self) -> f64 {
+        if self.isEmpty() {
+            return 0.0
+        }
+        return self.w * self.h
+    }
+
+    /// The perimeter 2 (w + h); 0 for an empty rectangle.
+    fn perimeter(self) -> f64 {
+        if self.isEmpty() {
+            return 0.0
+        }
+        return 2.0 * (self.w + self.h)
+    }
+
+    /// True when the extent is not positive in both directions: nothing is inside such a rectangle.
+    fn isEmpty(self) -> bool {
+        return !(self.w > 0.0) || !(self.h > 0.0)
+    }
+
+    fn left(self) -> f64 {
+        return self.x
+    }
+
+    fn top(self) -> f64 {
+        return self.y
+    }
+
+    /// x + w, which is the exclusive right edge.
+    fn right(self) -> f64 {
+        return self.x + self.w
+    }
+
+    /// y + h, which is the exclusive bottom edge.
+    fn bottom(self) -> f64 {
+        return self.y + self.h
+    }
+
+    /// The center point.
+    fn center(self) -> Vec2 {
+        return Vec2(self.x + self.w / 2.0, self.y + self.h / 2.0)
+    }
+
+    /// The top-left corner.
+    fn origin(self) -> Vec2 {
+        return Vec2(self.x, self.y)
+    }
+
+    /// True when `p` is inside or on the border. A half-open rectangle would exclude the right and bottom edge; this
+    /// form keeps a point shared by two neighboring rectangles inside both, so a hit test never falls in a gap.
+    fn contains(self, p: *Vec2) -> bool {
+        if self.isEmpty() {
+            return false
+        }
+        return p.x >= self.x && p.x <= self.right() && p.y >= self.y && p.y <= self.bottom()
+    }
+
+    /// True when `o` lies entirely inside or on the border of self.
+    fn containsRect(self, o: *Rect) -> bool {
+        if self.isEmpty() || o.isEmpty() {
+            return false
+        }
+        return o.x >= self.x && o.y >= self.y && o.right() <= self.right() && o.bottom() <= self.bottom()
+    }
+
+    /// True when the two rectangles share at least one point.
+    fn intersects(self, o: *Rect) -> bool {
+        if self.isEmpty() || o.isEmpty() {
+            return false
+        }
+        return o.x <= self.right() && self.x <= o.right() && o.y <= self.bottom() && self.y <= o.bottom()
+    }
+
+    /// The smallest rectangle around both; an empty operand is ignored (the union with nothing is the other one).
+    fn union(self, o: *Rect) -> Rect {
+        if self.isEmpty() {
+            return Rect(o.x, o.y, o.w, o.h)
+        }
+        if o.isEmpty() {
+            return Rect(self.x, self.y, self.w, self.h)
+        }
+        local x: f64 = self.x
+        if o.x < x { x = o.x }
+        local y: f64 = self.y
+        if o.y < y { y = o.y }
+        local r: f64 = self.right()
+        if o.right() > r { r = o.right() }
+        local b: f64 = self.bottom()
+        if o.bottom() > b { b = o.bottom() }
+        return Rect(x, y, r - x, b - y)
+    }
+
+    /// The shared part; an empty rectangle when the two do not overlap (the empty rectangle at the origin, so the
+    /// caller can test `isEmpty` without a second out-parameter).
+    fn intersect(self, o: *Rect) -> Rect {
+        if !self.intersects(o) {
+            return Rect(0.0, 0.0, 0.0, 0.0)
+        }
+        local x: f64 = self.x
+        if o.x > x { x = o.x }
+        local y: f64 = self.y
+        if o.y > y { y = o.y }
+        local r: f64 = self.right()
+        if o.right() < r { r = o.right() }
+        local b: f64 = self.bottom()
+        if o.bottom() < b { b = o.bottom() }
+        return Rect(x, y, r - x, b - y)
+    }
+
+    /// The same rectangle moved by (dx, dy).
+    fn translate(self, dx: f64, dy: f64) -> Rect {
+        return Rect(self.x + dx, self.y + dy, self.w, self.h)
+    }
+
+    /// The rectangle grown by `d` on all four sides; a negative `d` shrinks it.
+    fn inflate(self, d: f64) -> Rect {
+        return Rect(self.x - d, self.y - d, self.w + 2.0 * d, self.h + 2.0 * d)
+    }
+
+    /// The rectangle inset by `d` on all four sides; a negative `d` grows it. The extent is clamped to zero, so an
+    /// inset larger than half the rectangle gives an empty rectangle instead of a negative one.
+    fn deflate(self, d: f64) -> Rect {
+        local w: f64 = self.w - 2.0 * d
+        if w < 0.0 { w = 0.0 }
+        local h: f64 = self.h - 2.0 * d
+        if h < 0.0 { h = 0.0 }
+        return Rect(self.x + d, self.y + d, w, h)
+    }
+
+    /// True when both origin and extent agree exactly; use `near` for computed rectangles.
+    fn equals(self, o: *Rect) -> bool {
+        return self.x == o.x && self.y == o.y && self.w == o.w && self.h == o.h
+    }
+
+    fn near(self, o: *Rect, eps: f64) -> bool {
+        return absf(self.x - o.x) <= eps && absf(self.y - o.y) <= eps && absf(self.w - o.w) <= eps &&
+            absf(self.h - o.h) <= eps
+    }
+
+    /// The Euclidean distance from `p` to the nearest point of the rectangle; 0 when `p` is inside.
+    fn distanceTo(self, p: *Vec2) -> f64 {
+        local dx: f64 = 0.0
+        if p.x < self.x {
+            dx = self.x - p.x
+        } else if p.x > self.right() {
+            dx = p.x - self.right()
+        }
+        local dy: f64 = 0.0
+        if p.y < self.y {
+            dy = self.y - p.y
+        } else if p.y > self.bottom() {
+            dy = p.y - self.bottom()
+        }
+        return sqrt(dx * dx + dy * dy)
+    }
+}
+
+// |x| without pulling all of std/math/float in: two comparisons and a subtraction.
+fn absf(x: f64) -> f64 {
+    if x < 0.0 {
+        return 0.0 - x
+    }
+    return x
+}

@@ -192,7 +192,13 @@ private:
         case '[': single(TokenKind::LBracket); return;
         case ']': single(TokenKind::RBracket); return;
         case ',': single(TokenKind::Comma); return;
-        case ':': single(TokenKind::Colon); return;
+        case ':':
+            if (peek(1) == '=') {
+                single(TokenKind::ColonAssign, 2);
+            } else {
+                single(TokenKind::Colon);
+            }
+            return;
         case ';': single(TokenKind::Semicolon); return;
         case '.':
             if (peek(1) == '.') {
@@ -598,6 +604,7 @@ const char* tokenKindName(TokenKind kind) {
     case TokenKind::RBracket: return "]";
     case TokenKind::Comma: return ",";
     case TokenKind::Colon: return ":";
+    case TokenKind::ColonAssign: return ":=";
     case TokenKind::Semicolon: return ";";
     case TokenKind::Dot: return ".";
     case TokenKind::Arrow: return "->";

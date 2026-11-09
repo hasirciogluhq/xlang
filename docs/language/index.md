@@ -124,7 +124,10 @@ local i: i32 = 0
 local buf: [ui8; 64]          // no initializer
 local q: *Point = &p
 local n = 3                   // type inferred from the initializer
+local m := 3                  // same, written with `:=`
 ```
+
+`local x := expr` is the short form of `local x = expr`: the type is inferred from the initializer and there is no type to write. The initializer is mandatory and must have a value, so `local x :=` is an error, a `void` expression is `E0708`, and `nil` cannot be inferred. A type and `:=` cannot be combined -- `local x: T := expr` is an error; write `local x: T = expr` or `local x := expr`. `local x: T` still declares without an initializer. The same forms work in the `for` initializer (`for local i := 0; i < n; i++`).
 
 Globals use `global` with a mandatory type. Their initializer must be a compile-time constant; without one the global is zero-initialized:
 
@@ -191,6 +194,7 @@ if cond { ... } else if other { ... } else { ... }
 while cond { ... }
 do { ... } while cond
 for local i: i64 = 0; i < 10; i++ { ... }
+for local i := 0; i < 10; i++ { ... }        // type inferred from the initializer
 for i in 0..10 { ... }                    // upper bound exclusive, evaluated once
 
 outer: for i in 0..5 {
@@ -421,6 +425,7 @@ All of it is in `std/`; `import "std"` or `from "std" import name` brings it in,
 | `std/mem/memory` | `memcpy`, `memmove`, `memset`, `memcmp`, `strlen`, mapping helpers |
 | `std/mem/mem` | the `Allocator` interface, the default heap `Heap`, the exported global `currentAllocator`, the registered `alloc`/`free` functions that forward to it, `free`. Replace the allocator by assigning `currentAllocator` (for example in an `@init` function) |
 | `std/math/math`, `std/math/bignum` | `abs`, `min`, `max`, `minInt`, `maxInt`, `sqrt`; fixed-width big integers and Montgomery arithmetic for RSA and ECDSA |
+| `std/math` (geometry and `BigInt`) | `Vec2`, `Vec3`, `Vec4`, `Rect` (heap-free `f64` classes with methods), the allocator-backed `Mat` with `matDet`/`matInverse`, scalar helpers (`lerp`, `smoothstep`, `clamp`, `MATH_PI`), and the owning `BigInt` class over the limb functions (see [math.md]({{ site.baseurl }}/std/math.html)) |
 | `std/thread/thread`, `std/thread/sync`, `std/thread/sched` | threads, `Mutex`/`Cond`/`RwLock`/`Once`, cooperative scheduler (`spawn`, `waitAll`, `yield`) |
 | `std/io/fs`, `std/encoding/json` | whole-file helpers; read-only flat JSON lookups |
 | `std/net/dns`, `std/tls/tls`, `std/http` | name resolution, TLS 1.3 client/server, HTTP server and client (see [http.md]({{ site.baseurl }}/std/http.html)) |

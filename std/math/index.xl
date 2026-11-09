@@ -1,10 +1,21 @@
-// std/math: scalar math and arbitrary-precision integers (`bignum`, Montgomery reduction for the
-// crypto modules).
+// std/math: scalar math, geometry (vectors, rectangles, matrices) and arbitrary-precision integers.
+//   scalar: the scalar helpers every geometry file shares (lerp, smoothstep, clamping, angle conversion).
+//   vec2, vec3, vec4, rect: f64 value classes with methods; no heap, no pointer.
+//   matrix: the row-major f64 `Mat` class, the only math type that allocates (LU determinant and inverse).
+//   trig, float, math, integer: scalar functions.
+//   bignum, bigdiv, bigint: fixed-capacity multi-limb arithmetic for the crypto modules.
+//   big: the owning `BigInt` class on top of those.
 export * from "math"
+export * from "scalar"
+export * from "vec2"
+export * from "vec3"
+export * from "vec4"
+export * from "rect"
+export * from "matrix"
 export * from "bignum"
 export * from "integer"
 export * from "float"
 export * from "trig"
-export * from "vector"
 export * from "bigdiv"
 export * from "bigint"
+export * from "big"

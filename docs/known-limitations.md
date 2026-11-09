@@ -237,7 +237,16 @@ Decisions taken when the package system was added (`docs/PACKAGE_MANAGER.md` is 
 - **Floating-point functions are not correctly rounded:** results can differ from a libm in the last bit.
 - **`pow` with a non-integer exponent** goes through exp and log and loses about |y log x| times the rounding error.
 - **Big-integer arithmetic is not constant-time:** the division and Montgomery code branch on data.
-- **No fixed-size vector or matrix types:** the functions take explicit lengths and dimensions; the language has no generic numeric types for them yet.
+- **`BigInt` has a fixed bound of 130 limbs (4160 bits):** it is the operand size of the `bignum`/`bigdiv` limb
+  functions, so an operation whose result needs a 131st limb panics (`BigInt: result exceeds 4160 bits`) instead of
+  growing; `modPow` also needs an odd modulus (Montgomery reduction). The type has no operator overloads: an
+  operation is a method with a destination (`out.add(&a, &b)`), and `sub` panics when the right operand is larger
+  because the value is unsigned.
+- **The geometry value classes are heap-free but not chainable:** `Vec2`, `Vec3`, `Vec4` and `Rect` are classes with
+  `f64` fields, an `init` and methods, so only `Mat` allocates (from the registered allocator). The language has no
+  associated (static) function and no address of a temporary, so a named zero/identity factory is not available
+  (`Vec3(0.0, 0.0, 0.0)`), and the result of a method must be stored in a variable before another method is called
+  on it (`a.add(&b).normalized()` is `E0709`).
 
 ## Std random and identifiers (`std/random`)
 - **cuid v1 fingerprint is random per process:** the reference uses a hash of the host name. No host name is read (it needs an OS call that is not in std/sys yet). Values from two processes differ in those 4 characters even on the same host.

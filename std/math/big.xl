@@ -1,0 +1,659 @@
+// std/math/big: the owning arbitrary-precision unsigned integer `BigInt`, on top of the limb-array functions of
+// `bignum`, `bigdiv` and `bigint`. Those modules take `*ui32` + an explicit limb count and write into caller arrays,
+// which is right for a fixed-size crypto operand but noisy for general arithmetic; `BigInt` owns a `Vec<ui32>` and
+// gives the caller a value with methods (`a.add(&b, &c)`), no length to keep in step by hand.
+//   Representation: little-endian 32-bit limbs, no zero limbs at the top (a canonical value has no top zero limb,
+//   so equal numbers are equal limb vectors and `cmp` is one length comparison plus one limb comparison). 0 is the
+//   empty limb vector.
+//   The bound is BIG_MAX = 130 limbs = 4160 bits, the size of the fixed arrays in bignum/bigdiv. A result that would
+//   need more panics ("BigInt: result exceeds 4160 bits") instead of wrapping, exactly as the limb functions report
+//   the same overflow with a `false`; the value 2^4160 - 1 is the largest one BigInt holds.
+//   Algorithms: limb addition/subtraction with carry/borrow (Knuth, TAOCP vol. 2, 4.3.1), schoolbook
+//   multiplication and Knuth's Algorithm D for division (`bigdiv.xl`), repeated squaring for `pow`, Montgomery
+//   exponentiation for `modPow` (odd modulus), extended Euclid for `modInverse`, Euclid for `gcd`.
+//   Every routine that allocates first checks the bound and only then grows the `Vec`, so a failed operation leaves
+//   no half-built result and an overflow is a single panic at the point of the operation.
+from "../collections/vec" import Vec
+from "../str/string" import String
+from "bignum" import bnZero, bnCopy
+from "bigdiv" import bigMul, bigDivMod, bigLen
+from "bigint" import bigintPow, bigintGcd, bigintLcm, bigintModPow, bigintModInverse
+
+/// The limb capacity of bignum/bigdiv, restated here because those modules keep it private: 130 limbs = 4160 bits.
+/// A value of this module never exceeds it, and every operation that would is a panic.
+export define BIG_MAX = 130
+
+/// The limb capacity as a local name, so the bodies below read as the bound they enforce.
+define BN_MAX = BIG_MAX
+
+/// An arbitrary-precision unsigned integer, 0 <= value < 2^4160.
+///   `BigInt()` is 0 and `BigInt(v)` is a ui64 in two limbs. Results go into a destination: `out.add(&a, &b)`.
+///   Methods never change their receiver or their argument, only the destination, so any two of the three may be the
+///   same object (`a.add(&a, &a)` doubles in place).
+export class BigInt {
+    limbs: Vec<ui32>    // little-endian; no top zero limb; empty is 0
+
+    fn init(self) {
+        self.limbs = Vec<ui32>()
+    }
+
+    /// The value of a 64-bit unsigned integer: the low limb is `v & 0xFFFFFFFF`, the high limb `v >> 32`.
+    fn init(self, v: ui64) {
+        self.limbs = Vec<ui32>()
+        self.limbs.push((v & 0xffffffff) as ui32)
+        self.limbs.push((v >> 32) as ui32)
+        self.trim()
+    }
+
+    // ---- shape -------------------------------------------------------------------------------
+
+    /// The number of limbs, so 0 for the value 0.
+    fn count(self) -> usize {
+        return self.limbs.length()
+    }
+
+    /// The number of significant bits: the position of the top set bit plus one, 0 for the value 0.
+    fn bitLength(self) -> usize {
+        local n: usize = self.limbs.length()
+        if n == 0 {
+            return 0
+        }
+        local top: ui32 = *self.limbs.get(n - 1)
+        local bits: usize = 32 * n
+        local b: ui32 = 0x80000000
+        while b != 0 && (top & b) == 0 {
+            bits = bits - 1
+            b = b >> 1
+        }
+        return bits
+    }
+
+    fn isZero(self) -> bool {
+        return self.limbs.length() == 0
+    }
+
+    fn isEven(self) -> bool {
+        if self.limbs.length() == 0 {
+            return true
+        }
+        return (*self.limbs.get(0) & 1) == 0
+    }
+
+    fn isOdd(self) -> bool {
+        return !self.isEven()
+    }
+
+    fn isOne(self) -> bool {
+        return self.limbs.length() == 1 && *self.limbs.get(0) == 1
+    }
+
+    /// The low 64 bits (the value when it is below 2^64; otherwise the value modulo 2^64).
+    fn low64(self) -> ui64 {
+        local n: usize = self.limbs.length()
+        if n == 0 {
+            return 0
+        }
+        local v: ui64 = *self.limbs.get(0) as ui64
+        if n > 1 {
+            v = v | ((*self.limbs.get(1) as ui64) << 32)
+        }
+        return v
+    }
+
+    // ---- copies and comparison ---------------------------------------------------------------
+
+    /// Writes a copy of self into `out`.
+    fn copy(self, out: *BigInt) {
+        out.limbs.clear()
+        local i: usize = 0
+        local n: usize = self.limbs.length()
+        while i < n {
+            out.limbs.push(*self.limbs.get(i))
+            i = i + 1
+        }
+    }
+
+    /// -1, 0 or 1 as self is below, equal to or above `o`. The representation is canonical (no top zero limb), so
+    /// a longer limb vector is a larger number.
+    fn cmp(self, o: *BigInt) -> i32 {
+        local a: usize = self.limbs.length()
+        local b: usize = o.limbs.length()
+        if a != b {
+            if a < b { return -1 }
+            return 1
+        }
+        local i: usize = a
+        while i > 0 {
+            i = i - 1
+            local x: ui32 = *self.limbs.get(i)
+            local y: ui32 = *o.limbs.get(i)
+            if x > y { return 1 }
+            if x < y { return -1 }
+        }
+        return 0
+    }
+
+    fn equals(self, o: *BigInt) -> bool {
+        return self.cmp(o) == 0
+    }
+
+    // ---- text --------------------------------------------------------------------------------
+
+    /// Parses decimal digits (no sign, no spaces) into `out`. False, with `out` left alone, when the text is empty,
+    /// holds another byte, or names a value of 4161 bits or more. A method rather than a free constructor because the
+    /// language has no associated (static) function: `b.parseDecimal("12")`.
+    fn fromDecimal(self, s: str, out: *BigInt) -> bool {
+        local parsed: BigInt = BigInt()
+        if !self.parseDecimal(s, &parsed) {
+            return false
+        }
+        parsed.copy(out)
+        return true
+    }
+
+    /// The body of `fromDecimal`: parses into `out`, whose old value is overwritten.
+    fn parseDecimal(self, s: str, out: *BigInt) -> bool {
+        out.limbs.clear()
+        if s.len == 0 {
+            return false
+        }
+        local i: usize = 0
+        while i < s.len {
+            local c: ui8 = s[i]
+            if c < 48 || c > 57 {
+                out.limbs.clear()
+                return false
+            }
+            // out = out * 10 + d, one limb at a time: a 32-bit carry chain, no temporary to allocate.
+            local carry: ui64 = (c - 48) as ui64
+            local k: usize = out.limbs.length()
+            local j: usize = 0
+            while j < k {
+                local t: ui64 = (*out.limbs.get(j) as ui64) * 10 + carry
+                *out.limbs.get(j) = (t & 0xffffffff) as ui32
+                carry = t >> 32
+                j = j + 1
+            }
+            if carry != 0 {
+                if out.limbs.length() >= BN_MAX {
+                    panic("BigInt: result exceeds 4160 bits")
+                }
+                out.limbs.push(carry as ui32)
+            }
+            i = i + 1
+        }
+        out.trim()
+        return true
+    }
+
+    /// Parses hexadecimal digits with an optional `0x`/`0X` prefix into `out`. False, with `out` left alone, when the
+    /// text is empty, holds another byte, or names a value of 4161 bits or more.
+    fn fromHex(self, s: str, out: *BigInt) -> bool {
+        local parsed: BigInt = BigInt()
+        if !self.parseHex(s, &parsed) {
+            return false
+        }
+        parsed.copy(out)
+        return true
+    }
+
+    /// The body of `fromHex`: parses into `out`, whose old value is overwritten.
+    fn parseHex(self, s: str, out: *BigInt) -> bool {
+        local start: usize = 0
+        if s.len >= 2 && s[0] == 48 && (s[1] == 120 || s[1] == 88) {
+            start = 2
+        }
+        out.limbs.clear()
+        if start >= s.len {
+            return false
+        }
+        local i: usize = start
+        while i < s.len {
+            local d: i32 = hexDigit(s[i])
+            if d < 0 {
+                out.limbs.clear()
+                return false
+            }
+            // out = out * 16 + d: four bits per digit, still one carry chain over the limbs.
+            local carry: ui64 = d as ui64
+            local k: usize = out.limbs.length()
+            local j: usize = 0
+            while j < k {
+                local t: ui64 = ((*out.limbs.get(j) as ui64) << 4) | carry
+                *out.limbs.get(j) = (t & 0xffffffff) as ui32
+                carry = t >> 32
+                j = j + 1
+            }
+            if carry != 0 {
+                if out.limbs.length() >= BN_MAX {
+                    panic("BigInt: result exceeds 4160 bits")
+                }
+                out.limbs.push(carry as ui32)
+            }
+            i = i + 1
+        }
+        out.trim()
+        return true
+    }
+
+    /// The decimal text, most significant digit first, without leading zeros (0 is "0").
+    fn toDecimal(self) -> String {
+        local out: String = String()
+        if self.isZero() {
+            out.push(48)
+            return out
+        }
+        // Peel nine decimal digits at a time: 10^9 fits a ui32, so each step is one exact division of the 32-bit limb
+        // array by 10^9, and the quotient keeps the same or fewer limbs. 500 groups cover 4160 bits (1252 decimal
+        // digits), the most a BigInt can hold.
+        local n: usize = self.limbs.length()
+        local work: [ui32; 130]
+        bnZero(&work[0], BN_MAX)
+        bnCopy(&work[0], self.limbs.get(0), n)
+        local parts: [ui32; 500]
+        local pn: usize = 0
+        while bigLen(&work[0], BN_MAX) != 0 {
+            local rem: ui64 = 0
+            local i: usize = BN_MAX
+            while i > 0 {
+                i = i - 1
+                local cur: ui64 = (rem << 32) | (work[i] as ui64)
+                work[i] = (cur / 1000000000) as ui32
+                rem = cur % 1000000000
+            }
+            parts[pn] = rem as ui32
+            pn = pn + 1
+        }
+        // The top group is written without padding, every later group as exactly nine digits.
+        local g: usize = pn
+        local first: bool = true
+        while g > 0 {
+            g = g - 1
+            local v: ui32 = parts[g]
+            if first {
+                appendU32(&out, v)
+                first = false
+            } else {
+                local scale: ui32 = 100000000
+                while scale > 0 {
+                    local digit: ui32 = (v / scale) % 10
+                    out.push((digit as ui8) + 48)
+                    scale = scale / 10
+                }
+            }
+        }
+        return out
+    }
+
+    /// The hexadecimal text, most significant digit first, lower case, without a `0x` prefix or leading zeros
+    /// ("0" for the value 0).
+    fn toHex(self) -> String {
+        local out: String = String()
+        local n: usize = self.limbs.length()
+        if n == 0 {
+            out.push(48)
+            return out
+        }
+        // The top limb is written from its highest set nibble (no leading zeros); the rest as eight digits each.
+        local i: usize = n
+        local first: bool = true
+        while i > 0 {
+            i = i - 1
+            local v: ui32 = *self.limbs.get(i)
+            local shift: i32 = 28
+            while shift >= 0 {
+                local d: ui32 = (v >> (shift as ui32)) & 0xf
+                if first && d == 0 && i > 0 {
+                    // Leading zero nibbles of the top limb are the top of the number: skip them. For the last limb
+                    // written (i == 0) a zero nibble is significant unless another digit was already written.
+                } else if first && d == 0 {
+                    // Still inside the top limb's leading zeros.
+                } else {
+                    out.push(hexChar(d))
+                    first = false
+                }
+                shift = shift - 4
+            }
+        }
+        if first {
+            out.push(48)
+        }
+        return out
+    }
+
+    /// The same as `toDecimal`; the general name of an owning type whose text is its value.
+    fn toString(self) -> String {
+        return self.toDecimal()
+    }
+
+    // ---- arithmetic --------------------------------------------------------------------------
+
+    /// out = self + o.
+    fn add(self, o: *BigInt, out: *BigInt) {
+        local na: usize = self.limbs.length()
+        local nb: usize = o.limbs.length()
+        local n: usize = na
+        if nb > n { n = nb }
+        if n >= BN_MAX {
+            panic("BigInt: result exceeds 4160 bits")
+        }
+        local a: [ui32; 130]
+        local b: [ui32; 130]
+        load(&a[0], &self.limbs)
+        load(&b[0], &o.limbs)
+        local r: [ui32; 130]
+        local carry: ui64 = 0
+        local i: usize = 0
+        while i < n {
+            local s: ui64 = (a[i] as ui64) + (b[i] as ui64) + carry
+            r[i] = (s & 0xffffffff) as ui32
+            carry = s >> 32
+            i = i + 1
+        }
+        if carry != 0 {
+            if n >= BN_MAX {
+                panic("BigInt: result exceeds 4160 bits")
+            }
+            r[n] = carry as ui32
+            n = n + 1
+        }
+        store(out, &r[0], n)
+    }
+
+    /// out = self - o. Panics when o > self: BigInt is unsigned and the wrapped form would hide the mistake.
+    fn sub(self, o: *BigInt, out: *BigInt) {
+        if self.cmp(o) < 0 {
+            panic("BigInt: subtraction would go below zero")
+        }
+        local n: usize = self.limbs.length()
+        local a: [ui32; 130]
+        local b: [ui32; 130]
+        load(&a[0], &self.limbs)
+        load(&b[0], &o.limbs)
+        local r: [ui32; 130]
+        local borrow: ui64 = 0
+        local i: usize = 0
+        while i < n {
+            local d: ui64 = (a[i] as ui64) - (b[i] as ui64) - borrow
+            r[i] = (d & 0xffffffff) as ui32
+            borrow = (d >> 63) & 1
+            i = i + 1
+        }
+        store(out, &r[0], n)
+    }
+
+    /// out = self * o (schoolbook; Knuth 4.3.1, Algorithm M).
+    fn mul(self, o: *BigInt, out: *BigInt) {
+        local na: usize = self.limbs.length()
+        local nb: usize = o.limbs.length()
+        if na == 0 || nb == 0 {
+            out.limbs.clear()
+            return
+        }
+        if na + nb > BN_MAX {
+            panic("BigInt: result exceeds 4160 bits")
+        }
+        local a: [ui32; 130]
+        local b: [ui32; 130]
+        load(&a[0], &self.limbs)
+        load(&b[0], &o.limbs)
+        local r: [ui32; 260]
+        bigMul(&a[0], na, &b[0], nb, &r[0])
+        store(out, &r[0], na + nb)
+    }
+
+    /// Quotient and remainder of self by o (Knuth 4.3.1, Algorithm D). False when o is zero, and then `q` and `r`
+    /// are left unchanged; otherwise q * o + r == self with r < o.
+    fn divMod(self, o: *BigInt, q: *BigInt, r: *BigInt) -> bool {
+        local na: usize = self.limbs.length()
+        local nb: usize = o.limbs.length()
+        if nb == 0 {
+            return false
+        }
+        local a: [ui32; 130]
+        local b: [ui32; 130]
+        load(&a[0], &self.limbs)
+        load(&b[0], &o.limbs)
+        local qq: [ui32; 130]
+        local rr: [ui32; 130]
+        if !bigDivMod(&a[0], BN_MAX, &b[0], BN_MAX, &qq[0], &rr[0]) {
+            return false
+        }
+        store(q, &qq[0], na)
+        store(r, &rr[0], nb)
+        return true
+    }
+
+    /// out = self mod o; panics when o is zero.
+    fn mod(self, o: *BigInt, out: *BigInt) {
+        local q: BigInt = BigInt()
+        local r: BigInt = BigInt()
+        if !self.divMod(o, &q, &r) {
+            panic("BigInt: mod by zero")
+        }
+        r.copy(out)
+    }
+
+    /// out = self ^ e by repeated squaring. Panics when the result exceeds 4160 bits.
+    fn pow(self, e: ui64, out: *BigInt) {
+        local na: usize = self.limbs.length()
+        local a: [ui32; 130]
+        load(&a[0], &self.limbs)
+        local r: [ui32; 130]
+        local ok: bool = bigintPow(&a[0], na, e, &r[0], BN_MAX)
+        if !ok {
+            panic("BigInt: result exceeds 4160 bits")
+        }
+        store(out, &r[0], BN_MAX)
+    }
+
+    /// out = gcd(self, o) by Euclid (Knuth 4.5.2, Algorithm E). gcd(0, 0) = 0.
+    fn gcd(self, o: *BigInt, out: *BigInt) {
+        local na: usize = self.limbs.length()
+        local nb: usize = o.limbs.length()
+        local a: [ui32; 130]
+        local b: [ui32; 130]
+        load(&a[0], &self.limbs)
+        load(&b[0], &o.limbs)
+        local g: [ui32; 130]
+        bigintGcd(&a[0], na, &b[0], nb, &g[0], BN_MAX)
+        store(out, &g[0], BN_MAX)
+    }
+
+    /// out = lcm(self, o) = (self / gcd) * o. Panics when the result exceeds 4160 bits. lcm with 0 is 0.
+    fn lcm(self, o: *BigInt, out: *BigInt) {
+        local na: usize = self.limbs.length()
+        local nb: usize = o.limbs.length()
+        local a: [ui32; 130]
+        local b: [ui32; 130]
+        load(&a[0], &self.limbs)
+        load(&b[0], &o.limbs)
+        local l: [ui32; 130]
+        if !bigintLcm(&a[0], na, &b[0], nb, &l[0], BN_MAX) {
+            panic("BigInt: result exceeds 4160 bits")
+        }
+        store(out, &l[0], BN_MAX)
+    }
+
+    /// out = self ^ e mod m (Montgomery exponentiation). False for an even m, which Montgomery reduction cannot
+    /// handle; an odd m of any limb count up to 130 works. The exponent is a BigInt of its own.
+    fn modPow(self, e: *BigInt, m: *BigInt, out: *BigInt) -> bool {
+        if m.isZero() || m.isEven() {
+            return false
+        }
+        local na: usize = self.limbs.length()
+        local ne: usize = e.limbs.length()
+        local nm: usize = m.limbs.length()
+        local a: [ui32; 130]
+        local ex: [ui32; 130]
+        local md: [ui32; 130]
+        load(&a[0], &self.limbs)
+        load(&ex[0], &e.limbs)
+        load(&md[0], &m.limbs)
+        local r: [ui32; 130]
+        if !bigintModPow(&a[0], na, &ex[0], ne, &md[0], nm, &r[0]) {
+            return false
+        }
+        store(out, &r[0], nm)
+        return true
+    }
+
+    /// out = self^-1 mod m (extended Euclid with the coefficient kept modulo m, so no negative value is formed).
+    /// False when gcd(self, m) != 1, and then `out` is left unchanged.
+    fn modInverse(self, m: *BigInt, out: *BigInt) -> bool {
+        if m.isZero() {
+            return false
+        }
+        local na: usize = self.limbs.length()
+        local nm: usize = m.limbs.length()
+        local a: [ui32; 130]
+        local md: [ui32; 130]
+        load(&a[0], &self.limbs)
+        load(&md[0], &m.limbs)
+        local r: [ui32; 130]
+        if !bigintModInverse(&a[0], na, &md[0], nm, &r[0]) {
+            return false
+        }
+        store(out, &r[0], nm)
+        return true
+    }
+
+    /// out = self << n (n bits). Panics when the result exceeds 4160 bits.
+    fn shiftLeft(self, n: usize, out: *BigInt) {
+        if n == 0 {
+            self.copy(out)
+            return
+        }
+        local limb_shift: usize = n / 32
+        local bit_shift: usize = n % 32
+        local na: usize = self.limbs.length()
+        if na == 0 {
+            out.limbs.clear()
+            return
+        }
+        // A bit shift inside a limb only adds a limb when the top partial limb overflows.
+        local need: usize = na + limb_shift
+        if bit_shift != 0 && ((*self.limbs.get(na - 1) >> ((32 - bit_shift) as ui32)) != 0) {
+            need = need + 1
+        }
+        if need > BN_MAX {
+            panic("BigInt: result exceeds 4160 bits")
+        }
+        local r: [ui32; 130]
+        bnZero(&r[0], BN_MAX)
+        local i: usize = 0
+        while i < na {
+            local v: ui64 = (*self.limbs.get(i) as ui64) << (bit_shift as ui32)
+            r[i + limb_shift] = r[i + limb_shift] | ((v & 0xffffffff) as ui32)
+            if i + limb_shift + 1 < BN_MAX {
+                r[i + limb_shift + 1] = r[i + limb_shift + 1] | ((v >> 32) as ui32)
+            }
+            i = i + 1
+        }
+        store(out, &r[0], need)
+    }
+
+    /// out = self >> n (n bits, rounding down). Shifting by more than the bit length gives 0.
+    fn shiftRight(self, n: usize, out: *BigInt) {
+        if n == 0 {
+            self.copy(out)
+            return
+        }
+        local na: usize = self.limbs.length()
+        local limb_shift: usize = n / 32
+        local bit_shift: usize = n % 32
+        if limb_shift >= na {
+            out.limbs.clear()
+            return
+        }
+        local r: [ui32; 130]
+        bnZero(&r[0], BN_MAX)
+        local count: usize = na - limb_shift
+        local i: usize = 0
+        while i < count {
+            local v: ui64 = *self.limbs.get(i + limb_shift) as ui64
+            if bit_shift != 0 && i + limb_shift + 1 < na {
+                v = v | ((*self.limbs.get(i + limb_shift + 1) as ui64) << 32)
+            }
+            r[i] = ((v >> (bit_shift as ui32)) & 0xffffffff) as ui32
+            i = i + 1
+        }
+        store(out, &r[0], count)
+    }
+
+    // ---- internals ---------------------------------------------------------------------------
+
+    /// Removes the zero limbs above the top one, so the representation is canonical and `cmp` can compare lengths.
+    fn trim(self) {
+        while self.limbs.length() > 0 && *self.limbs.get(self.limbs.length() - 1) == 0 {
+            local dropped: ui32 = self.limbs.pop()
+        }
+    }
+
+    /// Grows the limb storage to `n` limbs; every limb is zero afterwards.
+    fn reserveLimbs(self, n: usize) {
+        self.limbs.reserve(n)
+        while self.limbs.length() < n {
+            self.limbs.push(0)
+        }
+    }
+}
+
+// ---- limb-array bridges ----------------------------------------------------------------------
+
+/// Copies the limbs of `v` into a fixed limb array, zero padding the rest. The array is what the `bignum`/`bigdiv`
+/// functions take; the 130-limb copy costs one pass and keeps those functions free of the Vec type.
+fn load(dst: *ui32, v: *Vec<ui32>) {
+    bnZero(dst, BN_MAX)
+    local i: usize = 0
+    local n: usize = v.length()
+    while i < n {
+        dst[i] = *v.get(i)
+        i = i + 1
+    }
+}
+
+/// Writes the first `n` limbs of a fixed array into `out`, dropping the zero limbs above the top one.
+fn store(out: *BigInt, src: *ui32, n: usize) {
+    local len: usize = bigLen(src, n)
+    out.limbs.clear()
+    local i: usize = 0
+    while i < len {
+        out.limbs.push(src[i])
+        i = i + 1
+    }
+}
+
+/// The value of a hex digit, or -1 when the byte is not one.
+fn hexDigit(c: ui8) -> i32 {
+    if c >= 48 && c <= 57 { return (c - 48) as i32 }
+    if c >= 97 && c <= 102 { return ((c - 97) as i32) + 10 }
+    if c >= 65 && c <= 70 { return ((c - 65) as i32) + 10 }
+    return -1
+}
+
+fn hexChar(d: ui32) -> ui8 {
+    if d < 10 { return (d as ui8) + 48 }
+    return ((d - 10) as ui8) + 97
+}
+
+/// Appends the decimal text of a value below 10^9 with no leading zeros.
+fn appendU32(out: *String, v: ui32) {
+    if v == 0 {
+        out.push(48)
+        return
+    }
+    local buf: [ui8; 16]
+    local at: usize = 0
+    local x: ui32 = v
+    while x != 0 {
+        buf[at] = ((x % 10) as ui8) + 48
+        x = x / 10
+        at = at + 1
+    }
+    local i: usize = at
+    while i > 0 {
+        i = i - 1
+        out.push(buf[i])
+    }
+}

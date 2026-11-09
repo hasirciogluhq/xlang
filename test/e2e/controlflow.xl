@@ -95,6 +95,11 @@ fn deferInLoop() -> i64 {
     for j in 0..5 { total += j }
     check("range", total, 10)
 
+    local inf := 4
+    local infStr := "cf"
+    check("infer-int", inf as i64, 4)
+    check("infer-str", infStr.len as i64, 2)
+
     local c: i64 = 6
     c *= 7
     c -= 2
@@ -146,6 +151,12 @@ fn deferInLoop() -> i64 {
     check("defer-ran", deferred, 7)
     // i=0: +1, +100; i=1: continue, +100; i=2: +1, +100; i=3: break, +100
     check("defer-loop", deferInLoop(), 402)
+
+    local fsum := 0
+    for local k := 0; k < 3; k++ {
+        fsum += 1
+    }
+    check("for-colon-assign", fsum, 3)
 
     if failures == 0 {
         print("controlflow ok\n")

@@ -1,0 +1,463 @@
+// std/math/matrix: a dynamic row-major f64 matrix (`Mat`) with the determinant, the inverse and the elementwise
+// operations. This is the only math type that owns heap storage: entry (i, j) is `data[i * cols + j]` on a
+// `Vec<f64>` from the registered allocator, so a matrix has no fixed maximum order and the caller controls the
+// scratch with `resize`/`mulTo` instead of paying one allocation per operation.
+//   Determinant and inverse: pivoted LU (Golub and Van Loan, Matrix Computations, 4th ed., algorithm 3.4.1,
+//   http://www.cs.cornell.edu/cv/GVL4/golubandvanloan.htm) on a copy of the matrix, then one triangular solve per
+//   unit column of the right-hand side. The pivot test is an exact zero, so a nearly singular matrix gives large but
+//   finite values; a caller that needs the conditioning must estimate it (rcond), which these functions do not.
+//   The product is the schoolbook ijk form with the loop over the shared index innermost, so `out` is written once
+//   and stays in cache (the "axpy" ordering in Golub and Van Loan, section 1.1.13).
+from "float" import fabs
+from "../collections/vec" import Vec
+
+// ---- the matrix ---------------------------------------------------------------------------
+
+/// A row-major r x c matrix of f64 on the registered allocator. A Mat owns its storage, so it is move-only (the Vec
+/// drop frees it); a function that writes into a caller's matrix takes `*Mat`.
+export class Mat {
+    rows: usize
+    cols: usize
+    data: Vec<f64>
+
+    /// An empty matrix.
+    fn init(self) {
+        self.rows = 0
+        self.cols = 0
+        self.data = Vec<f64>()
+    }
+
+    /// A rows x cols matrix, every entry zero. Panics when the product overflows `usize`.
+    fn init(self, rows: usize, cols: usize) {
+        if cols != 0 && rows > 18446744073709551615 / cols {
+            panic("Mat: the size overflows usize")
+        }
+        self.rows = rows
+        self.cols = cols
+        self.data = Vec<f64>()
+        local n: usize = rows * cols
+        local i: usize = 0
+        while i < n {
+            self.data.push(0.0)
+            i = i + 1
+        }
+    }
+
+    /// The number of entries, rows * cols.
+    fn count(self) -> usize {
+        return self.rows * self.cols
+    }
+
+    fn isEmpty(self) -> bool {
+        return self.rows == 0 || self.cols == 0
+    }
+
+    /// Entry (i, j). Panics when the index is outside the matrix.
+    fn at(self, i: usize, j: usize) -> f64 {
+        self.check(i, j)
+        return *self.data.get(i * self.cols + j)
+    }
+
+    /// Sets entry (i, j). Panics when the index is outside the matrix.
+    fn set(self, i: usize, j: usize, v: f64) {
+        self.check(i, j)
+        *self.data.get(i * self.cols + j) = v
+    }
+
+    /// The address of entry (i, j); no bounds check.
+    fn slot(self, i: usize, j: usize) -> *f64 {
+        return self.data.slot(i * self.cols + j)
+    }
+
+    fn check(self, i: usize, j: usize) {
+        if i >= self.rows || j >= self.cols {
+            panic("Mat: index out of range")
+        }
+    }
+
+    /// Reshapes to rows x cols, zeroing every entry. Existing storage is reused when it is big enough.
+    fn resize(self, rows: usize, cols: usize) {
+        if cols != 0 && rows > 18446744073709551615 / cols {
+            panic("Mat: the size overflows usize")
+        }
+        self.rows = rows
+        self.cols = cols
+        local n: usize = rows * cols
+        self.data.clear()
+        self.data.reserve(n)
+        local i: usize = 0
+        while i < n {
+            self.data.push(0.0)
+            i = i + 1
+        }
+    }
+
+    /// The transpose, as a new matrix.
+    fn transposed(self) -> Mat {
+        local out: Mat = Mat(self.cols, self.rows)
+        local i: usize = 0
+        while i < self.rows {
+            local j: usize = 0
+            while j < self.cols {
+                out.set(j, i, self.at(i, j))
+                j = j + 1
+            }
+            i = i + 1
+        }
+        return out
+    }
+
+    /// The product with `b`, as a new matrix. Panics when the shapes do not fit: cols != b.rows.
+    fn mul(self, b: *Mat) -> Mat {
+        local out: Mat = Mat(self.rows, b.cols)
+        self.mulTo(b, &out)
+        return out
+    }
+
+    /// Writes the product with `b` into `out`, reusing its storage. Panics when cols != b.rows.
+    fn mulTo(self, b: *Mat, out: *Mat) {
+        if self.cols != b.rows {
+            panic("Mat: mul needs cols == b.rows")
+        }
+        out.resize(self.rows, b.cols)
+        local i: usize = 0
+        while i < self.rows {
+            local t: usize = 0
+            while t < self.cols {
+                local s: f64 = self.at(i, t)
+                local j: usize = 0
+                while j < b.cols {
+                    *out.slot(i, j) = *out.slot(i, j) + s * b.at(t, j)
+                    j = j + 1
+                }
+                t = t + 1
+            }
+            i = i + 1
+        }
+    }
+
+    /// True when both shapes and every entry agree exactly.
+    fn equals(self, o: *Mat) -> bool {
+        if self.rows != o.rows || self.cols != o.cols {
+            return false
+        }
+        local i: usize = 0
+        while i < self.rows {
+            local j: usize = 0
+            while j < self.cols {
+                if self.at(i, j) != o.at(i, j) {
+                    return false
+                }
+                j = j + 1
+            }
+            i = i + 1
+        }
+        return true
+    }
+
+    /// Entrywise equality within `eps` in absolute value; the usual test after a computed inverse or product.
+    fn near(self, o: *Mat, eps: f64) -> bool {
+        if self.rows != o.rows || self.cols != o.cols {
+            return false
+        }
+        local i: usize = 0
+        while i < self.rows {
+            local j: usize = 0
+            while j < self.cols {
+                if fabs(self.at(i, j) - o.at(i, j)) > eps {
+                    return false
+                }
+                j = j + 1
+            }
+            i = i + 1
+        }
+        return true
+    }
+
+    /// The determinant of this square matrix; the matrix is not changed (the LU works on a copy).
+    fn det(self) -> f64 {
+        return matDet(self)
+    }
+}
+
+// ---- determinant and inverse ---------------------------------------------------------------
+
+/// The determinant of a square matrix. Zero when the matrix is singular; panics when it is not square.
+export fn matDet(a: *Mat) -> f64 {
+    if a.rows != a.cols { panic("matDet: the matrix is not square") }
+    if a.rows == 0 { return 1.0 }
+    local f: LU = luFactor(a)
+    if f.singular { return 0.0 }
+    local det: f64 = f.sign
+    local i: usize = 0
+    while i < a.rows {
+        det = det * f.u.at(i, i)
+        i = i + 1
+    }
+    return det
+}
+
+/// Writes the inverse of `a` into `out`. False when the matrix is singular; panics when it is not square.
+/// Solves L U x_j = P e_j for each unit column j, so no matrix product and no second LU is needed. The work is three
+/// heap buffers: the LU copy (inside `luFactor`) and the column of the right-hand side plus the solution column,
+/// both from the registered allocator through `Vec<f64>`.
+export fn matInverse(a: *Mat, out: *Mat) -> bool {
+    if a.rows != a.cols { panic("matInverse: the matrix is not square") }
+    local f: LU = luFactor(a)
+    if f.singular { return false }
+    local n: usize = a.rows
+    out.resize(n, n)
+    local y: Vec<f64> = Vec<f64>()
+    y.reserve(n)
+    local j: usize = 0
+    while j < n {
+        solveUnit(&f, j, &y)
+        local i: usize = 0
+        while i < n {
+            *out.slot(i, j) = *y.get(i)
+            i = i + 1
+        }
+        j = j + 1
+    }
+    return true
+}
+
+/// The LU factorization of a square matrix with partial pivoting: P A = L U, with L unit lower triangular and U
+/// upper triangular. `perm` is the row permutation of P (see `solveUnit`), so det(A) is `sign` times the diagonal
+/// product of U. The factor is singular exactly when a pivot is zero.
+class LU {
+    l: Mat        // strict lower part, unit diagonal implicit
+    u: Mat        // upper part, diagonal included
+    perm: Vec<usize>
+    sign: f64
+    singular: bool
+
+    fn init(self, n: usize) {
+        self.l = Mat(n, n)
+        self.u = Mat(n, n)
+        self.perm = Vec<usize>()
+        self.sign = 1.0
+        self.singular = false
+        local i: usize = 0
+        while i < n {
+            self.perm.push(i)
+            i = i + 1
+        }
+    }
+}
+
+/// Factors `a` (Golub and Van Loan, algorithm 3.4.1). A copy is reduced, so `a` is not changed.
+fn luFactor(a: *Mat) -> LU {
+    local n: usize = a.rows
+    local f: LU = LU(n)
+    local work: Mat = Mat(n, n)
+    copyInto(&work, a)
+    local col: usize = 0
+    while col < n {
+        local piv: usize = col
+        local row: usize = col + 1
+        while row < n {
+            if fabs(work.at(row, col)) > fabs(work.at(piv, col)) { piv = row }
+            row = row + 1
+        }
+        if work.at(piv, col) == 0.0 {
+            f.singular = true
+            return f
+        }
+        if piv != col {
+            // A row interchange must reach the multipliers already stored in L, not only the remaining work matrix.
+            // L keeps the elimination coefficients in the *final* row order (Golub and Van Loan, algorithm 3.4.1
+            // stores them in the same array as A precisely so the interchange moves them along); swapping only
+            // `work` leaves L describing the pre-swap rows and the triangular solves return the wrong vector.
+            swapRows(&work, piv, col)
+            swapPrefix(&f.l, piv, col, col)
+            local p: usize = *f.perm.get(col)
+            *f.perm.get(col) = *f.perm.get(piv)
+            *f.perm.get(piv) = p
+            f.sign = 0.0 - f.sign
+        }
+        local d: f64 = work.at(col, col)
+        f.u.set(col, col, d)
+        row = col + 1
+        while row < n {
+            local m: f64 = work.at(row, col) / d
+            f.l.set(row, col, m)
+            local t: usize = col
+            while t < n {
+                work.set(row, t, work.at(row, t) - m * work.at(col, t))
+                t = t + 1
+            }
+            row = row + 1
+        }
+        local t2: usize = col + 1
+        while t2 < n {
+            f.u.set(col, t2, work.at(col, t2))
+            t2 = t2 + 1
+        }
+        col = col + 1
+    }
+    return f
+}
+
+/// Solves L U x = P e_j for the j-th unit column, leaving x in `y`: forward substitution through L, then back
+/// substitution through U. `n` is the order of `f`.
+/// `perm` is the final row permutation of P (PA = LU), not a list of interchanges to replay: Pb is the vector
+/// (b[perm[0]], ..., b[perm[n-1]]), and replaying the interchanges in index order would undo each other. Because
+/// b is the unit vector e_j, Pb is simply the indicator of `perm[i] == j`, so the permuted right-hand side is built
+/// directly and no scratch copy of b is needed.
+fn solveUnit(f: *LU, j: usize, y: *Vec<f64>) {
+    local n: usize = f.u.rows
+    local b: Vec<f64> = Vec<f64>()
+    b.reserve(n)
+    local i: usize = 0
+    while i < n {
+        local v: f64 = 0.0
+        if *f.perm.get(i) == j { v = 1.0 }
+        b.push(v)
+        i = i + 1
+    }
+    y.clear()
+    local row2: usize = 0
+    while row2 < n {
+        local s: f64 = *b.get(row2)
+        local k: usize = 0
+        while k < row2 {
+            s = s - f.l.at(row2, k) * *y.get(k)
+            k = k + 1
+        }
+        y.push(s)
+        row2 = row2 + 1
+    }
+    local back: usize = n
+    while back > 0 {
+        back = back - 1
+        local k2: usize = back + 1
+        while k2 < n {
+            *y.get(back) = *y.get(back) - f.u.at(back, k2) * *y.get(k2)
+            k2 = k2 + 1
+        }
+        *y.get(back) = *y.get(back) / f.u.at(back, back)
+    }
+}
+
+// ---- elementwise operations ----------------------------------------------------------------
+
+/// Copies every entry of `src` into `dst`, resizing `dst` when the shapes differ.
+export fn matCopy(dst: *Mat, src: *Mat) {
+    if dst.rows != src.rows || dst.cols != src.cols {
+        dst.resize(src.rows, src.cols)
+    }
+    copyInto(dst, src)
+}
+
+fn copyInto(dst: *Mat, src: *Mat) {
+    local i: usize = 0
+    while i < src.rows {
+        local j: usize = 0
+        while j < src.cols {
+            dst.set(i, j, src.at(i, j))
+            j = j + 1
+        }
+        i = i + 1
+    }
+}
+
+fn swapRows(m: *Mat, a: usize, b: usize) {
+    swapPrefix(m, a, b, m.cols)
+}
+
+/// Swaps rows a and b of `m` over the first `count` columns only; `count > m.cols` would read outside the matrix.
+fn swapPrefix(m: *Mat, a: usize, b: usize, count: usize) {
+    if a == b { return }
+    local j: usize = 0
+    while j < count {
+        local tmp: f64 = m.at(a, j)
+        m.set(a, j, m.at(b, j))
+        m.set(b, j, tmp)
+        j = j + 1
+    }
+}
+
+/// The `rows x cols` identity matrix (1 on the diagonal, 0 elsewhere; a rectangular identity has min(rows, cols) ones).
+export fn matIdentity(rows: usize, cols: usize) -> Mat {
+    local out: Mat = Mat(rows, cols)
+    local k: usize = 0
+    while k < rows && k < cols {
+        out.set(k, k, 1.0)
+        k = k + 1
+    }
+    return out
+}
+
+/// Writes a + b into `out` (resizing it). Panics when the shapes differ.
+export fn matAdd(a: *Mat, b: *Mat, out: *Mat) {
+    matCombine(a, b, out, 1.0)
+}
+
+/// Writes a - b into `out` (resizing it). Panics when the shapes differ.
+export fn matSub(a: *Mat, b: *Mat, out: *Mat) {
+    matCombine(a, b, out, 0.0 - 1.0)
+}
+
+// One body for the two elementwise operations: a + sign * b. `sign` is +1 or -1 and keeps the shape check and the
+// resize in one place instead of two copies that can drift apart.
+fn matCombine(a: *Mat, b: *Mat, out: *Mat, sign: f64) {
+    if a.rows != b.rows || a.cols != b.cols {
+        panic("Mat: add/sub needs equal shapes")
+    }
+    out.resize(a.rows, a.cols)
+    local i: usize = 0
+    while i < a.rows {
+        local j: usize = 0
+        while j < a.cols {
+            *out.slot(i, j) = a.at(i, j) + sign * b.at(i, j)
+            j = j + 1
+        }
+        i = i + 1
+    }
+}
+
+/// Writes the transpose of `a` into `out`, which may be the same matrix as `a`.
+export fn matTranspose(a: *Mat, out: *Mat) {
+    if same(a, out) {
+        inPlaceTranspose(a)
+        return
+    }
+    out.resize(a.cols, a.rows)
+    local i: usize = 0
+    while i < a.rows {
+        local j: usize = 0
+        while j < a.cols {
+            out.set(j, i, a.at(i, j))
+            j = j + 1
+        }
+        i = i + 1
+    }
+}
+
+// a and b are the same matrix when they share storage and shape; a zero-sized pair never aliases because every
+// write would be skipped anyway.
+fn same(a: *Mat, b: *Mat) -> bool {
+    if a.rows != b.rows || a.cols != b.cols { return false }
+    if a.count() == 0 { return false }
+    return a.data.slot(0) == b.data.slot(0)
+}
+
+// Transposes a square matrix in place by swapping the two triangles entry by entry; a non-square matrix cannot be
+// transposed in place because the shape would change under the caller's storage.
+fn inPlaceTranspose(a: *Mat) {
+    if a.rows != a.cols {
+        panic("Mat: an in-place transpose needs a square matrix")
+    }
+    local i: usize = 0
+    while i < a.rows {
+        local j: usize = i + 1
+        while j < a.cols {
+            local tmp: f64 = a.at(i, j)
+            a.set(i, j, a.at(j, i))
+            a.set(j, i, tmp)
+            j = j + 1
+        }
+        i = i + 1
+    }
+}

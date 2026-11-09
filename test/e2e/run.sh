@@ -46,6 +46,8 @@ tests=(
   "raii|0|raii ok|0|1"
   "generics|0|generics ok|0|1"
   "collections|0|collections ok|0|1"
+  "math_vectors|0|math_vectors ok|0|1"
+  "big|0|big ok|0|1"
   "print|0|print ok|0|1"
   "printalloc|0|printalloc ok|0|1"
   "variadic|0|variadic ok|0|1"

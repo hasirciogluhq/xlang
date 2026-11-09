@@ -1135,17 +1135,7 @@ class Parser {
         switch (cur().kind) {
         case TokenKind::Local: {
             advance();
-            stmt.kind = Stmt::Kind::Local;
-            stmt.name = expectIdent("a variable name");
-            if (match(TokenKind::Colon)) {
-                stmt.has_type = true;
-                stmt.type = parseType();
-            }
-            if (match(TokenKind::Assign)) {
-                stmt.expr = parseExpr();
-            } else if (!stmt.has_type) {
-                expected("`:` with a type or `=` with an initializer");
-            }
+            parseLocalTail(stmt);
             endOfStatement();
             return stmt;
         }
@@ -1249,6 +1239,43 @@ class Parser {
     }
 
     /// `target = v`, `target op= v`, `target++`, `target--` or an expression statement.
+    /// The part of a `local` statement after the keyword: `name [: T | := expr] [= expr]`. Shared
+    /// by statement position and the `for` initializer so both spellings of the declaration behave
+    /// alike. On return the cursor is after the initializer (or after the type), never at `;`.
+    /// `local x: T := expr` is refused because `:=` already means "infer the type".
+    void parseLocalTail(Stmt& stmt) {
+        stmt.kind = Stmt::Kind::Local;
+        stmt.name = expectIdent("a variable name");
+        if (match(TokenKind::Colon)) {
+            stmt.has_type = true;
+            stmt.type = parseType();
+            if (at(TokenKind::ColonAssign)) {
+                failAt(cur(),
+                       "a type and `:=` cannot be combined in one `local`",
+                       "`:=` already infers the type from the initializer",
+                       "`local x: T := v` writes the type twice.",
+                       "Write `local x: T = v` or `local x := v`.");
+            }
+        } else if (match(TokenKind::ColonAssign)) {
+            stmt.has_type = false;
+            if (at(TokenKind::Semicolon) || at(TokenKind::RBrace) || at(TokenKind::End) ||
+                cur().newline_before) {
+                failAt(cur(),
+                       "expected an initializer after `:=`",
+                       "`:=` needs a value to infer the type from",
+                       "Without a value the type cannot be inferred.",
+                       "Write `local x := expr`, or `local x: T` to declare without a value.");
+            }
+            stmt.expr = parseExpr();
+            return;
+        }
+        if (match(TokenKind::Assign)) {
+            stmt.expr = parseExpr();
+        } else if (!stmt.has_type) {
+            expected("`:` with a type, `:=` with an inferred type, or `=` with an initializer");
+        }
+    }
+
     Stmt parseSimpleStatement() {
         Stmt stmt;
         stmt.span = cur().span;
@@ -1332,6 +1359,13 @@ class Parser {
             endOfStatement();
             return stmt;
         }
+        if (at(TokenKind::ColonAssign)) {
+            failAt(cur(),
+                   "`:=` declares a new variable and cannot assign to an existing one",
+                   "`:=` is only used in a `local` declaration",
+                   "An assignment to an existing variable is written with `=`.",
+                   "Write `local name := expr` to declare, or `name = expr` to assign.");
+        }
         stmt.kind = Stmt::Kind::Expr;
         stmt.expr = std::move(lhs);
         endOfStatement();
@@ -1388,17 +1422,7 @@ class Parser {
         Stmt stmt;
         stmt.span = cur().span;
         advance();
-        stmt.kind = Stmt::Kind::Local;
-        stmt.name = expectIdent("a variable name");
-        if (match(TokenKind::Colon)) {
-            stmt.has_type = true;
-            stmt.type = parseType();
-        }
-        if (match(TokenKind::Assign)) {
-            stmt.expr = parseExpr();
-        } else if (!stmt.has_type) {
-            expected("`:` with a type or `=` with an initializer");
-        }
+        parseLocalTail(stmt);
         return stmt;
     }
 

@@ -70,6 +70,7 @@ enum class TokenKind {
     RBracket,
     Comma,
     Colon,
+    ColonAssign, ///< `:=` (inferred local type)
     Semicolon,
     Dot,
     Arrow,
