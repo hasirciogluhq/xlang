@@ -49,3 +49,37 @@ from "std" import Vec, println
 ## Panics
 
 An index outside the elements panics with `Vec: index I out of range for length L`. `pop` on an empty `Vec` panics with `Vec: pop from empty vec`, and `first`/`last` with `Vec: first of empty vec` / `Vec: last of empty vec`.
+
+## Sum types: `Option<T>` and `Result<T, E>`
+
+`std/collections` also holds the two standard sum types. Both are ordinary generic payload enums, so a `switch` over
+their variants is exhaustive and the live payload is dropped exactly once.
+
+```xlang
+from "std/collections/option" import Option
+from "std/collections/result" import Result
+
+enum Option<T> {
+    None
+    Some(T)
+}
+
+enum Result<T, E> {
+    Ok(T)
+    Err(E)
+}
+```
+
+There is no `?` operator in the language yet, so early exit is written out:
+
+```xlang
+local r: Result<i32, MyErr> = step()
+switch r {
+    case Result.Err(e) { return Result.Err(e) }
+    case Result.Ok(v) { /* continue with v */ }
+}
+```
+
+The helpers are `optionOrElse`, `optionIsSome`, `optionTake` for `Option<T>` and `resultOrElse`, `resultIsOk`,
+`resultTake`, `resultTakeErr` for `Result<T, E>`; each `...Take` writes the payload through an `out` pointer and returns
+whether that variant was live.

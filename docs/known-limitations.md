@@ -91,12 +91,25 @@ The original plan is implemented except the items below, which are intentionally
 - Payload enums (sum types): the parser turns `enum E { A(T), B }` into ordinary items: the struct `E` (`tag`, `data`), the
   value enum `E$Tag`, the union struct `E$Data` and one struct `E$A` per variant with data. The union is not a language
   feature: only the compiler-made `E$Data` has `is_union` (all fields at offset 0), there is no `union` keyword. The
-  names with `$` are visible in `xlang layout` and in some diagnostics (a droppable payload reports `E0721` on `E$A`).
+  names with `$` are visible in `xlang layout`; diagnostics name the enum, not its parts (a droppable array of a
+  payload enum is `E0759`, and a droppable payload enum in a global or struct field is `E0758`). A droppable payload
+  is allowed: the enum owns it and its drop glue drops only the live variant's value.
   A generic payload enum is one type made of those items: `Result<T, E>` makes `Result<i32, MyErr>` and, with it, the
   instances `Result<i32, MyErr>$Tag`, `$Data` and `$Ok`/`$Err`; a `case` always names the declaration (`Result.Ok`).
+  `Result.Ok(v)` on a generic enum needs the target type where the value is created: the arguments are not inferred
+  from the payload value or from a following `switch`, so `Result.Ok(1)` with no expected type (a typed local, an
+  argument position, a `return`) is `E0756`.
   Not done: named payload fields, nested patterns (`case E.A(E.B(x))`), a payload
   pattern next to other variants in one `case`, `==` on payload enums and `switch` through a pointer without `*`.
   The tag is always `i32`.
+- **Std sum types (`std/collections/option`, `std/collections/result`):** `Option<T>` and `Result<T, E>` are ordinary
+generic payload enums plus a few helpers (`optionOrElse`, `optionIsSome`, `optionTake`, `resultOrElse`, `resultIsOk`,
+`resultTake`, `resultTakeErr`). There is no `?` operator in the language, so early exit is written out as a `switch` on
+both variants; the page in each file shows the shape. Known gap: `Option`/`Result` are re-exported through
+`std/collections/index.xl` and `std/index.xl` with `export *`, and a generic type that reaches a program only through
+such a chain of `export *` re-exports has been reported as not visible through `import "std"` while a direct import
+(`from "std/collections/result" import Result`) and a namespace import (`import "std/collections" as C`,
+`C.Result<i32, i32>`) work. No cause is confirmed yet.
 - `Vec<T>` (`std/collections/vec`): the element accessors `get`, `first` and `last` return `*T` rather than a value, so a droppable element is never copied. `vecClone` panics for an element type that needs drop, because a bitwise copy would drop the element twice. The index panic text (`Vec: index I out of range for length L`) is built by `fmtIndexPanic` in `std/str/fmt`, on the stack and without allocating. `set` drops the old element through a plain `*slot = v` assignment. A drop-counter element type in `test/e2e/collections.xl` checks that `set`, `insert`, `remove`, `swapRemove` and `truncate` drop each element exactly once.
 - `String` (core-language phase 7): the HTTP and TLS modules still use `*ui8` buffers. `fsReadAllString` is in `std/io/fs`.
 - `const` (core-language phase 2): a `const` is not a `define` constant, so it cannot be an array length, a `staticAssert`
@@ -106,8 +119,9 @@ The original plan is implemented except the items below, which are intentionally
 - Ownership (core-language phase 5): drops are statically dispatched (deleting a derived object through a base pointer runs
   only the base drop). There is no explicit base constructor call: a derived `init` runs the base's argument-less `init`
   automatically. An array whose element needs drop is `E0721` at locals, parameters, fields and globals, because arrays do
-  not drop their elements. Temporaries used as receivers are materialized with a drop flag; a droppable temporary inside `&&`/`||`
-  or a `?:` branch is dropped only if it was created.
+  not drop their elements (`E0759` when the element type is a payload enum that needs drop; a droppable payload enum in a
+  global or struct field is `E0758`). Temporaries used as receivers are materialized with a drop flag; a droppable
+  temporary inside `&&`/`||` or a `?:` branch is dropped only if it was created.
 - Overloading (core-language phase 3): an overloaded function's HIR name is its qualified name plus its mangled parameter
   types (not the link symbol); this is the unique key codegen uses. Overload resolution lowers each non-literal argument
   once, with no expected type, so an array literal passed to an overloaded or generic call has no element type context

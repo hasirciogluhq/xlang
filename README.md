@@ -25,8 +25,8 @@ or shared libraries. C++ owns the compiler, host tooling and LLVM codegen.
 | Area            | Support                                                                                                                                                                   |
 | --------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Types           | `i8`–`i64`, `ui8`–`ui64`, `isize`/`usize`, `f32`/`f64`, `bool`, `void`, `*T`, `fn(A)->R`, `[T; N]`, `str`, `(A, B)` tuple                                                 |
-| User types      | `struct`, `class` (single inheritance, vptr), `interface` (fat pointer), `enum` (value and payload), `type` alias                                                         |
-| Generics        | Functions, structs, classes, interfaces, aliases and class methods; monomorphized, no constraints                                                                         |
+| User types      | `struct`, `class` (single inheritance, vptr), `interface` (fat pointer), `enum` (value and payload, including generic payload enums such as `Result<T, E>`), `type` alias              |
+| Generics        | Functions, structs, classes, interfaces, enums (payload enums included), aliases and class methods; monomorphized, no constraints                                          |
 | Functions       | Overload by parameter types, parameter packs (`..args`), `fn alias = target`, `@entry` / `@init` / `@fini`                                                                |
 | Control flow    | `if`/`else`, `while`, `do`/`while`, three-clause `for`, `for i in a..b` / `a..=b`, `switch` (no fallthrough), labeled `break`/`continue`, `defer`, `try`/`catch`, ternary |
 | Memory          | `new T`, `new(p) T`, `delete p`; the allocator is a registered stdlib function, not a builtin                                                                             |

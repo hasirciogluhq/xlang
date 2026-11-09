@@ -270,6 +270,20 @@ constexpr std::size_t kLeadWidth = 40;
         {"E0755", Severity::Error, "`@entry` arguments on a shared library or Windows program",
          "The `argc`/`argv` form of `@entry` is available for executables on Linux and macOS only. Shared "
          "libraries and Windows programs take `@entry fn name()` with no parameters."},
+        {"E0756", Severity::Error, "cannot infer the type arguments of a generic payload enum",
+         "`Result.Ok(v)` names a variant of every instance of the enum, so the compiler needs the "
+         "instance to build. Write the target type where the value is created, as in "
+         "`local r: Result<i32, E> = Result.Ok(v)`."},
+        {"E0757", Severity::Error, "`case` names a variant of another enum",
+         "Every `case` of a `switch` on a payload enum must name a variant of that same enum. Check the "
+         "enum in front of the variant name, and write the variants of the enum being switched on."},
+        {"E0758", Severity::Error, "payload enum needs drop in a place that cannot own it",
+         "An enum with a droppable payload owns that value and drops it with the live variant, so it "
+         "is a local or a class field. It cannot be a global or a struct field, because those hold "
+         "plain data and drop nothing. Use a local, a class field or a `Vec<T>`."},
+        {"E0759", Severity::Error, "array of a payload enum that needs drop",
+         "An array of an enum whose payload needs drop cannot own its elements, because arrays do not "
+         "drop their elements. Use a `Vec<T>`, whose elements are dropped when it is dropped."},
         {"W0701", Severity::Warning, "missing return",
          "Control can fall off the end of a function that returns a value: some path has no "
          "`return` (a loop that ends with `break`, an `if` without `else`, ...). Add a `return`, "

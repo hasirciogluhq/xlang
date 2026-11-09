@@ -770,6 +770,90 @@ void testGenericPayloadEnums() {
     CHECK(Lowered(std::string(boxed) + "fn main() -> i32 { local b: Boxed<i32> = Boxed.Full }\n"
               "fn g() -> i32 { return 0 }\n")
               .failedWith("E0751"));
+    {
+        // A droppable payload of a generic instance: the payload enum itself needs drop, so a
+        // global or struct-field position is rejected (E0758), and its array (E0759).
+        Lowered ok("class Res {\n fn drop(self) { }\n}\n"
+                   "enum Boxed<T> {\n Empty\n Full(T)\n}\n"
+                   "fn f(b: Boxed<Res>) -> i32 {\n"
+                   "    switch b {\n"
+                   "        case Boxed.Empty { return 0 }\n"
+                   "        case Boxed.Full(v) { return 1 }\n"
+                   "    }\n"
+                   "    return -1\n"
+                   "}\n"
+                   "fn main() -> i32 {\n local b: Boxed<Res> = Boxed.Full(Res())\n return f(b)\n }\n");
+        CHECK(!ok.diag->hasErrors());
+    }
+    {
+        // A droppable payload type in a generic instance, used and dropped in a local.
+        Lowered ok("class Res {\n fn drop(self) { }\n}\n"
+                   "enum Result<T, E> {\n Ok(T)\n Err(E)\n}\n"
+                   "fn f(r: Result<Res, i32>) -> i32 {\n"
+                   "    switch r {\n"
+                   "        case Result.Ok(v) { return 1 }\n"
+                   "        case Result.Err(c) { return c }\n"
+                   "    }\n"
+                   "    return 0\n"
+                   "}\n"
+                   "fn main() -> i32 {\n local r: Result<Res, i32> = Result.Ok(Res())\n"
+                   " return f(r)\n }\n");
+        CHECK(!ok.diag->hasErrors());
+    }
+    {
+        // A nested generic argument: `Result<Boxed<i32>, i32>` is one instance of `Result`.
+        Lowered ok("enum Boxed<T> {\n Empty\n Full(T)\n}\n"
+                   "enum Result<T, E> {\n Ok(T)\n Err(E)\n}\n"
+                   "fn f(r: Result<Boxed<i32>, i32>) -> i32 {\n"
+                   "    switch r {\n"
+                   "        case Result.Err(c) { return c }\n"
+                   "        case Result.Ok(b) {\n"
+                   "            switch b {\n"
+                   "                case Boxed.Empty { return 0 }\n"
+                   "                case Boxed.Full(v) { return v }\n"
+                   "            }\n"
+                   "            return 1\n"
+                   "        }\n"
+                   "    }\n"
+                   "    return -1\n"
+                   "}\n"
+                   "fn main() -> i32 {\n"
+                   " local r: Result<Boxed<i32>, i32> = Result.Ok(Boxed.Full(5))\n"
+                   " return f(r)\n }\n");
+        CHECK(!ok.diag->hasErrors());
+    }
+    // E0756: a variant of a generic enum built where no target type is known.
+    CHECK(Lowered("enum Result<T, E> {\n Ok(T)\n Err(E)\n}\n"
+                  "fn main() -> i32 {\n local r = Result.Ok(1)\n return 0\n }\n")
+              .failedWith("E0756"));
+    {
+        // E0757: a `case` that names a variant of a different enum.
+        Lowered wrong("enum A {\n X\n Y(i32)\n}\n"
+                      "enum B {\n X\n Y(i32)\n}\n"
+                      "fn f(a: A) -> i32 {\n"
+                      "    switch a {\n"
+                      "        case B.X { return 0 }\n"
+                      "        default { return 1 }\n"
+                      "    }\n"
+                      "}\n"
+                      "fn main() -> i32 { return 0 }\n");
+        CHECK(wrong.failedWith("E0757"));
+    }
+    {
+        // E0758: a droppable payload enum in a struct field.
+        Lowered bad("class Res {\n fn drop(self) { }\n}\n"
+                    "enum Boxed<T> {\n Empty\n Full(T)\n}\n"
+                    "struct Holder {\n b: Boxed<Res>\n}\n"
+                    "fn main() -> i32 { return 0 }\n");
+        CHECK(bad.failedWith("E0758"));
+    }
+    {
+        // E0759: an array of a droppable payload enum.
+        Lowered bad("class Res {\n fn drop(self) { }\n}\n"
+                    "enum Boxed<T> {\n Empty\n Full(T)\n}\n"
+                    "fn main() -> i32 {\n local a: [Boxed<Res>; 2]\n return 0\n }\n");
+        CHECK(bad.failedWith("E0759"));
+    }
     CHECK(Lowered("enum Boxed<T> {\n Empty\n Full(T)\n}\n"
                   "fn main() -> i32 { local b: Boxed<i32, i32> = Boxed.Empty\n return 0 }\n")
               .failedWith("E0724"));

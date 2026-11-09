@@ -1470,7 +1470,9 @@ void Lowerer::lowerSumSwitch(const Stmt& s, EP scrutinee, std::vector<hir::Stmt>
             const auto named = head != nullptr ? sumOfEntry(*head) : std::nullopt;
             // The pattern names the enum; the scrutinee may be one instance of it (`Result<i32, E>`
             // built its own aggregate), so the compared part is the declaration's variant list.
-            if (!named || !sameVariants(*named->decl, *sum.decl)) {
+            if (!named) {
+                // A name that is not an enum at all, such as `case 1`, names no variant of the
+                // switched-on enum: the `case` syntax itself is wrong (E0749).
                 err("E0749",
                     value->span,
                     std::format("`case` of a `{}` switch must name one of its variants",
@@ -1478,6 +1480,18 @@ void Lowerer::lowerSumSwitch(const Stmt& s, EP scrutinee, std::vector<hir::Stmt>
                     std::format("write `{}.Variant` or `{}.Variant(names...)`",
                                 sum.decl->name,
                                 sum.decl->name));
+                continue;
+            }
+            if (!sameVariants(*named->decl, *sum.decl)) {
+                // A pattern that names another enum: `case Other.A` in a `switch` on `E`.
+                err("E0757",
+                    value->span,
+                    std::format("`case {}.{}` names a variant of `{}`, but the value is a `{}`",
+                                named->decl->name,
+                                pattern.text,
+                                named->decl->name,
+                                sum.decl->name),
+                    std::format("write `{}.{}`", sum.decl->name, pattern.text));
                 continue;
             }
             const auto variant = sumVariantIndex(sum, pattern.text);
@@ -1587,8 +1601,14 @@ void Lowerer::lowerGlobal(const GlobalDecl& g, const Modifiers& mods) {
     out.module = s_.key_;
     out.constant = g.is_const;
     out.type = globalType(s_, g);
-    rejectDroppableArray(out.type, g.name_span, "a global");
-    if (needsDrop(out.type)) {
+    rejectDroppablePlace(out.type, g.name_span, "a global");
+    if (droppableSum(out.type)) {
+        err("E0758",
+            g.name_span,
+            std::format("`{}` is a payload enum that needs drop and cannot be a global",
+                        typeToString(out.type)),
+            "a global is plain data and is never dropped; use a local or a class field");
+    } else if (needsDrop(out.type)) {
         err("E0721",
             g.name_span,
             std::format("`{}` needs drop and cannot be a global", typeToString(out.type)),
@@ -1774,7 +1794,7 @@ void Lowerer::lowerFunction(const FnDecl& f,
         const hir::LocalId id = addLocal(p.is_self ? "self" : p.name, t, true, p.span);
         bindLocal(p.is_self ? "self" : p.name, id, t, p.span);
         if (!p.is_self) {
-            rejectDroppableArray(t, p.span, "a parameter");
+            rejectDroppablePlace(t, p.span, "a parameter");
         }
         if (!p.is_self && needsDrop(t)) {
             owned_params.push_back({id, t, p.span});
@@ -1908,13 +1928,20 @@ void Lowerer::lowerAggregate(const Item& item) {
             // A sum (`E` itself) and its parts are dropped by `E`'s glue, which drops the live
             // variant only, so a droppable payload is allowed there.
             const bool in_sum = !st->variants.empty() || st->is_payload || st->is_union;
-            if (needsDrop(ft) && !in_sum) {
+            if (droppableSum(ft) && !in_sum) {
+                err("E0758",
+                    f.span,
+                    std::format("`{}` is a payload enum that needs drop and cannot be a struct "
+                                "field",
+                                typeToString(ft)),
+                    "use a class field instead; structs are plain data and drop nothing");
+            } else if (needsDrop(ft) && !in_sum) {
                 err("E0721",
                     f.span,
                     std::format("`{}` needs drop and cannot be a struct field", typeToString(ft)),
                     "use a class field instead; structs are plain data");
             }
-            rejectDroppableArray(ft, f.span, "a struct field");
+            rejectDroppablePlace(ft, f.span, "a struct field");
             a.fields.push_back({f.name, ft});
         }
         mod_.aggregates.push_back(std::move(a));
@@ -1962,7 +1989,7 @@ void Lowerer::lowerAggregate(const Item& item) {
         }
         for (const FieldDecl& f : cl->fields) {
             const Type ft = resolved(f.type);
-            rejectDroppableArray(ft, f.span, "a class field");
+            rejectDroppablePlace(ft, f.span, "a class field");
             a.fields.push_back({f.name, ft});
         }
         for (const FnDecl& m : cl->methods) {

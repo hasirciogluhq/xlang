@@ -489,8 +489,13 @@ class Lowerer {
     [[nodiscard]] bool needsDrop(const Type& t);
     /// An array whose element type needs drop, at any depth of nested arrays.
     [[nodiscard]] bool droppableArray(const Type& t);
+    /// Whether `t`, or an array element below it, is a payload enum whose highlighted payload needs
+    /// drop (`E0721` covers plain classes).
+    [[nodiscard]] bool droppableSum(const Type& t);
     /// E0721 when `t` is a droppable array; `where` completes "cannot be ...".
     void rejectDroppableArray(const Type& t, const Span& at, const char* where);
+    /// E0759 when `t` is an array of a payload enum that needs drop, else `rejectDroppableArray`.
+    void rejectDroppablePlace(const Type& t, const Span& at, const char* where);
     [[nodiscard]] static std::string dropGlueName(const std::string& qname);
     void emitDropGlue(const std::string& qname, const ClassDecl& c, const Span& span);
     /// The drop glue of a payload enum: `switch` on the tag, then the payload of the live variant

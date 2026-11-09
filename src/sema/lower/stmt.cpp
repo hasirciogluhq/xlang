@@ -50,6 +50,19 @@ bool Lowerer::droppableArray(const Type& t) {
     return t.kind == TypeKind::Array && t.elem && (needsDrop(*t.elem) || droppableArray(*t.elem));
 }
 
+bool Lowerer::droppableSum(const Type& t) {
+    const Type* cur = &t;
+    while (cur->kind == TypeKind::Array && cur->elem) {
+        cur = cur->elem.get();
+    }
+    if (cur->kind != TypeKind::Struct || cur->path.empty() || !needsDrop(*cur)) {
+        return false;
+    }
+    const auto ref = entityOfType(*cur);
+    const StructDecl* decl = ref ? sumDecl(ref->sym->item) : nullptr;
+    return decl != nullptr && !decl->variants.empty();
+}
+
 void Lowerer::rejectDroppableArray(const Type& t, const Span& at, const char* where) {
     if (droppableArray(t)) {
         err("E0721",
@@ -59,6 +72,21 @@ void Lowerer::rejectDroppableArray(const Type& t, const Span& at, const char* wh
                         where),
             "arrays do not drop their elements; use a class value instead");
     }
+}
+
+void Lowerer::rejectDroppablePlace(const Type& t, const Span& at, const char* where) {
+    // An array of a payload enum that needs drop is the sum-type case of the array rule, and the
+    // message names the enum, not the `$`-named union it is built from.
+    if (droppableArray(t) && droppableSum(t)) {
+        err("E0759",
+            at,
+            std::format("`{}` is an array of a payload enum that needs drop and cannot be {}",
+                        typeToString(t),
+                        where),
+            "arrays do not drop their elements; use a `Vec<T>` instead");
+        return;
+    }
+    rejectDroppableArray(t, at, where);
 }
 
 bool Lowerer::needsDrop(const Type& t) {
@@ -271,7 +299,7 @@ void Lowerer::emitSumDropGlue(const std::string& qname, const StructDecl& sum, c
         std::vector<std::pair<std::size_t, Type>> droppable;
         for (const std::size_t k : std::views::iota(std::size_t{0}, v.payload.size())) {
             Type ft = resolvedIn(s_, v.payload[k]);
-            rejectDroppableArray(ft, span, "a payload value");
+            rejectDroppablePlace(ft, span, "a payload value");
             if (needsDrop(ft)) {
                 droppable.emplace_back(k, std::move(ft));
             }
@@ -1389,7 +1417,7 @@ void Lowerer::lowerTupleLocal(const Stmt& s, std::vector<hir::Stmt>& out) {
         decl.kind = hir::StmtKind::Local;
         decl.span = s.span;
         decl.local = addLocal(s.names[i], t, false, s.span);
-        rejectDroppableArray(t, s.span, "a local");
+        rejectDroppablePlace(t, s.span, "a local");
         if (needsDrop(t)) {
             registerDrop(decl.local, t, true, s.span, out);
         }
@@ -1437,7 +1465,7 @@ void Lowerer::lowerStmt(const Stmt& s, std::vector<hir::Stmt>& out) {
         init = moveOut(std::move(init));
         h.kind = hir::StmtKind::Local;
         h.local = addLocal(s.name, t, false, s.span);
-        rejectDroppableArray(t, s.span, "a local");
+        rejectDroppablePlace(t, s.span, "a local");
         if (needsDrop(t)) {
             registerDrop(h.local, t, init != nullptr, s.span, out);
         }

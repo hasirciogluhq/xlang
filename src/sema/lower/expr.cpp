@@ -528,12 +528,10 @@ Lowerer::sumFor(const ScopeEntry& head, const Type* expected, const Span& at) {
         const std::string name = declBase(*head.item).name;
         const auto instance = instancesOf(expected, owner.qualify(name));
         if (!instance) {
-            err("E0724",
+            err("E0756",
                 at,
-                std::format("`{}` is generic and takes {} type argument(s), none given",
-                            name,
-                            owner.genericParamsOf(*head.item).size()),
-                std::format("name the instance in the type of the value, as in\n"
+                std::format("cannot infer the type arguments of enum `{}`", name),
+                std::format("write the target type, e.g.\n"
                             "    local r: {}<...> = {}.Variant",
                             name,
                             name));
@@ -571,17 +569,14 @@ Lowerer::EP Lowerer::fieldExpr(const Expr& e, const Type* expected) {
             const std::string name = declBase(*head->item).name;
             // `Result.Ok` of a generic enum names a member of the instance the surrounding
             // expression expects (`local r: Result<i32, E> = Result.Ok(1)`); without that type the
-            // instance is unknown (E0724).
-            if (const std::vector<std::string> params = owner.genericParamsOf(*head->item);
-                !params.empty()) {
+            // instance is unknown (E0756).
+            if (!owner.genericParamsOf(*head->item).empty()) {
                 const std::optional<Type> instance = instancesOf(expected, owner.qualify(name));
                 if (!instance) {
-                    err("E0724",
+                    err("E0756",
                         e.span,
-                        std::format("`{}` is generic and takes {} type argument(s), none given",
-                                    name,
-                                    params.size()),
-                        std::format("name the instance in the type of the value, as in\n"
+                        std::format("cannot infer the type arguments of enum `{}`", name),
+                        std::format("write the target type, e.g.\n"
                                     "    local r: {}<...> = {}.{}",
                                     name,
                                     name,

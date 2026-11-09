@@ -65,6 +65,54 @@ fn take(r: Result<String, i32>) -> i64 {
     return -4
 }
 
+// Two instances of the same declaration live in one function: `Result<i32, MyErr>` and
+// `Result<String, i32>` are different types, each with its own tag and payload structs.
+fn twoInstances() -> i64 {
+    local a: Result<i32, MyErr> = Result.Ok(10)
+    local b: Result<String, i32> = Result.Err(20)
+    local sum: i64 = 0
+    switch a {
+        case Result.Ok(v) { sum = sum + v as i64 }
+        case Result.Err(e) { sum = sum - 1 }
+    }
+    switch b {
+        case Result.Ok(s) { sum = sum - 1 }
+        case Result.Err(c) { sum = sum + c as i64 }
+    }
+    return sum
+}
+
+// A droppable payload bound and then dropped: `r` owns the `String` inside its live `Ok`, the
+// `case` moves it out into `s`, and `s` is dropped at the end of its arm. `r` is then dropped with
+// no live payload, so the buffer is freed exactly once.
+fn droppedArm() -> i64 {
+    local r: Result<String, i32> = Result.Ok(String("never bound"))
+    local out: i64 = 0
+    switch r {
+        case Result.Ok(s) { out = s.len as i64 }
+        case Result.Err(c) { out = c as i64 }
+    }
+    return out
+}
+
+// The `Err`/`None` branches: both variants of a two-parameter enum and the empty variant of
+// `Option` are reachable and dropped cleanly.
+fn errBranch(r: Result<i32, MyErr>) -> i64 {
+    switch r {
+        case Result.Ok(v) { return v as i64 }
+        case Result.Err(e) { return e.code as i64 }
+    }
+    return -6
+}
+
+fn noneBranch(o: Option<String>) -> i64 {
+    switch o {
+        case Option.None { return -7 }
+        case Option.Some(s) { return s.len as i64 }
+    }
+    return -8
+}
+
 fn cover(o: Option<i32>) -> i64 {
     switch o {
         case Option.Some(v) { return v }
@@ -101,6 +149,16 @@ fn cover(o: Option<i32>) -> i64 {
 
     // `default` covers the variants a `case` group does not name
     check("default", cover(Option.None), 0)
+
+    // two instances of the same generic enum in one function
+    check("two-instances", twoInstances(), 30)
+
+    // a droppable payload is moved out, used and dropped exactly once
+    check("dropped-arm", droppedArm(), 11)
+
+    // the `Err`/`None` branches are reachable and the enum drops cleanly
+    check("err-branch", errBranch(Result.Err(MyErr { code: 33 })), 33)
+    check("none-branch", noneBranch(Option.None), -7)
 
     if failures == 0 {
         print("generic_enums ok\n")
