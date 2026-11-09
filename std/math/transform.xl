@@ -76,23 +76,23 @@ export class Transform {
     }
 
     /// Writes the inverse placement into `out` and returns true; returns false and leaves `out` untouched when a scale
-    /// component is zero. The inverse of T * R * S is S^-1 * R^-1 * T^-1, so the position is the un-rotated,
-    /// un-scaled negative translation and the scale is the reciprocal of each component.
+    /// component is zero. The inverse of T * R * S is S^-1 * R^-1 * T^-1, so the position is the rotation of the
+    /// negative translation divided by the scale, the rotation is the conjugate and the scale is the reciprocal of each
+    /// component.
+    ///   `applyPoint(p) = R * (S * p) + t`; undoing it is `p = S^-1 * (R^-1 * (p' - t))`. The translation is undone
+    /// first and the scale is divided out last, in the same order as `applyPoint`; the division is componentwise
+    /// because the scale is, so undoing the scale before the rotation would only be right for a uniform scale.
     fn inverse(self, out: *Transform) -> bool {
         if self.scale.x == 0.0 || self.scale.y == 0.0 || self.scale.z == 0.0 {
             return false
         }
-        local neg: Vec3 = Vec3(0.0 - self.position.x, 0.0 - self.position.y, 0.0 - self.position.z)
-        local invPos: Vec3 = Vec3(0.0, 0.0, 0.0)
-        self.rotation.rotateVec(&neg, &invPos)
-        // Every field of `out` is assigned a whole value computed in a local first: a field assignment that reads
-        // another field of the same object (`out.position = ..(.. out.scale.x ..)`) or writes two fields in one
-        // statement computes the wrong value in the current code generator, and whole-value locals are correct on
-        // every backend. `out` may also be `self`, which the locals make safe.
         local sx: f64 = self.scale.x
         local sy: f64 = self.scale.y
         local sz: f64 = self.scale.z
-        local newPos: Vec3 = Vec3(invPos.x / sx, invPos.y / sy, invPos.z / sz)
+        local neg: Vec3 = Vec3(0.0 - self.position.x, 0.0 - self.position.y, 0.0 - self.position.z)
+        local unrotated: Vec3 = Vec3(0.0, 0.0, 0.0)
+        self.rotation.rotateVec(&neg, &unrotated)
+        local newPos: Vec3 = Vec3(unrotated.x / sx, unrotated.y / sy, unrotated.z / sz)
         local iw: f64 = self.rotation.w
         local ix: f64 = self.rotation.x
         local iy: f64 = self.rotation.y
