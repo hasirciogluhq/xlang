@@ -1,7 +1,7 @@
 #pragma once
 
-#include "xlang/lang/ast.h"
 #include "xlang/hir/hir.h"
+#include "xlang/lang/ast.h"
 #include "xlang/lang/config.h"
 #include "xlang/sema/layout.h"
 #include "xlang/util/diagnostics.h"
@@ -16,7 +16,11 @@
 
 namespace xlang {
 
+namespace lower {
+// The lowering pass (`src/sema/lower/lower.hpp`): one instance per module.
 class Lowerer;
+} // namespace lower
+
 class Compilation;
 
 using Int128 = __int128;
@@ -41,8 +45,10 @@ struct ConstValue {
 /// 3.6/3.8): name table, type alias resolution, enums, constant evaluation, layouts,
 /// `staticAssert`. Cross-module names (`alias.Name`) stay unresolved until module loading.
 class Sema {
-public:
-    Sema(const Program& program, const BuildConfig& config, DiagnosticEngine& diagnostics,
+  public:
+    Sema(const Program& program,
+         const BuildConfig& config,
+         DiagnosticEngine& diagnostics,
          const LayoutHistory* history = nullptr);
 
     /// Runs every check over the module: duplicate names, aliases, enums, array lengths in all
@@ -64,8 +70,8 @@ public:
     [[nodiscard]] std::vector<std::string> aggregateNames() const;
 
     /// Value of `Enum.Member` (auto-numbering applied).
-    [[nodiscard]] std::optional<ConstValue> enumMember(const std::string& enum_name,
-                                                       const std::string& member, const Span& at);
+    [[nodiscard]] std::optional<ConstValue>
+    enumMember(const std::string& enum_name, const std::string& member, const Span& at);
 
     /// Plan 4.1-4.3: scopes, name resolution and type checking of every function body, lowered to
     /// HIR in the same pass. Run `analyze()` first; diagnostics go to the engine, the returned
@@ -79,7 +85,16 @@ public:
 
     struct Symbol {
         enum class Kind {
-            Struct, Class, Interface, Enum, Alias, Define, Global, Fn, FnAlias, Macro
+            Struct,
+            Class,
+            Interface,
+            Enum,
+            Alias,
+            Define,
+            Global,
+            Fn,
+            FnAlias,
+            Macro
         } kind;
         const Item* item{nullptr};
         /// Fn: every declaration of the name in declaration order (more than one = overloads).
@@ -90,8 +105,8 @@ public:
     /// module, or a whole module (`import "m" as a`).
     struct ImportBinding {
         enum class Kind { Entity, Namespace } kind{Kind::Entity};
-        std::string module_key;  ///< defining module (Entity) / the module itself (Namespace)
-        std::string name;        ///< Entity: name inside that module
+        std::string module_key; ///< defining module (Entity) / the module itself (Namespace)
+        std::string name;       ///< Entity: name inside that module
         Span span;
     };
 
@@ -122,17 +137,16 @@ public:
 
     /// A concrete instance of a generic declaration: its origin and type arguments.
     struct InstanceInfo {
-        std::string generic;  ///< qualified name of the generic declaration
+        std::string generic; ///< qualified name of the generic declaration
         std::vector<Type> args;
-        Span requested_at;               ///< where the instance was first requested
-        std::string parent;              ///< local name of the instance that requested it, if any
-        const Sema* parent_owner{nullptr};  ///< the module that owns `parent`
+        Span requested_at;                 ///< where the instance was first requested
+        std::string parent;                ///< local name of the instance that requested it, if any
+        const Sema* parent_owner{nullptr}; ///< the module that owns `parent`
     };
     /// The instance of the generic declaration `generic` for `args` (created on first use, cached;
     /// E0724 on a wrong argument count, E0725 when the nesting of arguments is too deep).
-    [[nodiscard]] std::optional<EntityRef> instantiate(const EntityRef& generic,
-                                                       const std::vector<Type>& args,
-                                                       const Span& at);
+    [[nodiscard]] std::optional<EntityRef>
+    instantiate(const EntityRef& generic, const std::vector<Type>& args, const Span& at);
     /// Instances created since the last call, for lowering.
     [[nodiscard]] std::vector<const Item*> takePendingInstances();
     /// Origin of an instance by its local name (nullptr when `local` is not an instance).
@@ -147,10 +161,10 @@ public:
 
     /// A method with its own type parameters, instantiated for one set of type arguments.
     struct MethodInstance {
-        FnDecl decl;        ///< the method with its type parameters substituted
-        std::string key;    ///< link name: `Class.method<args>`
-        std::string cls;    ///< local name of the class
-        std::string cls_q;  ///< qualified name of the class
+        FnDecl decl;       ///< the method with its type parameters substituted
+        std::string key;   ///< link name: `Class.method<args>`
+        std::string cls;   ///< local name of the class
+        std::string cls_q; ///< qualified name of the class
     };
     /// The instance of the generic method `generic` of class `cls` for `args` (created on first
     /// use, cached, queued for lowering by this module).
@@ -183,8 +197,8 @@ public:
     [[nodiscard]] std::optional<EntityRef> entityByQName(const std::string& qname);
     [[nodiscard]] const Symbol* findLocal(const std::string& name) const { return find(name); }
 
-private:
-    friend class Lowerer;
+  private:
+    friend class lower::Lowerer;
     friend class Compilation;
 
     void collect();
@@ -214,8 +228,8 @@ private:
     [[nodiscard]] std::optional<ConstValue> evalCall(const Expr& expr);
     [[nodiscard]] std::optional<ConstValue> fromConfig(const ConfigValue& v);
     [[nodiscard]] std::optional<std::uint64_t> primitiveSize(const Type& t, std::uint64_t& align);
-    [[nodiscard]] std::optional<TypeLayout> aggregateLayout(const std::string& name, const Item& item,
-                                                            const Span& at);
+    [[nodiscard]] std::optional<TypeLayout>
+    aggregateLayout(const std::string& name, const Item& item, const Span& at);
     void notConstant(const Span& at, std::string why);
     void error(const char* code, const Span& at, std::string message, std::string label);
     /// Notes for the instantiation chain of the instance being lowered (at most 8 levels).
@@ -241,12 +255,12 @@ private:
     };
     std::map<std::pair<const Item*, std::size_t>, std::unique_ptr<PackTemplate>> pack_templates_;
     [[nodiscard]] const PackTemplate& packTemplate(const Item& generic, std::size_t count);
-    std::map<std::string, InstanceInfo> instance_info_;  ///< instance local name -> origin
-    std::map<const Item*, std::string> item_instance_;   ///< instance item -> its local name
-    std::string current_instance_;  ///< local name of the instance whose body is lowered
+    std::map<std::string, InstanceInfo> instance_info_; ///< instance local name -> origin
+    std::map<const Item*, std::string> item_instance_;  ///< instance item -> its local name
+    std::string current_instance_; ///< local name of the instance whose body is lowered
     std::vector<const Item*> pending_instances_;
-    std::deque<MethodInstance> method_instances_;  ///< stable addresses for the lowering queue
-    std::map<std::string, const MethodInstance*> method_index_;  ///< link name -> instance
+    std::deque<MethodInstance> method_instances_; ///< stable addresses for the lowering queue
+    std::map<std::string, const MethodInstance*> method_index_; ///< link name -> instance
     std::vector<const MethodInstance*> pending_methods_;
     std::map<std::string, std::optional<ConstValue>> define_cache_;
     std::set<std::string> define_in_progress_;
@@ -255,10 +269,10 @@ private:
     std::set<std::string> layout_in_progress_;
     std::map<std::string, std::vector<std::optional<ConstValue>>> enum_values_;
     std::set<std::string> enum_in_progress_;
-    std::set<std::string> reported_;  ///< dedup key for repeated diagnostics
+    std::set<std::string> reported_; ///< dedup key for repeated diagnostics
     Compilation* comp_{nullptr};
     std::string key_;
     std::map<std::string, ImportBinding> imports_;
 };
 
-}  // namespace xlang
+} // namespace xlang

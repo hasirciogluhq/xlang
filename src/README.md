@@ -21,12 +21,30 @@ src/
     config.cpp         # BuildConfig, target triples, -D values
     frontend.cpp       # lex -> preprocess -> macros -> parse
   sema/
-    sema.cpp           # names, aliases, enums, const eval, layouts, staticAssert, generic instances and method instances
+    sema/              # per-module semantic services (plan phases 2 and 3.6/3.8); `sema.hpp` is the internal header
+      const_value.cpp  #   `ConstValue` and its text form
+      symbols.cpp      #   name table (`collect`, E0401/E0405), diagnostics with instantiation notes, link names, `fn alias`
+      instances.cpp    #   generic instances: `instantiate`, method instances, the pending queues
+      types.cpp        #   `resolve`: Named -> Struct/Class/Interface/Enum, alias expansion (E0704/E0724)
+      module_scope.cpp #   import bindings, qualified lookup, name expression -> entity, expression -> type
+      const_eval.cpp   #   compile-time evaluation: literals, defines, enum members, operators, casts, sizeOf/alignOf/offsetOf
+      enums.cpp        #   enum member values and E0705 checks
+      layout.cpp       #   sizes, `str`, arrays, aggregate layout (scheme v1, @repr(c), @packed, @align, records)
+      checks.cpp       #   whole-module checks and `analyze`
     layout.cpp         # layout record / xl.layout history
     conversion.cpp     # implicit conversion rules (E0601 / W0601)
     scope.cpp          # ScopeStack: module -> function -> block scopes (plan 4.1)
-    compilation.cpp    # module loading, exports/imports, registrations, whole-program driver (4.6, 4.12)
-    lower.cpp          # body type checking + HIR lowering over all modules (4.2-4.5, 4.8-4.12); payload enum variants and `switch` (E0749-E0751)
+    compilation/       # whole-program driver (4.6, 4.12); `compilation.hpp` is the internal header
+      locate.cpp       #   import spec -> file, macros seeding, module loading and `ModuleInfo` registration
+      exports.cpp      #   per-module export set (`export`, `export ... from`, `except`, `as`)
+      imports.cpp      #   per-module import bindings and duplicate/conflict diagnostics (E0401/W0401)
+      registered.cpp   #   `register(role)` names across the compilation, user over stdlib, E0502
+      driver.cpp       #   lifecycle, phase order (`finish`/`analyzeAll`/`lowerAll`), `@init` order, W0301
+    lower/             # lowering pass (4.2-4.5, 4.8-4.12); `lower.hpp` is the internal header
+      lower.cpp        #   pass entry points and the cross-module orchestration
+      items.cpp        #   items: module scope, registrations, vtables, impls, declarations, payload enum variants (E0749-E0751)
+      stmt.cpp         #   statements (control flow, `defer`, `try`) and ownership (drop glue, drop flags, moves)
+      expr.cpp         #   expressions, calls, overload resolution and conversions
     variadic.cpp       # `..args` packs: per-count instances, args.len folding, unrolled for, pack checks (E0734-E0738)
   pkg/
     toml.cpp           # TOML subset parser (xlang.toml, xlang.lock)

@@ -70,12 +70,27 @@ target("xlang-frontend")
         "$(projectdir)/src/lang/types/types.cpp",
         "$(projectdir)/src/lang/config.cpp",
         "$(projectdir)/src/lang/frontend.cpp",
-        "$(projectdir)/src/sema/sema.cpp",
+        "$(projectdir)/src/sema/sema/const_value.cpp",
+        "$(projectdir)/src/sema/sema/symbols.cpp",
+        "$(projectdir)/src/sema/sema/instances.cpp",
+        "$(projectdir)/src/sema/sema/types.cpp",
+        "$(projectdir)/src/sema/sema/module_scope.cpp",
+        "$(projectdir)/src/sema/sema/const_eval.cpp",
+        "$(projectdir)/src/sema/sema/enums.cpp",
+        "$(projectdir)/src/sema/sema/layout.cpp",
+        "$(projectdir)/src/sema/sema/checks.cpp",
         "$(projectdir)/src/sema/layout.cpp",
         "$(projectdir)/src/sema/conversion.cpp",
         "$(projectdir)/src/sema/scope.cpp",
-        "$(projectdir)/src/sema/compilation.cpp",
-        "$(projectdir)/src/sema/lower.cpp",
+        "$(projectdir)/src/sema/compilation/locate.cpp",
+        "$(projectdir)/src/sema/compilation/exports.cpp",
+        "$(projectdir)/src/sema/compilation/imports.cpp",
+        "$(projectdir)/src/sema/compilation/registered.cpp",
+        "$(projectdir)/src/sema/compilation/driver.cpp",
+        "$(projectdir)/src/sema/lower/lower.cpp",
+        "$(projectdir)/src/sema/lower/items.cpp",
+        "$(projectdir)/src/sema/lower/stmt.cpp",
+        "$(projectdir)/src/sema/lower/expr.cpp",
         "$(projectdir)/src/sema/variadic.cpp",
         "$(projectdir)/src/pkg/toml.cpp",
         "$(projectdir)/src/pkg/semver.cpp",
@@ -88,6 +103,9 @@ target("xlang-frontend")
         "$(projectdir)/src/util/diagnostics.cpp"
     )
     add_includedirs("$(projectdir)/include", {public = true})
+    -- Internal headers live in the area directory (`src/sema/lower/lower.hpp`) and are included
+    -- as `sema/...`: not part of the installed `include/` tree.
+    add_includedirs("$(projectdir)/src", {public = true})
 
 -- Code generation: HIR -> LLVM, pass pipeline, object/IR/bitcode writers, C header, link driver.
 target("xlang-codegen")
