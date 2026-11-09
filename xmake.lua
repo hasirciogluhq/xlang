@@ -6,7 +6,7 @@
 
 set_project("xlang")
 -- `xlang --version` and `xlang self-update` compare against this version (XLANG_VERSION).
-local xlang_version = "0.1.0"
+local xlang_version = "0.0.0"
 set_version(xlang_version)
 add_defines("XLANG_VERSION=\"" .. xlang_version .. "\"")
 
