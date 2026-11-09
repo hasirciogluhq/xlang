@@ -89,9 +89,9 @@ from "std" import Client, Request, Response, println
 
 @entry fn main() -> i32 {
     local c: Client = Client()
-    local req: Request = Request()
+    local req: Request = Request("POST", "https://example.com/")
     req.SetBody("{}")
-    req.Header().Set("Content-Type", "application/json")
+    req.headers.Set("Content-Type", "application/json")
     local resp: Response = c.Do(&req)
     println("{} {}", resp.status, resp.Text())
     return 0
