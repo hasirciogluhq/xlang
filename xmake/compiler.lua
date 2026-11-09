@@ -4,7 +4,7 @@
 --   src/cli/          CLI entry
 --   src/lang/         lexer, parser, ast, types
 --   src/util/         source manager, diagnostics, errors
---   (src/codegen, src/compiler, src/host, src/platform: old pipeline, not built until phase 4.7)
+--   (src/codegen, src/compiler, src/platform: old pipeline, not built until phase 4.7)
 
 local cross = xlang_ctx.is_cross()
 
@@ -100,7 +100,10 @@ target("xlang-frontend")
         "$(projectdir)/src/hir/prune.cpp",
         "$(projectdir)/src/util/source.cpp",
         "$(projectdir)/src/util/diagnostics.cpp",
-        "$(projectdir)/src/util/program.cpp"
+        "$(projectdir)/src/util/program.cpp",
+        -- `xlang::host::run`: spawned by `src/util/program.cpp` and `src/pkg/git.cpp` above, so it
+        -- lives here rather than in the `xlang` binary, which reaches it through this library.
+        "$(projectdir)/src/cli/process.cpp"
     )
     add_includedirs("$(projectdir)/include", {public = true})
     -- Internal headers live in the area directory (`src/sema/lower/lower.hpp`) and are included
@@ -127,7 +130,7 @@ target("xlang")
     set_default(not cross)
     set_enabled(not cross)
     add_files("$(projectdir)/src/cli/app/main.cpp", "$(projectdir)/src/cli/tests/runner.cpp",
-              "$(projectdir)/src/cli/console.cpp", "$(projectdir)/src/cli/process.cpp",
+              "$(projectdir)/src/cli/console.cpp",
               "$(projectdir)/src/cli/update/update.cpp", "$(projectdir)/src/cli/completions/completions.cpp",
               "$(projectdir)/src/cli/package/package.cpp")
     add_deps("xlang-codegen", "xlang-frontend")

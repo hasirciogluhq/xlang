@@ -98,11 +98,14 @@ std::string selfExecutable(const char* argv0) {
 #endif
 
 std::string programOutput(const std::string& program, const std::vector<std::string>& args) {
+    // `argv[0]` is the program itself: the argument list is the caller's, prefixed by the name.
     std::vector<std::string> argv;
     argv.reserve(args.size() + 1);
-    argv.push_back(program);
-    argv.insert(argv.end(), args.begin(), args.end());
-    return host::run(argv, host::RunOptions{.stdio = host::Stdio::Captured}).out;
+    argv.emplace_back(program);
+    argv.append_range(args);
+    // Captured stdout only: a program that fails to start leaves `out` empty, which is what the
+    // header promises.
+    return host::run(argv, {.stdio = host::Stdio::Captured}).out;
 }
 
 int processId() {

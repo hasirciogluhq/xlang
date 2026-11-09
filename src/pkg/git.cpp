@@ -12,9 +12,11 @@ namespace xlang::pkg {
 ProcessResult runProcess(const std::vector<std::string>& argv, const std::filesystem::path& cwd) {
     // Two separate pipes, `GIT_TERMINAL_PROMPT=0` for the child, the exit code: `cli/process.h`
     // holds the one implementation (`fork`/`poll` on POSIX, `CreateProcessW`/`PeekNamedPipe` on
-    // Windows), so the platform branch is not repeated here.
-    const host::RunResult r =
-        host::run(argv, {.stdio = host::Stdio::Captured, .cwd = cwd.string()});
+    // Windows), so the platform branch is not repeated here. A child that cannot start comes back
+    // with `RunResult::status` still at -1, which `gitFailed` reports as "git is not installed".
+    const host::RunResult r = host::run(
+        argv,
+        {.stdio = host::Stdio::Captured, .cwd = cwd.empty() ? std::string{} : cwd.string()});
     return {.status = r.status, .out = r.out, .err = r.err};
 }
 

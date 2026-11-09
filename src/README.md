@@ -5,6 +5,7 @@ Context folders — each concern owns its tree.
 ```
 src/
   cli/                 # xlang CLI entry (`parse`, `check`, `build`, `layout`, `run`, `test`, `package`, `self-update`, `completions`, `--explain`, `--version`, `--color`)
+    process.cpp        # child processes (`xlang::host::run`: `fork`/`poll` or `CreateProcessW`), shared by the CLI and by `util/program.cpp`/`pkg/git.cpp`, so it is built into `xlang-frontend`
     app/
       main.cpp         # CLI11 command tree, `parse`/`check`/`build`/`layout`/`run` wiring and exit codes
       style.h          # ANSI `Palette` and `useColor` (`--color`, `NO_COLOR`, `XLANG_COLOR`) shared by the CLI
@@ -80,6 +81,7 @@ src/
   util/
     source.cpp         # SourceManager / Span
     diagnostics.cpp    # code registry, rendering, allow/deny, log
+    program.cpp        # running program's image path, `programOutput` (captured stdout), `processId`
 test/compiler/         # unit tests (xlang-tests)
 test/e2e/              # end-to-end programs + run.sh (+ lib.sh: filter and job pool; packages.sh: the package system)
 std/                   # the standard library, plain xl (plan phase 7), nested by area, each area with index.xl
