@@ -3,7 +3,8 @@
 //          product name in /sys/class/dmi/id/product_name (the dmi driver's sysfs file; the kernel documents its fields in
 //          Documentation/ABI/testing/sysfs-firmware-dmi).
 //   macOS: sysctlbyname("machdep.cpu.brand_string"), "hw.memsize" (bytes, int64) and "hw.model" (the Mac model identifier).
-//   Windows: not implemented; the functions return false or 0.
+//   Windows: the PROCESSOR_IDENTIFIER environment variable (GetEnvironmentVariableW) and GlobalMemoryStatusEx. There is no
+//          documented, registry-free source for the machine model on Windows, so hwProductName returns 0 there.
 // Every value is read at call time. The text is copied into the caller's buffer, NUL terminated, and the length is returned.
 
 #if os == "linux"
@@ -143,18 +144,52 @@ export fn hwProductName(out: *ui8, cap: usize) -> usize {
 
 #elif os == "windows"
 
-from "../sys/windows" import sysMemoryTotal
+from "../sys/windows" import sysMemoryTotal, sysGetEnvW
 
-// The CPU brand and product name are read from the registry in a later change; Windows returns 0 for them.
+/// The CPU description from the PROCESSOR_IDENTIFIER environment variable (for example
+/// "Intel64 Family 6 Model 154 Stepping 3, GenuineIntel") into `out`; its length, or 0. GetSystemInfo reports only
+/// dwProcessorType (a legacy architecture class, not a name), so the variable is the documented WS2008+ source:
+/// https://learn.microsoft.com/en-us/windows/win32/procthread/processor-identification. It does not carry the marketing
+/// name ("Core i7-12700"), which lives only in the registry value
+/// HARDWARE\DESCRIPTION\System\CentralProcessor\0 : ProcessorNameString.
 export fn hwCpuModel(out: *ui8, cap: usize) -> usize {
-    return 0
+    local wname: [ui16; 21]             // "PROCESSOR_IDENTIFIER" is 20 units plus the NUL
+    local key: *ui8 = "PROCESSOR_IDENTIFIER"
+    local k: usize = 0
+    while key[k] != 0 {
+        wname[k] = key[k] as ui16
+        k = k + 1
+    }
+    wname[k] = 0
+    local wbuf: [ui16; 256]
+    local need: ui32 = sysGetEnvW(&wname[0], &wbuf[0], 256)
+    if need == 0 || need >= 256 { return 0 }
+    // The value is ASCII in practice; each UTF-16 unit is narrowed to its low byte as in std/sys/env, and a unit above 0x7F
+    // becomes '?' so the buffer stays valid UTF-8 without a second conversion helper.
+    local len: usize = 0
+    local i: usize = 0
+    while i < (need as usize) && len + 1 < cap {
+        local u: ui16 = wbuf[i]
+        local b: ui8 = 63
+        if u < 0x80 { b = u as ui8 }
+        out[len] = b
+        len = len + 1
+        i = i + 1
+    }
+    out[len] = 0
+    return len
 }
 
+/// The installed physical memory in bytes (GlobalMemoryStatusEx), or -1.
 export fn hwMemoryBytes() -> i64 {
     return sysMemoryTotal()
 }
 
+/// There is no registry-free Windows source for the machine model (DMI/SMBIOS is not exposed by kernel32), so this
+/// reports nothing; see docs/known-limitations.md. A caller that needs it reads the registry values
+/// HARDWARE\DESCRIPTION\System\BIOS : SystemManufacturer / SystemProductName through RegGetValueW.
 export fn hwProductName(out: *ui8, cap: usize) -> usize {
+    out[0] = 0
     return 0
 }
 

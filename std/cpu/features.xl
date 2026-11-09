@@ -15,7 +15,10 @@
 // arch/arm64/include/uapi/asm/hwcap.h (HWCAP_ASIMD 1, AES 3, PMULL 4, SHA1 5, SHA2 6, CRC32 7, ATOMICS 8, SHA3 17, ASIMDDP 20,
 // SHA512 21). The AT_HWCAP number is AT_HWCAP = 16 in include/uapi/linux/auxvec.h.
 // arm64 macOS: sysctlbyname("hw.optional.*") with the Apple names (hw.optional.neon, hw.optional.arm.FEAT_AES, ...).
-// Windows: not implemented yet (IsProcessorFeaturePresent is the planned source); every flag is false there.
+// Windows: the x86-64 path below is CPUID plus XGETBV, which are processor instructions, not an OS interface, so it is the
+// same on Windows and is not repeated per OS. arm64 Windows has no CPUID, so the flags come from IsProcessorFeaturePresent
+// (kernel32), the only documented feature query the OS offers; there is no arm64 Windows variant of the file yet that
+// would filter on the OS version, so a flag is what the processor reports to the OS.
 //
 // Not constant-time and not cached: each call runs CPUID again.
 
@@ -206,6 +209,38 @@ fn detectPlatform(f: *CpuFeatures) {
     f.crc32 = sysctlFlag("hw.optional.arm.FEAT_CRC32")
     f.atomics = sysctlFlag("hw.optional.arm.FEAT_LSE")
     f.dotprod = sysctlFlag("hw.optional.arm.FEAT_DotProd")
+}
+
+#elif os == "windows" && arch == "aarch64"
+
+// IsProcessorFeaturePresent (processthreadsapi.h): nonzero when the feature is available on this machine.
+// https://learn.microsoft.com/en-us/windows/win32/api/processthreadsapi/nf-processthreadsapi-isprocessorfeaturepresent
+// The PF_ values are from winnt.h. Windows has no query for SHA-3, SHA-512 or CRC32 instructions: it reports the whole
+// Armv8 cryptographic extension as PF_ARM_V8_CRYPTO_INSTRUCTIONS_AVAILABLE (AES, PMULL, SHA-1 and SHA-256), so sha3,
+// sha512 and crc32 stay false here even when the processor has them.
+define PF_ARM_V8_CRYPTO_INSTRUCTIONS_AVAILABLE = 30
+define PF_ARM_V8_1_ATOMIC_INSTRUCTIONS_AVAILABLE = 34
+define PF_ARM_V8_2_DP_INSTRUCTIONS_AVAILABLE = 43
+
+@library("kernel32") declare fn IsProcessorFeaturePresent(feature: ui32) -> i32
+
+fn featurePresent(feature: ui32) -> bool {
+    return IsProcessorFeaturePresent(feature) != 0
+}
+
+fn detectPlatform(f: *CpuFeatures) {
+    // ASIMD (NEON) is a baseline requirement of every arm64 Windows installation, so it is not queried.
+    f.neon = true
+    local crypto: bool = featurePresent(PF_ARM_V8_CRYPTO_INSTRUCTIONS_AVAILABLE)
+    f.aes = crypto
+    f.pmull = crypto
+    f.sha1 = crypto
+    f.sha2 = crypto
+    f.atomics = featurePresent(PF_ARM_V8_1_ATOMIC_INSTRUCTIONS_AVAILABLE)
+    f.dotprod = featurePresent(PF_ARM_V8_2_DP_INSTRUCTIONS_AVAILABLE)
+    f.sha3 = false
+    f.sha512 = false
+    f.crc32 = false
 }
 
 #else

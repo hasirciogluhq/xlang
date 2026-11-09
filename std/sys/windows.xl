@@ -98,6 +98,77 @@ export fn sysUnmap(p: *void, size: usize) {
     NtFreeVirtualMemory(CURRENT_PROCESS as i64, &base, &region, 32768)   // MEM_RELEASE
 }
 
+// ---- guarded mapping ----------------------------------------------------------------------------
+// VirtualAlloc / VirtualProtect / VirtualFree (memoryapi.h), the documented user-mode virtual memory interface:
+//   https://learn.microsoft.com/en-us/windows/win32/api/memoryapi/nf-memoryapi-virtualalloc
+//   https://learn.microsoft.com/en-us/windows/win32/api/memoryapi/nf-memoryapi-virtualprotect
+//   https://learn.microsoft.com/en-us/windows/win32/api/memoryapi/nf-memoryapi-virtualfree
+// The contract is the Linux sysMapGuarded one: the returned pointer is the usable base, a single page *below* it (in the
+// lower-address direction, where a downward-growing stack overflows) is inaccessible, and sysUnmapGuarded takes the same
+// pointer back. The whole reservation is released at once, so the guard page is protected, not split off.
+define MEM_COMMIT_RESERVE = 12288       // MEM_COMMIT | MEM_RESERVE
+define MEM_RELEASE_FLAG = 32768         // MEM_RELEASE
+define PAGE_READWRITE_PROT = 4          // PAGE_READWRITE
+define PAGE_NOACCESS_PROT = 1           // PAGE_NOACCESS
+// The size is reserved and committed in one call, the same page count as Linux `sysMap(size + 4096)`: the whole range
+// becomes one committed region whose lowest page is then made inaccessible, so `VirtualQuery` still describes it as a
+// single region and the single `VirtualFree(MEM_RELEASE)` below releases all of it. (The alternative — reserve
+// `size + page`, then commit only `size` — needs two calls and leaves the guard page merely reserved.) See the
+// VirtualAlloc remarks on page protection.
+@library("kernel32") declare fn VirtualAlloc(base: *void, size: usize, allocType: ui32, protect: ui32) -> *void
+@library("kernel32") declare fn VirtualProtect(base: *void, size: usize, newProtect: ui32, oldProtect: *ui32) -> i32
+@library("kernel32") declare fn VirtualFree(base: *void, size: usize, freeType: ui32) -> i32
+
+// SYSTEM_INFO (sysinfoapi.h), in documented field order:
+//   union { DWORD dwOemId; struct { WORD wProcessorArchitecture; WORD wReserved; } }  offset 0..4
+//   DWORD dwPageSize                         4..8
+//   LPVOID lpMinimumApplicationAddress       8..16
+//   LPVOID lpMaximumApplicationAddress      16..24
+//   DWORD_PTR dwActiveProcessorMask         24..32
+//   DWORD dwNumberOfProcessors              32..36
+//   DWORD dwProcessorType                   36..40
+//   DWORD dwAllocationGranularity           40..44
+//   WORD wProcessorLevel                    44..46
+//   WORD wProcessorRevision                 46..48  (padded to 8-byte alignment: sizeof = 48)
+// dwPageSize is therefore at offset 4; it is read through the offset rather than a struct so the layout stays visible.
+define SYSTEM_INFO_SIZE = 48
+define SYSTEM_INFO_PAGE_SIZE = 4
+// https://learn.microsoft.com/en-us/windows/win32/api/sysinfoapi/nf-sysinfoapi-getsysteminfo
+@library("kernel32") declare fn GetSystemInfo(info: *ui8)
+
+/// The page size the OS rounds every protection change to (dwPageSize of SYSTEM_INFO; 4096 on x86-64 and arm64 Windows, but
+/// read instead of assumed).
+fn pageSize() -> usize {
+    local buf: [ui8; SYSTEM_INFO_SIZE]
+    GetSystemInfo(&buf[0])
+    local v: *ui32 = (&buf[0] as usize + SYSTEM_INFO_PAGE_SIZE) as *ui32
+    if v[0] == 0 { return 4096 }
+    return v[0] as usize
+}
+
+/// `size` readable/writable bytes with an inaccessible guard page directly below them; the base, or nil.
+export fn sysMapGuarded(size: usize) -> *void {
+    local page: usize = pageSize()
+    local total: usize = size + page
+    local base: *void = VirtualAlloc(nil, total, MEM_COMMIT_RESERVE, PAGE_READWRITE_PROT)
+    if base == nil { return nil }
+    // The guard page is the lowest page of the region: the usable base is the page after it.
+    local guard: *void = base
+    local old: ui32 = 0
+    if VirtualProtect(guard, page, PAGE_NOACCESS_PROT, &old) == 0 {
+        VirtualFree(base, 0, MEM_RELEASE_FLAG)
+        return nil
+    }
+    return ((base as usize) + page) as *void
+}
+
+/// Releases a region made by sysMapGuarded (`p` is the usable base it returned). MEM_RELEASE needs size 0 and the base of
+/// the original reservation, which is one page below `p`.
+export fn sysUnmapGuarded(p: *void, size: usize) {
+    local page: usize = pageSize()
+    VirtualFree(((p as usize) - page) as *void, 0, MEM_RELEASE_FLAG)
+}
+
 export fn sysYield() {
     NtYieldExecution()
 }

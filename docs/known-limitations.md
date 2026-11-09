@@ -28,7 +28,8 @@ The original plan is implemented except the items below, which are intentionally
   macOS and Linux. **Not** run on real Windows (Wine's winsock/crypt32 are not Windows'), and the
   `sched`/`threads`/`panics` e2e programs are not run there. The entry stub (`mainCRTStartup`) exits through
   `NtTerminateProcess` and provides `__chkstk`/`_fltused` itself. Not done: threads (`NtCreateThreadEx` +
-  `WaitOnAddress`), readiness polling (IOCP/AFD), pipes; UTF-8 paths are widened as Latin-1; the fd is the
+  `WaitOnAddress`), readiness polling (IOCP/AFD), pipes; the file API paths are widened as Latin-1 (only `fsListDir`, which
+  needs a UTF-16 pattern, converts through `std/encoding/utf8`); the fd is the
   handle's low 32 bits (socket fds carry bit 30); `-D ssn...` no longer exists. Entry stubs exist for linux and macos on x86_64 and aarch64 and for windows on x86_64 only; the Windows stub is x86_64 assembly with no aarch64 variant. Every executable stub calls `_xl_initAll` (the `@init` functions) before the `@entry` function and `_xl_finiAll` (the `@fini` functions) after it.
 - **Linux/macOS sockets ignore SIGPIPE** (`std/sys/sock.xl`: process-wide on Linux, `SO_NOSIGPIPE` on macOS), so a
   write to a vanished peer is an error return, never a crash. OS setup (WSAStartup on Windows, the Linux SIGPIPE
@@ -356,7 +357,17 @@ Decisions taken when the package system was added ([Packages]({{ site.baseurl }}
 
 ## Std system information (`std/cpu`, `std/hw`, `std/gpu`, `std/io/dir`)
 
-- **Windows is empty:** `cpuFeatures`, `hwCpuModel`, `gpuDrmDevices` and the others return false or 0 there (IsProcessorFeaturePresent, GlobalMemoryStatusEx and DXGI are planned).
+- **Windows is partly empty:** `hwProductName` and `gpuDrmDevices` return 0 there. Windows has no registry-free local
+  query for the machine model (DMI/SMBIOS is not exposed by kernel32; the registry keys
+  `HARDWARE\DESCRIPTION\System\BIOS` and `HARDWARE\DESCRIPTION\System\CentralProcessor\0` need `RegGetValueW`), so the
+  product name is left empty rather than guessed; GPU enumeration needs DXGI, which is not wrapped. The CPU description is
+  `hwCpuModel` from the `PROCESSOR_IDENTIFIER` environment variable, which names the family and model but not the marketing
+  name (`ProcessorNameString` in the registry is the only source for that).
+- **Windows arm64 CPU flags have no SHA-3/SHA-512/CRC32 source:** `IsProcessorFeaturePresent` reports the Armv8 crypto
+  extension as one flag, so `sha3`, `sha512` and `crc32` are false on arm64 Windows.
+- **Windows directory listing and guarded mapping are unchallenged at runtime:** `fsListDir` (`FindFirstFileW`) and
+  `sysMapGuarded` (`VirtualAlloc` + `VirtualProtect`) are type-checked for `x86_64-pc-windows-msvc` and `aarch64-pc-windows-msvc`
+  only; no e2e entry exercises them, and a symlinked directory reports kind 4 (the reparse point is not resolved).
 - **macOS has no directory listing and no GPU enumeration yet:** `getdirentries` is not in the verified XNU table; Metal and IOKit are deferred.
 - **The DRM success path is untested:** no DRM driver exists in the available containers, so `DRM_IOCTL_VERSION` is only exercised on a missing or non-DRM node.
 
@@ -376,4 +387,6 @@ Decisions taken when the package system was added ([Packages]({{ site.baseurl }}
 - **JSON Patch (RFC 6902) and Merge Patch (RFC 7396) are not implemented.**
 - **DHCPv6, SLAAC and DHCPv4 state machine are not implemented.**
 - **NTP client clock:** the local clock has whole-second resolution.
-- **Windows:** CPU feature flags (IsProcessorFeaturePresent), directory listing and file stat are empty.
+- **Windows:** CPU feature flags are filled (CPUID/XGETBV on x86-64, `IsProcessorFeaturePresent` on arm64) and so are directory
+  listing (`FindFirstFileW`) and the guarded mapping (`VirtualAlloc` + `VirtualProtect`, released with `VirtualFree`); file stat
+  is still empty, and the Windows paths are type-checked but not run on real Windows.

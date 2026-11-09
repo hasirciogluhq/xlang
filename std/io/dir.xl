@@ -1,7 +1,10 @@
 // std/io/dir: directory listing. Linux: getdents64 (x86-64 217, arm64 61; docs/std/syscalls). Each linux_dirent64 record
 // (include/uapi/linux/dirent.h) is inode ui64, offset i64, record length ui16, type ui8, then the NUL-terminated name.
-// macOS: not implemented yet (getdirentries is not verified against the XNU table; see docs/std/syscalls/macos-xnu.md).
-// Names "." and ".." are skipped.
+// macOS: opendir/readdir/closedir from libSystem (struct dirent, sys/dirent.h).
+// Windows: FindFirstFileW/FindNextFileW/FindClose from kernel32 (minwinbase.h and fileapi.h); the paths are UTF-16, so
+// the UTF-8 `path` is converted with std/encoding/utf8 and the 16-bit cFileName is converted back the same way.
+// Names "." and ".." are skipped on every OS. `kind` uses the Linux d_type codes everywhere (4 = directory,
+// 8 = regular file, 10 = symlink, 0 = unknown), so a caller never needs an OS check.
 #if os == "linux"
 
 from "../sys/linux" import sysOpenRead, sysClose, sysGetdents
@@ -82,6 +85,153 @@ export fn fsListDir(path: *ui8, out: *DirEntry, max: usize) -> usize {
         }
     }
     closedir(dir)
+    return count
+}
+
+#elif os == "windows"
+
+from "../encoding/utf8" import utf8Decode, utf8Encode
+
+// FindFirstFileW / FindNextFileW / FindClose, kernel32 (fileapi.h):
+//   https://learn.microsoft.com/en-us/windows/win32/api/fileapi/nf-fileapi-findfirstfilew
+//   https://learn.microsoft.com/en-us/windows/win32/api/fileapi/nf-fileapi-findnextfilew
+//   https://learn.microsoft.com/en-us/windows/win32/api/fileapi/nf-fileapi-findclose
+// The handle is an opaque *void here; INVALID_HANDLE_VALUE is (HANDLE)-1, so it is compared as 0xFFFFFFFFFFFFFFFF.
+// `data` points at a WIN32_FIND_DATAW supplied by the caller (minwinbase.h,
+// https://learn.microsoft.com/en-us/windows/win32/api/minwinbase/ns-minwinbase-win32_find_dataw).
+@library("kernel32") declare fn FindFirstFileW(pattern: *ui16, data: *ui8) -> *void
+@library("kernel32") declare fn FindNextFileW(handle: *void, data: *ui8) -> i32
+@library("kernel32") declare fn FindClose(handle: *void) -> i32
+
+define INVALID_HANDLE = 18446744073709551615         // (HANDLE)-1
+// WIN32_FIND_DATAW (minwinbase.h), in documented field order (https://learn.microsoft.com/en-us/windows/win32/api/minwinbase/ns-minwinbase-win32_find_dataw):
+//   dwFileAttributes   DWORD   4 bytes  offset 0..4
+//   ftCreationTime     FILETIME (two DWORD) 8 bytes  4..12
+//   ftLastAccessTime   FILETIME            8 bytes 12..20
+//   ftLastWriteTime    FILETIME            8 bytes 20..28
+//   nFileSizeHigh      DWORD               4 bytes 28..32
+//   nFileSizeLow       DWORD               4 bytes 32..36
+//   dwReserved0        DWORD               4 bytes 36..40
+//   dwReserved1        DWORD               4 bytes 40..44
+//   cFileName          WCHAR[260]        520 bytes 44..564
+//   cAlternateFileName WCHAR[14]          28 bytes 564..592
+// sizeof = 592, no padding (every member is 4-byte aligned). It is not @repr(c) because it is never passed by value or
+// as a struct to a C function: it is a plain byte buffer and the two fields are read back through the offsets above.
+define FIND_DATA_SIZE = 592
+// The field-order arithmetic for the two fields read below: dwFileAttributes 0; ftCreationTime 4..12; ftLastAccessTime
+// 12..20; ftLastWriteTime 20..28; nFileSizeHigh 28..32; nFileSizeLow 32..36; dwReserved0 36..40; dwReserved1 40..44;
+// cFileName starts at 44.
+define FIND_ATTRIBUTES = 0
+define FIND_NAME = 44
+define FILE_ATTRIBUTE_DIRECTORY = 16              // https://learn.microsoft.com/en-us/windows/win32/fileio/file-attribute-constants
+
+export struct DirEntry {
+    name: [ui8; 256]
+    kind: ui8
+}
+
+/// UTF-8 -> UTF-16 into `out` (capacity `cap` units, NUL terminated); false when it does not fit. Surrogate pairs: a code
+/// point above U+FFFF (4 UTF-8 bytes) becomes two UTF-16 units, U+D800..U+DBFF (the high 10 bits of cp - 0x10000) then
+/// U+DC00..U+DFFF (the low 10 bits), which is the UTF-16 encoding of the Unicode standard (chapter 3). Code points in
+/// U+D800..U+DFFF cannot appear in valid UTF-8; utf8Decode rejects them, and an invalid byte is copied as U+FFFD here.
+fn utf8ToWide(src: *ui8, n: usize, out: *ui16, cap: usize) -> bool {
+    local i: usize = 0
+    local o: usize = 0
+    while i < n {
+        local l: usize = 0
+        local cp: i32 = utf8Decode(&src[i], n - i, &l)
+        if l == 0 { l = 1 }
+        i = i + l
+        if cp < 0 { cp = 0xfffd }
+        if cp >= 0x10000 {
+            if o + 2 >= cap { return false }
+            local v: i32 = cp - 0x10000
+            out[o] = (0xd800 | (v >> 10)) as ui16
+            out[o + 1] = (0xdc00 | (v & 0x3ff)) as ui16
+            o = o + 2
+        } else {
+            if o + 1 >= cap { return false }
+            out[o] = cp as ui16
+            o = o + 1
+        }
+    }
+    out[o] = 0
+    return true
+}
+
+/// UTF-16 -> UTF-8 into `out` (capacity `cap` bytes, NUL terminated); returns the byte count. A high surrogate followed
+/// by a low surrogate is joined back into one code point ((hi - 0xD800) << 10 | (lo - 0xDC00)) + 0x10000; a lone
+/// surrogate is written as U+FFFD, because UTF-8 has no encoding for a surrogate.
+fn wideToUtf8(src: *ui16, n: usize, out: *ui8, cap: usize) -> usize {
+    local used: usize = 0
+    local i: usize = 0
+    while i < n {
+        local u: ui32 = src[i] as ui32
+        i = i + 1
+        local cp: i32 = u as i32
+        if u >= 0xd800 && u <= 0xdbff && i < n {
+            local lo: ui32 = src[i] as ui32
+            if lo >= 0xdc00 && lo <= 0xdfff {
+                cp = ((((u - 0xd800) << 10) | (lo - 0xdc00)) + 0x10000) as i32
+                i = i + 1
+            } else {
+                cp = 0xfffd
+            }
+        } else if u >= 0xdc00 && u <= 0xdfff {
+            cp = 0xfffd
+        }
+        local enc: [ui8; 4]
+        local k: usize = utf8Encode(cp, &enc[0])
+        if k == 0 { k = utf8Encode(0xfffd, &enc[0]) }
+        local j: usize = 0
+        while j < k && used + 1 < cap {
+            out[used] = enc[j]
+            used = used + 1
+            j = j + 1
+        }
+        if used + 1 >= cap { break }
+    }
+    out[used] = 0
+    return used
+}
+
+/// Lists the entries of `path` into `out` (at most `max`); returns how many were written, or 0 when the search cannot be
+/// started. FindFirstFileW needs a wildcard, so the pattern is `path` + `\*`; `/` and `\` are both accepted by Win32.
+/// A name with more than 512 UTF-16 units (the buffer cap) is skipped.
+export fn fsListDir(path: *ui8, out: *DirEntry, max: usize) -> usize {
+    local plen: usize = 0
+    while path[plen] != 0 && plen < 480 { plen = plen + 1 }
+    local pattern: [ui16; 512]
+    if !utf8ToWide(path, plen, &pattern[0], 510) { return 0 }
+    local at: usize = 0
+    while pattern[at] != 0 { at = at + 1 }
+    pattern[at] = 92                     // backslash
+    pattern[at + 1] = 42                 // '*'
+    pattern[at + 2] = 0
+    local data: [ui8; FIND_DATA_SIZE]
+    local h: *void = FindFirstFileW(&pattern[0], &data[0])
+    if (h as usize) == INVALID_HANDLE { return 0 }
+    local count: usize = 0
+    local more: bool = true
+    while more && count < max {
+        local attrs: *ui32 = (&data[0] as usize + FIND_ATTRIBUTES) as *ui32
+        local namep: *ui16 = (&data[0] as usize + FIND_NAME) as *ui16
+        local nlen: usize = 0
+        while namep[nlen] != 0 { nlen = nlen + 1 }
+        // "." (46) and ".." (46, 46) are skipped exactly as in the Linux and macOS branches.
+        local dot: bool = nlen > 0 && namep[0] == 46 && (nlen == 1 || (nlen == 2 && namep[1] == 46))
+        if !dot {
+            local e: DirEntry
+            wideToUtf8(namep, nlen, &e.name[0], 256)
+            // d_type codes: FILE_ATTRIBUTE_DIRECTORY (0x10) is a directory (DT_DIR = 4), everything else is a regular
+            // file (DT_REG = 8); reparse points are not resolved, so a directory link reports 4 like GetFileAttributes.
+            if (attrs[0] & FILE_ATTRIBUTE_DIRECTORY) != 0 { e.kind = 4 } else { e.kind = 8 }
+            out[count] = e
+            count = count + 1
+        }
+        more = FindNextFileW(h, &data[0]) != 0
+    }
+    FindClose(h)
     return count
 }
 
