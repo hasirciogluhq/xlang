@@ -114,6 +114,7 @@ target("xlang-codegen")
     set_enabled(not cross)
     add_files(
         "$(projectdir)/src/codegen/*.cpp",
+        "$(projectdir)/src/codegen/llvm/*.cpp",
         "$(projectdir)/src/driver/*.cpp"
     )
     add_includedirs("$(projectdir)/include", {public = true})
@@ -125,9 +126,9 @@ target("xlang")
     set_basename("xlang")
     set_default(not cross)
     set_enabled(not cross)
-    add_files("$(projectdir)/src/cli/main.cpp", "$(projectdir)/src/cli/test_runner.cpp",
-              "$(projectdir)/src/cli/update.cpp", "$(projectdir)/src/cli/completions.cpp",
-              "$(projectdir)/src/cli/package.cpp")
+    add_files("$(projectdir)/src/cli/app/main.cpp", "$(projectdir)/src/cli/tests/runner.cpp",
+              "$(projectdir)/src/cli/update/update.cpp", "$(projectdir)/src/cli/completions/completions.cpp",
+              "$(projectdir)/src/cli/package/package.cpp")
     add_deps("xlang-codegen", "xlang-frontend")
     add_target_defines()
     xlang_ctx.add_llvm()

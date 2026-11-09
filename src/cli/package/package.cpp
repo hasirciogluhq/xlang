@@ -1,6 +1,6 @@
-#include "package.h"
+#include "cli/package/package.h"
 
-#include "style.h"
+#include "cli/app/style.h"
 #include "xlang/pkg/error.h"
 #include "xlang/pkg/git.h"
 #include "xlang/pkg/manifest.h"
@@ -63,14 +63,17 @@ void printProblem(const pkg::Problem& p) {
     }
     const auto latest = pkg::latestRelease(names);
     if (!latest) {
-        throw pkg::PackageError("E0744", "`" + path + "` has no stable release tag, so there is no latest version",
-                                "`latest` ignores pre-release and `-test` tags; name one explicitly, e.g. `" + path +
-                                    "@v1.2.0-test`");
+        throw pkg::PackageError(
+            "E0744",
+            "`" + path + "` has no stable release tag, so there is no latest version",
+            "`latest` ignores pre-release and `-test` tags; name one explicitly, e.g. `" + path +
+                "@v1.2.0-test`");
     }
     return latest->tag;
 }
 
-[[nodiscard]] const pkg::Dependency* findDependency(const pkg::Manifest& m, const std::string& path) {
+[[nodiscard]] const pkg::Dependency* findDependency(const pkg::Manifest& m,
+                                                    const std::string& path) {
     for (const pkg::Dependency& d : m.dependencies) {
         if (d.path == path) {
             return &d;
@@ -80,7 +83,9 @@ void printProblem(const pkg::Problem& p) {
 }
 
 /// Resolves online, prints problems; returns false when any.
-bool resolveAndStore(const std::filesystem::path& file, const std::string& text, const pkg::ResolveOptions& options) {
+bool resolveAndStore(const std::filesystem::path& file,
+                     const std::string& text,
+                     const pkg::ResolveOptions& options) {
     const pkg::Manifest manifest = pkg::parseManifest(text, file);
     pkg::Project project = pkg::resolveProject(manifest, options);
     if (!project.problems.empty()) {
@@ -94,7 +99,8 @@ bool resolveAndStore(const std::filesystem::path& file, const std::string& text,
     }
     pkg::writeLock(project);
     const auto line = [](const pkg::ResolvedPackage& rp) {
-        std::cout << "  " << rp.path << ' ' << (rp.local ? "(local)" : rp.version + " " + shortCommit(rp.commit)) << '\n';
+        std::cout << "  " << rp.path << ' '
+                  << (rp.local ? "(local)" : rp.version + " " + shortCommit(rp.commit)) << '\n';
     };
     if (project.std_package) {
         std::cout << "std:\n";
@@ -121,8 +127,11 @@ int run(const PackageOptions& o) {
 
     if (!manifest_file) {
         if (o.action != "install" || (o.specs.empty() && o.std_spec.empty())) {
-            throw pkg::PackageError("E0740", "no xlang.toml found in `" + cwd.generic_string() + "` or its parents",
-                                    "run `xlang package install <host/user/repo>` in your project directory to create one");
+            throw pkg::PackageError("E0740",
+                                    "no xlang.toml found in `" + cwd.generic_string() +
+                                        "` or its parents",
+                                    "run `xlang package install <host/user/repo>` in your project "
+                                    "directory to create one");
         }
         manifest_file = cwd / pkg::kManifestName;
         writeFile(*manifest_file, "");
@@ -133,7 +142,9 @@ int run(const PackageOptions& o) {
     if (o.action == "list") {
         pkg::Project project = pkg::resolveProject(current, {});
         const auto line = [](const pkg::ResolvedPackage& rp, const char* tag) {
-            std::cout << rp.path << "  " << (rp.local ? "(local) " + rp.dir.generic_string() : rp.version + "  " + shortCommit(rp.commit))
+            std::cout << rp.path << "  "
+                      << (rp.local ? "(local) " + rp.dir.generic_string()
+                                   : rp.version + "  " + shortCommit(rp.commit))
                       << tag << '\n';
         };
         if (project.std_package) {
@@ -157,7 +168,8 @@ int run(const PackageOptions& o) {
             pkg::Dependency dep = pkg::parseDependencySpec(spec);
             const pkg::Dependency* existing = findDependency(current, dep.path);
             if (dep.version == "latest") {
-                dep.version = latestTagOf(dep.path, existing != nullptr ? existing->source : std::string{});
+                dep.version =
+                    latestTagOf(dep.path, existing != nullptr ? existing->source : std::string{});
             }
             text = pkg::setDependencyText(text, dep.path, dep.version);
         }
@@ -171,21 +183,27 @@ int run(const PackageOptions& o) {
     } else if (o.action == "update") {
         options.update = true;
         for (const std::string& name : o.specs) {
-            if (findDependency(current, name) == nullptr && !(current.std_package && current.std_package->path == name)) {
-                throw pkg::PackageError("E0740", "`" + name + "` is not a dependency of this project");
+            if (findDependency(current, name) == nullptr &&
+                !(current.std_package && current.std_package->path == name)) {
+                throw pkg::PackageError("E0740",
+                                        "`" + name + "` is not a dependency of this project");
             }
         }
         const auto wanted = [&](const std::string& path) {
-            return o.specs.empty() || std::find(o.specs.begin(), o.specs.end(), path) != o.specs.end();
+            return o.specs.empty() ||
+                   std::find(o.specs.begin(), o.specs.end(), path) != o.specs.end();
         };
         for (const pkg::Dependency& d : current.dependencies) {
             if (!d.isLocal() && wanted(d.path)) {
                 text = pkg::setDependencyText(text, d.path, latestTagOf(d.path, d.source));
             }
         }
-        if (current.std_package && !current.std_package->isLocal() && wanted(current.std_package->path)) {
-            text = pkg::setStdText(text, current.std_package->path,
-                                   latestTagOf(current.std_package->path, current.std_package->source));
+        if (current.std_package && !current.std_package->isLocal() &&
+            wanted(current.std_package->path)) {
+            text = pkg::setStdText(
+                text,
+                current.std_package->path,
+                latestTagOf(current.std_package->path, current.std_package->source));
         }
     } else if (o.action == "remove") {
         if (o.specs.empty()) {
@@ -193,14 +211,15 @@ int run(const PackageOptions& o) {
         }
         for (const std::string& name : o.specs) {
             if (!pkg::removeDependencyText(text, name)) {
-                throw pkg::PackageError("E0740", "`" + name + "` is not in the `[dependencies]` of xlang.toml");
+                throw pkg::PackageError(
+                    "E0740", "`" + name + "` is not in the `[dependencies]` of xlang.toml");
             }
         }
     }
     return resolveAndStore(*manifest_file, text, options) ? 0 : 1;
 }
 
-}  // namespace
+} // namespace
 
 int runPackage(const PackageOptions& options) {
     try {
@@ -211,15 +230,19 @@ int runPackage(const PackageOptions& options) {
     }
 }
 
-std::vector<std::filesystem::path> attachProject(const std::filesystem::path& root_file, const BuildConfig& config,
-                                                 Compilation& compilation, DiagnosticEngine& diagnostics) {
+std::vector<std::filesystem::path> attachProject(const std::filesystem::path& root_file,
+                                                 const BuildConfig& config,
+                                                 Compilation& compilation,
+                                                 DiagnosticEngine& diagnostics) {
     const std::string& arg = config.std_path;
     std::error_code ec;
     const bool std_dir = !arg.empty() && std::filesystem::is_directory(arg, ec);
-    const std::string std_spec = (!arg.empty() && !std_dir && looksLikeStdSpec(arg)) ? arg : std::string{};
+    const std::string std_spec =
+        (!arg.empty() && !std_dir && looksLikeStdSpec(arg)) ? arg : std::string{};
 
     pkg::Manifest manifest;
-    const std::filesystem::path start = root_file.has_parent_path() ? root_file.parent_path() : std::filesystem::path(".");
+    const std::filesystem::path start =
+        root_file.has_parent_path() ? root_file.parent_path() : std::filesystem::path(".");
     if (const auto file = pkg::findManifest(start)) {
         try {
             manifest = pkg::loadManifest(*file);
@@ -231,7 +254,7 @@ std::vector<std::filesystem::path> attachProject(const std::filesystem::path& ro
         manifest.dir = std::filesystem::absolute(start, ec).lexically_normal();
     }
     if (config.no_std || !arg.empty()) {
-        manifest.std_package.reset();  // the command line wins over `[std]`
+        manifest.std_package.reset(); // the command line wins over `[std]`
     }
 
     if (manifest.file.empty() && std_spec.empty()) {
@@ -260,11 +283,12 @@ std::vector<std::filesystem::path> attachProject(const std::filesystem::path& ro
         }
     }
     std::vector<pkg::Problem> native_problems;
-    std::vector<std::filesystem::path> natives = project.nativeInputs(config.target, native_problems);
+    std::vector<std::filesystem::path> natives =
+        project.nativeInputs(config.target, native_problems);
     for (const pkg::Problem& p : native_problems) {
         report(p, diagnostics);
     }
     return natives;
 }
 
-}  // namespace xlang::cli
+} // namespace xlang::cli

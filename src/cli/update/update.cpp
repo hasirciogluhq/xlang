@@ -1,7 +1,7 @@
-#include "update.h"
+#include "cli/update/update.h"
 
-#include "style.h"
-#include "version.h"
+#include "cli/app/style.h"
+#include "cli/app/version.h"
 
 #include <algorithm>
 #include <cctype>
@@ -178,7 +178,7 @@ struct TempDir {
     }
 };
 
-}  // namespace
+} // namespace
 
 int selfUpdate(const SelfUpdateOptions& options, const std::string& self) {
     const Palette c{options.color};
@@ -250,7 +250,8 @@ int selfUpdate(const SelfUpdateOptions& options, const std::string& self) {
     const fs::path sums = temp.path / "checksums.txt";
 
     step("Downloading " + asset);
-    if (run("curl -fSL --progress-bar -o " + quote(archive.string()) + " " + quote(base + asset)) != 0) {
+    if (run("curl -fSL --progress-bar -o " + quote(archive.string()) + " " + quote(base + asset)) !=
+        0) {
         return fail("download failed: " + base + asset);
     }
     if (run("curl -fsSL -o " + quote(sums.string()) + " " + quote(base + "checksums.txt")) != 0) {
@@ -263,7 +264,8 @@ int selfUpdate(const SelfUpdateOptions& options, const std::string& self) {
         return expectedHash(text.out, asset);
     }();
     if (expected.empty()) {
-        return fail("checksums.txt has no entry for " + asset + "; refusing to install an unverified binary");
+        return fail("checksums.txt has no entry for " + asset +
+                    "; refusing to install an unverified binary");
     }
     const std::string sha_command =
         hasTool("sha256sum") ? "sha256sum " : (hasTool("shasum") ? "shasum -a 256 " : "");
@@ -314,8 +316,9 @@ int selfUpdate(const SelfUpdateOptions& options, const std::string& self) {
     // Best effort; a failure here never fails the update.
     run(quote(target.string()) + " completions install --refresh >/dev/null 2>&1");
 
-    std::cout << c.boldGreen() << "updated xlang " << current << " -> " << latest << c.reset() << '\n';
+    std::cout << c.boldGreen() << "updated xlang " << current << " -> " << latest << c.reset()
+              << '\n';
     return 0;
 }
 
-}  // namespace xlang::cli
+} // namespace xlang::cli

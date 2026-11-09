@@ -1,5 +1,6 @@
-#include "test_runner.h"
-#include "style.h"
+#include "cli/tests/runner.h"
+
+#include "cli/app/style.h"
 
 #include <algorithm>
 #include <chrono>

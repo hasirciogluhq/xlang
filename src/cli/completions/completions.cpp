@@ -1,6 +1,6 @@
-#include "completions.h"
+#include "cli/completions/completions.h"
 
-#include "style.h"
+#include "cli/app/style.h"
 
 #include <CLI/CLI.hpp>
 
@@ -20,16 +20,16 @@ namespace xlang::cli {
 namespace {
 
 struct Flag {
-    std::vector<std::string> spellings;  ///< "--emit", "-O", ...
+    std::vector<std::string> spellings; ///< "--emit", "-O", ...
     std::string description;
-    std::vector<std::string> values;     ///< fixed value set; empty when free-form
+    std::vector<std::string> values; ///< fixed value set; empty when free-form
 };
 
 struct Command {
-    std::vector<std::string> names;      ///< name first, then aliases; empty for the root
+    std::vector<std::string> names; ///< name first, then aliases; empty for the root
     std::string description;
     std::vector<Flag> flags;
-    std::vector<std::string> positional_values;  ///< fixed values of the first positional
+    std::vector<std::string> positional_values; ///< fixed values of the first positional
 };
 
 std::string oneLine(std::string text) {
@@ -136,7 +136,9 @@ std::string bashScript(const Command& root, const std::vector<Command>& subs) {
         "    [ \"$COMP_CWORD\" -gt 0 ] && prev=\"${COMP_WORDS[COMP_CWORD-1]}\"\n"
         "    for ((i = 1; i < COMP_CWORD; i++)); do\n"
         "        case \"${COMP_WORDS[i]}\" in\n"
-        "            " + join(sub_names, "|") + ") sub=\"${COMP_WORDS[i]}\"; break ;;\n"
+        "            " +
+        join(sub_names, "|") +
+        ") sub=\"${COMP_WORDS[i]}\"; break ;;\n"
         "        esac\n"
         "    done\n"
         "    case \"$prev\" in\n";
@@ -157,8 +159,8 @@ std::string bashScript(const Command& root, const std::vector<Command>& subs) {
            "        return\n"
            "    fi\n"
            "    case \"$sub\" in\n"
-           "        \"\") COMPREPLY=($(compgen -W \"" + join(sub_names, " ") +
-           "\" -- \"$cur\")); COMPREPLY+=($(compgen -f -- \"$cur\")) ;;\n";
+           "        \"\") COMPREPLY=($(compgen -W \"" +
+           join(sub_names, " ") + "\" -- \"$cur\")); COMPREPLY+=($(compgen -f -- \"$cur\")) ;;\n";
     for (const Command& s : subs) {
         if (!s.positional_values.empty()) {
             out += "        " + join(s.names, "|") + ") COMPREPLY=($(compgen -W \"" +
@@ -221,7 +223,9 @@ std::string zshScript(const Command& root, const std::vector<Command>& subs) {
         "    local sub=\"\" i\n"
         "    for ((i = 2; i < CURRENT; i++)); do\n"
         "        case \"$words[i]\" in\n"
-        "            " + join(sub_names, "|") + ") sub=\"$words[i]\"; break ;;\n"
+        "            " +
+        join(sub_names, "|") +
+        ") sub=\"$words[i]\"; break ;;\n"
         "        esac\n"
         "    done\n"
         "    case \"$words[CURRENT-1]\" in\n";
@@ -235,17 +239,19 @@ std::string zshScript(const Command& root, const std::vector<Command>& subs) {
     for (const Command& s : subs) {
         out += "            " + join(s.names, "|") + ") entries=(" + zshFlagArray(s) + ") ;;\n";
     }
-    out += "            *) entries=(" + zshFlagArray(root) + ") ;;\n"
+    out += "            *) entries=(" + zshFlagArray(root) +
+           ") ;;\n"
            "        esac\n"
            "        _describe -t options 'option' entries\n"
            "        return\n"
            "    fi\n"
            "    case \"$sub\" in\n"
-           "        \"\") entries=(" + sub_entries + "); _describe -t commands 'command' entries; _files ;;\n";
+           "        \"\") entries=(" +
+           sub_entries + "); _describe -t commands 'command' entries; _files ;;\n";
     for (const Command& s : subs) {
         if (!s.positional_values.empty()) {
-            out += "        " + join(s.names, "|") + ") compadd -- " + join(s.positional_values, " ") +
-                   " ;;\n";
+            out += "        " + join(s.names, "|") + ") compadd -- " +
+                   join(s.positional_values, " ") + " ;;\n";
         }
     }
     out += "        *) _files ;;\n"
@@ -276,9 +282,8 @@ std::string fishFlagWords(const Flag& f) {
 }
 
 std::string fishScript(const Command& root, const std::vector<Command>& subs) {
-    std::string out =
-        "# fish completion for xlang. Enable with:  xlang completions fish | source\n"
-        "for c in xlang xl\n";
+    std::string out = "# fish completion for xlang. Enable with:  xlang completions fish | source\n"
+                      "for c in xlang xl\n";
     for (const Flag& f : root.flags) {
         out += "    complete -c $c -n __fish_use_subcommand" + fishFlagWords(f) + " -d " +
                fishQuote(f.description);
@@ -296,21 +301,23 @@ std::string fishScript(const Command& root, const std::vector<Command>& subs) {
     for (const Command& s : subs) {
         const std::string seen = "'__fish_seen_subcommand_from " + join(s.names, " ") + "'";
         for (const Flag& f : s.flags) {
-            out += "    complete -c $c -n " + seen + fishFlagWords(f) + " -d " + fishQuote(f.description);
+            out += "    complete -c $c -n " + seen + fishFlagWords(f) + " -d " +
+                   fishQuote(f.description);
             if (!f.values.empty()) {
                 out += " -x -a " + fishQuote(join(f.values, " "));
             }
             out += "\n";
         }
         if (!s.positional_values.empty()) {
-            out += "    complete -c $c -n " + seen + " -f -a " + fishQuote(join(s.positional_values, " ")) + "\n";
+            out += "    complete -c $c -n " + seen + " -f -a " +
+                   fishQuote(join(s.positional_values, " ")) + "\n";
         }
     }
     out += "end\n";
     return out;
 }
 
-}  // namespace
+} // namespace
 
 std::string generateCompletions(CLI::App& app, const std::string& shell) {
     const Command root = collect(app);
@@ -370,15 +377,15 @@ bool addSourceBlock(const fs::path& rc, const fs::path& script, const std::strin
     }
     std::string block = current.empty() || current.back() == '\n' ? "" : "\n";
     block += std::string(current.empty() ? "" : "\n") + kBlockBegin + "\n" +
-             "# Added by `xlang completions install`; delete this block to opt out.\n" +
-             "[ -f \"" + withHomeVar(script, home) + "\" ] && source \"" +
-             withHomeVar(script, home) + "\"\n" + kBlockEnd + "\n";
+             "# Added by `xlang completions install`; delete this block to opt out.\n" + "[ -f \"" +
+             withHomeVar(script, home) + "\" ] && source \"" + withHomeVar(script, home) + "\"\n" +
+             kBlockEnd + "\n";
     std::ofstream out(rc, std::ios::binary | std::ios::app);
     out << block;
     return static_cast<bool>(out);
 }
 
-}  // namespace
+} // namespace
 
 int installCompletions(CLI::App& app, const CompletionInstallOptions& options) {
     const Palette c{options.color};
@@ -388,11 +395,13 @@ int installCompletions(CLI::App& app, const CompletionInstallOptions& options) {
         return 1;
     }
     const std::string login = fs::path(envOr("SHELL", "")).filename().string();
-    const fs::path data = fs::path(envOr("XDG_DATA_HOME", home + "/.local/share")) / "xlang" / "completions";
+    const fs::path data =
+        fs::path(envOr("XDG_DATA_HOME", home + "/.local/share")) / "xlang" / "completions";
     const fs::path config = fs::path(envOr("XDG_CONFIG_HOME", home + "/.config"));
 #ifdef __APPLE__
     // Terminal.app starts login shells, which read ~/.bash_profile rather than ~/.bashrc.
-    const std::vector<fs::path> bash_rcs = {fs::path(home) / ".bash_profile", fs::path(home) / ".bashrc"};
+    const std::vector<fs::path> bash_rcs = {fs::path(home) / ".bash_profile",
+                                            fs::path(home) / ".bashrc"};
 #else
     const std::vector<fs::path> bash_rcs = {fs::path(home) / ".bashrc"};
 #endif
@@ -442,7 +451,8 @@ int installCompletions(CLI::App& app, const CompletionInstallOptions& options) {
     }
     const bool bash_wanted = login == "bash" || fs::exists(bash_rc);
     const bool zsh_wanted = login == "zsh" || fs::exists(zsh_rc);
-    for (const Source& s : {Source{"bash", bash_rc, bash_wanted}, Source{"zsh", zsh_rc, zsh_wanted}}) {
+    for (const Source& s :
+         {Source{"bash", bash_rc, bash_wanted}, Source{"zsh", zsh_rc, zsh_wanted}}) {
         if (!s.wanted) {
             continue;
         }
@@ -464,12 +474,13 @@ int installCompletions(CLI::App& app, const CompletionInstallOptions& options) {
     }
 
     if (!any && !options.refresh) {
-        std::cout << "no bash, zsh or fish setup found; run `xlang completions <bash|zsh|fish>` and "
-                     "source its output\n";
+        std::cout
+            << "no bash, zsh or fish setup found; run `xlang completions <bash|zsh|fish>` and "
+               "source its output\n";
     } else if (any && !options.refresh) {
         std::cout << c.dim() << "open a new terminal to use tab completion" << c.reset() << '\n';
     }
     return 0;
 }
 
-}  // namespace xlang::cli
+} // namespace xlang::cli

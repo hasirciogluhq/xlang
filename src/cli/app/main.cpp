@@ -1,9 +1,9 @@
-#include "completions.h"
-#include "package.h"
-#include "style.h"
-#include "test_runner.h"
-#include "update.h"
-#include "version.h"
+#include "cli/app/style.h"
+#include "cli/app/version.h"
+#include "cli/completions/completions.h"
+#include "cli/package/package.h"
+#include "cli/tests/runner.h"
+#include "cli/update/update.h"
 #include "xlang/codegen/codegen.h"
 #include "xlang/codegen/link.h"
 #include "xlang/hir/prune.h"
@@ -358,9 +358,9 @@ int main(int argc, char** argv) {
 
     std::string completions_shell;
     xlang::cli::CompletionInstallOptions completion_install;
-    CLI::App* completions = app.add_subcommand(
-        "completions",
-        "Print a shell completion script (bash, zsh or fish), or `install` it for the shells in use");
+    CLI::App* completions = app.add_subcommand("completions",
+                                               "Print a shell completion script (bash, zsh or "
+                                               "fish), or `install` it for the shells in use");
     completions->add_option("shell", completions_shell, "bash|zsh|fish|install")
         ->required()
         ->check(CLI::IsMember({"bash", "zsh", "fish", "install"}));
@@ -382,13 +382,22 @@ int main(int argc, char** argv) {
     };
     CLI::App* package_install = packageAction(
         "install",
-        "Download dependencies; `install host/user/repo[@vX.Y.Z]` adds one (latest release by default)",
+        "Download dependencies; `install host/user/repo[@vX.Y.Z]` adds one (latest release by "
+        "default)",
         "Repositories to add, e.g. github.com/user/repo or github.com/user/repo@v1.2.0");
-    package_install->add_flag("--update", package_options.update, "Re-resolve `latest` entries instead of using xlang.lock");
-    package_install->add_option("--std", package_options.std_spec, "Use this repository as the standard library ([std] in xlang.toml)");
-    CLI::App* package_update = packageAction(
-        "update", "Move dependencies (all, or the named ones) to their latest release", "Repositories to update");
-    CLI::App* package_remove = packageAction("remove", "Remove dependencies from xlang.toml", "Repositories to remove");
+    package_install->add_flag("--update",
+                              package_options.update,
+                              "Re-resolve `latest` entries instead of using xlang.lock");
+    package_install->add_option(
+        "--std",
+        package_options.std_spec,
+        "Use this repository as the standard library ([std] in xlang.toml)");
+    CLI::App* package_update =
+        packageAction("update",
+                      "Move dependencies (all, or the named ones) to their latest release",
+                      "Repositories to update");
+    CLI::App* package_remove =
+        packageAction("remove", "Remove dependencies from xlang.toml", "Repositories to remove");
     CLI::App* package_list = packageAction("list", "Show the resolved dependencies", nullptr);
     CLI::App* package_clean = packageAction("clean", "Delete .xlang/cache", nullptr);
 
@@ -567,29 +576,31 @@ int main(int argc, char** argv) {
                 const xlang::codegen::Output output = xlang::codegen::outputOf(emit);
                 const bool entry_takes_args = entry != nullptr && entry->param_count > 0;
                 if (emit == "exe" && entry == nullptr) {
-                    diagnostics.error("E0739",
-                                      xlang::Span{},
-                                      std::format("`{}` has no entry point: no `@entry` function",
-                                                  path.filename().string()),
-                                      "mark one module-level function `@entry fn main()`, or build the "
-                                      "file as a library with `--emit=obj`, `--emit=static` or `--emit=shared`");
+                    diagnostics.error(
+                        "E0739",
+                        xlang::Span{},
+                        std::format("`{}` has no entry point: no `@entry` function",
+                                    path.filename().string()),
+                        "mark one module-level function `@entry fn main()`, or build the "
+                        "file as a library with `--emit=obj`, `--emit=static` or `--emit=shared`");
                 } else if (entry != nullptr && (emit == "static" || emit == "obj")) {
-                    diagnostics.error("E0754",
-                                      entry->span,
-                                      std::format("`@entry` on `{}` in a static library or object file",
-                                                  entry->name),
-                                      "remove `@entry`: a library has no entry point, use `@init` for "
-                                      "startup work or `@fini` for teardown");
-                } else if (entry_takes_args &&
-                           (output == xlang::codegen::Output::Shared || config.target.os == "windows")) {
-                    diagnostics.error("E0755",
-                                      entry->span,
-                                      std::format("`@entry` on `{}` takes arguments, which {} does not pass",
-                                                  entry->name,
-                                                  output == xlang::codegen::Output::Shared
-                                                      ? "a shared library"
-                                                      : "a Windows program"),
-                                      "write `@entry fn name()` with no parameters");
+                    diagnostics.error(
+                        "E0754",
+                        entry->span,
+                        std::format("`@entry` on `{}` in a static library or object file",
+                                    entry->name),
+                        "remove `@entry`: a library has no entry point, use `@init` for "
+                        "startup work or `@fini` for teardown");
+                } else if (entry_takes_args && (output == xlang::codegen::Output::Shared ||
+                                                config.target.os == "windows")) {
+                    diagnostics.error(
+                        "E0755",
+                        entry->span,
+                        std::format("`@entry` on `{}` takes arguments, which {} does not pass",
+                                    entry->name,
+                                    output == xlang::codegen::Output::Shared ? "a shared library"
+                                                                             : "a Windows program"),
+                        "write `@entry fn name()` with no parameters");
                 } else if (emit == "header") {
                     std::string guard = "XLANG_" + stem + "_H";
                     for (char& ch : guard) {
@@ -706,7 +717,8 @@ int main(int argc, char** argv) {
                         } else {
                             xlang::codegen::LinkRequest req;
                             req.objects = objects;
-                            req.objects.insert(req.objects.end(), native_inputs.begin(), native_inputs.end());
+                            req.objects.insert(
+                                req.objects.end(), native_inputs.begin(), native_inputs.end());
                             req.output = out;
                             req.kind = emit == "shared" ? xlang::codegen::LinkKind::Shared
                                                         : xlang::codegen::LinkKind::Executable;
@@ -716,8 +728,13 @@ int main(int argc, char** argv) {
                         }
                     }
                 } else {
-                    xlang::codegen::CodegenInput cg{
-                        module, config, sources, diagnostics, layoutOf, stem, xlang::codegen::outputOf(emit)};
+                    xlang::codegen::CodegenInput cg{module,
+                                                    config,
+                                                    sources,
+                                                    diagnostics,
+                                                    layoutOf,
+                                                    stem,
+                                                    xlang::codegen::outputOf(emit)};
                     auto artifact = xlang::codegen::generate(cg);
                     if (artifact) {
                         artifact->optimize(config.opt_level);
@@ -739,7 +756,9 @@ int main(int argc, char** argv) {
                                 } else {
                                     xlang::codegen::LinkRequest req;
                                     req.objects = {obj};
-                                    req.objects.insert(req.objects.end(), native_inputs.begin(), native_inputs.end());
+                                    req.objects.insert(req.objects.end(),
+                                                       native_inputs.begin(),
+                                                       native_inputs.end());
                                     req.output = out;
                                     req.kind = emit == "shared"
                                                    ? xlang::codegen::LinkKind::Shared

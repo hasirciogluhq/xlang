@@ -5,12 +5,18 @@ Context folders — each concern owns its tree.
 ```
 src/
   cli/                 # xlang CLI entry (`parse`, `check`, `build`, `layout`, `run`, `test`, `package`, `self-update`, `completions`, `--explain`, `--version`, `--color`)
-    test_runner.cpp    # `xlang run` and `xlang test`: file/glob/regex selection, build + run per file, colored report
-    update.cpp         # `xlang self-update` (aliases `update`, `upgrade`): latest release, checksum, in-place replace
-    completions.cpp    # `xlang completions bash|zsh|fish|install`: scripts generated from the CLI11 command tree; `install` sets up the shells in use
-    package.cpp        # `xlang package install|update|remove|list|clean` and `attachProject` (xlang.toml -> packages, stdlib source, native files for a build)
-    style.h            # ANSI `Palette` and `useColor` (`--color`, `NO_COLOR`, `XLANG_COLOR`) shared by the CLI
-    version.h          # `kVersion`, the `XLANG_VERSION` define from xmake.lua
+    app/
+      main.cpp         # CLI11 command tree, `parse`/`check`/`build`/`layout`/`run` wiring and exit codes
+      style.h          # ANSI `Palette` and `useColor` (`--color`, `NO_COLOR`, `XLANG_COLOR`) shared by the CLI
+      version.h        # `kVersion`, the `XLANG_VERSION` define from xmake.lua
+    tests/
+      runner.cpp       # `xlang run` and `xlang test`: file/glob/regex selection, build + run per file, colored report
+    update/
+      update.cpp       # `xlang self-update` (aliases `update`, `upgrade`): latest release, checksum, in-place replace
+    completions/
+      completions.cpp  # `xlang completions bash|zsh|fish|install`: scripts generated from the CLI11 command tree; `install` sets up the shells in use
+    package/
+      package.cpp      # `xlang package install|update|remove|list|clean` and `attachProject` (xlang.toml -> packages, stdlib source, native files for a build)
   lang/
     lexer/             # tokens; `#if` ... directives are lexed here
     preprocess/        # conditional compilation on the token stream
@@ -56,7 +62,18 @@ src/
     hir.cpp            # typed HIR dump (`xlang check --hir`)
     prune.cpp          # reachability pruning: drops functions and globals no root reaches (plan 24)
   codegen/
-    codegen.cpp        # HIR -> LLVM IR (4.7, 5.1, 5.3, 5.4, 6)
+    codegen.cpp        # HIR -> LLVM IR driver: context, module, target machine, data layout (4.7)
+    llvm/              # the pass itself, split by topic; `gen.hpp` is the internal header
+      gen.hpp          #   `Gen` (the per-module emitter) and the helpers its parts share
+      types.cpp        #   SSA type of a scalar, in-memory type, size/align, function types
+      memory.cpp       #   allocas, scalar load/store, aggregate copy/zero, field and byte addresses, panic calls
+      unwind.cpp       #   landing pads and `try` (5.3)
+      declarations.cpp #   globals, functions, vtables/itables, constant initializers
+      functions.cpp    #   prologue/epilogue of a function and statement lowering
+      expressions.cpp  #   addresses, memory results, casts, binary operators, calls, `new`, `syscall`
+      atomics_asm.cpp  #   `__builtin_atomic*`/`__builtin_fence` and `__builtin_asm`
+      scalar.cpp       #   scalar expression dispatch and constant expressions
+      entry.cpp        #   `_xl_initAll`/`_xl_finiAll`, library hooks, `_start`/`mainCRTStartup` stubs, `Gen::run`
     emit.cpp           # target machine, pass pipeline, obj/ir/bc writers (5.2, 5.6)
     header.cpp         # `--emit=header` (5.7)
   driver/
