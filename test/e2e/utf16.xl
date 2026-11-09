@@ -146,16 +146,25 @@ fn same(out: *ui8, n: usize, want: *ui8) -> bool {
 
     // copyTruncated: a cut backs up to the previous character boundary, never into the middle of one.
     // The bytes are é (C3 A9), € (E2 82 AC) and 😀 (F0 9F 98 80): 2 + 3 + 4 = 9.
-    local buf: [ui8; 8]
+    local buf: [ui8; 16]
     local raw: [ui8; 9] = [0xc3, 0xa9, 0xe2, 0x82, 0xac, 0xf0, 0x9f, 0x98, 0x80]
     local src: str = fromParts(&raw[0], 9)
-    if copyTruncated(src, &buf[0], 8) != 9 { fail("copyTruncated fits") }
-    // Cap 4 lands inside "€"; the result is just "é" (2 bytes).
+    if copyTruncated(src, &buf[0], 16) != 9 { fail("copyTruncated fits") }
+    if copyTruncated(src, &buf[0], 9) != 9 { fail("copyTruncated exact") }
+    // Cap 8 is one byte short of the whole string, so 😀 is dropped whole and é€ remain (5 bytes).
+    if copyTruncated(src, &buf[0], 8) != 5 { fail("copyTruncated drops the straddling char") }
+    // Cap 4 falls inside € (é ends at 2, € needs 2..5), so only é survives.
     if copyTruncated(src, &buf[0], 4) != 2 { fail("copyTruncated backs up to é") }
-    // Cap 5 lands inside "€" too (é=2, then 2 of 3), so again 2.
-    if copyTruncated(src, &buf[0], 5) != 2 { fail("copyTruncated caps at é") }
-    // Cap 6 holds "é€" exactly.
-    if copyTruncated(src, &buf[0], 6) != 5 { fail("copyTruncated holds é€") }
+    // Cap 5 holds é€ exactly.
+    if copyTruncated(src, &buf[0], 5) != 5 { fail("copyTruncated holds é€") }
+    // Cap 6 is one byte into 😀, which is dropped whole: still é€.
+    if copyTruncated(src, &buf[0], 6) != 5 { fail("copyTruncated caps at é€") }
+    // Cap 2 and 1 hold é alone (é is exactly 2).
+    if copyTruncated(src, &buf[0], 2) != 2 { fail("copyTruncated exact é") }
+    if copyTruncated(src, &buf[0], 1) != 0 { fail("copyTruncated cuts inside é") }
+    // An ASCII string is cut on the cap with no backing up.
+    local plain: str = view("abcdef", 0, 6)
+    if copyTruncated(plain, &buf[0], 4) != 4 { fail("copyTruncated ascii") }
 
     if failures == 0 {
         println("utf16 ok")
