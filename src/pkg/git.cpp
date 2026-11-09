@@ -2,6 +2,7 @@
 
 #include "cli/process.h"
 #include "xlang/pkg/error.h"
+#include "xlang/util/program.h"
 
 #include <cstdlib>
 #include <fstream>
