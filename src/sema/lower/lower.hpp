@@ -101,7 +101,7 @@ namespace lower {
                          (e.lhs->type.kind == TypeKind::Slice && !e.lhs->type.is_mutable));
     }
     if (e.kind == hir::ExprKind::Slice) {
-        return true;  // a slice yields a `str` value, not a place
+        return true; // a slice yields a `str` value, not a place
     }
     if (e.kind == hir::ExprKind::Field && e.lhs) {
         const Type* owner = &e.lhs->type;
@@ -126,7 +126,7 @@ namespace lower {
 }
 
 [[nodiscard]] inline const Attribute* findAttribute(const std::vector<Attribute>& attrs,
-                                             std::string_view name) {
+                                                    std::string_view name) {
     for (const Attribute& a : attrs) {
         if (a.name == name) {
             return &a;
