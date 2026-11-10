@@ -895,29 +895,30 @@ class Parser {
                 no_struct_ = false;
                 // `base[lo..hi]` and `base[lo..]` are slices; `..=` is not a slice, because a view
                 // has no defined inclusive end (`base[lo..=hi]` would be off by one).
-                if (at(TokenKind::DotDot)) {
-                    advance();
+                // Called right after `..`: reads the optional `hi`, closes the bracket and wraps `expr`.
+                const auto finishSlice = [&](ExprPtr lo) {
                     ExprPtr slice = makeExpr(Expr::Kind::Slice, expr->span);
-                    slice->rhs = parseExpr(); // `hi`; absent when the bracket closes here
+                    if (lo) {
+                        slice->args.push_back(std::move(lo));
+                    }
+                    if (!at(TokenKind::RBracket)) {
+                        slice->rhs = parseExpr(); // `hi`; absent when the bracket closes here
+                    }
                     no_struct_ = saved_no_struct;
                     --nl_depth_;
                     expect(TokenKind::RBracket, "`]` closing the slice");
                     slice->span = spanFrom(expr->span);
                     slice->lhs = std::move(expr);
                     expr = std::move(slice);
+                };
+                if (at(TokenKind::DotDot)) {
+                    advance();
+                    finishSlice(nullptr);
                 } else {
                     ExprPtr first = parseExpr();
                     if (at(TokenKind::DotDot)) {
                         advance();
-                        ExprPtr slice = makeExpr(Expr::Kind::Slice, expr->span);
-                        slice->args.push_back(std::move(first)); // `lo`
-                        slice->rhs = parseExpr(); // `hi`; absent when the bracket closes
-                        no_struct_ = saved_no_struct;
-                        --nl_depth_;
-                        expect(TokenKind::RBracket, "`]` closing the slice");
-                        slice->span = spanFrom(expr->span);
-                        slice->lhs = std::move(expr);
-                        expr = std::move(slice);
+                        finishSlice(std::move(first));
                     } else {
                         ExprPtr index = makeExpr(Expr::Kind::Index, expr->span);
                         index->rhs = std::move(first);

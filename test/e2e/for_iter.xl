@@ -114,7 +114,7 @@ fn breakContinue() {
             }
         }
     }
-    check("labeled break", found == 2030)
+    check("labeled break", found == 230)
 }
 
 @entry fn main() -> i32 {

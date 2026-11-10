@@ -431,7 +431,7 @@ Decisions taken when the package system was added ([Packages]({{ site.baseurl }}
 ## Batch: process, stat, io_uring, protocols, DER and hardware (this change)
 
 - **io_uring is a standalone backend:** `std/sys/uring` sets up a ring and does a NOP round trip. The event loop (`std/sys/event`) still uses epoll; wiring the completion backend in with the epoll fallback is open. Docker's default seccomp profile refuses io_uring, so the fallback path is what runs in containers.
-- **Process spawn has no environment:** `processSpawn` starts the child with an empty environment; passing one is open. There are no signal handlers (rt_sigaction, sigaction).
+- **Process spawn has no environment:** `processSpawn` starts the child with an empty environment; passing one is open. There are no signal handlers (rt_sigaction, sigaction). `processSpawnOut` (child output into a file) is implemented for Linux and macOS only and returns -1 on Windows, so the xlang e2e runner (`test/e2e/runner.xl`) does not run there yet; its Linux path is not verified on a Linux host. The runner also lacks the shared-library load test (needs `DYLD_INSERT_LIBRARIES`, but a child gets an empty environment) and a per-test timeout.
 - **Fiber scheduler is not built:** `sysMapGuarded` gives the guard page; the fiber scheduler on top of it is open.
 - **JSON Patch (RFC 6902) and Merge Patch (RFC 7396) are not implemented.**
 - **DHCPv6, SLAAC and DHCPv4 state machine are not implemented.**

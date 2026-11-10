@@ -1,0 +1,61 @@
+# Native end-to-end table read by test/e2e/runner.xl. One entry per line, fields separated by `|`; `#` starts a comment.
+#   run|name|expected exit code|text the output must contain (empty: any)
+#   diag|name|build flag (empty: none)|diagnostic code the build output must contain, or `ok` (the build must succeed)
+run|language|0|
+run|controlflow|0|controlflow ok
+run|for|0|for ok
+run|enums|0|enums ok
+run|generic_enums|0|generic_enums ok
+run|tuple_return|0|tuple return ok
+run|tuple_destructure|0|tuple destructuring ok
+run|proc_list|0|pid
+run|router|0|router ok
+run|stdlib|0|499500
+run|fsjson|0|
+run|argv|0|argv ok
+run|panics|134|before
+run|vecpanic|134|before
+run|threads|0|40000
+run|try|0|try ok
+run|sched|0|20100
+run|sched_io|0|5
+run|bitops|0|bitops ok
+run|sha256|0|sha256 ok
+run|sha512|0|sha512 ok
+run|hmac|0|hmac ok
+run|aesgcm|0|aesgcm ok
+run|chacha20poly1305|0|chacha20poly1305 ok
+run|x25519|0|x25519 ok
+run|ecdsa|0|ecdsa ok
+run|strings|0|strings ok
+run|strtools|0|strtools ok
+run|utf16|0|utf16 ok
+run|for_iter|0|for_iter ok
+run|overload|0|overload ok
+run|raii|0|raii ok
+run|generics|0|generics ok
+run|collections|0|collections ok
+run|math_vectors|0|math_vectors ok
+run|math_matrix2|0|math_matrix2 ok
+run|math_matrix3|0|math_matrix3 ok
+run|math_matrix4|0|math_matrix4 ok
+run|math_quat|0|math_quat ok
+run|math_transform|0|math_transform ok
+run|big|0|big ok
+run|print|0|print ok
+run|printalloc|0|printalloc ok
+run|variadic|0|variadic ok
+run|printpanic|134|format: 2 placeholders, got 1 arguments
+run|init|0|init ok
+run|initset|0|initset ok
+run|cyclic|0|cyclic ok
+run|entry_order|3|initA initB entry finiB finiA
+diag|diag_noentry||E0739
+diag|diag_twoentry||E0753
+diag|diag_badsig||E0752
+diag|diag_init_args||E0729
+diag|diag_static_entry|--emit=static|E0754
+diag|diag_shared_args|--emit=shared|E0755
+diag|diag_slice_readonly||E0716
+diag|entry_order|--emit=ir|ok
+diag|shared_hook|--emit=static|ok

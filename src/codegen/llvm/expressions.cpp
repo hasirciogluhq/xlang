@@ -298,8 +298,8 @@ llvm::Value* Gen::genMem(const hir::Expr& e) {
         // The value is read first; the drop flag is cleared, so the owner no longer drops it.
         // A field move (the payload of a `case` pattern) has no flag of its own: `local` is 0.
         llvm::Value* src = genMem(*e.lhs);
-        if (e.index != 0 || e.local != 0) {
-            storeScalar(Type::makeBool(), B_.getInt1(false), locals_[e.index]);
+        if (e.local != 0) {
+            storeScalar(Type::makeBool(), B_.getInt1(false), locals_[e.local]);
         }
         return src;
     }

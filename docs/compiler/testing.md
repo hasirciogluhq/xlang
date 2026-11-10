@@ -44,7 +44,15 @@ The suites `slices.test.xl` and `for_iter.test.xl` cover slices (`[]T`, `[]mut T
 xmake run e2e
 ```
 
-`test/e2e/` holds one `.xl` program per feature. `test/e2e/run.sh` builds each program with the compiler under test and runs it, checking the exit code and one substring of its output. Each program is also cross-built and run on the other targets the host can reach:
+`test/e2e/` holds one `.xl` program per feature. `xmake run e2e` compiles the runner `test/e2e/runner.xl`, which is itself an xlang program, and runs it. The runner reads the table `test/e2e/tests.txt` (`run|name|exit code|output substring` and `diag|name|flag|diagnostic code or ok`), builds each program with the compiler under test, starts it as a child process with its output redirected into a file (`processSpawnOut` in `std/os/process`), and checks the exit code and one substring of the output. It runs natively on Linux and macOS, one entry at a time, and takes an optional name filter (a plain substring of the table line):
+
+```
+xlang build test/e2e/runner.xl -o outputs/e2e-runner
+outputs/e2e-runner outputs/xlang test/e2e              # the whole table
+outputs/e2e-runner outputs/xlang test/e2e raii         # the entries whose line contains "raii"
+```
+
+The cross-target legs below, the TLS and HTTPS server/client pairs and the package cases are still run by the shell script `test/e2e/run.sh`, which is not part of `xmake run e2e` and takes the compiler path as its first argument. Each program is cross-built and run on the other targets the host can reach:
 
 | Target | How |
 |---|---|

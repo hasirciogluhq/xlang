@@ -43,7 +43,7 @@ path is not covered by an e2e entry.
 
 | Module | Functions | Source |
 |---|---|---|
-| `std/os/process` | `processId`, `processKill`, `processWait`, `processSpawn` | Linux: getpid 39/172, kill 62/129, wait4 61/260, clone 56/220 (SIGCHLD), execve 59/221, exit 60/93; macOS: libSystem getpid, kill, wait4, posix_spawn |
+| `std/os/process` | `processId`, `processKill`, `processWait`, `processSpawn`, `processSpawnOut` (stdout and stderr into a file: Linux dup3 292/24, macOS `posix_spawn_file_actions_addopen`/`_adddup2`; Windows returns -1) | Linux: getpid 39/172, kill 62/129, wait4 61/260, clone 56/220 (SIGCHLD), execve 59/221, exit 60/93; macOS: libSystem getpid, kill, wait4, posix_spawn |
 | `std/io/stat` | `fsStat` (mode, size, mtime) | Linux: statx 332/291 (stx_mode 28, stx_size 40, stx_mtime 112); macOS: libSystem stat (st_mode 4, st_size 96, st_mtime 48) |
 | `std/io/dir` | `fsListDir` (macOS and Windows now too) | macOS: libSystem opendir, readdir, closedir (struct dirent: d_type 20, d_name 21); Windows: kernel32 FindFirstFileW, FindNextFileW, FindClose (WIN32_FIND_DATAW: dwFileAttributes 0, cFileName 44) |
 | `std/sys` | `sysMapGuarded`, `sysUnmapGuarded` | Linux: mprotect 10/arm64 226; macOS: BSD number 74 (the comment in `std/macos.xl`): a PROT_NONE page below the region; Windows: `VirtualAlloc` (MEM_RESERVE|MEM_COMMIT, PAGE_READWRITE) over `size + dwPageSize`, then `VirtualProtect` of the lowest page to PAGE_NOACCESS, released with `VirtualFree(MEM_RELEASE)` |
