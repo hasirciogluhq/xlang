@@ -1,0 +1,245 @@
+// std/net/proto/slaac: IPv6 stateless address autoconfiguration (RFC 4862, https://www.rfc-editor.org/rfc/rfc4862) with the Neighbor
+// Discovery messages it needs (RFC 4861, https://www.rfc-editor.org/rfc/rfc4861), the interface identifier of RFC 4291 appendix A
+// (https://www.rfc-editor.org/rfc/rfc4291) and the RDNSS option of RFC 8106 (https://www.rfc-editor.org/rfc/rfc8106).
+// An IPv6 address is a 16-byte `String`. A message is ICMPv6 (next header 58) whose checksum covers a pseudo-header of the source,
+// the destination, the upper-layer length and the next header (RFC 8200 section 8.1; RFC 4443 section 2.3).
+//
+// The client does no I/O (see dhcpclient.xl): the caller passes `now` in ms, feeds ICMPv6 messages to `recv` with their source
+// address, calls `tick` on timer expiry, and sends what `take` returns from `src` to `dst` with hop limit 255 (RFC 4861 section 6.1.1).
+//
+//   Init --start--> Tentative (DAD of fe80::/64 + EUI-64) --quiet 1 s--> Soliciting (RS, 3 times, 4 s apart)
+//        --RA with an autonomous /64 prefix--> Configuring (DAD of prefix + EUI-64) --quiet 1 s--> Bound
+//
+// Duplicate Address Detection (RFC 4862 section 5.4): one NS from `::` to the target's solicited-node address; a NA (or a NS from
+// `::`) for the target means it is in use and the client stops in Failed.
+from "../../str/string" import String
+from "wire" import putBe, putZeros, getBe
+
+const dadWait: ui64 = 1000                              // RetransTimer, RFC 4861 section 10
+const rsGap: ui64 = 4000                                // RTR_SOLICITATION_INTERVAL
+const rsMax: ui32 = 3                                   // MAX_RTR_SOLICITATIONS
+
+/// The modified EUI-64 interface identifier of the 48-bit `mac` (RFC 4291 appendix A): `ff:fe` goes in the middle and the
+/// universal/local bit (0x02 of the first byte) is inverted.
+export fn eui64(mac: ui64) -> ui64 {
+    return (((mac >> 24) << 40) ^ 0x0200000000000000) | 0xfffe000000 | (mac & 0xffffff)
+}
+
+/// `prefix` (its first 8 bytes) followed by the interface identifier of `mac`: the address SLAAC forms (RFC 4862 section 5.5.3 d).
+export fn slaacAddress(prefix: *String, mac: ui64) -> String {
+    local a: String = prefix.slice(0, 8)
+    putBe(&a, eui64(mac), 8)
+    return a
+}
+
+/// The link-local address fe80::/64 + EUI-64 (RFC 4862 section 5.3).
+export fn linkLocal(mac: ui64) -> String {
+    local a: String = String()
+    putBe(&a, 0xfe80000000000000, 8)
+    putBe(&a, eui64(mac), 8)
+    return a
+}
+
+/// The solicited-node multicast address of `addr`: ff02::1:ff00:0/104 + its last 24 bits (RFC 4291 section 2.7.1).
+export fn solicitedNode(addr: *String) -> String {
+    local a: String = String()
+    putBe(&a, 0xff02000000000000, 8)
+    putBe(&a, 0x00000001ff000000 | getBe(addr, 13, 3), 8)
+    return a
+}
+
+/// The ICMPv6 checksum of `body` (checksum field zero) between `src` and `dst`: the ones' complement of the ones' complement sum of
+/// the pseudo-header and the body in 16-bit words, an odd last byte padded with zero (RFC 4443 section 2.3, RFC 8200 section 8.1).
+export fn icmp6Checksum(src: *String, dst: *String, body: *String) -> ui16 {
+    local pseudo: String = src.clone()
+    pseudo.append(dst)
+    putBe(&pseudo, body.length() as ui64, 4)
+    putZeros(&pseudo, 3)
+    pseudo.push(58)
+    local sum: ui64 = words(&pseudo) + words(body)
+    for _ in 0..4 { sum = (sum & 0xffff) + (sum >> 16) }
+    return (~sum & 0xffff) as ui16
+}
+
+/// The sum of the 16-bit big-endian words of `s`; an odd last byte is the high byte of a final word.
+fn words(s: *String) -> ui64 {
+    local sum: ui64 = 0
+    for i in 0..s.length() / 2 { sum += getBe(s, i * 2, 2) }
+    return s.length() % 2 == 1 ? sum + ((s.at(s.length() - 1) as ui64) << 8) : sum
+}
+
+/// An ICMPv6 message of type `kind` with the 4 bytes `rest` after the checksum and the options/body `tail`, checksum filled in.
+fn icmp6(kind: ui8, rest: ui32, tail: *String, src: *String, dst: *String) -> String {
+    local m: String = String()
+    m.push(kind)
+    putZeros(&m, 3)                                     // code 0, checksum 0 for now
+    putBe(&m, rest as ui64, 4)
+    m.append(tail)
+    local ck: String = String()
+    putBe(&ck, icmp6Checksum(src, dst, &m) as ui64, 2)
+    return m.splice(2, 4, &ck)
+}
+
+/// A Router Solicitation (type 133) with the source link-layer address option (RFC 4861 section 4.1, 4.6.1). Sent from `src`
+/// (the link-local address) to ff02::2.
+export fn rsBuild(src: *String, mac: ui64) -> String {
+    local o: String = String()
+    putBe(&o, 0x0101, 2)                                // option type 1, length 1 (8 bytes)
+    putBe(&o, mac, 6)
+    local all: String = String()
+    putBe(&all, 0xff02000000000000, 8)
+    putBe(&all, 2, 8)
+    return icmp6(133, 0, &o, src, &all)
+}
+
+/// A Neighbor Solicitation (type 135) for `target` (RFC 4861 section 4.3). For DAD the source is `::` and it goes to the
+/// target's solicited-node address (RFC 4862 section 5.4.2).
+export fn nsBuild(target: *String, src: *String, dst: *String) -> String {
+    return icmp6(135, 0, target, src, dst)
+}
+
+/// The fields of a Router Advertisement the client uses (RFC 4861 section 4.2): the first prefix information option (type 3,
+/// section 4.6.2) and the first RDNSS option (type 25, RFC 8106 section 5.1).
+export class RaInfo {
+    routerLifetime: ui16
+    prefix: String                      // 16 bytes (the prefix, rest zero); empty when there is none
+    prefixLen: ui8
+    onLink: bool
+    autonomous: bool
+    valid: ui32
+    preferred: ui32
+    dns: String                         // the first RDNSS address, or empty
+    ok: bool
+
+    fn init(self) {
+        self.prefix = String()
+        self.dns = String()
+    }
+}
+
+/// Parses an ICMPv6 message; `ok` is false unless it is a Router Advertisement of at least 16 bytes.
+export fn raParse(buf: *String) -> RaInfo {
+    local r: RaInfo = RaInfo()
+    if buf.length() < 16 || buf.at(0) != 134 { return r }
+    r.routerLifetime = getBe(buf, 6, 2) as ui16
+    local o: usize = 16
+    for ; o + 2 <= buf.length(); o += (buf.at(o + 1) as usize) * 8 {
+        local len: usize = (buf.at(o + 1) as usize) * 8
+        if len == 0 || o + len > buf.length() { return r }                   // a zero length is malformed (section 6.1.2)
+        if buf.at(o) == 3 && len == 32 && r.prefix.length() == 0 {
+            r.prefixLen = buf.at(o + 2)
+            r.onLink = (buf.at(o + 3) & 0x80) != 0
+            r.autonomous = (buf.at(o + 3) & 0x40) != 0
+            r.valid = getBe(buf, o + 4, 4) as ui32
+            r.preferred = getBe(buf, o + 8, 4) as ui32
+            r.prefix = buf.slice(o + 16, 16)
+        } else if buf.at(o) == 25 && len >= 24 && r.dns.length() == 0 { r.dns = buf.slice(o + 8, 16) }
+    }
+    r.ok = true
+    return r
+}
+
+export enum SlaacState: ui8 {
+    Init
+    Tentative
+    Soliciting
+    Configuring
+    Bound
+    Failed
+}
+
+export class SlaacClient {
+    state: SlaacState
+    mac: ui64
+    due: ui64
+    sent: ui32                          // RS sent so far
+    linkAddr: String                    // the link-local address
+    address: String                     // the global address, once Bound
+    dns: String
+    valid: ui64                         // ms the global address stays valid
+    expireAt: ui64
+    tentative: String                   // the address under DAD
+    packet: String
+    src: String
+    dst: String
+
+    fn init(self, mac: ui64) {
+        self.state = SlaacState.Init
+        self.mac = mac
+        self.linkAddr = linkLocal(mac)
+        self.address = String()
+        self.dns = String()
+        self.tentative = String()
+        self.packet = String()
+        self.src = String()
+        self.dst = String()
+    }
+
+    fn take(self) -> String {
+        local p: String = self.packet.clone()
+        self.packet = String()
+        return p
+    }
+
+    fn dad(self, now: ui64, target: *String) {
+        self.tentative = target.clone()
+        self.src = String(16, 0)
+        self.dst = solicitedNode(target)
+        self.packet = nsBuild(target, &self.src, &self.dst)
+        self.due = now + dadWait
+    }
+
+    /// Begins: DAD of the link-local address (RFC 4862 section 5.4).
+    fn start(self, now: ui64) {
+        self.state = SlaacState.Tentative
+        self.dad(now, &self.linkAddr)
+    }
+
+    fn solicit(self, now: ui64) {
+        self.state = SlaacState.Soliciting
+        self.src = self.linkAddr.clone()
+        self.dst = String()
+        putBe(&self.dst, 0xff02000000000000, 8)
+        putBe(&self.dst, 2, 8)
+        self.packet = rsBuild(&self.src, self.mac)
+        self.sent++
+        self.due = now + rsGap
+    }
+
+    /// One received ICMPv6 message. A NA for the tentative address, or a NS for it from `::` (RFC 4862 section 5.4.3), fails DAD; a
+    /// RA while Soliciting starts DAD of the address its autonomous prefix gives (section 5.5.3).
+    fn recv(self, now: ui64, buf: *String) {
+        if buf.length() >= 24 && (self.state == SlaacState.Tentative || self.state == SlaacState.Configuring) {
+            local target: String = buf.slice(8, 16)
+            if (buf.at(0) == 136 || buf.at(0) == 135) && target.equals(&self.tentative) { self.state = SlaacState.Failed }
+        }
+        if self.state != SlaacState.Soliciting { return }
+        local ra: RaInfo = raParse(buf)
+        if !ra.ok || !ra.autonomous || ra.prefixLen != 64 || ra.preferred > ra.valid || ra.valid == 0 { return }
+        self.dns = ra.dns.clone()
+        self.valid = ra.valid as ui64 * 1000
+        self.state = SlaacState.Configuring
+        local a: String = slaacAddress(&ra.prefix, self.mac)
+        self.dad(now, &a)
+    }
+
+    /// A timer check: a quiet DAD period completes the step (Tentative to Soliciting, Configuring to Bound), and an unanswered RS
+    /// is sent again up to three times (RFC 4861 section 6.3.7); the global address lapses at the end of its valid lifetime.
+    fn tick(self, now: ui64) {
+        if now < self.due { return }
+        switch self.state {
+            case SlaacState.Tentative { self.solicit(now) }
+            case SlaacState.Soliciting { if self.sent < rsMax { self.solicit(now) } }
+            case SlaacState.Configuring {
+                self.address = self.tentative.clone()
+                self.expireAt = now + self.valid
+                self.state = SlaacState.Bound
+                self.due = self.expireAt
+            }
+            case SlaacState.Bound {
+                self.address = String()
+                self.state = SlaacState.Init
+            }
+        }
+    }
+}

@@ -49,6 +49,9 @@ run|printpanic|134|format: 2 placeholders, got 1 arguments
 run|jsonpatch|0|jsonpatch ok
 run|dhcpclient|0|dhcpclient ok
 run|ntp|0|ntp ok
+run|dhcp6|0|dhcp6 ok
+run|slaac|0|slaac ok
+run|stat|0|stat ok
 run|init|0|init ok
 run|initset|0|initset ok
 run|cyclic|0|cyclic ok

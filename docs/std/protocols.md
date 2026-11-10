@@ -4,7 +4,7 @@ The wire formats of some application protocols are in `std/net/proto`. Each modu
 
 | Module | Functions | Specification |
 |---|---|---|
-| `std/net/proto/ntp` | `ntpClientRequest`, `ntpParse`, `ntpToUnixSeconds`, `ntpOffsetDelay` | RFC 5905, sections 6, 7.3 and 8 |
+| `std/net/proto/ntp` | `ntpClientRequest`, `ntpParse`, `ntpToUnixSeconds`, `ntpFromUnixNanos`, `ntpToUnixNanos`, `ntpOffsetDelay` | RFC 5905, sections 6, 7.3 and 8 |
 | `std/net/proto/syslog` | `syslogPri`, `syslogMessage` | RFC 5424, section 6 (header with version 1; structured data written as `-`) |
 | `std/net/proto/socks5` | `socks5Greeting`, `socks5ConnectDomain`, `socks5ConnectIPv4`, `socks5ParseReply` | RFC 1928 (no authentication method; the RFC 1929 username subnegotiation is not done) |
 | `std/net/proto/ip` | `inetChecksum`, `ipv4Header`, `icmpEcho` | RFC 1071 (checksum), RFC 791 section 3.1 (IPv4 header, no options), RFC 792 (ICMP echo) |
@@ -40,12 +40,17 @@ Not implemented: will messages, username and password, AUTH, user properties, to
 
 | Module | Functions | Specification |
 |---|---|---|
-| `std/net/proto/ntpclient` | `ntpQuery(ip, port, timeoutMs)` returns the offset and delay | RFC 5905 sections 7.3 and 8 (UDP, the clock has whole-second resolution) |
+| `std/net/proto/ntpclient` | `ntpQuery(ip, port, timeoutMs)` returns the offset and delay | RFC 5905 sections 7.3 and 8 (UDP; t1 and t4 come from `sysClockNanos`: nanoseconds on Linux, microseconds on macOS, 100 ns on Windows; a reply whose origin timestamp is not t1 is dropped) |
 | `std/net/proto/dnstransport` | `dnsBuildQueryEdns`, `dnsFrameTcp`, `dnsUnframeTcp`, `dohRequestTarget` | RFC 6891 section 6.1.2 (OPT record in the additional section), RFC 1035 section 4.2.2 (DNS over TCP framing, used by DNS over TLS, RFC 7858), RFC 8484 section 4.1 (GET with `dns=` base64url) |
 | `std/net/proto/stun` | `stunBindingRequest`, `stunMappedAddress` | RFC 8489 sections 6 and 14.2 (IPv4 XOR-MAPPED-ADDRESS, MAPPED-ADDRESS fallback) |
-| `std/net/proto/dhcp` | `dhcpDiscover`, `dhcpParseReply` | RFC 2131 sections 2 and 3, RFC 2132 options 1, 3, 51, 53, 54, 55 |
+| `std/net/proto/dhcp` | `dhcpBuild`, `dhcpParseReply` | RFC 2131 sections 2 and 3, RFC 2132 options 1, 3, 6, 15, 50, 51, 53, 54, 55, 58, 59 |
+| `std/net/proto/dhcpclient` | `DhcpClient`: `start`, `recv`, `tick`, `take`, `release`, `decline` | RFC 2131 sections 3.1, 4.1 and 4.4 (DISCOVER, OFFER, REQUEST, ACK, renewing at T1, rebinding at T2, NAK and lease expiry) |
+| `std/net/proto/dhcp6` | `Dhcp6Client`: `start`, `recv`, `tick`, `take`, `release`; `dhcp6Parse` | RFC 8415 sections 7, 15, 18 and 21 (SOLICIT, ADVERTISE, REQUEST, REPLY, RENEW, REBIND, RELEASE with one IA_NA; DUID-LL) |
+| `std/net/proto/slaac` | `SlaacClient`; `eui64`, `linkLocal`, `slaacAddress`, `icmp6Checksum`, `rsBuild`, `nsBuild`, `raParse` | RFC 4862 sections 5.3 to 5.5, RFC 4861 sections 4.1 to 4.6, RFC 4291 appendix A, RFC 8106 section 5.1 (RDNSS), RFC 4443 section 2.3 |
 
-The DNS over TLS and DNS over HTTPS transports are the caller's TLS and HTTP clients; this module frames and encodes only. The STUN and DHCP messages are built and parsed; nothing here sends them on a socket.
+The DNS over TLS and DNS over HTTPS transports are the caller's TLS and HTTP clients; this module frames and encodes only. The STUN messages are built and parsed; nothing here sends them on a socket.
+
+The DHCPv4, DHCPv6 and SLAAC clients are state machines without I/O or a clock. The caller passes `now` in milliseconds, hands each received datagram to `recv`, calls `tick` once `due` has passed, and sends what `take` returns: DHCPv4 to `dest` (broadcast or the server, UDP 67), DHCPv6 to `ff02::1:2` port 547, SLAAC from `src` to `dst` with hop limit 255. Retransmission starts at the RFC's initial timeout, doubles up to its maximum and has jitter (`std/net/proto/wire`). Timers use fixed numbers where the RFC lets the client choose. The DHCPv4 client does not ARP-probe the address (it exposes `decline` for the caller who does), and DHCPv6 handles one IA_NA with no IA_TA or prefix delegation.
 
 ## Base91
 

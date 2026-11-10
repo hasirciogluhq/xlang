@@ -379,6 +379,24 @@ export fn sysUnlink(path: *ui8) -> i32 {
     return 0
 }
 
+/// Metadata of `path` (a file or a directory) into `out[0..3]`: FileAttributes, EndOfFile in bytes, LastWriteTime in 100 ns ticks
+/// since 1601 (MS-FSCC 2.4.7 `FileBasicInformation` class 4 and 2.4.41 `FileStandardInformation` class 5). False when it cannot be opened.
+export fn sysFileInfo(path: *ui8, out: *i64) -> bool {
+    // FILE_READ_ATTRIBUTES | SYNCHRONIZE, FILE_OPEN, FILE_SYNCHRONOUS_IO_NONALERT (directories allowed)
+    local fd: i32 = createFile(path, 0x100080, 1, 32)
+    if fd < 0 { return false }
+    defer NtClose(fd as i64)
+    local basic: [i64; 5]
+    local standard: [i64; 3]
+    local io: [i64; 2]
+    if NtQueryInformationFile(fd as i64, &io[0], &basic[0] as *void, 40, 4) < 0 { return false }
+    if NtQueryInformationFile(fd as i64, &io[0], &standard[0] as *void, 24, 5) < 0 { return false }
+    out[0] = basic[4] & 0xffffffff
+    out[1] = standard[1]
+    out[2] = basic[2]
+    return true
+}
+
 export fn sysFileSize(fd: i32) -> i64 {
     local info: [i64; 3]        // FILE_STANDARD_INFORMATION: AllocationSize, EndOfFile, ...
     local io: [i64; 2]

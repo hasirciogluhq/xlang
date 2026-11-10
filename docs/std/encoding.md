@@ -79,6 +79,20 @@ The bit operations of the encoding (`(cp >> 6) & 0x3f`, the surrogate arithmetic
 
 Nesting deeper than 512 levels is rejected. The validator checks the escapes; control characters inside strings are rejected.
 
+The same module has a `String` layer for callers that hold the text in a `String`: `JsonSpan` (the byte range of a value or member), `jsonValid(*String)`, `jsonValueAt`, `jsonMembers` (the members of an object or elements of an array as `Vec<JsonSpan>`), `jsonPointerGet(*String, *String)`, `jsonText` (a decoded string value) and `jsonPointerToken` (a decoded RFC 6901 reference token).
+
+## JSON Patch and Merge Patch
+
+`std/encoding/jsonpatch` edits JSON text without a tree. Each change is one splice of the text, so member order is kept and a new member goes last. A result is a `String`; the empty String means failure (valid JSON is never empty).
+
+| Function | Purpose |
+|---|---|
+| `jsonPatch(doc, patch)` | applies a JSON Patch ([RFC 6902](https://www.rfc-editor.org/rfc/rfc6902)): `add`, `remove`, `replace`, `move`, `copy`, `test`, in order; the first failure gives the empty String |
+| `jsonMergePatch(target, patch)` | applies a JSON Merge Patch ([RFC 7396](https://www.rfc-editor.org/rfc/rfc7396)): a non-object patch replaces the target, `null` deletes a name |
+| `jsonEqual(a, b)` | value equality as RFC 6902 section 4.6 defines it: object member order is ignored, numbers compare by value (`1`, `1.0` and `10e-1` are equal), strings by code points |
+
+Failures include a missing path, an array index past the end or with a leading zero, a failed `test`, and a `move` into its own child (section 4.4). The tests in `test/e2e/jsonpatch.xl` run the examples of RFC 6902 appendix A and RFC 7396 appendix A.
+
 ## Base58, CBOR and Protocol Buffers
 
 `base58Encode` takes at most 512 input bytes; `base58Decode` accepts an output of up to 800 bytes. The CBOR functions write one item each: the caller writes the items of an array or map after its header. The Protocol Buffers functions are the wire primitives (varint, zigzag, tag, fixed-width values); there is no message schema or code generator.

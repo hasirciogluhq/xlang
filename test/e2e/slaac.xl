@@ -1,0 +1,107 @@
+// std/net/proto/slaac: EUI-64, ICMPv6 checksum, RS/NS/RA messages and the SLAAC state machine (RFC 4862, 4861, 4291, 8106).
+from "std" import print
+from "std/str/string" import String
+from "std/net/proto/wire" import putBe, putZeros, getBe
+from "std/net/proto/slaac" import eui64, linkLocal, solicitedNode, slaacAddress, icmp6Checksum, rsBuild, raParse, RaInfo, SlaacClient, SlaacState
+
+global failures: i32 = 0
+
+fn check(ok: bool, what: str) {
+    if !ok {
+        failures++
+        print("FAIL ")
+        print(what)
+        print("\n")
+    }
+}
+
+/// A Router Advertisement with prefix 2001:db8:1:2::/64 (flags `flags`, valid 7200 s, preferred 3600 s) and one RDNSS 2001:4860:4860::8888.
+fn ra(flags: ui8) -> String {
+    local m: String = String()
+    m.push(134)
+    putZeros(&m, 3)
+    putBe(&m, 0x40, 1)                                  // hop limit
+    putBe(&m, 0, 1)
+    putBe(&m, 1800, 2)                                  // router lifetime
+    putZeros(&m, 8)
+    putBe(&m, 0x0304, 2)                                // prefix information: type 3, 4 * 8 bytes
+    m.push(64)
+    m.push(flags)
+    putBe(&m, 7200, 4)
+    putBe(&m, 3600, 4)
+    putZeros(&m, 4)
+    putBe(&m, 0x20010db800010002, 8)
+    putZeros(&m, 8)
+    putBe(&m, 0x1903, 2)                                // RDNSS: type 25, 3 * 8 bytes
+    putZeros(&m, 2)
+    putBe(&m, 600, 4)
+    putBe(&m, 0x2001486048600000, 8)
+    putBe(&m, 0x8888, 8)
+    return m
+}
+
+@entry fn main() -> i32 {
+    check(eui64(0x3456789ABCDE) == 0x365678FFFE9ABCDE, "RFC 4291 appendix A: 34-56-78-9A-BC-DE -> 3656:78FF:FE9A:BCDE")
+    local ll: String = linkLocal(0x3456789ABCDE)
+    check(getBe(&ll, 0, 2) == 0xfe80 && getBe(&ll, 8, 8) == 0x365678FFFE9ABCDE, "link-local is fe80:: + EUI-64")
+    local sn: String = solicitedNode(&ll)
+    check(getBe(&sn, 0, 2) == 0xff02 && getBe(&sn, 8, 8) == 0x1ff9abcde, "solicited-node is ff02::1:ff9a:bcde")
+
+    local src: String = ll.clone()
+    local rs: String = rsBuild(&src, 0x3456789ABCDE)
+    check(rs.length() == 16 && rs.at(0) == 133 && rs.at(8) == 1 && rs.at(9) == 1, "RS has the source link-layer option")
+    local all: String = String()
+    putBe(&all, 0xff02000000000000, 8)
+    putBe(&all, 2, 8)
+    check(icmp6Checksum(&src, &all, &rs) == 0, "a message with its checksum sums to zero")
+    local flipped: String = rs.clone()
+    flipped.push(0)
+    check(icmp6Checksum(&src, &all, &flipped) != 0, "a changed message fails the checksum")
+
+    local msg: String = ra(0xC0)
+    local info: RaInfo = raParse(&msg)
+    check(info.ok && info.prefixLen == 64 && info.onLink && info.autonomous, "RA prefix flags")
+    check(info.valid == 7200 && info.preferred == 3600 && info.routerLifetime == 1800, "RA lifetimes")
+    check(getBe(&info.prefix, 0, 8) == 0x20010db800010002 && getBe(&info.dns, 8, 8) == 0x8888, "RA prefix and RDNSS")
+    local ns: String = String(1, 135)
+    check(!raParse(&ns).ok, "a non-RA is rejected")
+
+    // The client: DAD of the link-local address, router solicitation, DAD of the global address, bound.
+    local c: SlaacClient = SlaacClient(0x3456789ABCDE)
+    c.start(0)
+    local dad: String = c.take()
+    check(c.state == SlaacState.Tentative && dad.at(0) == 135 && getBe(&c.src, 0, 8) == 0, "DAD NS comes from ::")
+    c.tick(500)
+    check(c.take().length() == 0, "DAD waits one second")
+    c.tick(1000)
+    check(c.state == SlaacState.Soliciting && c.take().at(0) == 133, "quiet DAD leads to RS")
+    c.tick(5000)
+    check(c.take().at(0) == 133, "RS is repeated")
+
+    local weak: String = ra(0x80)                       // on-link only: no address from it
+    c.recv(5100, &weak)
+    check(c.state == SlaacState.Soliciting, "a prefix without the A flag is not used")
+    local good: String = ra(0xC0)
+    c.recv(5200, &good)
+    check(c.state == SlaacState.Configuring, "RA starts DAD of the global address")
+    local want: String = slaacAddress(&info.prefix, 0x3456789ABCDE)
+    check(c.tentative.equals(&want), "the address is the prefix + EUI-64")
+    c.take()
+    c.tick(6200)
+    check(c.state == SlaacState.Bound && c.address.equals(&want) && getBe(&c.dns, 8, 8) == 0x8888, "bound with DNS")
+    c.tick(6200 + 7200000)
+    check(c.address.length() == 0, "the address lapses with its valid lifetime")
+
+    // A neighbor advertisement for the tentative address means a duplicate.
+    local d: SlaacClient = SlaacClient(0x3456789ABCDE)
+    d.start(0)
+    local na: String = String()
+    na.push(136)
+    putZeros(&na, 7)
+    na.append(&d.linkAddr)
+    d.recv(200, &na)
+    check(d.state == SlaacState.Failed, "a duplicate address fails DAD")
+
+    if failures == 0 { print("slaac ok\n") }
+    return failures
+}
