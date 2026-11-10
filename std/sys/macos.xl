@@ -237,6 +237,13 @@ export fn sysClockSeconds() -> i64 {
     return tv[0]
 }
 
+/// Nanoseconds since 1970-01-01 UTC, with microsecond resolution: gettimeofday fills `struct timeval` (tv_sec i64 at 0, tv_usec
+/// i32 at 8, bsd/sys/time.h user64_timeval); negative on failure.
+export fn sysClockNanos() -> i64 {
+    local tv: [i64; 2]
+    return syscall(SYS_GETTIMEOFDAY, &tv[0], 0, 0) < 0 ? -1 : tv[0] * 1000000000 + (tv[1] & 0xffffffff) * 1000
+}
+
 /// sysctlbyname(3) from libSystem: reads or writes the Apple sysctl `name`. 0 on success, -1 on failure (errno is not kept).
 @library("System") declare fn sysctlbyname(name: *ui8, oldp: *void, oldlenp: *usize, newp: *void, newlen: usize) -> i32
 

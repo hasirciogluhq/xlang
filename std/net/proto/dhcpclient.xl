@@ -1,0 +1,150 @@
+// std/net/proto/dhcpclient: the DHCPv4 client state machine (RFC 2131 section 4.4, https://www.rfc-editor.org/rfc/rfc2131).
+// It does no I/O and reads no clock: the caller passes `now` (milliseconds, any monotonic origin) and feeds each received datagram
+// to `recv` and each timer expiry to `tick`. After a call, `take` returns the packet to send (empty when none) and `dest` says where:
+// 255.255.255.255 (broadcast) or the server's address (unicast). A UDP client uses port 68 and the server port 67 (RFC 2131 section 4.1).
+//
+//   Init --start--> Selecting --OFFER--> Requesting --ACK--> Bound --T1--> Renewing --T2--> Rebinding --lease end--> Init
+//
+// Retransmission is 4 s doubling to 64 s with +-1 s jitter (section 4.1). T1 and T2 come from options 58 and 59 or default to 0.5 and
+// 0.875 of the lease (section 4.5). A NAK, or the end of the lease, returns to Init and forgets the address (section 3.2).
+from "../../str/string" import String
+from "dhcp" import DhcpKind, DhcpMsg, DhcpReply, dhcpBuild, dhcpParseReply
+from "wire" import retryDelay, jitter
+
+export enum DhcpState: ui8 {
+    Init
+    Selecting
+    Requesting
+    Bound
+    Renewing
+    Rebinding
+}
+
+const broadcast: ui32 = 0xFFFFFFFF
+
+export class DhcpClient {
+    state: DhcpState
+    mac: ui64
+    xid: ui32
+    seed: ui32
+    begun: ui64                         // when the exchange began, for `secs`
+    due: ui64                           // when `tick` must act next (retransmit, T1, T2 or lease end)
+    attempt: ui32
+    lease: DhcpReply                    // the offer or the active lease
+    t1At: ui64
+    t2At: ui64
+    endAt: ui64
+    packet: String
+    dest: ui32
+
+    /// A client for the hardware address `mac` (6 bytes as a number). `seed` feeds the transaction id and the jitter.
+    fn init(self, mac: ui64, seed: ui32) {
+        self.state = DhcpState.Init
+        self.mac = mac
+        self.seed = seed
+        self.xid = seed
+        self.packet = String()
+    }
+
+    /// The pending packet, which is then cleared.
+    fn take(self) -> String {
+        local p: String = self.packet.clone()
+        self.packet = String()
+        return p
+    }
+
+    /// Whether the client holds a lease it may use (Bound, Renewing or Rebinding).
+    fn bound(self) -> bool { return self.state >= DhcpState.Bound }
+
+    /// The address the client may use, or 0.
+    fn address(self) -> ui32 { return self.bound() ? self.lease.yourAddr : 0 }
+
+    fn send(self, now: ui64, kind: DhcpKind, to: ui32) {
+        local m: DhcpMsg = DhcpMsg {
+            kind: kind, xid: self.xid, secs: ((now - self.begun) / 1000) as ui16, mac: self.mac, broadcast: to == broadcast,
+            ciaddr: self.bound() ? self.lease.yourAddr : 0,
+            requested: self.state == DhcpState.Requesting ? self.lease.yourAddr : 0,
+            serverId: self.state == DhcpState.Requesting ? self.lease.serverId : 0,
+        }
+        self.packet = dhcpBuild(m)
+        self.dest = to
+        local wait: i64 = retryDelay(4000, 64000, self.attempt) as i64 + jitter(&self.seed, 1000)
+        self.due = now + wait as ui64
+        self.attempt++
+    }
+
+    /// Begins (or restarts) address acquisition: a new transaction, then DISCOVER (section 4.3.1).
+    fn start(self, now: ui64) {
+        self.xid = self.xid * 1664525 + 1013904223
+        self.state = DhcpState.Selecting
+        self.begun = now
+        self.attempt = 0
+        self.send(now, DhcpKind.Discover, broadcast)
+    }
+
+    /// Gives the lease back (section 4.4.6): a unicast RELEASE to the server; the client returns to Init.
+    fn release(self, now: ui64) {
+        if !self.bound() { return }
+        self.send(now, DhcpKind.Release, self.lease.serverId)
+        self.state = DhcpState.Init
+    }
+
+    /// Refuses the offered address after finding it in use, for instance by ARP (section 3.1 step 5), and starts again.
+    fn decline(self, now: ui64) {
+        self.state = DhcpState.Requesting
+        self.send(now, DhcpKind.Decline, broadcast)
+        self.state = DhcpState.Init
+    }
+
+    fn enter(self, now: ui64, r: DhcpReply) {
+        local secs: ui64 = (r.leaseSeconds == 0 ? 3600 : r.leaseSeconds) as ui64
+        self.lease = r
+        self.t1At = now + (r.renewSeconds != 0 ? r.renewSeconds as ui64 * 1000 : secs * 500)
+        self.t2At = now + (r.rebindSeconds != 0 ? r.rebindSeconds as ui64 * 1000 : secs * 875)
+        self.endAt = now + secs * 1000
+        self.state = DhcpState.Bound
+        self.due = self.t1At
+    }
+
+    /// One received datagram; replies for another transaction are ignored. Moves Selecting to Requesting on an OFFER and to
+    /// Bound on an ACK; a NAK returns to Init (section 3.1 step 3, section 4.4.4).
+    fn recv(self, now: ui64, buf: *String) {
+        local r: DhcpReply = dhcpParseReply(buf)
+        if !r.ok || r.xid != self.xid { return }
+        if r.kind == DhcpKind.Nak && self.state != DhcpState.Selecting {
+            self.state = DhcpState.Init
+            self.due = now
+        } else if r.kind == DhcpKind.Offer && self.state == DhcpState.Selecting {
+            self.lease = r
+            self.state = DhcpState.Requesting
+            self.attempt = 0
+            self.send(now, DhcpKind.Request, broadcast)
+        } else if r.kind == DhcpKind.Ack && self.state >= DhcpState.Requesting && self.state != DhcpState.Bound {
+            self.enter(now, r)
+        }
+    }
+
+    /// A timer check; call it whenever `due` has passed. Retransmits, or advances Bound to Renewing (unicast REQUEST to the
+    /// server), Renewing to Rebinding (broadcast REQUEST) and Rebinding to Init when the lease ends (section 4.4.5).
+    fn tick(self, now: ui64) {
+        if now < self.due { return }
+        switch self.state {
+            case DhcpState.Init { self.start(now) }
+            case DhcpState.Selecting { self.send(now, DhcpKind.Discover, broadcast) }
+            case DhcpState.Requesting { self.send(now, DhcpKind.Request, broadcast) }
+            case DhcpState.Bound {
+                self.state = DhcpState.Renewing
+                self.attempt = 0
+                self.send(now, DhcpKind.Request, self.lease.serverId)
+            }
+            case DhcpState.Renewing {
+                local late: bool = now >= self.t2At
+                self.state = late ? DhcpState.Rebinding : DhcpState.Renewing
+                self.send(now, DhcpKind.Request, late ? broadcast : self.lease.serverId)
+            }
+            case DhcpState.Rebinding {
+                if now >= self.endAt { self.start(now) } else { self.send(now, DhcpKind.Request, broadcast) }
+            }
+        }
+    }
+}

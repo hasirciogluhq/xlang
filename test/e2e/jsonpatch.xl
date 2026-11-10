@@ -1,0 +1,90 @@
+// std/encoding/jsonpatch: JSON Patch (RFC 6902, appendix A examples) and JSON Merge Patch (RFC 7396, appendix A examples).
+from "std" import print
+from "std/str/string" import String
+from "std/encoding/jsonpatch" import jsonPatch, jsonMergePatch, jsonEqual
+
+global failures: i32 = 0
+
+fn patch(name: str, doc: str, ops: str, want: str) {
+    local d: String = String(doc)
+    local o: String = String(ops)
+    local w: String = String(want)
+    local r: String = jsonPatch(&d, &o)
+    if !(want.len == 0 ? r.length() == 0 : jsonEqual(&r, &w)) {
+        failures++
+        print("FAIL patch ")
+        print(name)
+        print(": ")
+        print(r.cstr())
+        print("\n")
+    }
+}
+
+fn merge(name: str, doc: str, p: str, want: str) {
+    local d: String = String(doc)
+    local o: String = String(p)
+    local w: String = String(want)
+    local r: String = jsonMergePatch(&d, &o)
+    if !r.equals(&w) {
+        failures++
+        print("FAIL merge ")
+        print(name)
+        print(": ")
+        print(r.cstr())
+        print("\n")
+    }
+}
+
+@entry fn main() -> i32 {
+    // RFC 6902 appendix A
+    patch("A.1 add member", "{\"foo\":\"bar\"}", "[{\"op\":\"add\",\"path\":\"/baz\",\"value\":\"qux\"}]", "{\"foo\":\"bar\",\"baz\":\"qux\"}")
+    patch("A.2 add element", "{\"foo\":[\"bar\",\"baz\"]}", "[{\"op\":\"add\",\"path\":\"/foo/1\",\"value\":\"qux\"}]", "{\"foo\":[\"bar\",\"qux\",\"baz\"]}")
+    patch("A.3 remove member", "{\"baz\":\"qux\",\"foo\":\"bar\"}", "[{\"op\":\"remove\",\"path\":\"/baz\"}]", "{\"foo\":\"bar\"}")
+    patch("A.4 remove element", "{\"foo\":[\"bar\",\"qux\",\"baz\"]}", "[{\"op\":\"remove\",\"path\":\"/foo/1\"}]", "{\"foo\":[\"bar\",\"baz\"]}")
+    patch("A.5 replace", "{\"baz\":\"qux\",\"foo\":\"bar\"}", "[{\"op\":\"replace\",\"path\":\"/baz\",\"value\":\"boo\"}]", "{\"baz\":\"boo\",\"foo\":\"bar\"}")
+    patch("A.6 move", "{\"foo\":{\"bar\":\"baz\",\"waldo\":\"fred\"},\"qux\":{\"corge\":\"grault\"}}", "[{\"op\":\"move\",\"from\":\"/foo/waldo\",\"path\":\"/qux/thud\"}]", "{\"foo\":{\"bar\":\"baz\"},\"qux\":{\"corge\":\"grault\",\"thud\":\"fred\"}}")
+    patch("A.7 move element", "{\"foo\":[\"all\",\"grass\",\"cows\",\"eat\"]}", "[{\"op\":\"move\",\"from\":\"/foo/1\",\"path\":\"/foo/3\"}]", "{\"foo\":[\"all\",\"cows\",\"eat\",\"grass\"]}")
+    patch("A.8 test", "{\"baz\":\"qux\",\"foo\":[\"a\",2,\"c\"]}", "[{\"op\":\"test\",\"path\":\"/baz\",\"value\":\"qux\"},{\"op\":\"test\",\"path\":\"/foo/1\",\"value\":2}]", "{\"baz\":\"qux\",\"foo\":[\"a\",2,\"c\"]}")
+    patch("A.9 test fails", "{\"baz\":\"qux\"}", "[{\"op\":\"test\",\"path\":\"/baz\",\"value\":\"bar\"}]", "")
+    patch("A.10 add nested", "{\"foo\":\"bar\"}", "[{\"op\":\"add\",\"path\":\"/child\",\"value\":{\"grandchild\":{}}}]", "{\"foo\":\"bar\",\"child\":{\"grandchild\":{}}}")
+    patch("A.14 escaped keys", "{\"/\":9,\"~1\":10}", "[{\"op\":\"test\",\"path\":\"/~01\",\"value\":10}]", "{\"/\":9,\"~1\":10}")
+    patch("A.15 test fails", "{\"/\":9,\"~1\":10}", "[{\"op\":\"test\",\"path\":\"/~01\",\"value\":\"\"}]", "")
+    patch("A.16 add to array end", "{\"foo\":[\"bar\"]}", "[{\"op\":\"add\",\"path\":\"/foo/-\",\"value\":[\"abc\",\"def\"]}]", "{\"foo\":[\"bar\",[\"abc\",\"def\"]]}")
+    patch("copy", "{\"a\":{\"b\":1}}", "[{\"op\":\"copy\",\"from\":\"/a\",\"path\":\"/c\"}]", "{\"a\":{\"b\":1},\"c\":{\"b\":1}}")
+    patch("number equality", "{\"n\":1.0}", "[{\"op\":\"test\",\"path\":\"/n\",\"value\":10e-1}]", "{\"n\":1.0}")
+    patch("remove only member", "{\"a\":1}", "[{\"op\":\"remove\",\"path\":\"/a\"}]", "{}")
+    patch("remove last element", "[1,2,3]", "[{\"op\":\"remove\",\"path\":\"/2\"}]", "[1,2]")
+    patch("replace root", "[1]", "[{\"op\":\"replace\",\"path\":\"\",\"value\":{\"x\":1}}]", "{\"x\":1}")
+    patch("add into empty array", "{\"a\":[]}", "[{\"op\":\"add\",\"path\":\"/a/0\",\"value\":1}]", "{\"a\":[1]}")
+    // failures
+    patch("missing parent", "{\"a\":1}", "[{\"op\":\"add\",\"path\":\"/x/y\",\"value\":1}]", "")
+    patch("index past end", "[1]", "[{\"op\":\"add\",\"path\":\"/2\",\"value\":1}]", "")
+    patch("leading zero index", "[1,2]", "[{\"op\":\"add\",\"path\":\"/01\",\"value\":1}]", "")
+    patch("replace missing", "{\"a\":1}", "[{\"op\":\"replace\",\"path\":\"/b\",\"value\":1}]", "")
+    patch("remove missing", "{\"a\":1}", "[{\"op\":\"remove\",\"path\":\"/b\"}]", "")
+    patch("move into child", "{\"a\":{}}", "[{\"op\":\"move\",\"from\":\"/a\",\"path\":\"/a/b\"}]", "")
+    patch("unknown op", "{}", "[{\"op\":\"bump\",\"path\":\"/a\"}]", "")
+    patch("bad patch", "{}", "{\"op\":\"add\"}", "")
+    patch("bad doc", "{", "[]", "")
+
+    // RFC 7396 appendix A
+    merge("a", "{\"a\":\"b\"}", "{\"a\":\"c\"}", "{\"a\":\"c\"}")
+    merge("b", "{\"a\":\"b\"}", "{\"b\":\"c\"}", "{\"a\":\"b\",\"b\":\"c\"}")
+    merge("c", "{\"a\":\"b\"}", "{\"a\":null}", "{}")
+    merge("d", "{\"a\":\"b\",\"b\":\"c\"}", "{\"a\":null}", "{\"b\":\"c\"}")
+    merge("e", "{\"a\":[\"b\"]}", "{\"a\":\"c\"}", "{\"a\":\"c\"}")
+    merge("f", "{\"a\":\"c\"}", "{\"a\":[\"b\"]}", "{\"a\":[\"b\"]}")
+    merge("g", "{\"a\":{\"b\":\"c\"}}", "{\"a\":{\"b\":\"d\",\"c\":null}}", "{\"a\":{\"b\":\"d\"}}")
+    merge("h", "{\"a\":[{\"b\":\"c\"}]}", "{\"a\":[1]}", "{\"a\":[1]}")
+    merge("i", "[\"a\",\"b\"]", "[\"c\",\"d\"]", "[\"c\",\"d\"]")
+    merge("j", "{\"a\":\"b\"}", "[\"c\"]", "[\"c\"]")
+    merge("k", "{\"a\":\"foo\"}", "null", "null")
+    merge("l", "{\"a\":\"foo\"}", "\"bar\"", "\"bar\"")
+    merge("m", "{\"e\":null}", "{\"a\":1}", "{\"e\":null,\"a\":1}")
+    merge("n", "[1,2]", "{\"a\":\"b\",\"c\":null}", "{\"a\":\"b\"}")
+    merge("o", "{}", "{\"a\":{\"bb\":{\"ccc\":null}}}", "{\"a\":{\"bb\":{}}}")
+    merge("invalid", "{", "{}", "")
+
+    if failures == 0 { print("jsonpatch ok\n") }
+    return failures
+}

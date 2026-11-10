@@ -4,6 +4,8 @@
 // reference identifier (4 bytes); and four 64-bit timestamps in NTP format (32.32 seconds since 1900-01-01T00:00:00Z,
 // section 6). Unix time is NTP time minus 2208988800 seconds (the 70 years between the two epochs, section 6).
 // A client request sets LI 0, VN 4 and Mode 3 (client), so byte 0 is 0x23.
+from "../../str/string" import String
+from "wire" import putBe, putZeros, getBe
 
 /// The NTP epoch offset from the Unix epoch in seconds (RFC 5905 section 6).
 define NTP_UNIX_OFFSET = 2208988800
@@ -26,47 +28,26 @@ export struct NtpPacket {
     ok: bool
 }
 
-/// Writes a client request (LI 0, VN 4, Mode 3) with the transmit timestamp `xmit` into `out` (48 bytes); returns 48.
-export fn ntpClientRequest(xmit: ui64, out: *ui8) -> usize {
-    local i: usize = 0
-    while i < 48 {
-        out[i] = 0
-        i = i + 1
-    }
-    out[0] = 0x23
-    putBe(out, 40, xmit, 8)
-    return 48
-}
-
-fn putBe(out: *ui8, at: usize, v: ui64, width: usize) {
-    local i: usize = 0
-    while i < width {
-        out[at + i] = ((v >> (((width - 1 - i) * 8) as ui64)) & 0xff) as ui8
-        i = i + 1
-    }
-}
-
-fn getBe(buf: *ui8, at: usize, width: usize) -> ui64 {
-    local v: ui64 = 0
-    local i: usize = 0
-    while i < width {
-        v = (v << 8) | (buf[at + i] as ui64)
-        i = i + 1
-    }
-    return v
+/// A client request (LI 0, VN 4, Mode 3) with the transmit timestamp `xmit`: 48 bytes.
+export fn ntpClientRequest(xmit: ui64) -> String {
+    local out: String = String()
+    out.push(0x23)
+    putZeros(&out, 39)
+    putBe(&out, xmit, 8)
+    return out
 }
 
 /// Parses a 48-byte NTP packet. `ok` is false when fewer than 48 bytes are given or the version is not 3 or 4.
-export fn ntpParse(buf: *ui8, n: usize) -> NtpPacket {
+export fn ntpParse(buf: *String) -> NtpPacket {
     local p: NtpPacket
-    if n < 48 { return p }
-    p.leap = buf[0] >> 6
-    p.version = (buf[0] >> 3) & 7
-    p.mode = buf[0] & 7
+    if buf.length() < 48 { return p }
+    p.leap = buf.at(0) >> 6
+    p.version = (buf.at(0) >> 3) & 7
+    p.mode = buf.at(0) & 7
     if p.version != 3 && p.version != 4 { return p }
-    p.stratum = buf[1]
-    p.poll = buf[2] as i8
-    p.precision = buf[3] as i8
+    p.stratum = buf.at(1)
+    p.poll = buf.at(2) as i8
+    p.precision = buf.at(3) as i8
     p.rootDelay = getBe(buf, 4, 4) as ui32
     p.rootDispersion = getBe(buf, 8, 4) as ui32
     p.refId = getBe(buf, 12, 4) as ui32
@@ -81,6 +62,17 @@ export fn ntpParse(buf: *ui8, n: usize) -> NtpPacket {
 /// Unix seconds of an NTP 32.32 timestamp (the fraction is dropped).
 export fn ntpToUnixSeconds(ts: ui64) -> i64 {
     return ((ts >> 32) as i64) - NTP_UNIX_OFFSET
+}
+
+/// The NTP 32.32 timestamp of `nanos` nanoseconds since the Unix epoch: whole seconds plus 2208988800 in the high word, the
+/// fraction `ns / 10^9` in the low word (RFC 5905 section 6).
+export fn ntpFromUnixNanos(nanos: i64) -> ui64 {
+    return (((nanos / 1000000000 + NTP_UNIX_OFFSET) as ui64) << 32) | ((((nanos % 1000000000) as ui64) << 32) / 1000000000)
+}
+
+/// The nanoseconds since the Unix epoch of an NTP 32.32 timestamp (inverse of `ntpFromUnixNanos`, to the nanosecond).
+export fn ntpToUnixNanos(ts: ui64) -> i64 {
+    return ntpToUnixSeconds(ts) * 1000000000 + (((ts & 0xffffffff) * 1000000000 + 0x80000000) >> 32) as i64
 }
 
 /// The clock offset and round-trip delay of section 8, from the four timestamps t1 (client send), t2 (server receive),

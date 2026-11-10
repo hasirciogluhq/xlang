@@ -46,6 +46,9 @@ run|print|0|print ok
 run|printalloc|0|printalloc ok
 run|variadic|0|variadic ok
 run|printpanic|134|format: 2 placeholders, got 1 arguments
+run|jsonpatch|0|jsonpatch ok
+run|dhcpclient|0|dhcpclient ok
+run|ntp|0|ntp ok
 run|init|0|init ok
 run|initset|0|initset ok
 run|cyclic|0|cyclic ok

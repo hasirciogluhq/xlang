@@ -1,103 +1,110 @@
-// std/net/proto/dhcp: DHCP for IPv4 (RFC 2131, https://www.rfc-editor.org/rfc/rfc2131) and its options (RFC 2132). A message is the
-// 236-byte BOOTP header (section 2: op, htype, hlen, hops, xid, secs, flags, ciaddr, yiaddr, siaddr, giaddr, chaddr 16, sname 64,
-// file 128), the magic cookie 99.130.83.99 (section 3), and options as code, length, value (RFC 2132 section 2); option 255 ends the
-// list and option 0 is padding. The client sends DHCPDISCOVER (option 53 = 1) with a broadcast flag (0x8000) and reads the server's
-// DHCPOFFER (2) or DHCPACK (5). Not implemented: DHCPREQUEST, lease renewal, the state machine and sending over UDP port 67/68 (a raw
-// broadcast needs privileges; see docs/std/protocols.md).
+// std/net/proto/dhcp: the DHCP for IPv4 message (RFC 2131, https://www.rfc-editor.org/rfc/rfc2131; options RFC 2132,
+// https://www.rfc-editor.org/rfc/rfc2132). A message is the 236-byte BOOTP header (RFC 2131 section 2: op, htype, hlen, hops, xid,
+// secs, flags, ciaddr, yiaddr, siaddr, giaddr, chaddr 16, sname 64, file 128), the magic cookie 99.130.83.99 (0x63825363,
+// section 3), and options as code, length, value (RFC 2132 section 2); option 255 ends the list, 0 is padding. A client message is
+// padded to 300 bytes (the BOOTP minimum, RFC 951 section 3). The client state machine that drives these is in dhcpclient.xl.
+from "../../str/string" import String
+from "wire" import putBe, putZeros, getBe
 
-define DHCP_COOKIE = 1669525603
-
-/// Writes a DHCPDISCOVER for the 6-byte hardware address `mac` and transaction ID `xid` into `out` (capacity 300); returns its length.
-export fn dhcpDiscover(mac: *ui8, xid: ui32, out: *ui8) -> usize {
-    local i: usize = 0
-    while i < 300 {
-        out[i] = 0
-        i = i + 1
-    }
-    out[0] = 1
-    out[1] = 1
-    out[2] = 6
-    out[3] = 0
-    out[4] = ((xid >> 24) & 0xff) as ui8
-    out[5] = ((xid >> 16) & 0xff) as ui8
-    out[6] = ((xid >> 8) & 0xff) as ui8
-    out[7] = (xid & 0xff) as ui8
-    out[10] = 0x80
-    i = 0
-    while i < 6 {
-        out[28 + i] = mac[i]
-        i = i + 1
-    }
-    out[236] = 99
-    out[237] = 130
-    out[238] = 83
-    out[239] = 99
-    local o: usize = 240
-    out[o] = 53
-    out[o + 1] = 1
-    out[o + 2] = 1
-    o = o + 3
-    out[o] = 55
-    out[o + 1] = 6
-    out[o + 2] = 1
-    out[o + 3] = 3
-    out[o + 4] = 6
-    out[o + 5] = 15
-    out[o + 6] = 51
-    out[o + 7] = 54
-    o = o + 8
-    out[o] = 255
-    return o + 1
+/// The DHCP message type, option 53 (RFC 2132 section 9.6).
+export enum DhcpKind: ui8 {
+    None = 0
+    Discover = 1
+    Offer = 2
+    Request = 3
+    Decline = 4
+    Ack = 5
+    Nak = 6
+    Release = 7
 }
 
-/// The fields of a DHCPOFFER or DHCPACK the client needs.
+/// What one client message says. `ciaddr` is the client's current address (RENEWING, REBINDING, RELEASE), `requested` goes in
+/// option 50 and `serverId` in option 54 when not 0, `broadcast` sets the broadcast flag (RFC 2131 section 4.1), `mac` is the
+/// 6-byte Ethernet address as a number (htype 1), `secs` the seconds since the client began (section 4.1).
+export struct DhcpMsg {
+    kind: DhcpKind
+    xid: ui32
+    secs: ui16
+    ciaddr: ui32
+    requested: ui32
+    serverId: ui32
+    mac: ui64
+    broadcast: bool
+}
+
+fn opt(out: *String, code: ui8, v: ui64, width: usize) {
+    out.push(code)
+    out.push(width as ui8)
+    putBe(out, v, width)
+}
+
+/// The wire bytes of a client message.
+export fn dhcpBuild(m: DhcpMsg) -> String {
+    local out: String = String()
+    out.push(1)                                         // op: BOOTREQUEST
+    out.push(1)                                         // htype: Ethernet
+    out.push(6)                                         // hlen
+    out.push(0)                                         // hops
+    putBe(&out, m.xid as ui64, 4)
+    putBe(&out, m.secs as ui64, 2)
+    putBe(&out, m.broadcast ? 0x8000 : 0, 2)
+    putBe(&out, m.ciaddr as ui64, 4)
+    putZeros(&out, 12)                                  // yiaddr, siaddr, giaddr
+    putBe(&out, m.mac, 6)
+    putZeros(&out, 10 + 64 + 128)                       // rest of chaddr, sname, file
+    putBe(&out, 0x63825363, 4)
+    opt(&out, 53, (m.kind as ui8) as ui64, 1)
+    if m.requested != 0 { opt(&out, 50, m.requested as ui64, 4) }
+    if m.serverId != 0 { opt(&out, 54, m.serverId as ui64, 4) }
+    if m.kind == DhcpKind.Discover || m.kind == DhcpKind.Request {
+        local want: [ui8; 7] = [1, 3, 6, 15, 51, 58, 59]          // mask, router, DNS, domain, lease, T1, T2
+        out.push(55)
+        out.push(7)
+        for c in want { out.push(*c) }
+    }
+    out.push(255)
+    putZeros(&out, out.length() < 300 ? 300 - out.length() : 0)
+    return out
+}
+
+/// The fields of a server message the client needs; `ok` is false for anything that is not a well-formed OFFER, ACK or NAK.
 export struct DhcpReply {
-    kind: ui8
+    kind: DhcpKind
     xid: ui32
     yourAddr: ui32
     serverId: ui32
     subnetMask: ui32
     router: ui32
+    dns: ui32
     leaseSeconds: ui32
+    renewSeconds: ui32
+    rebindSeconds: ui32
     ok: bool
 }
 
-fn be32(p: *ui8) -> ui32 {
-    return ((p[0] as ui32) << 24) | ((p[1] as ui32) << 16) | ((p[2] as ui32) << 8) | (p[3] as ui32)
-}
-
-/// Reads an offer or acknowledgement (BOOTREPLY, op 2) from `buf[0..n)`.
-export fn dhcpParseReply(buf: *ui8, n: usize) -> DhcpReply {
+/// Reads a server message (BOOTREPLY, op 2) from `buf`.
+export fn dhcpParseReply(buf: *String) -> DhcpReply {
     local r: DhcpReply
-    if n < 241 || buf[0] != 2 { return r }
-    if buf[236] != 99 || buf[237] != 130 || buf[238] != 83 || buf[239] != 99 { return r }
-    r.xid = be32(&buf[4])
-    r.yourAddr = be32(&buf[16])
+    if buf.length() < 241 || buf.at(0) != 2 || getBe(buf, 236, 4) != 0x63825363 { return r }
+    r.xid = getBe(buf, 4, 4) as ui32
+    r.yourAddr = getBe(buf, 16, 4) as ui32
     local o: usize = 240
-    while o < n {
-        local code: ui8 = buf[o]
-        if code == 255 { break }
-        if code == 0 {
-            o = o + 1
-        } else {
-            if o + 1 >= n { return r }
-            local len: usize = buf[o + 1] as usize
-            if o + 2 + len > n { return r }
-            local v: usize = o + 2
-            if code == 53 && len >= 1 {
-                r.kind = buf[v]
-            } else if code == 54 && len >= 4 {
-                r.serverId = be32(&buf[v])
-            } else if code == 1 && len >= 4 {
-                r.subnetMask = be32(&buf[v])
-            } else if code == 3 && len >= 4 {
-                r.router = be32(&buf[v])
-            } else if code == 51 && len >= 4 {
-                r.leaseSeconds = be32(&buf[v])
-            }
-            o = v + len
+    for ; o < buf.length() && buf.at(o) != 255; o += buf.at(o) == 0 ? 1 : 2 + (buf.at(o + 1) as usize) {
+        if buf.at(o) == 0 { continue }
+        local len: usize = o + 1 < buf.length() ? buf.at(o + 1) as usize : buf.length()
+        if o + 2 + len > buf.length() { return r }
+        local v: ui64 = len >= 4 ? getBe(buf, o + 2, 4) : (len >= 1 ? buf.at(o + 2) as ui64 : 0)
+        switch buf.at(o) {
+            case 53 { r.kind = v as ui8 as DhcpKind }
+            case 54 { r.serverId = v as ui32 }
+            case 1 { r.subnetMask = v as ui32 }
+            case 3 { r.router = v as ui32 }
+            case 6 { r.dns = v as ui32 }
+            case 51 { r.leaseSeconds = v as ui32 }
+            case 58 { r.renewSeconds = v as ui32 }
+            case 59 { r.rebindSeconds = v as ui32 }
         }
     }
-    r.ok = r.kind == 2 || r.kind == 5
+    r.ok = r.kind == DhcpKind.Offer || r.kind == DhcpKind.Ack || r.kind == DhcpKind.Nak
     return r
 }

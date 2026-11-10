@@ -1,15 +1,13 @@
-// std/net/proto/ntpclient: an NTP client query over UDP (RFC 5905 section 8 for the four timestamps and the offset and delay).
-// The request is the packet of ntp.xl; the transmit time is sent as the origin timestamp of the exchange (t1). The reply gives
-// t2 (receive) and t3 (transmit); t4 is the local time of arrival. The local clock has whole-second resolution here (sysClockSeconds),
-// so the offset and delay are accurate to about one second; a sub-second clock is a later change. The socket is connected to the
-// server with connect(2) (UDP), which fixes the peer; the reply timeout is given in milliseconds.
-from "ntp" import ntpClientRequest, ntpParse, ntpOffsetDelay, NtpOffsetDelay, NtpPacket
+// std/net/proto/ntpclient: an NTP client query over UDP (RFC 5905 section 8, https://www.rfc-editor.org/rfc/rfc5905). The request is
+// the packet of ntp.xl with the local transmit time t1 in its transmit field; the server echoes it as the origin timestamp and adds
+// t2 (receive) and t3 (transmit); t4 is the local time of arrival. Local time comes from `sysClockNanos` (nanosecond resolution on
+// Linux, microsecond on macOS, 100 ns on Windows), so offset and delay are accurate to the OS clock. The socket is connected
+// (connect(2) on UDP fixes the peer) and a reply whose origin is not t1 is dropped (section 8, test 1). The timeout is in ms.
+from "../../str/string" import String
+from "ntp" import ntpClientRequest, ntpParse, ntpOffsetDelay, ntpFromUnixNanos, NtpOffsetDelay, NtpPacket
+from "../../sys" import sysUdpSocket, sysTcpConnect, sysWrite, sysRead, sysClose, sysSetRecvTimeout, sysClockNanos
 
-// seconds from 1900-01-01 to 1970-01-01 (RFC 5905 section 6)
-define NTP_UNIX_OFFSET = 2208988800
-from "../../sys" import sysUdpSocket, sysTcpConnect, sysWrite, sysRead, sysClose, sysSetRecvTimeout, sysClockSeconds
-
-/// The result of one query: the clock offset and round-trip delay in NTP 32.32 units (seconds times 2^32), `ok` on success.
+/// The result of one query: clock offset and round-trip delay in NTP 32.32 units (seconds times 2^32), `ok` on success.
 export struct NtpResult {
     offset: i64
     delay: i64
@@ -17,34 +15,22 @@ export struct NtpResult {
     ok: bool
 }
 
-/// Queries the server at `ip` (host order IPv4) and `port` (123 for NTP). Returns ok = false on any failure or timeout.
+/// Queries the server at `ip` (host order IPv4) and `port` (123 for NTP). `ok` is false on any failure or timeout.
 export fn ntpQuery(ip: ui32, port: ui16, timeoutMs: i32) -> NtpResult {
     local r: NtpResult
     local fd: i32 = sysUdpSocket()
     if fd < 0 { return r }
+    defer sysClose(fd)
     sysSetRecvTimeout(fd, timeoutMs)
-    if sysTcpConnect(fd, ip, port) != 0 {
-        sysClose(fd)
-        return r
-    }
-    local t1: ui64 = ((sysClockSeconds() as ui64) + (NTP_UNIX_OFFSET as ui64)) << 32
-    local req: [ui8; 48]
-    ntpClientRequest(t1, &req[0])
-    if sysWrite(fd, &req[0], 48) != 48 {
-        sysClose(fd)
-        return r
-    }
-    local buf: [ui8; 128]
-    local got: isize = sysRead(fd, &buf[0], 128)
-    sysClose(fd)
+    local t1: ui64 = ntpFromUnixNanos(sysClockNanos())
+    local req: String = ntpClientRequest(t1)
+    if sysTcpConnect(fd, ip, port) != 0 || sysWrite(fd, req.cstr(), req.length()) != req.length() as isize { return r }
+    local buf: String = String(128, 0)
+    local got: isize = sysRead(fd, buf.cstr(), 128)
+    local t4: ui64 = ntpFromUnixNanos(sysClockNanos())
     if got < 48 { return r }
-    local p: NtpPacket = ntpParse(&buf[0], got as usize)
-    if !p.ok || p.mode != 4 { return r }
-    local t4: ui64 = ((sysClockSeconds() as ui64) + (NTP_UNIX_OFFSET as ui64)) << 32
+    local p: NtpPacket = ntpParse(&buf)
+    if !p.ok || p.mode != 4 || p.origin != t1 { return r }
     local od: NtpOffsetDelay = ntpOffsetDelay(t1, p.receive, p.transmit, t4)
-    r.offset = od.offset
-    r.delay = od.delay
-    r.stratum = p.stratum
-    r.ok = true
-    return r
+    return NtpResult { offset: od.offset, delay: od.delay, stratum: p.stratum, ok: true }
 }

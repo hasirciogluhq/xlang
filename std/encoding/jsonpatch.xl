@@ -1,0 +1,313 @@
+// std/encoding/jsonpatch: JSON Patch (RFC 6902, https://www.rfc-editor.org/rfc/rfc6902) and JSON Merge Patch (RFC 7396,
+// https://www.rfc-editor.org/rfc/rfc7396). There is no value tree: a value is a `JsonSpan` of the text and every change is one
+// splice that builds the next text. A result is a `String`; the empty String means failure (valid JSON is never empty): bad
+// input, a failed `test`, a missing path, an index past the end, or a `move` into its own child (RFC 6902 section 4.4).
+// Member order is kept and a new member goes last (RFC 6902 section 4.1: member order is not significant).
+from "../str/string" import String
+from "../str/fmt" import toString
+from "../collections/vec" import Vec
+from "jsonfull" import JsonSpan, JsonWriter, jsonValid, jsonValueAt, jsonMembers, jsonPointerGet, jsonText, jsonPointerToken
+
+fn text(t: *String, s: JsonSpan) -> String { return t.slice(s.at, s.end - s.at) }
+fn name(t: *String, m: *JsonSpan) -> String { return jsonText(t, m.keyAt, m.keyEnd) }
+fn isObject(t: *String, s: JsonSpan) -> bool { return t.at(s.at) == 123 }
+
+/// The member named `key` (decoded), or -1.
+fn findKey(t: *String, ms: *Vec<JsonSpan>, key: *String) -> i64 {
+    for i in 0..ms.length() { if name(t, ms.get(i)).equals(key) { return i as i64 } }
+    return -1
+}
+
+/// A canonical text of the JSON number `n`, so equal values give equal text (RFC 6902 section 4.6): sign, significant digits and
+/// a decimal exponent; `1`, `1.0` and `10e-1` all become `1e1`, and every zero becomes `0`.
+fn canonNumber(n: *String) -> String {
+    local digits: String = String()
+    local point: i64 = 0
+    local exp: i64 = 0
+    local dot: bool = false
+    for i in 0..n.length() {
+        local c: ui8 = n.at(i)
+        if c == 101 || c == 69 {                                        // the exponent: e, optional sign, digits
+            local neg: bool = n.at(i + 1) == 45
+            for j in i + 1 + (neg || n.at(i + 1) == 43 ? 1 : 0)..n.length() { exp = exp * 10 + (n.at(j) - 48) as i64 }
+            exp = neg ? 0 - exp : exp
+            break
+        }
+        if c == 46 { dot = true }
+        else if c != 45 {
+            if digits.length() == 0 && c == 48 { point -= dot ? 1 : 0 }       // leading zeros carry no value
+            else {
+                digits.push(c)
+                point += dot ? 0 : 1
+            }
+        }
+    }
+    local keep: usize = 0                                               // significant digits: up to the last non-zero
+    for i in 0..digits.length() { if digits.at(i) != 48 { keep = i + 1 } }
+    if keep == 0 { return String("0") }
+    local out: String = String(n.at(0) == 45 ? "-" : "")
+    local sig: String = digits.slice(0, keep)
+    local e: String = toString(point + exp)
+    out.append(&sig)
+    out.append("e")
+    out.append(&e)
+    return out
+}
+
+/// The member of `ms` (members of `t`) that has the same decoded name as member `m` of `p`, or -1.
+fn keyIn(t: *String, ms: *Vec<JsonSpan>, p: *String, m: *JsonSpan) -> i64 {
+    local k: String = name(p, m)
+    return findKey(t, ms, &k)
+}
+
+/// Whether two scalar values are equal: same decoded string, same number value (RFC 6902 section 4.6), or same literal.
+fn sameScalar(a: *String, sa: JsonSpan, b: *String, sb: JsonSpan) -> bool {
+    local c: ui8 = a.at(sa.at)
+    local x: String = c == 34 ? jsonText(a, sa.at, sa.end) : text(a, sa)
+    local y: String = b.at(sb.at) == 34 ? jsonText(b, sb.at, sb.end) : text(b, sb)
+    if c == 45 || (c >= 48 && c <= 57) {
+        local nx: String = canonNumber(&x)
+        local ny: String = canonNumber(&y)
+        return nx.equals(&ny)
+    }
+    return (b.at(sb.at) == 34) == (c == 34) && x.equals(&y)
+}
+
+/// Equality of the values `sa` of `a` and `sb` of `b` as RFC 6902 section 4.6 defines it: objects have the same names with equal
+/// values (order ignored), arrays the same elements in order, strings the same code points, numbers the same value.
+fn same(a: *String, sa: JsonSpan, b: *String, sb: JsonSpan) -> bool {
+    local c: ui8 = a.at(sa.at)
+    if sa.end == sa.at || sb.end == sb.at { return false }
+    if c == 123 || c == 91 {
+        if c != b.at(sb.at) { return false }
+        local ma: Vec<JsonSpan> = jsonMembers(a, sa.at)
+        local mb: Vec<JsonSpan> = jsonMembers(b, sb.at)
+        if ma.length() != mb.length() { return false }
+        for i in 0..ma.length() {
+            local j: i64 = c == 91 ? i as i64 : keyIn(b, &mb, a, ma.get(i))
+            if j < 0 || !same(a, *ma.get(i), b, *mb.get(j as usize)) { return false }
+        }
+        return true
+    }
+    return sameScalar(a, sa, b, sb)
+}
+
+/// Whether the JSON texts `a` and `b` hold equal values (see `same`).
+export fn jsonEqual(a: *String, b: *String) -> bool {
+    return same(a, jsonValueAt(a, 0), b, jsonValueAt(b, 0))
+}
+
+/// The container that `path` points into (an empty span when it has none) and the decoded last reference token (RFC 6901
+/// section 4).
+class Slot {
+    box: JsonSpan
+    token: String
+    members: Vec<JsonSpan>
+
+    fn init(self, doc: *String, path: *String) {
+        local sp: i64 = -1
+        for i in 0..path.length() { if path.at(i) == 47 { sp = i as i64 } }
+        self.token = String()
+        self.members = Vec<JsonSpan>()
+        if path.length() == 0 || path.at(0) != 47 { return }
+        local parent: String = path.slice(0, sp as usize)
+        local last: String = path.slice(sp as usize + 1, path.length() - sp as usize - 1)
+        self.box = jsonPointerGet(doc, &parent)
+        self.token = jsonPointerToken(&last)
+        if self.box.end > self.box.at { self.members = jsonMembers(doc, self.box.at) }
+    }
+
+    fn valid(self) -> bool { return self.box.end > self.box.at }
+
+    /// The array index the token names: digits without a leading zero, or `-` (one past the end) when `allowEnd`; -1 otherwise.
+    fn index(self, allowEnd: bool) -> i64 {
+        if allowEnd && self.token.equals("-") { return self.members.length() as i64 }
+        local v: i64 = 0
+        for i in 0..self.token.length() {
+            local d: ui8 = self.token.at(i)
+            if d < 48 || d > 57 || v > 1099511627776 { return -1 }
+            v = v * 10 + (d - 48) as i64
+        }
+        return self.token.length() == 0 || (self.token.length() > 1 && self.token.at(0) == 48) ? -1 : v
+    }
+}
+
+/// RFC 6902 section 4.1 `add`: an empty path replaces the document; an existing member is replaced, a new one is appended; an
+/// array element is inserted before the index (`-` appends).
+fn opAdd(doc: *String, path: *String, value: *String) -> String {
+    if path.length() == 0 { return value.clone() }
+    local s: Slot = Slot(doc, path)
+    if !s.valid() { return String() }
+    local n: usize = s.members.length()
+    local tail: usize = n > 0 ? s.members.get(n - 1).end : s.box.at + 1             // where an appended entry goes
+    if isObject(doc, s.box) {
+        local j: i64 = findKey(doc, &s.members, &s.token)
+        if j >= 0 { return doc.splice(s.members.get(j as usize).at, s.members.get(j as usize).end, value) }
+        local w: JsonWriter = JsonWriter()
+        w.writeString(s.token.asStr())
+        local entry: String = String(n > 0 ? "," : "")
+        entry.append(&w.out)
+        entry.append(":")
+        entry.append(value)
+        return doc.splice(tail, tail, &entry)
+    }
+    local i: i64 = s.index(true)
+    if doc.at(s.box.at) != 91 || i < 0 || i > n as i64 { return String() }
+    local entry: String = String(i as usize == n && n > 0 ? "," : "")
+    entry.append(value)
+    if (i as usize) < n { entry.append(",") }
+    local pos: usize = i as usize == n ? tail : s.members.get(i as usize).at
+    return doc.splice(pos, pos, &entry)
+}
+
+/// RFC 6902 section 4.2 `remove`: the member or element at `path` goes, together with one comma.
+fn opRemove(doc: *String, path: *String) -> String {
+    local s: Slot = Slot(doc, path)
+    if !s.valid() { return String() }
+    local n: usize = s.members.length()
+    local object: bool = isObject(doc, s.box)
+    local i: i64 = object ? findKey(doc, &s.members, &s.token) : s.index(false)
+    if i < 0 || i >= n as i64 { return String() }
+    local k: usize = i as usize
+    local first: usize = object ? s.members.get(k).keyAt : s.members.get(k).at               // an entry starts at its key
+    local none: String = String()
+    if k + 1 < n { return doc.splice(first, object ? s.members.get(k + 1).keyAt : s.members.get(k + 1).at, &none) }
+    return doc.splice(k > 0 ? s.members.get(k - 1).end : first, s.members.get(k).end, &none)
+}
+
+/// RFC 6902 section 4.3 `replace`: the target must exist.
+fn opReplace(doc: *String, path: *String, value: *String) -> String {
+    if path.length() == 0 { return value.clone() }
+    local v: JsonSpan = jsonPointerGet(doc, path)
+    return v.end == v.at ? String() : doc.splice(v.at, v.end, value)
+}
+
+/// One operation object of a patch, read member by member.
+class PatchOp {
+    kind: String
+    path: String
+    origin: String                      // the "from" member
+    value: String                       // the raw JSON of "value"
+    hasPath: bool
+    hasOrigin: bool
+    hasValue: bool
+
+    fn init(self, patch: *String, op: JsonSpan) {
+        self.kind = String()
+        self.path = String()
+        self.origin = String()
+        self.value = String()
+        self.hasPath = false
+        self.hasOrigin = false
+        self.hasValue = false
+        if !isObject(patch, op) { return }
+        local ms: Vec<JsonSpan> = jsonMembers(patch, op.at)
+        for i in 0..ms.length() {
+            local m: *JsonSpan = ms.get(i)
+            local key: String = name(patch, m)
+            if key.equals("op") { self.kind = jsonText(patch, m.at, m.end) }
+            else if key.equals("path") {
+                self.path = jsonText(patch, m.at, m.end)
+                self.hasPath = true
+            } else if key.equals("from") {
+                self.origin = jsonText(patch, m.at, m.end)
+                self.hasOrigin = true
+            } else if key.equals("value") {
+                self.value = text(patch, *m)
+                self.hasValue = true
+            }
+        }
+    }
+
+    /// The patched text after this operation, or the empty String when it fails.
+    fn apply(self, doc: *String) -> String {
+        if !self.hasPath { return String() }
+        if self.kind.equals("remove") { return opRemove(doc, &self.path) }
+        if self.kind.equals("add") { return self.hasValue ? opAdd(doc, &self.path, &self.value) : String() }
+        if self.kind.equals("replace") { return self.hasValue ? opReplace(doc, &self.path, &self.value) : String() }
+        if self.kind.equals("test") {
+            local v: JsonSpan = jsonPointerGet(doc, &self.path)
+            return self.hasValue && v.end > v.at && same(doc, v, &self.value, jsonValueAt(&self.value, 0)) ? doc.clone() : String()
+        }
+        local src: JsonSpan = jsonPointerGet(doc, &self.origin)
+        if !(self.kind.equals("move") || self.kind.equals("copy")) || !self.hasOrigin || src.end == src.at { return String() }
+        local val: String = text(doc, src)
+        if self.kind.equals("copy") { return opAdd(doc, &self.path, &val) }
+        if self.origin.equals(&self.path) { return doc.clone() }
+        local inside: bool = self.path.startsWith(self.origin.asStr()) && self.path.at(self.origin.length()) == 47     // RFC 6902 4.4
+        if inside { return String() }
+        local rest: String = opRemove(doc, &self.origin)
+        return opAdd(&rest, &self.path, &val)
+    }
+}
+
+/// Applies the JSON Patch `patch` (an array of operation objects) to `doc`, in order, each on the result of the previous one.
+/// The first failure stops it and gives the empty String, so the caller's document is unchanged (RFC 6902 section 5).
+/// Operations: add, remove, replace, move, copy, test.
+export fn jsonPatch(doc: *String, patch: *String) -> String {
+    if !jsonValid(doc) || !jsonValid(patch) { return String() }
+    local list: JsonSpan = jsonValueAt(patch, 0)
+    if patch.at(list.at) != 91 { return String() }
+    local cur: String = text(doc, jsonValueAt(doc, 0))
+    local ops: Vec<JsonSpan> = jsonMembers(patch, list.at)
+    for i in 0..ops.length() {
+        local op: PatchOp = PatchOp(patch, *ops.get(i))
+        local next: String = op.apply(&cur)
+        if next.length() == 0 { return String() }
+        cur = next
+    }
+    return cur
+}
+
+/// Appends the bytes `lo..hi` of `t` to `out`.
+fn put(out: *String, t: *String, lo: usize, hi: usize) {
+    local part: String = t.slice(lo, hi - lo)
+    out.append(&part)
+}
+
+/// Whether the value of span `s` in `t` is the literal `null`.
+fn isNull(t: *String, s: JsonSpan) -> bool { return t.at(s.at) == 110 }
+
+/// The merge of `patch` (value `ps`) into `target` (value `ts`; empty when absent) appended to `out`.
+fn merge(out: *String, target: *String, ts: JsonSpan, patch: *String, ps: JsonSpan) {
+    if patch.at(ps.at) != 123 {
+        put(out, patch, ps.at, ps.end)
+        return
+    }
+    local old: Vec<JsonSpan> = Vec<JsonSpan>()
+    if ts.end > ts.at && isObject(target, ts) { old = jsonMembers(target, ts.at) }
+    local news: Vec<JsonSpan> = jsonMembers(patch, ps.at)
+    out.append("{")
+    local sep: bool = false
+    for i in 0..old.length() {                          // members of the target, merged or kept
+        local t: *JsonSpan = old.get(i)
+        local j: i64 = keyIn(patch, &news, target, t)
+        if j >= 0 && isNull(patch, *news.get(j as usize)) { continue }
+        out.append(sep ? "," : "")
+        sep = true
+        put(out, target, t.keyAt, t.keyEnd)
+        out.append(":")
+        if j >= 0 { merge(out, target, *t, patch, *news.get(j as usize)) } else { put(out, target, t.at, t.end) }
+    }
+    local absent: JsonSpan = JsonSpan { keyAt: 0, keyEnd: 0, at: 0, end: 0 }
+    for i in 0..news.length() {                         // members only the patch has
+        local n: *JsonSpan = news.get(i)
+        if isNull(patch, *n) || keyIn(target, &old, patch, n) >= 0 { continue }
+        out.append(sep ? "," : "")
+        sep = true
+        put(out, patch, n.keyAt, n.keyEnd)
+        out.append(":")
+        merge(out, target, absent, patch, *n)
+    }
+    out.append("}")
+}
+
+/// JSON Merge Patch (RFC 7396 section 2): a patch that is not an object replaces the target; an object patch merges member by
+/// member: `null` deletes the name, any other value is merged into the existing one (an absent or non-object target counts as
+/// `{}`). Other members of the target stay and new ones are appended. The empty String means one input was not valid JSON.
+export fn jsonMergePatch(target: *String, patch: *String) -> String {
+    if !jsonValid(target) || !jsonValid(patch) { return String() }
+    local out: String = String()
+    merge(&out, target, jsonValueAt(target, 0), patch, jsonValueAt(patch, 0))
+    return out
+}

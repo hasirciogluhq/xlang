@@ -5,6 +5,7 @@
 from "../str/str" import fromParts
 from "../str/string" import String
 from "utf8" import utf8Encode
+from "../collections/vec" import Vec
 
 define JSON_MAX_DEPTH = 512
 
@@ -443,4 +444,72 @@ export class JsonWriter {
 fn hexDigit(v: ui8) -> ui8 {
     if v < 10 { return 48 + v }
     return 87 + v
+}
+
+// ---- the String layer: the same reader over a `String`, with positions instead of views ------------------------------
+
+/// A value in a JSON text, as byte offsets: `at..end` is the raw value; for an object member `keyAt..keyEnd` is its quoted
+/// name (both 0 for an array element). `end == at` means there is no such value.
+export struct JsonSpan {
+    keyAt: usize
+    keyEnd: usize
+    at: usize
+    end: usize
+}
+
+fn spanOf(t: *String, v: str) -> JsonSpan {
+    local at: usize = v.len == 0 ? 0 : (v.ptr as usize) - (t.cstr() as usize)
+    return JsonSpan { keyAt: 0, keyEnd: 0, at: at, end: at + v.len }
+}
+
+/// True when `t` is exactly one JSON value surrounded by optional whitespace (RFC 8259 section 2).
+export fn jsonValid(t: *String) -> bool {
+    return jsonValid(t.cstr(), t.length())
+}
+
+/// The value that starts at or after `at` (whitespace skipped); an empty span when it is malformed.
+export fn jsonValueAt(t: *String, at: usize) -> JsonSpan {
+    local p: usize = at
+    return spanOf(t, jsonSkipRaw(t.cstr(), t.length(), &p))
+}
+
+/// The members of the object, or the elements of the array, that starts at `at` in the valid text `t`, in order.
+export fn jsonMembers(t: *String, at: usize) -> Vec<JsonSpan> {
+    local out: Vec<JsonSpan> = Vec<JsonSpan>()
+    local object: bool = t.at(at) == 123
+    local p: usize = at + 1
+    for ; ; skipWs(t.cstr(), t.length(), &p) {
+        skipWs(t.cstr(), t.length(), &p)
+        if p >= t.length() || t.at(p) == (object ? 125 : 93) { break }
+        local m: JsonSpan = jsonValueAt(t, p)
+        if object {
+            m.keyAt = m.at
+            m.keyEnd = m.end
+            p = m.end
+            skipWs(t.cstr(), t.length(), &p)
+            local v: JsonSpan = jsonValueAt(t, p + 1)                   // after the ':'
+            m.at = v.at
+            m.end = v.end
+        }
+        p = m.end
+        out.push(m)
+        skipWs(t.cstr(), t.length(), &p)
+        if t.at(p) == 44 { p++ }
+    }
+    return out
+}
+
+/// The value at the JSON Pointer `ptr` (RFC 6901) of the document `t`; an empty span when it does not exist.
+export fn jsonPointerGet(t: *String, ptr: *String) -> JsonSpan {
+    return spanOf(t, jsonPointerGet(t.cstr(), t.length(), ptr.cstr(), ptr.length()))
+}
+
+/// The decoded JSON string whose quoted text is `t[at..end)` (a member name or a string value); empty when it is not a string.
+export fn jsonText(t: *String, at: usize, end: usize) -> String {
+    return end < at + 2 || t.at(at) != 34 ? String() : jsonStringDecode(fromParts(&t.cstr()[at + 1], end - at - 2))
+}
+
+/// The decoded reference token `tok` of a JSON pointer (`~1` is "/", `~0` is "~"; RFC 6901 section 4).
+export fn jsonPointerToken(tok: *String) -> String {
+    return unescapeToken(tok.cstr(), tok.length())
 }

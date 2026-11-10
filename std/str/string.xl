@@ -148,6 +148,14 @@ export class String {
         return slice(self.asStr(), first, n)
     }
 
+    /// A new String with the bytes `[lo, hi)` replaced by `repl`; panics when the range is outside the content.
+    fn splice(self, lo: usize, hi: usize, repl: *String) -> String {
+        local out: String = slice(self.asStr(), 0, lo)
+        out.append(repl)
+        out.append(view(self.asStr(), hi, self.len - hi))
+        return out
+    }
+
     /// The byte offset of the first `needle` in the content, or -1 when there is none.
     fn find(self, needle: str) -> i64 {
         return find(self.asStr(), needle)

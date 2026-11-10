@@ -268,6 +268,12 @@ export fn sysClockSeconds() -> i64 {
     return ts[0]
 }
 
+/// Nanoseconds since 1970-01-01 UTC (CLOCK_REALTIME, `struct timespec` = tv_sec i64, tv_nsec i64); negative on failure.
+export fn sysClockNanos() -> i64 {
+    local ts: [i64; 2]
+    return syscall(SYS_CLOCK_GETTIME, 0, &ts[0]) < 0 ? -1 : ts[0] * 1000000000 + ts[1]
+}
+
 /// getdents64 (`linux_dirent64` records into `buf`): the number of bytes read, 0 at the end of the directory, or -errno.
 /// The record layout is in include/uapi/linux/dirent.h: inode ui64, offset i64, record length ui16, type ui8, then the NUL-terminated name.
 export fn sysGetdents(fd: i32, buf: *ui8, n: usize) -> isize {

@@ -421,6 +421,18 @@ export fn sysClockSeconds() -> i64 {
     return -1
 }
 
+/// Nanoseconds since 1970-01-01 UTC with 100 ns resolution (the same KUSER_SHARED_DATA.SystemTime read; 100 ns units since 1601,
+/// 11644473600 seconds before the Unix epoch); negative on failure.
+export fn sysClockNanos() -> i64 {
+    local t: *ui32 = 2147352596 as *ui32            // 0x7FFE0014
+    for _ in 0..8 {
+        local hi: i64 = t[1] as i32 as i64
+        local lo: i64 = t[0] as i64
+        if hi == (t[2] as i32 as i64) { return (hi * 4294967296 + lo - 116444736000000000) * 100 }
+    }
+    return -1
+}
+
 // ---- memory and environment (kernel32; Microsoft Learn: GlobalMemoryStatusEx, GetEnvironmentVariableW) ---------------------
 
 /// MEMORYSTATUSEX (memoryapi.h): dwLength ui32 at 0 (set to 64), dwMemoryLoad ui32 at 4, ullTotalPhys ui64 at 8.
