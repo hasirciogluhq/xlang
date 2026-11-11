@@ -6,7 +6,7 @@
 	path = xlc
 	url = https://github.com/hasirciogluhq/xlc.git
 	branch = main
-[submodule "std"]
-	path = std
+[submodule "xl-std"]
+	path = xl-std
 	url = https://github.com/hasirciogluhq/xl-std.git
 	branch = main

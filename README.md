@@ -1,11 +1,11 @@
 # xlang
 
-Documentation: <https://hasirciogluhq.github.io/xlang/> (built from `docs/` by the `pages` workflow).
+Documentation: <https://hasirciogluhq.github.io/xlang-docs/> (the `xlang-docs/` submodule, deployed from its own repository).
 
 **xlang** is a low-level, LLVM-based programming language. There is no libc and no C runtime: the
 compiler knows only the language, the CPU primitives and a closed list of builtins, and everything
 else (printing, memory allocation, `memcpy`, threads, sockets, HTTP, TLS) is ordinary xlang code in
-`std/`. Optional high-level APIs are importable packages, not the language core.
+`xl-std/`. Optional high-level APIs are importable packages, not the language core.
 
 Source files use the extension `.xl`. The CLI compiles them to native objects, executables, static
 or shared libraries. C++ owns the compiler, host tooling and LLVM codegen.
@@ -53,10 +53,10 @@ xlang run --incremental main.xl                 # from "github.com/user/repo" im
 Builds never touch the network. The standard library is a package too: the compiler embeds a default
 and any project may use a local directory or a repository at another version (`--std`, `[std]` in
 `xlang.toml`). Packages may also ship prebuilt files per platform (`[[native]]`), which the compiler
-links. Details: **[docs/compiler/packages.md](docs/compiler/packages.md)**.
+links. Details: **[xlang-docs/compiler/packages.md](xlang-docs/compiler/packages.md)**.
 
-Full language reference: **[docs/language/index.md](docs/language/index.md)** · Linking: **[docs/compiler/linking.md](docs/compiler/linking.md)** · Runtime: **[docs/compiler/runtime.md](docs/compiler/runtime.md)**  
-Known gaps and open decisions: **[docs/known-limitations.md](docs/known-limitations.md)**  
+Full language reference: **[xlang-docs/language/index.md](xlang-docs/language/index.md)** · Linking: **[xlang-docs/compiler/linking.md](xlang-docs/compiler/linking.md)** · Runtime: **[xlang-docs/compiler/runtime.md](xlang-docs/compiler/runtime.md)**  
+Known gaps and open decisions: **[xlang-docs/known-limitations.md](xlang-docs/known-limitations.md)**  
 VS Code extension: **[vscode/README.md](vscode/README.md)**
 
 ## Install
@@ -94,7 +94,7 @@ xlang self-update --check   # only report whether a newer release exists
 
 `self-update` downloads the latest release for your OS and CPU, verifies it, and replaces the running
 binary; when you already have the latest it says so. A Homebrew install is updated with
-`brew upgrade xlang` instead. Details: **[docs/compiler/install.md](docs/compiler/install.md)**.
+`brew upgrade xlang` instead. Details: **[xlang-docs/compiler/install.md](xlang-docs/compiler/install.md)**.
 
 ### Shell completion
 
@@ -242,12 +242,12 @@ xlang/
 │   ├── pkg/                 # xlang.toml, semver, git, cache
 │   └── util/                # source manager, diagnostics, errors
 ├── include/xlang/           # public headers
-├── std/                     # the standard library, written in xlang
+├── xl-std/                  # the standard library, written in xlang (git submodule)
 ├── test/
 │   ├── e2e/                 # end-to-end programs, run across OSes
 │   ├── unit/                # `*.test.xl` suites (std/testing)
 │   └── compiler/            # C++ tests for the frontend and sema
-├── docs/                    # the published documentation site
+├── xlang-docs/                    # the published documentation site
 ├── xmake.lua
 ├── xmake/
 └── vscode/
@@ -281,7 +281,7 @@ Entry symbols (`_start`, `mainCRTStartup`) and `_xl_initAll` are compiler-owned;
 
 Early stage (v0.1). The `development` branch carries no backward compatibility: when behaviour
 changes, the superseded form is removed from code, tests and docs with no note about the old form.
-Open gaps are recorded in **[docs/known-limitations.md](docs/known-limitations.md)**.
+Open gaps are recorded in **[xlang-docs/known-limitations.md](xlang-docs/known-limitations.md)**.
 
 ## License
 

@@ -24,7 +24,7 @@ local function add_target_defines()
     end
 end
 
--- The standard library (`std/**/*.xl`) is embedded into the compiler: this generates a C++ file that
+-- The standard library (`xl-std/**/*.xl`, the xl-std submodule) is embedded into the compiler: this generates a C++ file that
 -- holds every source as a byte array. Rewritten only when the content changes.
 -- Frontend library: lexer, preprocessor, macros, parser, AST, types, diagnostics, module checks.
 target("xlang-frontend")
@@ -32,9 +32,9 @@ target("xlang-frontend")
     set_default(false)
     set_enabled(not cross)
     on_load(function (target)
-        local files = os.files(path.join(os.projectdir(), "std", "**.xl"))
+        local files = os.files(path.join(os.projectdir(), "xl-std", "**.xl"))
         table.sort(files)
-        local out = {"// Generated from std/**/*.xl by xmake/compiler.lua. Do not edit.\n",
+        local out = {"// Generated from xl-std/**/*.xl by xmake/compiler.lua. Do not edit.\n",
                      "#include \"xlang/lang/embedded_std.h\"\n\n#include <array>\n\n",
                      "namespace xlang {\nnamespace {\n\n"}
         local entries = {}
@@ -47,7 +47,7 @@ target("xlang-frontend")
             end
             out[#out + 1] = string.format("constexpr char kData%d[] = {%s0}; // trailing NUL: never an empty array\n", i,
                                           table.concat(bytes, ",") .. (#bytes > 0 and "," or ""))
-            local rel = path.relative(file, path.join(os.projectdir(), "std")):gsub("\\", "/")
+            local rel = path.relative(file, path.join(os.projectdir(), "xl-std")):gsub("\\", "/")
             entries[i] = string.format("    EmbeddedFile{\"%s\", {kData%d, %d}},\n", rel, i, #data)
         end
         out[#out + 1] = string.format("\nconstexpr std::array<EmbeddedFile, %d> kFiles{{\n%s}};\n\n} // namespace\n\n",
@@ -152,7 +152,7 @@ target("xlang-tests")
     add_deps("xlang-frontend")
     add_tests("frontend")
 
--- Plan 7.6: the standard library is plain xl source (`std/`). Building this target type-checks
+-- Plan 7.6: the standard library is plain xl source (`xl-std/`). Building this target type-checks
 -- it with the freshly built compiler. (The compiler itself embeds the sources: see std_blob.cpp.)
 target("std")
     set_kind("phony")
@@ -161,11 +161,11 @@ target("std")
     add_deps("xlang")
     after_build(function (target)
         local exe = path.join(os.projectdir(), "outputs", "xlang")
-        os.execv(exe, {"check", path.join(os.projectdir(), "std", "index.xl"), "--no-std"})
+        os.execv(exe, {"check", path.join(os.projectdir(), "xl-std", "index.xl"), "--no-std"})
     end)
 
--- Examples: `docs/examples/*.xl` (short programs that the documentation pages include) and `examples/<name>/main.xl` (complete
--- programs). Every build copies both sets into `build/examples/` (docs/ and project/) and type-checks each program with the
+-- Examples: `xlang-docs/examples/*.xl` (short programs that the documentation pages include) and `examples/<name>/main.xl` (complete
+-- programs). Every build copies both sets into `build/examples/` (xlang-docs/ and project/) and type-checks each program with the
 -- freshly built compiler, so an example cannot silently rot.
 target("examples")
     set_kind("phony")
@@ -177,7 +177,7 @@ target("examples")
         local exe = path.join(root, "outputs", "xlang")
         local out = path.join(root, "build", "examples")
         os.tryrm(out)
-        os.cp(path.join(root, "docs", "examples"), path.join(out, "docs"))
+        os.cp(path.join(root, "xlang-docs", "examples"), path.join(out, "docs"))
         os.cp(path.join(root, "examples"), path.join(out, "project"))
         for _, f in ipairs(os.files(path.join(out, "docs", "*.xl"))) do
             os.execv(exe, {"check", f})
