@@ -14,3 +14,7 @@
 	path = xl-vscode
 	url = https://github.com/hasirciogluhq/xl-vscode.git
 	branch = main
+[submodule "xl-llvm"]
+	path = xl-llvm
+	url = https://github.com/hasirciogluhq/xl-llvm.git
+	branch = main
