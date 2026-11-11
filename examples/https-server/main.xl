@@ -9,19 +9,19 @@ from "std/sys" import sysClockSeconds
 
 define DEFAULT_PORT = 8443
 
-@entry fn main(argc: i32, argv: **ui8) -> i32 {
+@entry fn main(argc: i32, argv: **u8) -> i32 {
     if argc < 3 {
         print("usage: https-server <cert.pem> <key.pem> [port]\n")
         return 2
     }
-    local port: ui16 = DEFAULT_PORT
+    local port: u16 = DEFAULT_PORT
     if argc >= 4 {
-        local v: ui64 = 0
+        local v: u64 = 0
         if !toU64(fromC(argv[3]), &v) || v == 0 || v > 65535 {
             print("the port must be 1 to 65535\n")
             return 2
         }
-        port = v as ui16
+        port = v as u16
     }
     local cred: TlsCredentials
     local rc: i32 = tlsLoadCredentials(&cred, argv[1], argv[2])

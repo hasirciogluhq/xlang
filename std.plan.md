@@ -320,7 +320,7 @@ Work order for this catalogue: entropy and time (section 13 and 22 rows), PCG an
 - floor, ceil, round, trunc, cbrt, pow, exp, exp2, log, log2, log10, ln: todo (software, no libm)
 - sin, cos, tan, asin, acos, atan, atan2, sinh, cosh, tanh, asinh, acosh, atanh: todo
 - hypot, fmod, remainder, modf, frexp, ldexp, copysign, nextafter: todo
-- gcd, lcm, factorial, binomial, is_prime, next_prime, mod_inverse, mod_pow, crt, legendre, jacobi, miller_rabin: todo (integer functions over ui64 and bignum)
+- gcd, lcm, factorial, binomial, is_prime, next_prime, mod_inverse, mod_pow, crt, legendre, jacobi, miller_rabin: todo (integer functions over u64 and bignum)
 - bigint_add, bigint_sub: done at the limb level (bnAdd, bnSub, bnCmp, bnFromBytes, bnToBytes); the `bigint_*` public API names: todo
 - bigint_mul, bigint_div, bigint_mod, bigint_pow, bigint_gcd, bigint_lcm, bigint_mod_inverse, bigint_mod_pow, bigint_is_prime: todo
 - Montgomery modular arithmetic (montInit, montMul, montTo, montFrom, modAdd, modSub, montPow): done (mod_pow covered by montPow at limb level)
@@ -477,11 +477,11 @@ Goal: remove the pain points of current code (see the table at the end of this s
 - 25.2 `match` as the only multi-way branch (no `switch`; `match` covers its job). Expression form, patterns in stages: literal (`42`, `"hello"`, `true`), wildcard `_`, binding `x`, range `1..10` and `100..=200`, or `1 | 2 | 3`, guard `x if x > 10`, optional `Some(v)` / `None` for `?T`, enum `Color.RGB(r, g, b)` once enums carry payloads, struct `Post { used: true, id }` last. `match` and `else |e|` coexist: `else |e|` for the quick exit, `match` for full branching.
 - 25.3 `?` operator (propagate): `local id = c.param("id").parse<i64>()?` returns the error to the caller. Needs a fallible return type in the function signature; defined together with 25.1.
 - 25.4 Generic parsing: `parse<T>()` on `str`/`String`, returning the value plus an error with the position and reason. Stdlib function, not a compiler builtin, once generics on methods with a type argument are supported.
-- 25.5 Fixed buffer with length: `buf[N]string` (a fixed array of bytes plus its length, on the stack, no allocation). Replaces hand-written `title: [ui8; 120], titleLen: usize`.
+- 25.5 Fixed buffer with length: `buf[N]string` (a fixed array of bytes plus its length, on the stack, no allocation). Replaces hand-written `title: [u8; 120], titleLen: usize`.
 - 25.6 Compile-time JSON literal: `json"{ id: p.id, title: p.title }"`. Expanded at compile time to an encoder call that escapes strings, so no hand-written `\"` escapes. Macro-like; the compiler only expands the literal, and the encoder itself is stdlib.
 - 25.7 Route block: `r.group("/api", requireToken) { r.post(...); r.put(...); r.delete(...) }`. Needs a trailing block argument (a function literal passed as the last argument) and captures or an explicit receiver. Depends on closure capture (currently `unknown name k` for captured names) before the block can be sugar over a literal.
 - 25.8 `for` over ranges and collections: `for i, p := range posts { }` and `for c := range s.bytes() { }`, plus the existing `for i in lo..hi`. Stdlib iterators; the loop form is the compiler part.
-- 25.9 Slice syntax: done. `auth[7..]` and `s[a..b]` yield a `str` view without copying, over a `str` or a `[ui8; N]`; both bounds optional. Bounds checked under `--safety=checked` (constant end past an array length is `E0701`), a non-byte base is `E0709`, and a slice is a value (`E0716` when assigned to). Lowered to `hir::ExprKind::Slice`; codegen clamps negative bounds and emits the two `checkedBranch` guards. E2E: `test/e2e/slices.xl`.
+- 25.9 Slice syntax: done. `auth[7..]` and `s[a..b]` yield a `str` view without copying, over a `str` or a `[u8; N]`; both bounds optional. Bounds checked under `--safety=checked` (constant end past an array length is `E0701`), a non-byte base is `E0709`, and a slice is a value (`E0716` when assigned to). Lowered to `hir::ExprKind::Slice`; codegen clamps negative bounds and emits the two `checkedBranch` guards. E2E: `test/e2e/slices.xl`.
 - 25.10 Operators on std types, both as builtins and as overloads, with the overload used for user types: `x += 1`, `a == b` (for `String` and `str` via `eq`), and `copy(dst, src)` as a builtin for bulk copy. Open decision: `copy` as a compiler builtin conflicts with the closed builtin list in CLAUDE.md; the stdlib form `std/mem` copy is the default unless the compiler change is approved.
 - 25.11 Local type inference: `local slot := slotOf(id)`; the declared type is optional when the initializer fixes it.
 - 25.12 String-first stdlib: user code and new stdlib functions use `String` for owned text and `str` only for views at boundaries. Conversions: `String.asStr()` (view), `String.from(str)` (copy), `str.toString()`; each stdlib module migrates its public API to these in one pass. Rule already in CLAUDE.md (Std API types); this item is the migration of the existing modules.
@@ -490,7 +490,7 @@ Pain points this section addresses (current code):
 
 | Pain | Now | Planned |
 |------|-----|---------|
-| Three text types | `str`, `String`, `*ui8` + length | `String` in APIs, `str` view at boundaries (25.12) |
+| Three text types | `str`, `String`, `*u8` + length | `String` in APIs, `str` view at boundaries (25.12) |
 | Manual length | `titleLen`, `textLen` fields | `buf[N]string` (25.5) |
 | Manual pointer and length | `fromParts(&t[0], tl)` everywhere | slice syntax (25.9) |
 | Manual JSON | `sprintf("{\"id\":{}}", ...)` plus escaping helpers | `json"..."` (25.6) |

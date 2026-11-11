@@ -10,8 +10,8 @@ from "std/mem" import currentAllocator
 define BUF = 16384
 
 /// Reads a file into a new buffer of BUF bytes; returns the buffer and sets `n` to its length (-1 on failure).
-fn load(path: *ui8, n: *isize) -> *ui8 {
-    local buf: *ui8 = currentAllocator.alloc(BUF, 1) as *ui8
+fn load(path: *u8, n: *isize) -> *u8 {
+    local buf: *u8 = currentAllocator.alloc(BUF, 1) as *u8
     *n = fsReadAll(path, buf, BUF)
     return buf
 }
@@ -22,12 +22,12 @@ fn usage() -> i32 {
     return 2
 }
 
-@entry fn main(argc: i32, argv: **ui8) -> i32 {
+@entry fn main(argc: i32, argv: **u8) -> i32 {
     if argc < 2 { return usage() }
     local cmd: str = fromC(argv[1])
     if eq(cmd, "sign-hs256") && argc == 4 {
         local n: isize = 0
-        local payload: *ui8 = load(argv[3], &n)
+        local payload: *u8 = load(argv[3], &n)
         if n < 0 { return 1 }
         local header: str = "{\"alg\":\"HS256\",\"typ\":\"JWT\"}"
         local token: String = jwtSignHs256(header, fromParts(payload, n as usize), argv[2], strlen(argv[2]))
@@ -43,7 +43,7 @@ fn usage() -> i32 {
     }
     if eq(cmd, "verify-jwk") && argc == 5 {
         local n: isize = 0
-        local key: *ui8 = load(argv[3], &n)
+        local key: *u8 = load(argv[3], &n)
         if n < 0 { return 1 }
         local ok: bool = jwtVerifyWithJwk(fromC(argv[4]), fromParts(key, n as usize), fromC(argv[2]))
         print(ok ? "valid\n" : "invalid\n")
@@ -52,7 +52,7 @@ fn usage() -> i32 {
     }
     if eq(cmd, "thumbprint") && argc == 3 {
         local n: isize = 0
-        local key: *ui8 = load(argv[2], &n)
+        local key: *u8 = load(argv[2], &n)
         if n < 0 { return 1 }
         local tp: String = jwkThumbprintSha256(fromParts(key, n as usize))
         if tp.length() == 0 {

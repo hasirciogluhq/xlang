@@ -23,15 +23,15 @@ define DEFAULT_PORT = 8080
 struct Post {
     used: bool
     id: i64
-    title: [ui8; 120]
+    title: [u8; 120]
     titleLen: usize
-    text: [ui8; 480]
+    text: [u8; 480]
     textLen: usize
 }
 
 global posts: [Post; 64]
 global nextId: i64 = 1
-global secret: *ui8 = nil
+global secret: *u8 = nil
 global secretLen: usize = 0
 
 /// The slot of the post with `id`, or -1.
@@ -54,7 +54,7 @@ fn freeSlot() -> i32 {
 }
 
 /// True when `s` can be written into a JSON string without escapes.
-fn plain(s: *ui8, n: usize) -> bool {
+fn plain(s: *u8, n: usize) -> bool {
     local i: usize = 0
     while i < n {
         if s[i] == 34 || s[i] == 92 || s[i] < 32 { return false }
@@ -64,7 +64,7 @@ fn plain(s: *ui8, n: usize) -> bool {
 }
 
 /// Copies `s[0..n)` into `dst` (capacity `cap`); returns the length stored.
-fn store(dst: *ui8, cap: usize, s: *ui8, n: usize) -> usize {
+fn store(dst: *u8, cap: usize, s: *u8, n: usize) -> usize {
     local i: usize = 0
     while i < n && i < cap {
         dst[i] = s[i]
@@ -74,11 +74,11 @@ fn store(dst: *ui8, cap: usize, s: *ui8, n: usize) -> usize {
 }
 
 /// The title and body of a request body, or false when a field is missing, too long or not plain text.
-fn readPost(c: *Context, title: *ui8, body: *ui8) -> bool {
+fn readPost(c: *Context, title: *u8, body: *u8) -> bool {
     local text: String = String()
     text.append(c.Body())
-    local t: [ui8; 128]
-    local b: [ui8; 512]
+    local t: [u8; 128]
+    local b: [u8; 512]
     if !jsonString(text.cstr(), "title", &t[0], 128) { return false }
     if !jsonString(text.cstr(), "body", &b[0], 512) { return false }
     local tl: usize = strlen(&t[0])
@@ -127,8 +127,8 @@ fn showPost(c: *Context) {
 }
 
 fn createPost(c: *Context) {
-    local t: [ui8; 120]
-    local b: [ui8; 480]
+    local t: [u8; 120]
+    local b: [u8; 480]
     if !readPost(c, &t[0], &b[0]) {
         c.String(400, "a title and a body of plain text are required")
         return
@@ -158,8 +158,8 @@ fn updatePost(c: *Context) {
         c.String(404, "not found")
         return
     }
-    local t: [ui8; 120]
-    local b: [ui8; 480]
+    local t: [u8; 120]
+    local b: [u8; 480]
     if !readPost(c, &t[0], &b[0]) {
         c.String(400, "a title and a body of plain text are required")
         return
@@ -216,7 +216,7 @@ fn listening() {
     print("blog-api listening on http://127.0.0.1\n")
 }
 
-@entry fn main(argc: i32, argv: **ui8) -> i32 {
+@entry fn main(argc: i32, argv: **u8) -> i32 {
     if argc < 2 {
         print("usage: blog-api <secret> [port] | blog-api <secret> token <subject>\n")
         return 2
@@ -230,14 +230,14 @@ fn listening() {
         print("\n")
         return 0
     }
-    local port: ui16 = DEFAULT_PORT
+    local port: u16 = DEFAULT_PORT
     if argc >= 3 {
-        local v: ui64 = 0
+        local v: u64 = 0
         if !toU64(fromC(argv[2]), &v) || v == 0 || v > 65535 {
             print("the port must be 1 to 65535\n")
             return 2
         }
-        port = v as ui16
+        port = v as u16
     }
     local router: Engine = Engine()
     router.GET("/posts", listPosts)

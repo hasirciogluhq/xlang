@@ -10,21 +10,21 @@ from "std/mem" import currentAllocator
 define BUF = 65536
 
 /// Reads a whole file into a fresh buffer; returns its length, or -1.
-fn readFile(path: *ui8, buf: *ui8) -> isize {
+fn readFile(path: *u8, buf: *u8) -> isize {
     return fsReadAll(path, buf, BUF)
 }
 
 /// Decodes the first PEM block with label `label` of `text` into `der`; returns its length, or 0.
-fn firstDer(text: *ui8, n: usize, label: *ui8, der: *ui8) -> usize {
+fn firstDer(text: *u8, n: usize, label: *u8, der: *u8) -> usize {
     local pos: usize = 0
     return pemNext(text, n, &pos, label, der, BUF)
 }
 
 /// The serial number bytes of a certificate: the INTEGER after the optional [0] version field of the TBSCertificate.
-fn serialOf(c: *Cert, out: *ui8) -> usize {
+fn serialOf(c: *Cert, out: *u8) -> usize {
     local t: Tlv
     if !derRead(c.tbs, c.tbsLen, &t) { return 0 }
-    local body: *ui8 = t.body
+    local body: *u8 = t.body
     local len: usize = t.len
     local first: Tlv
     if !derRead(body, len, &first) { return 0 }
@@ -41,23 +41,23 @@ fn serialOf(c: *Cert, out: *ui8) -> usize {
     return first.len
 }
 
-fn yesNo(b: bool) -> *ui8 {
+fn yesNo(b: bool) -> *u8 {
     if b { return "yes" }
     return "no"
 }
 
-@entry fn main(argc: i32, argv: **ui8) -> i32 {
+@entry fn main(argc: i32, argv: **u8) -> i32 {
     if argc < 2 {
         print("usage: certificate-inspect <cert.pem> [root.pem] [crl.pem]\n")
         return 2
     }
-    local text: *ui8 = currentAllocator.alloc(BUF, 1) as *ui8
+    local text: *u8 = currentAllocator.alloc(BUF, 1) as *u8
     local n: isize = readFile(argv[1], text)
     if n <= 0 {
         print("cannot read the certificate\n")
         return 1
     }
-    local der: *ui8 = currentAllocator.alloc(BUF, 1) as *ui8
+    local der: *u8 = currentAllocator.alloc(BUF, 1) as *u8
     local dl: usize = firstDer(text, n as usize, "CERTIFICATE", der)
     local cert: Cert
     if dl == 0 || !x509Parse(&cert, der, dl) {
@@ -65,9 +65,9 @@ fn yesNo(b: bool) -> *ui8 {
         return 1
     }
     local now: i64 = sysClockSeconds()
-    local fp: [ui8; 32]
+    local fp: [u8; 32]
     x509FingerprintSha256(&cert, &fp[0])
-    local hex: [ui8; 64]
+    local hex: [u8; 64]
     hexEncode(&fp[0], 32, &hex[0])
     print("subject DER bytes: ")
     print(x509SubjectDer(&cert).len)
@@ -86,9 +86,9 @@ fn yesNo(b: bool) -> *ui8 {
     print("\n")
     local ok: bool = true
     if argc >= 3 {
-        local rootText: *ui8 = currentAllocator.alloc(BUF, 1) as *ui8
+        local rootText: *u8 = currentAllocator.alloc(BUF, 1) as *u8
         local rn: isize = readFile(argv[2], rootText)
-        local rootDer: *ui8 = currentAllocator.alloc(BUF, 1) as *ui8
+        local rootDer: *u8 = currentAllocator.alloc(BUF, 1) as *u8
         local rdl: usize = firstDer(rootText, rn as usize, "CERTIFICATE", rootDer)
         local root: Cert
         if rdl == 0 || !x509Parse(&root, rootDer, rdl) {
@@ -106,12 +106,12 @@ fn yesNo(b: bool) -> *ui8 {
         ok = ok && valid
     }
     if argc >= 4 {
-        local crlText: *ui8 = currentAllocator.alloc(BUF, 1) as *ui8
+        local crlText: *u8 = currentAllocator.alloc(BUF, 1) as *u8
         local cn: isize = readFile(argv[3], crlText)
-        local crlDer: *ui8 = currentAllocator.alloc(BUF, 1) as *ui8
+        local crlDer: *u8 = currentAllocator.alloc(BUF, 1) as *u8
         local cdl: usize = firstDer(crlText, cn as usize, "X509 CRL", crlDer)
         local crl: Crl = crlParse(crlDer, cdl)
-        local serial: *ui8 = currentAllocator.alloc(32, 1) as *ui8
+        local serial: *u8 = currentAllocator.alloc(32, 1) as *u8
         local sl: usize = serialOf(&cert, serial)
         local revoked: bool = crlIsRevoked(&crl, serial, sl)
         print("revoked in crl:    ")

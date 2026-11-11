@@ -6,7 +6,7 @@ from "std" import print, fromC, dnsResolveAll, dnsBuildQuery
 define MAX_ADDRS = 16
 
 /// Prints `v` as a dotted-quad IPv4 address (the value holds the four octets, most significant first).
-fn printAddress(v: ui32) {
+fn printAddress(v: u32) {
     print((v >> 24) & 0xff)
     print(".")
     print((v >> 16) & 0xff)
@@ -16,13 +16,13 @@ fn printAddress(v: ui32) {
     print(v & 0xff)
 }
 
-@entry fn main(argc: i32, argv: **ui8) -> i32 {
+@entry fn main(argc: i32, argv: **u8) -> i32 {
     if argc != 2 {
         print("usage: dns-lookup <host>\n")
         return 2
     }
-    local host: *ui8 = argv[1]
-    local addrs: [ui32; MAX_ADDRS]
+    local host: *u8 = argv[1]
+    local addrs: [u32; MAX_ADDRS]
     local count: usize = dnsResolveAll(host, &addrs[0], MAX_ADDRS)
     if count == 0 {
         print("no IPv4 address found\n")
@@ -34,7 +34,7 @@ fn printAddress(v: ui32) {
         print("\n")
         i = i + 1
     }
-    local query: [ui8; 512]
+    local query: [u8; 512]
     local name: str = fromC(host)
     local n: isize = dnsBuildQuery(0x2a2a, host, name.len, 1, &query[0], 512)
     if n < 0 {

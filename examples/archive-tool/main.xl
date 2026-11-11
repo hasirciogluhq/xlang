@@ -10,19 +10,19 @@ from "std/mem" import currentAllocator
 define IN_CAP = 64 * 1024 * 1024
 define OUT_CAP = 64 * 1024 * 1024
 
-@entry fn main(argc: i32, argv: **ui8) -> i32 {
+@entry fn main(argc: i32, argv: **u8) -> i32 {
     if argc != 4 {
         print("usage: archive-tool gzip|zlib|gunzip|unzlib <in> <out>\n")
         return 2
     }
     local mode: str = fromC(argv[1])
-    local input: *ui8 = currentAllocator.alloc(IN_CAP, 1) as *ui8
+    local input: *u8 = currentAllocator.alloc(IN_CAP, 1) as *u8
     local n: isize = fsReadAll(argv[2], input, IN_CAP)
     if n < 0 {
         print("cannot read the input\n")
         return 1
     }
-    local output: *ui8 = currentAllocator.alloc(OUT_CAP, 1) as *ui8
+    local output: *u8 = currentAllocator.alloc(OUT_CAP, 1) as *u8
     local m: isize = -1
     if eq(mode, "gzip") {
         m = gzipCompress(input, n as usize, output, OUT_CAP)

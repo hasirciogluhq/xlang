@@ -40,7 +40,7 @@ fn Pay(p: IProvider, a: i32, pl: String) {
     p.pay(a, pl)
 }
 
-fn process() -> *ui64 {
+fn process() -> *u64 {
     local stripe := LoadProvider(String("Stripe"))
     local paypal := LoadProvider(String("PayPal"))
     local brainTree := LoadProvider(String("BrainTree"))
@@ -51,7 +51,7 @@ fn process() -> *ui64 {
     Pay(paypal, 20, String("Pro"))
     Pay(brainTree, 300, String("Legend"))
 
-    return &stripe as *ui64
+    return &stripe as *u64
 }
 
 @entry fn main() {
