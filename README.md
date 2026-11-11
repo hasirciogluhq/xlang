@@ -136,8 +136,7 @@ Useful targets:
 
 ```bash
 xmake build std           # type-check the standard library with the fresh compiler
-xmake build xlang-tests && xmake run xlang-tests   # frontend / sema / HIR unit tests
-xmake run e2e             # end-to-end programs in test/e2e (native, plus Docker and CrossOver legs)
+xmake run e2e             # end-to-end programs in xl-std/test/e2e, built with $XLC (default xlc); Docker and CrossOver legs: xl-std/test/e2e/run.sh
 ```
 
 While working, run only the tests of what changed; the full suites take over a minute.
@@ -172,8 +171,8 @@ fn divMod(a: i64, b: i64) -> (i64, i64) {
 
 ```bash
 ./outputs/xlang run hello.xl
-./outputs/xlang run test/e2e/strings.xl
-./outputs/xlang run test/e2e/for.xl
+./outputs/xlang run xl-std/test/e2e/strings.xl
+./outputs/xlang run xl-std/test/e2e/for.xl
 ```
 
 ## CLI
@@ -205,11 +204,11 @@ Other flags: `-D NAME[=VALUE]`, `-U NAME`, `--mangle=xl|none`, `--safety=checked
 ### Other subcommands
 
 ```bash
-xlang check test/e2e/print.xl          # parse + module checks (types, enums, layouts, staticAssert)
+xlang check xl-std/test/e2e/print.xl          # parse + module checks (types, enums, layouts, staticAssert)
 xlang parse foo.xl                     # preprocess, expand macros, parse; print the AST summary
 xlang layout foo.xl                    # print offsets/sizes/alignment of structs and classes
 xlang run foo.xl                       # build into a temp file, run it, exit with its status
-xlang test test/unit/                  # build and run `*.test.xl` (file, dir, glob, re:<regex>)
+xlang test xl-std/test/unit/                  # build and run `*.test.xl` (file, dir, glob, re:<regex>)
 xlang package install|update|remove|list|clean
 xlang completions bash|zsh|fish|install
 xlang self-update [--check]
@@ -243,10 +242,7 @@ xlang/
 │   └── util/                # source manager, diagnostics, errors
 ├── include/xlang/           # public headers
 ├── xl-std/                  # the standard library, written in xlang (git submodule)
-├── test/
-│   ├── e2e/                 # end-to-end programs, run across OSes
-│   ├── unit/                # `*.test.xl` suites (std/testing)
-│   └── compiler/            # C++ tests for the frontend and sema
+│   └── test/                # e2e programs (run across OSes) and `*.test.xl` unit suites
 ├── xlang-docs/                    # the published documentation site
 ├── xmake.lua
 ├── xmake/

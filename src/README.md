@@ -82,9 +82,9 @@ src/
     source.cpp         # SourceManager / Span
     diagnostics.cpp    # code registry, rendering, allow/deny, log
     program.cpp        # running program's image path, `programOutput` (captured stdout), `processId`
-test/compiler/         # unit tests (xlang-tests)
-test/e2e/              # end-to-end programs + runner.xl and tests.txt (native runner, xlang); run.sh (+ lib.sh, packages.sh): Docker/Windows legs, TLS pairs, packages
 xl-std/                # the standard library (git submodule), plain xl (plan phase 7), nested by area, each area with index.xl
+  test/unit/           #   `*.test.xl` suites; run.sh builds and runs them with xlc
+  test/e2e/            #   end-to-end programs + runner.xl and tests.txt (native runner, xlang); run.sh (+ lib.sh, packages.sh): Docker/Windows legs, TLS pairs, packages
   runtime/             #   panic, unwind (try/catch walker, register(unwind)), context (stack switch)
   sys/                 #   the per-OS raw layer (linux, macos, windows, sock); OS setup hidden behind sockUp-style functions
   mem/                 #   mem (Allocator, Heap, currentAllocator), memory (memcpy family)

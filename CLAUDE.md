@@ -41,8 +41,8 @@
 - Never edit a too-big file: first split it into cohesive parts (`src/<area>/<topic>_<part>.cpp` plus a shared internal header) as a pure move, update `src/README.md` and `xmake.lua`, then make the change. New code goes into the matching part, never a catch-all.
 
 ## Docs (single source)
-- `xlang-docs/` is the only documentation, published as the GitHub Pages site: `language/`, `compiler/`, `std/`, and `known-limitations.md` (open decisions and intentional incompleteness only). Plain, professional Markdown.
-- A new page goes into `xlang-docs/_data/nav.yml` and `xlang-docs/index.md` in the same change. `src/README.md` is the layout; `xl-std/` is the stdlib; `test/e2e/` holds the only examples.
+- `xlang-docs/` is the only documentation, published as the GitHub Pages site: `language/`, `compiler/`, `std/` and `known-limitations.md` under `src/content/docs/` (open decisions and intentional incompleteness only). Plain, professional Markdown.
+- The site is Astro Starlight; pages are in `xlang-docs/src/content/docs/`. A new page goes into the `sidebar` of `xlang-docs/astro.config.mjs` and into `xlang-docs/src/content/docs/index.md` in the same change. `src/README.md` is the layout; `xl-std/` is the stdlib; `xl-std/test/e2e/` holds the only examples.
 - **Every code change updates the affected docs in the same change** (`xlang-docs/`, `src/README.md`, doc comments).
 
 ## Core rules
@@ -71,5 +71,5 @@ When the user adds a feature, give an honest assessment without praise: impact (
 
 ## Build and test
 - `xmake build`; LLVM from `llvm-config`; the stdlib is embedded at build time (`xmake build std` type-checks it; `xlang run --std=xl-std file.xl` runs against the working tree).
-- Suites: `xmake build xlang-tests && xmake run xlang-tests` (frontend/sema/HIR) and `xmake run e2e` (native, Docker, CrossOver for Windows).
-- **Test order.** While working, run only the tests of what changed (`xlang run test/e2e/<name>.xl`). Run each full suite once at the very end and fix what it finds. Tests are small and fast: no sleeps, no needless Docker or network.
+- Tests live in `xl-std/test/` (`unit/` `*.test.xl` suites, `e2e/` programs + `tests.txt`) and run with the standalone compiler `xlc` (`-M std=xl-std --import std -DfeatureDefaultAllocator=true`; `xlc --help`). There is no C++ test suite. Suites: `xl-std/test/unit/run.sh [xlc]` and `xmake run e2e` / `xl-std/test/e2e/run.sh [xlc]` (native, Docker, CrossOver for Windows).
+- **Test order.** While working, run only the tests of what changed (`xlc xl-std/test/e2e/<name>.xl -M std=xl-std --import std -DfeatureDefaultAllocator=true -o /tmp/t && /tmp/t`). Run each full suite once at the very end and fix what it finds. Tests are small and fast: no sleeps, no needless Docker or network.

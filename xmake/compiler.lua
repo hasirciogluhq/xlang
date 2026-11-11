@@ -32,7 +32,14 @@ target("xlang-frontend")
     set_default(false)
     set_enabled(not cross)
     on_load(function (target)
-        local files = os.files(path.join(os.projectdir(), "xl-std", "**.xl"))
+        -- The library is the repository root (index.xl and the area folders); `test/` holds its own tests and is not embedded.
+        local stdroot = path.join(os.projectdir(), "xl-std")
+        local files = {}
+        for _, file in ipairs(os.files(path.join(stdroot, "**.xl"))) do
+            if not path.relative(file, stdroot):gsub("\\", "/"):startswith("test/") then
+                files[#files + 1] = file
+            end
+        end
         table.sort(files)
         local out = {"// Generated from xl-std/**/*.xl by xmake/compiler.lua. Do not edit.\n",
                      "#include \"xlang/lang/embedded_std.h\"\n\n#include <array>\n\n",
@@ -142,16 +149,6 @@ target("xlang")
         add_syslinks("ncurses", "z", "pthread", "dl", "m")
     end
 
--- Frontend/diagnostics unit tests: `xmake build xlang-tests && xmake run xlang-tests`.
-target("xlang-tests")
-    set_kind("binary")
-    set_default(false)
-    set_enabled(not cross)
-    add_files("$(projectdir)/test/compiler/main.cpp", "$(projectdir)/test/compiler/sema_test.cpp",
-              "$(projectdir)/test/compiler/lower_test.cpp", "$(projectdir)/test/compiler/pkg_test.cpp")
-    add_deps("xlang-frontend")
-    add_tests("frontend")
-
 -- Plan 7.6: the standard library is plain xl source (`xl-std/`). Building this target type-checks
 -- it with the freshly built compiler. (The compiler itself embeds the sources: see std_blob.cpp.)
 target("std")
@@ -187,18 +184,18 @@ target("examples")
         end
     end)
 
--- End-to-end tests: `xmake run e2e` builds and runs the programs of test/e2e (natively, and on
--- Linux aarch64/x86_64 through Docker when it is available).
+-- The tests of the standard library live in the xl-std repository (`xl-std/test/`), and the compiler is `xlc`. `xmake run e2e` builds the
+-- native runner (an xlang program, `xl-std/test/e2e/runner.xl`) with the compiler named by $XLC (default: `xlc` on PATH) and runs it on the
+-- table. The Docker and CrossOver legs are `xl-std/test/e2e/run.sh`.
 target("e2e")
     set_kind("phony")
     set_default(false)
     set_enabled(not cross)
-    add_deps("xlang")
     on_run(function (target)
-        -- The runner is an xlang program (test/e2e/runner.xl): compile it, then run it on the table.
-        local root = os.projectdir()
-        local exe = path.join(root, "outputs", "xlang")
-        local runner = path.join(root, "outputs", "e2e-runner")
-        os.execv(exe, {"build", path.join(root, "test", "e2e", "runner.xl"), "-o", runner})
-        os.execv(runner, {exe, path.join(root, "test", "e2e")})
+        local stdroot = path.join(os.projectdir(), "xl-std")
+        local xlc = os.getenv("XLC") or "xlc"
+        local runner = path.join(os.projectdir(), "outputs", "e2e-runner")
+        os.execv(xlc, {path.join(stdroot, "test", "e2e", "runner.xl"), "-M", "std=" .. stdroot, "--import", "std",
+                       "-DfeatureDefaultAllocator=true", "-o", runner})
+        os.execv(runner, {xlc, stdroot, path.join(stdroot, "test", "e2e")})
     end)
