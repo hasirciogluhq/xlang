@@ -20,7 +20,7 @@ struct PackageOptions {
     std::string std_spec;    ///< install: `--std=host/u/r[@ver]`, recorded in `[std]`
 };
 
-/// `xlang package <action>`: works on the xlang.toml found from the current directory.
+/// `xl install|update|remove|list|clean`: works on the xlang.toml found from the current directory.
 int runPackage(const PackageOptions& options);
 
 /// Called by build/check before the root file is loaded: finds xlang.toml from the root file's

@@ -23,7 +23,7 @@ The three test files already written (`test/e2e/encodings.xl`, `random.xl`, `che
 - New docs pages must be added to `xlang-docs/index.md` in the same change.
 
 ## Current queue (read this first; the numbered sections below are the detailed catalogue)
-Work runs top to bottom. An item is finished when its code type-checks (`xmake build std`, and `xlang check --target` for std/sys files), its xlang-docs/ and docs-ai/ pages and header comments match, and its KNOWN-LIMITATIONS entries exist. Tests and e2e files are added only after the whole queue is finished.
+Work runs top to bottom. An item is finished when its code type-checks (`xmake build std`, and `xl check --target` for std/sys files), its xlang-docs/ and docs-ai/ pages and header comments match, and its KNOWN-LIMITATIONS entries exist. Tests and e2e files are added only after the whole queue is finished.
 
 Q1. DONE. Verified by scratch programs (not added to the repo): ULID, cuid v1 and v2 shapes, nanoid, Snowflake, KSUID, ObjectId, XID, Sonyflake, Instagram, TSID, PushID; MD5("") and SHA-1("abc") and UUID v3 and v5 (DNS, www.example.com) match known vectors; string helpers `compare`, `equalIgnoreCase`, `containsAny`, `trimStart`, `trimEnd`, `globMatch`, `replace`, `replaceAll`, `repeat`, `slice`, `trim`, `split` work. Item list kept below for reference:
   - IDs: `std/random/ids.xl` with cuidV1, cuidV2 (SHA-256 until sha3 exists; deviation recorded), ulid with a monotonic generator, nanoid (default and custom alphabet, mask rejection sampling), snowflake (epoch, machine id, sequence), ksuid. Export from `std/random/index.xl`.
@@ -449,7 +449,7 @@ Goal: `@library("name") declare fn` works on Linux and macOS the same way it wor
 - macOS: `ld64.lld` must receive `-lSystem` (or the framework or dylib that exports the symbol) and the dyld load commands are then produced by the linker. Each library is a dylib dependency only when a symbol from it is used. Current state: no `-lSystem`, raw syscalls only. The libc ban is lifted (CLAUDE.md), so `-lSystem` is allowed; no open decision remains.
 - Linux: the current link is `-static -nostdlib` with no interpreter, so a shared `.so` cannot load. Two routes: (a) static `.a` archives given as `[[native]]` link inputs in `xlang.toml`, pruned by `--gc-sections`; (b) dynamic linking with `PT_INTERP` (`ld-linux`), `PT_DYNAMIC`, PLT/GOT and `DT_NEEDED`, which the compiler does not emit today. Route (a) first; route (b) is a separate design pass, recorded as defer until then.
 - Stdlib is not a runtime blob: the standard library is compiled into each program and only reachable functions survive, so linking a library does not bring the whole stdlib with it.
-- Verification: `xmake build` for the compiler; `xlang check --target <triple>` for the three OS targets on each new file (done for the poll module on aarch64-apple-darwin, x86_64-pc-windows-msvc, x86_64-unknown-linux-gnu, aarch64-unknown-linux-gnu); runtime checks only after the plan is complete.
+- Verification: `xmake build` for the compiler; `xl check --target <triple>` for the three OS targets on each new file (done for the poll module on aarch64-apple-darwin, x86_64-pc-windows-msvc, x86_64-unknown-linux-gnu, aarch64-unknown-linux-gnu); runtime checks only after the plan is complete.
 
 ## Order of work (superseded by "Current queue" above; kept for history)
 1. Finish the wip items (md5, sha1, uuid v1 v3 v5 v6 v8, id generators, str helpers) and run `xmake build std`.

@@ -6,7 +6,7 @@ The short programs that the documentation shows are in `xlang-docs/examples/` (s
 Build one with the compiler, for example:
 
 ```
-xlang build -o blog-api examples/blog-api/main.xl
+xl build -o blog-api examples/blog-api/main.xl
 ./blog-api s3cret 8080
 ```
 

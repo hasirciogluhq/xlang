@@ -11,19 +11,19 @@ src/
       style.h          # ANSI `Palette` and `useColor` (`--color`, `NO_COLOR`, `XLANG_COLOR`) shared by the CLI
       version.h        # `kVersion`, the `XLANG_VERSION` define from xmake.lua
     tests/
-      runner.cpp       # `xlang run` and `xlang test`: file/glob/regex selection, build + run per file, colored report
+      runner.cpp       # `xl run` and `xl test`: file/glob/regex selection, build + run per file, colored report
     update/
-      update.cpp       # `xlang self-update` (aliases `update`, `upgrade`): latest release, checksum, in-place replace
+      update.cpp       # `xl self-update` (aliases `update`, `upgrade`): latest release, checksum, in-place replace
     completions/
-      completions.cpp  # `xlang completions bash|zsh|fish|install`: scripts generated from the CLI11 command tree; `install` sets up the shells in use
+      completions.cpp  # `xl completions bash|zsh|fish|install`: scripts generated from the CLI11 command tree; `install` sets up the shells in use
     package/
-      package.cpp      # `xlang package install|update|remove|list|clean` and `attachProject` (xlang.toml -> packages, stdlib source, native files for a build)
+      package.cpp      # `xl install|update|remove|list|clean` and `attachProject` (xlang.toml -> packages, stdlib source, native files for a build)
   lang/
     lexer/             # tokens; `#if` ... directives are lexed here
     preprocess/        # conditional compilation on the token stream
     macro/             # `define f(x: expr) { }` / `f!(...)` token-level expansion
     parser/            # recursive descent, error recovery; a payload enum is split into struct/union/tag items here
-    ast/               # AST dump (`xlang parse`)
+    ast/               # AST dump (`xl parse`)
     types/             # Type tree + primitive names
     config.cpp         # BuildConfig, target triples, -D values
     frontend.cpp       # lex -> preprocess -> macros -> parse
@@ -59,7 +59,7 @@ src/
     git.cpp            # `git` as a child process: ls-remote tags, clone a tag into the cache
     project.cpp        # resolver: lock + cache (offline) or fetch (install), transitive deps, conflicts, native inputs, xlang.lock
   hir/
-    hir.cpp            # typed HIR dump (`xlang check --hir`)
+    hir.cpp            # typed HIR dump (`xl check --hir`)
     prune.cpp          # reachability pruning: drops functions and globals no root reaches (plan 24)
   codegen/
     codegen.cpp        # HIR -> LLVM IR driver: context, module, target machine, data layout (4.7)

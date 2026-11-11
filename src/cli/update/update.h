@@ -10,7 +10,7 @@ struct SelfUpdateOptions {
     bool color{false};
 };
 
-/// `xlang self-update`: asks GitHub for the latest release, and when it is newer than this binary
+/// `xl self-update`: asks GitHub for the latest release, and when it is newer than this binary
 /// downloads the archive for the host OS and architecture, verifies it against the release's
 /// `checksums.txt`, smoke-tests the new binary and replaces `self` in place. Prints "up to date"
 /// when nothing newer exists. Returns the process exit code.

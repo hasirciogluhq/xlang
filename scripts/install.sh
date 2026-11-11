@@ -117,14 +117,14 @@ note "sha256 $expected"
 
 step "Installing to $dir"
 tar -xzf "$tmp/$asset" -C "$tmp" || fail "could not extract $asset"
-[ -f "$tmp/xlang" ] || fail "the archive does not contain an 'xlang' binary"
-chmod 0755 "$tmp/xlang"
-"$tmp/xlang" --version >/dev/null 2>&1 || fail "the downloaded binary does not start on this machine"
+[ -f "$tmp/xl" ] || fail "the archive does not contain an 'xl' binary"
+chmod 0755 "$tmp/xl"
+"$tmp/xl" --version >/dev/null 2>&1 || fail "the downloaded binary does not start on this machine"
 
 mkdir -p "$dir" 2>/dev/null || fail "cannot create $dir (use --dir, or XLANG_INSTALL_DIR, to pick another place)"
 # Copy next to the target and rename, so a running `xlang` is replaced atomically.
-cp "$tmp/xlang" "$dir/.xlang.new.$$" 2>/dev/null || fail "cannot write to $dir (use --dir, or XLANG_INSTALL_DIR, to pick another place)"
-mv -f "$dir/.xlang.new.$$" "$dir/xlang"
+cp "$tmp/xl" "$dir/.xl.new.$$" 2>/dev/null || fail "cannot write to $dir (use --dir, or XLANG_INSTALL_DIR, to pick another place)"
+mv -f "$dir/.xl.new.$$" "$dir/xl"
 
 printf '%sinstalled xlang %s%s -> %s/xlang\n' "$green" "$version" "$reset" "$dir" >&2
 
@@ -137,7 +137,7 @@ esac
 # Tab completion for the shells in use (bash, zsh, fish). Never fails the install.
 if [ "$completions" = "1" ]; then
   step "Setting up tab completion"
-  "$dir/xlang" completions install >&2 || note "could not set up completion; run 'xlang completions install' later"
+  "$dir/xl" completions install >&2 || note "could not set up completion; run 'xl completions install' later"
 fi
 
-note "update later with: xlang self-update"
+note "update later with: xl self-update"

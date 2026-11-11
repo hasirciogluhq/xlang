@@ -4,7 +4,7 @@ Resolves a host name to IPv4 addresses with the system resolver (`/etc/hosts`, t
 for it as bytes.
 
 ```
-xlang build -o dns-lookup examples/dns-lookup/main.xl
+xl build -o dns-lookup examples/dns-lookup/main.xl
 ./dns-lookup example.com
 ```
 

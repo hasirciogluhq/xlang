@@ -21,7 +21,7 @@ struct CompletionInstallOptions {
     bool color{false};
 };
 
-/// `xlang completions install`: writes the completion scripts for the shells in use and makes each
+/// `xl completions install`: writes the completion scripts for the shells in use and makes each
 /// shell load them, with no manual step. Idempotent.
 ///   fish  `$XDG_CONFIG_HOME/fish/completions/{xlang,xl}.fish` (fish autoloads it; no startup edit)
 ///   bash  `$XDG_DATA_HOME/xlang/completions/xlang.bash` + a marked block in `~/.bash_profile`

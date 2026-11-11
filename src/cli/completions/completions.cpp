@@ -130,7 +130,7 @@ std::string bashScript(const Command& root, const std::vector<Command>& subs) {
     }
 
     std::string out =
-        "# bash completion for xlang. Enable with:  source <(xlang completions bash)\n"
+        "# bash completion for xlang. Enable with:  source <(xl completions bash)\n"
         "_xlang_complete() {\n"
         "    local cur=\"${COMP_WORDS[COMP_CWORD]}\" prev=\"\" sub=\"\" i\n"
         "    [ \"$COMP_CWORD\" -gt 0 ] && prev=\"${COMP_WORDS[COMP_CWORD-1]}\"\n"
@@ -217,7 +217,7 @@ std::string zshScript(const Command& root, const std::vector<Command>& subs) {
     }
 
     std::string out =
-        "# zsh completion for xlang. Enable with:  source <(xlang completions zsh)\n"
+        "# zsh completion for xlang. Enable with:  source <(xl completions zsh)\n"
         "if (( ! $+functions[compdef] )); then autoload -Uz compinit && compinit; fi\n"
         "_xlang() {\n"
         "    local sub=\"\" i\n"
@@ -282,7 +282,7 @@ std::string fishFlagWords(const Flag& f) {
 }
 
 std::string fishScript(const Command& root, const std::vector<Command>& subs) {
-    std::string out = "# fish completion for xlang. Enable with:  xlang completions fish | source\n"
+    std::string out = "# fish completion for xlang. Enable with:  xl completions fish | source\n"
                       "for c in xlang xl\n";
     for (const Flag& f : root.flags) {
         out += "    complete -c $c -n __fish_use_subcommand" + fishFlagWords(f) + " -d " +
@@ -377,7 +377,7 @@ bool addSourceBlock(const fs::path& rc, const fs::path& script, const std::strin
     }
     std::string block = current.empty() || current.back() == '\n' ? "" : "\n";
     block += std::string(current.empty() ? "" : "\n") + kBlockBegin + "\n" +
-             "# Added by `xlang completions install`; delete this block to opt out.\n" + "[ -f \"" +
+             "# Added by `xl completions install`; delete this block to opt out.\n" + "[ -f \"" +
              withHomeVar(script, home) + "\" ] && source \"" + withHomeVar(script, home) + "\"\n" +
              kBlockEnd + "\n";
     std::ofstream out(rc, std::ios::binary | std::ios::app);
@@ -475,7 +475,7 @@ int installCompletions(CLI::App& app, const CompletionInstallOptions& options) {
 
     if (!any && !options.refresh) {
         std::cout
-            << "no bash, zsh or fish setup found; run `xlang completions <bash|zsh|fish>` and "
+            << "no bash, zsh or fish setup found; run `xl completions <bash|zsh|fish>` and "
                "source its output\n";
     } else if (any && !options.refresh) {
         std::cout << c.dim() << "open a new terminal to use tab completion" << c.reset() << '\n';

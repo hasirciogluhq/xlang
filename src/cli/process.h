@@ -3,8 +3,8 @@
 // Host process spawning: the one place that starts a child program and collects its exit status.
 //
 // POSIX (macOS, Linux) uses `fork`/`execv` and `pipe`/`poll`; Windows uses `CreateProcessW` and
-// `CreatePipe`/`PeekNamedPipe`. The public functions are the same on both, so `xlang run`,
-// `xlang test`, `xlang package` and `xlang self-update` carry no platform branch.
+// `CreatePipe`/`PeekNamedPipe`. The public functions are the same on both, so `xl run`,
+// `xl test`, `xl install` and `xl self-update` carry no platform branch.
 //
 // Internal header: included as `cli/process.h` by `src/cli/*`, `src/pkg/*` and `src/driver/*`.
 
@@ -18,7 +18,7 @@ enum class Stdio {
     /// `hStdOutput`/`hStdError`). stdin is the null device.
     Captured,
     /// The child inherits this process's stdin, stdout and stderr: the interactive form, used by
-    /// `xlang run` and `xlang test`, where the program under test owns the terminal.
+    /// `xl run` and `xl test`, where the program under test owns the terminal.
     Inherited,
 };
 

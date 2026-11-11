@@ -76,12 +76,12 @@ class Xlang < Formula
   end
 
   def install
-    bin.install "xlang"
-    generate_completions_from_executable(bin/"xlang", "completions", shells: [:bash, :zsh, :fish])
+    bin.install "xl"
+    generate_completions_from_executable(bin/"xl", "completions", shells: [:bash, :zsh, :fish])
   end
 
   test do
-    system "#{bin}/xlang", "--help"
+    system "#{bin}/xl", "--help"
   end
 end
 EOF

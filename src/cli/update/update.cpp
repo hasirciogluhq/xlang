@@ -229,7 +229,7 @@ int selfUpdate(const SelfUpdateOptions& options, const std::string& self) {
     if (options.check_only) {
         std::cout << c.boldYellow() << "update available: " << c.reset() << current << " -> "
                   << c.bold() << latest << c.reset() << '\n';
-        note("run `xlang self-update` to install it");
+        note("run `xl self-update` to install it");
         return 0;
     }
 
@@ -286,9 +286,9 @@ int selfUpdate(const SelfUpdateOptions& options, const std::string& self) {
     if (run("tar -xzf " + quote(archive.string()) + " -C " + quote(temp.path.string())) != 0) {
         return fail("could not extract " + asset);
     }
-    const fs::path fresh = temp.path / "xlang";
+    const fs::path fresh = temp.path / "xl";
     if (!fs::exists(fresh)) {
-        return fail("the archive does not contain an `xlang` binary");
+        return fail("the archive does not contain an `xl` binary");
     }
     ::chmod(fresh.c_str(), 0755);
     const Captured smoke = capture(quote(fresh.string()) + " --version");

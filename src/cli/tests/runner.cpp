@@ -180,7 +180,7 @@ select(const std::string& pattern, const std::vector<std::string>& all_files, st
         out.push_back(normalize(pattern));
         return out;
     }
-    // Not a path: a substring of the test file path (`xlang test json`).
+    // Not a path: a substring of the test file path (`xl test json`).
     for (const std::string& f : all_files) {
         if (isTestFile(f) && f.find(pattern) != std::string::npos) {
             out.push_back(f);
@@ -200,7 +200,7 @@ void forwardSignal(int sig) {
 }
 
 /// With `forward` set, SIGINT/SIGTERM/SIGHUP received by this process are passed on to the child,
-/// so killing `xlang run` does not leave the program running (and holding e.g. its listening port).
+/// so killing `xl run` does not leave the program running (and holding e.g. its listening port).
 int runProcess(const std::vector<std::string>& args, bool forward = false) {
     std::vector<char*> argv;
     for (const std::string& a : args) {

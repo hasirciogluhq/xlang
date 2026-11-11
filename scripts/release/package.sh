@@ -5,7 +5,7 @@
 #   version  release version without the leading "v" (e.g. 0.1.0)
 #   os       darwin | linux
 #   arch     amd64 | arm64
-#   binary   path to the built compiler (default: outputs/xlang)
+#   binary   path to the built compiler (default: outputs/xl)
 #
 # Output (in ./dist):
 #   xlang_<version>_<os>_<arch>.tar.gz
@@ -20,7 +20,7 @@ fi
 version="$1"
 os="$2"
 arch="$3"
-binary="${4:-outputs/xlang}"
+binary="${4:-outputs/xl}"
 
 case "$os" in
   darwin | linux) ;;
@@ -45,18 +45,18 @@ stage="$(mktemp -d)"
 trap 'rm -rf "$stage"' EXIT
 
 mkdir -p "$dist"
-cp "$binary" "$stage/xlang"
-chmod 0755 "$stage/xlang"
+cp "$binary" "$stage/xl"
+chmod 0755 "$stage/xl"
 
 # Strip symbols to keep the archive small; non-fatal if strip is unavailable.
 if [ "$os" = "darwin" ]; then
-  strip -x "$stage/xlang" || true
+  strip -x "$stage/xl" || true
 else
-  strip --strip-unneeded "$stage/xlang" || true
+  strip --strip-unneeded "$stage/xl" || true
 fi
 
 archive="$dist/$name.tar.gz"
-tar -C "$stage" -czf "$archive" xlang
+tar -C "$stage" -czf "$archive" xl
 
 if command -v sha256sum >/dev/null 2>&1; then
   hash="$(sha256sum "$archive" | awk '{print $1}')"

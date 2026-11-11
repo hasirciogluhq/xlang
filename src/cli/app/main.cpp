@@ -194,7 +194,7 @@ xlang::BuildConfig toBuildConfig(const BuildCliOptions& o) {
     return config;
 }
 
-/// The build options typed on a subcommand, re-spelled for a `xlang build` child process.
+/// The build options typed on a subcommand, re-spelled for a `xl build` child process.
 std::vector<std::string> forwardBuildArgs(const CLI::App* cmd, const BuildCliOptions& b) {
     std::vector<std::string> a;
     for (const std::string& d : b.defines) {
@@ -369,12 +369,9 @@ int main(int argc, char** argv) {
                           "With install: only rewrite scripts that are already installed");
 
     xlang::cli::PackageOptions package_options;
-    CLI::App* package = app.add_subcommand(
-        "package",
-        "Manage dependencies from git repositories (xlang.toml, xlang.lock, .xlang/cache)");
-    package->require_subcommand(1, 1);
+    // Dependencies from git repositories (xlang.toml, xlang.lock, .xlang/cache): top-level commands.
     const auto packageAction = [&](const char* name, const char* help, const char* specs_help) {
-        CLI::App* c = package->add_subcommand(name, help);
+        CLI::App* c = app.add_subcommand(name, help);
         if (specs_help != nullptr) {
             c->add_option("repositories", package_options.specs, specs_help);
         }
@@ -405,8 +402,6 @@ int main(int argc, char** argv) {
     CLI::App* self_update = app.add_subcommand("self-update",
                                                "Install the latest release for this OS and CPU "
                                                "(reports \"up to date\" when there is none)");
-    self_update->alias("update");
-    self_update->alias("upgrade");
     self_update->add_flag(
         "--check", update_options.check_only, "Only report whether an update exists");
     self_update->add_flag(
@@ -445,13 +440,18 @@ int main(int argc, char** argv) {
             return 0;
         }
 
-        if (package->parsed()) {
-            package_options.action = package_install->parsed()  ? "install"
-                                     : package_update->parsed() ? "update"
-                                     : package_remove->parsed() ? "remove"
-                                     : package_list->parsed()   ? "list"
-                                     : package_clean->parsed()  ? "clean"
-                                                                : "";
+        if (const auto action = {std::pair{package_install, "install"},
+                                 std::pair{package_update, "update"},
+                                 std::pair{package_remove, "remove"},
+                                 std::pair{package_list, "list"},
+                                 std::pair{package_clean, "clean"}};
+            std::ranges::any_of(action, [&](const auto& a) {
+                if (!a.first->parsed()) {
+                    return false;
+                }
+                package_options.action = a.second;
+                return true;
+            })) {
             return xlang::cli::runPackage(package_options);
         }
 

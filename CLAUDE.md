@@ -38,7 +38,7 @@
 
 ## File size
 - No fixed limit: a file is too big when one edit forces reading much unrelated code, when it has more than one responsibility, or when it no longer fits one Read (roughly 1000 lines for dense code). Flat table-like files may be longer.
-- Never edit a too-big file: first split it into cohesive parts (`src/<area>/<topic>_<part>.cpp` plus a shared internal header) as a pure move, update `src/README.md` and `xmake.lua`, then make the change. New code goes into the matching part, never a catch-all.
+- Never edit a too-big file: first split it into cohesive parts (`src/<area>/<topic>_<part>.cpp` plus a shared internal header) as a pure move, update `src/README.md`, then make the change. New code goes into the matching part, never a catch-all.
 
 ## Docs (single source)
 - `xlang-docs/` is the only documentation, published as the GitHub Pages site: `language/`, `compiler/`, `std/` and `known-limitations.md` under `src/content/docs/` (open decisions and intentional incompleteness only). Plain, professional Markdown.
@@ -67,10 +67,10 @@ When the user adds a feature, give an honest assessment without praise: impact (
 - `syscall(nr, args...)` returns `i64` (`-errno` style); the target's argument maximum is checked at compile time.
 - Diagnostics: `E` error, `W` warning, with a code and how to fix; `--allow`/`--deny`/`@allow`/`--explain`.
 - Stdlib is optional (`--no-std`, `--std=<dir|host/user/repo[@tag]>`, `[std]` in `xlang.toml`); features become `featureXxx` constants. Packages are git repositories of `.xl` source (`xlang-docs/compiler/packages.md`): `xlang.toml`, `xlang.lock`, `.xlang/cache`, builds never use the network.
-- `--emit=obj|ir|bc|header|exe|static|shared`. CLI: `xlang build|parse|check|layout|run|test|package|self-update|completions`.
+- `--emit=obj|ir|bc|header|exe|static|shared`. CLI: `xl build|parse|check|layout|run|test|package|self-update|completions`.
 
 ## Build and test
-- `xmake build`; LLVM from `llvm-config`; the stdlib is embedded at build time (`xmake build std` type-checks it; `xlang run --std=xl-std file.xl` runs against the working tree).
+- This repository has no build system (xmake removed): `xl` is the all-in-one tool, the compiler is `xlc` (built in the `xlc/` submodule), and the C++ in `src/` is being rewritten in xlang. Type-check the stdlib with `xlc xl-std/index.xl --check -DfeatureDefaultAllocator=true`.
 - Tests live in `xl-std/test/` (`unit/` `*.test.xl` suites, `e2e/` programs + `tests.txt`) and run with the standalone compiler `xlc` (`-M std=xl-std --import std -DfeatureDefaultAllocator=true`; `xlc --help`). There is no C++ test suite. Suites: `xl-std/test/unit/run.sh [xlc]` and `xmake run e2e` / `xl-std/test/e2e/run.sh [xlc]` (native, Docker, CrossOver for Windows).
 - **Unit tests are platform independent, e2e tests are platform related (hard rule).** `test/unit/*.test.xl` checks code that gives the same result on every OS and CPU: `Vec`, `String`, `Option`, slices, parsing, math, encodings, collections, control flow. It never touches the OS (no files, sockets, processes, clocks, threads, environment). `test/e2e/` holds what depends on the OS or the CPU: sockets, processes, files, threads, entropy, TLS and HTTP, syscalls, the Windows leg. The bulk of the tests are unit tests; the e2e table stays the small, heavy part. A test that needs the host goes to e2e, a logic check never does. The same rule holds in `xlc` (`xlc/CLAUDE.md`).
 - **Test order.** While working, run only the tests of what changed (`xlc xl-std/test/e2e/<name>.xl -M std=xl-std --import std -DfeatureDefaultAllocator=true -o /tmp/t && /tmp/t`). Run each full suite once at the very end and fix what it finds. Tests are small and fast: no sleeps, no needless Docker or network.

@@ -90,7 +90,7 @@ jobs:
           VERSION: ${{ needs.meta.outputs.version }}
         run: |
           set -euo pipefail
-          # `xlang --version` and `xlang self-update` use this value; a mismatch would make a
+          # `xl --version` and `xl self-update` use this value; a mismatch would make a
           # released compiler think it is out of date.
           declared="$(sed -n 's/^local xlang_version = "\(.*\)"$/\1/p' xmake.lua)"
           if [ "$declared" != "$VERSION" ]; then
@@ -161,7 +161,7 @@ jobs:
         run: |
           set -euo pipefail
           chmod +x scripts/release/*.sh
-          scripts/release/package.sh "$VERSION" "$OS" "$ARCH" outputs/xlang
+          scripts/release/package.sh "$VERSION" "$OS" "$ARCH" outputs/xl
 
       - uses: actions/upload-artifact@v4
         with:

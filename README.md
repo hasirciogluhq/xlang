@@ -19,7 +19,7 @@ from "std" import print
 - Structs, classes with single inheritance, interfaces, payload enums, monomorphized generics, tuples, slices, `defer`, `try`/`catch`, hygienic macros.
 - Bounds-checked arrays by default; allocator, panic and unwind are replaceable stdlib functions.
 - Packages are plain git repositories of `.xl` source, pinned by `xlang.lock`; builds never use the network.
-- Coded diagnostics with fixes (`xlang --explain E0709`).
+- Coded diagnostics with fixes (`xl --explain E0709`).
 
 ## Repositories
 
@@ -40,7 +40,7 @@ Prebuilt binaries exist for macOS and Linux (arm64, amd64). The installer verifi
 ```bash
 curl -fsSL https://raw.githubusercontent.com/hasirciogluhq/xlang/main/scripts/install.sh | bash
 brew install hasirciogluhq/tap/xlang      # alternative
-xlang self-update                         # later updates
+xl self-update                         # later updates
 ```
 
 On Windows, use [WSL](https://learn.microsoft.com/windows/wsl/install); the compiler still produces Windows executables (`--target x86_64-pc-windows-msvc`). Shell completion for bash, zsh and fish is set up by every install method. Details: [installation](xlang-docs/src/content/docs/compiler/install.md).
@@ -48,26 +48,20 @@ On Windows, use [WSL](https://learn.microsoft.com/windows/wsl/install); the comp
 ## Usage
 
 ```bash
-xlang run hello.xl                       # build to a temporary file and run
-xlang build app.xl -o app                # executable; --emit=obj|ir|bc|header|static|shared
-xlang build app.xl --target aarch64-apple-darwin -O2
-xlang check app.xl                       # type-check only
-xlang test xl-std/test/unit/             # run *.test.xl suites
-xlang package install github.com/user/repo
-xlang --explain E0709                    # explain a diagnostic code
+xl run hello.xl                       # build to a temporary file and run
+xl build app.xl -o app                # executable; --emit=obj|ir|bc|header|static|shared
+xl build app.xl --target aarch64-apple-darwin -O2
+xl check app.xl                       # type-check only
+xl test xl-std/test/unit/             # run *.test.xl suites
+xl install github.com/user/repo
+xl --explain E0709                    # explain a diagnostic code
 ```
 
 The full CLI, language reference and standard library are documented in [xlang-docs](https://hasirciogluhq.github.io/xlang-docs/).
 
 ## Build from source
 
-Requirements: [xmake](https://xmake.io) 2.8+, a C++23 compiler (C++26 is picked automatically), Clang on `PATH`, and LLVM with `llvm-config` (or `$LLVM_CONFIG`).
-
-```bash
-xmake                     # ./outputs/xlang
-xmake build std           # type-check the standard library with the fresh compiler
-xmake run e2e             # end-to-end programs in xl-std/test/e2e
-```
+The compiler is [`xlc`](https://github.com/hasirciogluhq/xlc) (built there); `xl` is the all-in-one tool. This repository has no build system: the C++ under `src/` is being rewritten in xlang.
 
 The repository layout is described in [src/README.md](src/README.md).
 

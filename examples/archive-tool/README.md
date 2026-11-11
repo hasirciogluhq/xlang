@@ -3,7 +3,7 @@
 Compresses and decompresses files with DEFLATE in its gzip (RFC 1952) and zlib (RFC 1950) wrappers.
 
 ```
-xlang build -o archive-tool examples/archive-tool/main.xl
+xl build -o archive-tool examples/archive-tool/main.xl
 ./archive-tool gzip notes.txt notes.txt.gz
 ./archive-tool gunzip notes.txt.gz notes.out
 ./archive-tool zlib notes.txt notes.zz

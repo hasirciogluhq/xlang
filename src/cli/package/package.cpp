@@ -130,7 +130,7 @@ int run(const PackageOptions& o) {
             throw pkg::PackageError("E0740",
                                     "no xlang.toml found in `" + cwd.generic_string() +
                                         "` or its parents",
-                                    "run `xlang package install <host/user/repo>` in your project "
+                                    "run `xl install <host/user/repo>` in your project "
                                     "directory to create one");
         }
         manifest_file = cwd / pkg::kManifestName;
@@ -207,7 +207,7 @@ int run(const PackageOptions& o) {
         }
     } else if (o.action == "remove") {
         if (o.specs.empty()) {
-            throw pkg::PackageError("E0740", "`xlang package remove` needs a repository path");
+            throw pkg::PackageError("E0740", "`xl remove` needs a repository path");
         }
         for (const std::string& name : o.specs) {
             if (!pkg::removeDependencyText(text, name)) {

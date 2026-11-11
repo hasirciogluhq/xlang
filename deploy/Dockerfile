@@ -1,4 +1,4 @@
-# xlang — production image (xlang build + welcome landing server)
+# xlang — production image (xl build + welcome landing server)
 FROM debian:bookworm-slim AS builder
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
@@ -19,7 +19,7 @@ COPY . .
 RUN mkdir -p /out \
     && xmake f -y -m release \
     && xmake -y \
-    && ./outputs/xlang build deploy/server.xlang -o /out/server
+    && ./outputs/xl build deploy/server.xlang -o /out/server
 
 FROM debian:bookworm-slim AS runner
 
