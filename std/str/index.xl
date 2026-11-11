@@ -1,6 +1,0 @@
-// std/str: the read-only `str` helpers (`str`), the owned growable `String` (`string`) and the
-// placeholder engine (`fmt`).
-export * from "str"
-export * from "compare"
-export * from "string"
-export * from "fmt"

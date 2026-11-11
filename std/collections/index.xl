@@ -1,5 +1,0 @@
-// std/collections: growable containers and the standard sum types. `vec` is the element array
-// `Vec<T>`; `option` and `result` are the two payload enums every fallible API speaks in.
-export * from "vec"
-export * from "option"
-export * from "result"

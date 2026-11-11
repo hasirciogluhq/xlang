@@ -1,3 +1,0 @@
-// std/crypto/kex: key exchange. X25519 is specified in RFC 7748 (https://www.rfc-editor.org/rfc/rfc7748).
-export * from "x25519"
-export * from "x448"

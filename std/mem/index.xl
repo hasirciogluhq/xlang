@@ -1,4 +1,0 @@
-// std/mem: the allocator interface and the default heap (`mem`) and the memory primitives
-// (`memory`: memcpy family, mapped growth, strlen).
-export * from "mem"
-export * from "memory"

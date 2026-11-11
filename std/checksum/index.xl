@@ -1,5 +1,0 @@
-// std/checksum: non-cryptographic checksums and hashes for error detection and hash tables. They are not
-// collision resistant against an attacker: use std/crypto/hash for integrity against tampering.
-export * from "crc"
-export * from "adler"
-export * from "fnv"

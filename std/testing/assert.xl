@@ -1,6 +1,0 @@
-// std/testing/assert: `assert!(cond)`; `panic` is registered, so no import is needed for it.
-export define assert(cond: expr) {
-    if !(cond) {
-        panic("assertion failed")
-    }
-}

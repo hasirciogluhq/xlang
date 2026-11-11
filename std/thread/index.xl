@@ -1,4 +1,0 @@
-// std/thread: OS threads (`thread`), synchronization primitives (`sync`) and the M:N scheduler (`sched`).
-export * from "thread"
-export * from "sync"
-export * from "sched"

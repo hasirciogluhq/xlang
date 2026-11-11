@@ -4,7 +4,7 @@
 - Repo content is English (code, comments, docs, commits, diagnostics). User chat is Turkish.
 
 ## Platforms
-- Every std feature is written for Linux, macOS and Windows (x86-64 and arm64 where the OS supports it). Where an OS cannot support a feature, it is a clear compile-time error or an entry in `docs/known-limitations.md`, never a half-written port.
+- Every std feature is written for Linux, macOS and Windows (x86-64 and arm64 where the OS supports it). Where an OS cannot support a feature, it is a clear compile-time error or an entry in `xlang-docs/known-limitations.md`, never a half-written port.
 - A Windows column of `0` in the e2e table means not yet verified under Wine/CrossOver or on real Windows, not out of scope.
 
 ## Stdlib style (hard rule)
@@ -13,19 +13,20 @@
 - **When the language lacks a form the code needs** (closures, `Vec` iteration, `?`), say so to the user so it can be added to the language, then write the stdlib for it. Do not work around it with clumsy code.
 - **Std API types.** Stdlib signatures (public and internal) never use `str`, `*ui8` + length, or offset pairs for text and bytes: they take `*String` to borrow and return `String` to give, `struct`/`class` for records, `Vec<T>` for lists. A packet or buffer is a `String`. `str` appears only inside `String` and the other base types themselves, and for literals handed to them. A missing `String` operation (view, slice, index, compare) is added to `String`, not worked around with `str`.
 - **Names carry no module prefix** (`slice`, `eq`, `split`, not `strSlice`); the import names the module.
+- **Repository.** `std/` is the `xl-std` git submodule (`hasirciogluhq/xl-std`), an independent repo that only stands as a submodule here and references nothing of this repo. Stdlib changes are committed and pushed inside `std/` first, then the submodule pointer is committed here. Commits in `xl-std` never carry `Co-Authored-By` or "Generated with Claude Code" lines.
 - **Layout.** `std/<area>/<file>.xl` with `std/<area>/index.xl` re-exporting the area (siblings import as `"name"`, parents as `"../name"`). New code goes into the matching area; a new top-level file is only for a new area.
 - **Comments are English and dense**: explain each non-obvious layout, flag, errno and OS difference, and cite the specification (`https://www.rfc-editor.org/rfc/rfcNNNN`, man pages or vendor docs as URLs).
 
 ## Native OS code
 - OS code (syscalls, ntdll/kernel32/ws2_32 imports, handles) lives in `std/sys/`: one file per area (socket, process, file, memory, entropy), routed with `#if os`. Split per OS only when the bodies share nothing. One function for all OSes when the arguments and result match; route with `#if` at the smallest scope.
-- **Docs first.** Before writing or changing a syscall or OS call, read the official docs for every target OS and record the numbers, struct layouts and error behavior in `docs/` first. Never guess.
+- **Docs first.** Before writing or changing a syscall or OS call, read the official docs for every target OS and record the numbers, struct layouts and error behavior in `xlang-docs/` first. Never guess.
 - **OS setup is hidden.** Per-OS one-time state (WSAStartup, SIGPIPE) never reaches the user API; each area has one internal `…Up()` function called by every public creator.
 - A Windows shared library gets a `DllMain` (`DLL_PROCESS_ATTACH` runs `_xl_initAll`, `DLL_PROCESS_DETACH` runs `_xl_finiAll`); the module handle comes from a `std/sys` helper.
 - OS runtime libraries may be linked (`@library("name") declare fn`) on all three OSes. Only stdlib calls them; user code reaches them through stdlib functions. Prefer raw `syscall` where the number is documented and stable; use `@library` where the OS promises the interface through its library (macOS `kevent`).
 - Only reachable code is linked.
 
 ## Compiler vs runtime (hard rule)
-- The compiler owns language semantics, types, layout, CPU primitives and compile-time facts (`sizeOf`, `alignOf`, drop glue). Everything at run time (memory, panic text, I/O, threads, strings, formatting) is stdlib. The compiler must not know a runtime type, interface or method by name. The only seam is a `register(role)` function checked structurally; a new runtime need becomes a new role or stdlib code. If the compiler needs a hook, record it in `docs/known-limitations.md`.
+- The compiler owns language semantics, types, layout, CPU primitives and compile-time facts (`sizeOf`, `alignOf`, drop glue). Everything at run time (memory, panic text, I/O, threads, strings, formatting) is stdlib. The compiler must not know a runtime type, interface or method by name. The only seam is a `register(role)` function checked structurally; a new runtime need becomes a new role or stdlib code. If the compiler needs a hook, record it in `xlang-docs/known-limitations.md`.
 - Closed builtin list: `syscall`, `__builtin_` atomics/fence/asm, `__builtin_read`/`__builtin_write`/`__builtin_drop`/`__builtin_needsDrop`, `__builtin_unwindPads`/`__builtin_unwindPadCount`, `sizeOf`-style, `staticAssert`, `nil`, `MemoryOrder`. `memcpy`, `malloc`/`free`, allocators are stdlib (`std/mem`).
 - Entry symbols (`_start`, `mainCRTStartup`) and `_xl_initAll` are compiler-owned; user symbols with those names are `E0726`.
 
@@ -40,15 +41,16 @@
 - Never edit a too-big file: first split it into cohesive parts (`src/<area>/<topic>_<part>.cpp` plus a shared internal header) as a pure move, update `src/README.md` and `xmake.lua`, then make the change. New code goes into the matching part, never a catch-all.
 
 ## Docs (single source)
-- `docs/` is the only documentation, published as the GitHub Pages site: `language/`, `compiler/`, `std/`, and `known-limitations.md` (open decisions and intentional incompleteness only). Plain, professional Markdown.
-- A new page goes into `docs/_data/nav.yml` and `docs/index.md` in the same change. `src/README.md` is the layout; `std/` is the stdlib; `test/e2e/` holds the only examples.
-- **Every code change updates the affected docs in the same change** (`docs/`, `src/README.md`, doc comments).
+- `xlang-docs/` is the only documentation, published as the GitHub Pages site: `language/`, `compiler/`, `std/`, and `known-limitations.md` (open decisions and intentional incompleteness only). Plain, professional Markdown.
+- A new page goes into `xlang-docs/_data/nav.yml` and `xlang-docs/index.md` in the same change. `src/README.md` is the layout; `std/` is the stdlib; `test/e2e/` holds the only examples.
+- **Every code change updates the affected docs in the same change** (`xlang-docs/`, `src/README.md`, doc comments).
 
 ## Core rules
 - **No backward compatibility on `development`.** When behavior changes, the old form is removed completely from code, tests, examples and docs, with no note about it. No compatibility layers.
+- Never add `Co-Authored-By` trailers or any "Generated with Claude Code" line to commits or PR descriptions, in this repo and its submodules (`xlc/`, `xlang-docs/`, `std/`).
 - Old `.xlang` files, `examples/` and `.cursor/` must not be recreated.
 - `register(role) decl` makes a name global and exported. Roles: `panic`, `alloc`, `free`, `unwind`. One per role per group; group 1 is the stdlib default, a group 2 (user) registration replaces it.
-- Do not invent features: record decisions in `docs/known-limitations.md` or ask. Do not re-ask closed topics.
+- Do not invent features: record decisions in `xlang-docs/known-limitations.md` or ask. Do not re-ask closed topics.
 - **File edits use the built-in Read/Edit/Write tools, always.** No `python`, `sed`, `awk`, `perl` or shell redirection to replace or write text in a file. The only exception is a mechanical bulk update that touches the same import/export line in many files (a module rename). Bash is for build, run, inspect, and moving or deleting whole files.
 
 ## Feature assessment
@@ -64,7 +66,7 @@ When the user adds a feature, give an honest assessment without praise: impact (
 - Modules: `"x"` → `x.xl` or `x/index.xl`; `from "m" import x` and `import x from "m"`; `import *`; re-exports. Two exports of one name are an error; the same entity via two paths warns `W0401`.
 - `syscall(nr, args...)` returns `i64` (`-errno` style); the target's argument maximum is checked at compile time.
 - Diagnostics: `E` error, `W` warning, with a code and how to fix; `--allow`/`--deny`/`@allow`/`--explain`.
-- Stdlib is optional (`--no-std`, `--std=<dir|host/user/repo[@tag]>`, `[std]` in `xlang.toml`); features become `featureXxx` constants. Packages are git repositories of `.xl` source (`docs/compiler/packages.md`): `xlang.toml`, `xlang.lock`, `.xlang/cache`, builds never use the network.
+- Stdlib is optional (`--no-std`, `--std=<dir|host/user/repo[@tag]>`, `[std]` in `xlang.toml`); features become `featureXxx` constants. Packages are git repositories of `.xl` source (`xlang-docs/compiler/packages.md`): `xlang.toml`, `xlang.lock`, `.xlang/cache`, builds never use the network.
 - `--emit=obj|ir|bc|header|exe|static|shared`. CLI: `xlang build|parse|check|layout|run|test|package|self-update|completions`.
 
 ## Build and test

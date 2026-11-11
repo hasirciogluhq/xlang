@@ -1,4 +1,0 @@
-// std/net: network primitives. The blocking IPv4 resolver `dns`, and the wire formats of `proto` (NTP, syslog, SOCKS5); TCP, UDP and IP
-// commands are planned here (see docs/known-limitations.md).
-export * from "dns"
-export * from "proto"

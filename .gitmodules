@@ -1,0 +1,12 @@
+[submodule "xlang-docs"]
+	path = xlang-docs
+	url = https://github.com/hasirciogluhq/xlang-docs.git
+	branch = main
+[submodule "xlc"]
+	path = xlc
+	url = https://github.com/hasirciogluhq/xlc.git
+	branch = main
+[submodule "std"]
+	path = std
+	url = https://github.com/hasirciogluhq/xl-std.git
+	branch = main
