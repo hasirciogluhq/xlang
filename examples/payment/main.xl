@@ -1,0 +1,62 @@
+import println from "std/io"
+import String from "std/str/string"
+
+interface IProvider {
+    fn updateName(name: String)
+    fn getName() -> *String
+    fn pay(amount: i32, plan: String)
+}
+
+class CProvider {
+    name: String
+
+    fn setName(self, name: String) {
+        self.name = name
+    }
+}
+
+impl IProvider for CProvider {
+    fn pay(self, amount: i32, plan: String) {
+        println("{}$ paid via {}", amount, self.name.asStr())
+        println("{}", self.name.asStr())
+    }
+
+    fn updateName(self, n: String) {
+        self.setName(n)
+    }
+
+    fn getName(self) -> *String {
+        return &self.name
+    }
+}
+
+fn LoadProvider(n: String) -> CProvider {
+    local p := CProvider()
+    p.updateName(n)
+    return p
+}
+
+fn Pay(p: IProvider, a: i32, pl: String) {
+    p.pay(a, pl)
+}
+
+fn process() -> *ui64 {
+    local stripe := LoadProvider(String("Stripe"))
+    local paypal := LoadProvider(String("PayPal"))
+    local brainTree := LoadProvider(String("BrainTree"))
+
+    local name := stripe.getName()
+
+    Pay(stripe, 3, String("Poor"))
+    Pay(paypal, 20, String("Pro"))
+    Pay(brainTree, 300, String("Legend"))
+
+    return &stripe as *ui64
+}
+
+@entry fn main() {
+    local address := process()
+
+    // dangling pointer
+    println("address: 0x{}", address as usize)
+}
