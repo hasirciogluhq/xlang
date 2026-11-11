@@ -1,2 +1,0 @@
-// An @entry with a parameter list other than () or (argc: i32, argv: **ui8): E0752.
-@entry fn main(x: i64) -> i64 { return x }

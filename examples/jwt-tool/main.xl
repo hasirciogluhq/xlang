@@ -3,7 +3,7 @@
 //   jwt-tool verify-hs256 <secret> <token>           exit 0 when the signature and the alg (HS256) are valid
 //   jwt-tool verify-jwk <alg> <key.jwk> <token>      alg is RS256, ES256 or EdDSA; the key is a JSON Web Key (RFC 7517)
 //   jwt-tool thumbprint <key.jwk>                    the RFC 7638 thumbprint of the key
-// Signature checks only: claims such as exp and aud are read by the caller (see docs/std/auth.md).
+// Signature checks only: claims such as exp and aud are read by the caller (see xlang-docs/std/auth.md).
 from "std" import print, String, fromC, fromParts, eq, strlen, fsReadAll, jwtSignHs256, jwtVerifyHs256, jwtVerifyWithJwk, jwkThumbprintSha256
 from "std/mem" import currentAllocator
 

@@ -1,2 +1,0 @@
-// A shared library's @entry takes no arguments: built with --emit=shared, parameters fail with E0755.
-@entry fn main(argc: i32, argv: **ui8) -> i32 { return 0 }

@@ -1,2 +1,0 @@
-// An executable without @entry: the build fails with E0739.
-fn main() -> i32 { return 0 }

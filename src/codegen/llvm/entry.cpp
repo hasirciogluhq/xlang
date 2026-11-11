@@ -39,7 +39,7 @@ const hir::Function* Gen::entryDecl() const {
 void Gen::emitSharedHooks(llvm::Function* init_all, llvm::Function* fini_all) {
     // Hidden, so no other image's hook can interpose these. The loader runs the load hook when the
     // library is mapped (`@init`, then the `@entry` if the library has one) and the unload hook
-    // when it is torn down (`@fini`). Windows DLLs have no hook yet: see docs/known-limitations.md
+    // when it is torn down (`@fini`). Windows DLLs have no hook yet: see xlang-docs/known-limitations.md
     // (DllMain).
     init_all->setVisibility(llvm::GlobalValue::HiddenVisibility);
     fini_all->setVisibility(llvm::GlobalValue::HiddenVisibility);

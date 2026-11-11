@@ -1,7 +1,7 @@
 # Examples
 
 Complete programs. Each directory holds a `main.xl` and this kind of README: what it does, how to build and run it.
-The short programs that the documentation shows are in `docs/examples/` (see the Examples page of the documentation site).
+The short programs that the documentation shows are in `xlang-docs/examples/` (see the Examples page of the documentation site).
 
 Build one with the compiler, for example:
 

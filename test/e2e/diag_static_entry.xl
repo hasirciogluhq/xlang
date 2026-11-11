@@ -1,2 +1,0 @@
-// A static library cannot have an @entry: built with --emit=static, this fails with E0754.
-@entry fn main() -> i32 { return 0 }

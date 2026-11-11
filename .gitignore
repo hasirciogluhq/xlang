@@ -36,5 +36,5 @@ out
 .xlang/
 # Jekyll build output and cache (the Pages workflow builds in CI; local builds write here)
 _site/
-docs/.jekyll-cache/
-docs/.sass-cache/
+xlang-docs/.jekyll-cache/
+xlang-docs/.sass-cache/

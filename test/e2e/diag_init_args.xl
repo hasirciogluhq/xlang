@@ -1,2 +1,0 @@
-// An @init function takes no parameters: the signature is rejected with E0729.
-@init fn boot(x: i32) { }

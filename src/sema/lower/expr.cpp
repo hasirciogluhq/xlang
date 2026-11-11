@@ -208,7 +208,7 @@ Lowerer::EP Lowerer::constExpr(const Expr& e, const Type* expected) {
     return v ? fromConst(*v, expected, e.span) : nullptr;
 }
 
-/// A string literal takes its type from the context (see docs/language/index.md, "Strings"):
+/// A string literal takes its type from the context (see xlang-docs/language/index.md, "Strings"):
 /// `*ui8` (raw NUL-terminated bytes), `[ui8; N]` (a mutable zero-padded copy) or `str`.
 Lowerer::EP
 Lowerer::stringLiteral(const std::string& text, const Type* expected, const Span& span) {

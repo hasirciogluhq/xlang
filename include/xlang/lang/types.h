@@ -26,7 +26,7 @@ enum class TypeKind {
     Interface,
     Str,      ///< built-in immutable view `{ ptr: *ui8, len: usize }`; never owns its bytes
     Slice,    ///< `[]T` / `[]mut T`: a non-owning fat pointer `{ ptr: *T, len: usize }` over `elem`;
-              ///< `is_mutable` tells the two views apart (see docs/language/index.md)
+              ///< `is_mutable` tells the two views apart (see xlang-docs/language/index.md)
     Tuple,    ///< `(A, B, ...)`: the product of `args` in declaration order; laid out like `@repr(c)`
     Named,    ///< unresolved reference to a user type or alias; sema resolves it to one of the above
 };

@@ -49,7 +49,7 @@ namespace gen_detail {
     return !in.only_module || *in.only_module == key;
 }
 
-/// `MemoryOrder` member index -> LLVM atomic ordering (see docs/language for the enum).
+/// `MemoryOrder` member index -> LLVM atomic ordering (see xlang-docs/language for the enum).
 [[nodiscard]] inline llvm::AtomicOrdering orderingOf(std::uint32_t order) {
     switch (order) {
     case 1:
@@ -194,7 +194,7 @@ class Gen {
     std::vector<LoopTargets> loops_; ///< enclosing loops, innermost last
     bool failed_{false};
 
-    // ---- unwinding (landing pads and `try`): see docs/language/index.md "Panics and `try`"
+    // ---- unwinding (landing pads and `try`): see xlang-docs/language/index.md "Panics and `try`"
     struct PadEntry {
         llvm::Function* fn;
         llvm::BasicBlock* pad; ///< null = the function has no cleanups

@@ -5,7 +5,7 @@ namespace xlang::codegen {
 using gen_detail::hasTerminator;
 using gen_detail::isUnknownType;
 
-// Unwinding (landing pads and `try`): see docs/language/index.md "Panics and `try`".
+// Unwinding (landing pads and `try`): see xlang-docs/language/index.md "Panics and `try`".
 
 // ---------------------------------------------------------------------------------------------
 // Unwinding: landing pads and `try`
