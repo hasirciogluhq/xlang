@@ -10,3 +10,7 @@
 	path = xl-std
 	url = https://github.com/hasirciogluhq/xl-std.git
 	branch = main
+[submodule "xl-vscode"]
+	path = xl-vscode
+	url = https://github.com/hasirciogluhq/xl-vscode.git
+	branch = main
