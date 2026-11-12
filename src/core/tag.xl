@@ -46,8 +46,8 @@ fn specNumbers(spec: *String) -> Result<Vec<u64>, Problem> {
         if p.length() == 0 || (p.length() > 1 && p.startsWith("0")) { return bad(spec) }
         local n: u64 = 0
         for c in p.asStr() {
-            if *c < 48 || *c > 57 { return bad(spec) }
-            n = n * 10 + (*c - 48) as u64
+            if c < b'0' || c > b'9' { return bad(spec) }
+            n = n * 10 + (c - b'0') as u64
         }
         want.push(n)
     }

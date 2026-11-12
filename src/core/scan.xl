@@ -112,8 +112,8 @@ fn bareChar(c: u8) -> bool {
 export fn quote(s: *String) -> String {
     local out = String("\"")
     for c in s.asStr() {
-        if *c == 34 || *c == 92 { out.push(92) }
-        out.push(*c)
+        if c == b'"' || c == b'\\' { out.push(b'\\') }
+        out.push(c)
     }
     out.push(34)
     return out
