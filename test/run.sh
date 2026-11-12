@@ -156,7 +156,8 @@ printf 'export fn answer() -> i32 { return 11 }\n' >"$repos/a/index.xl"
 commit "$repos/a" v1.1.0
 git -C "$repos/b" init -q
 printf 'from "example.com/t/a" import answer\nexport fn twice() -> i32 { return answer() * 2 }\n' >"$repos/b/index.xl"
-printf '[dependencies]\n"example.com/t/a" = { version = "v1.0.0", source = "%s" }\n' "$(native "$repos/a")" >"$repos/b/xlang.toml"
+# CRLF line ends, as Git for Windows checks files out with core.autocrlf: TOML accepts both.
+printf '[dependencies]\r\n"example.com/t/a" = { version = "v1.0.0", source = "%s" }\r\n' "$(native "$repos/a")" >"$repos/b/xlang.toml"
 commit "$repos/b" v0.1.0
 
 app="$work/app"

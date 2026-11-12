@@ -16,9 +16,10 @@ export class Scan {
     fn more(self) -> bool { return self.at < self.text.length() }
     fn peek(self) -> u8 { return self.more() ? self.text.at(self.at) : 0 }
 
-    /// Skips spaces and tabs.
+    /// Skips spaces, tabs and a carriage return: lines are split at `\n`, and TOML also ends a line with CRLF (a file checked out
+    /// by Git for Windows with `core.autocrlf`).
     fn blank(self) {
-        while self.peek() == 32 || self.peek() == 9 { self.at++ }
+        while self.peek() == 32 || self.peek() == 9 || self.peek() == 13 { self.at++ }
     }
 
     /// Consumes `c` after blanks; false (and nothing consumed) when the next character is another one.
