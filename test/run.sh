@@ -107,6 +107,8 @@ run "$xl" help
 expect "help" 0 "usage: xl <command>"
 run "$xl" nonsense
 expect "unknown command" 2 "unknown command"
+run "$xl" run --help
+expect "command help needs no toolchain" 0 "usage: xl run"
 
 mkdir -p "$work/hello"
 cat >"$work/hello/main.xl" <<'EOF'
