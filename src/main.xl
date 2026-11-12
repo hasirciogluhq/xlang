@@ -9,6 +9,26 @@ from "lc/command" import lcMain
 from "build/command" import checkMain, buildMain, runMain, envMain
 from "self/command" import selfUpdateMain
 
+define BUILD_NOTES = "Flags are xlc's own (`xlc --help`: -O2, -o out, --emit=obj, -D NAME=VALUE, --target, ...) and pass through\nunchanged; --std=<dir> replaces the stdlib. Without a file, main.xl of the project root (the directory of the nearest\nxlang.toml) or of the current directory is used. Builds never touch the network. XL_VERBOSE=1 prints the xlc command line."
+define CHECK_HELP = "usage: xl check [flags] [file.xl] [flags]\n\nType-checks a program with the project's stdlib and packages; writes nothing.\n"
+define BUILD_HELP = "usage: xl build [flags] [file.xl] [flags]\n\nBuilds an executable next to the file (or what --emit asks for) with the project's stdlib and packages.\n"
+define RUN_HELP = "usage: xl run [flags] [file.xl] [program arguments...]\n       xl run [flags] -- [program arguments...]\n\nBuilds the program into a temporary directory and runs it; everything after the file or `--` goes to the\nprogram, and its exit status becomes xl's.\n"
+define ENV_HELP = "usage: xl env [--json] [--std=<dir>] [file.xl]\n\nPrints the compiler, stdlib, package roots and flags a build of the file uses, and why a build could not start.\n--json prints one object for editors and scripts (xlang-docs: compiler/cli)."
+define SELF_UPDATE_HELP = "usage: xl self-update [tag] [--check] [--force]\n\nReplaces this xl with the newest release (or the given tag) of hasirciogluhq/xlang after checking its checksum.\nA pre-release xl follows pre-releases. --check only reports; --force reinstalls or downgrades."
+
+/// `xl <command> --help` of the commands that have no subcommands (`pkg` and `lc` print their own); false for any other command.
+fn commandHelp(cmd: *String) -> bool {
+    local pages = [("check", CHECK_HELP), ("build", BUILD_HELP), ("run", RUN_HELP), ("env", ENV_HELP), ("self-update", SELF_UPDATE_HELP)]
+    for p in pages {
+        local (name, text) = *p
+        if !cmd.equals(name) { continue }
+        println(text)
+        if !cmd.equals("env") && !cmd.equals("self-update") { println(BUILD_NOTES) }
+        return true
+    }
+    return false
+}
+
 fn usage() {
     println("xl {}: the xlang tool", VERSION)
     println("")
@@ -35,6 +55,7 @@ fn usage() {
     local cmd = all.get(1).clone()
     local rest: Vec<String> = Vec<String>()
     for a, i in all { if i > 1 { rest.push(a.clone()) } }
+    if !rest.isEmpty() && (rest.get(0).equals("--help") || rest.get(0).equals("-h")) && commandHelp(&cmd) { return 0 }
     if cmd.equals("help") || cmd.equals("--help") || cmd.equals("-h") {
         usage()
         return 0
