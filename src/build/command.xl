@@ -163,9 +163,8 @@ fn env(args: *Vec<String>) -> Result<i32, Problem> {
     local rest: Vec<String> = Vec<String>()
     for a in args { if a.equals("--json") { json = true } else { rest.push(a.clone()) } }
     local r = requestOf(&rest, false)?
-    for extra in [&r.flags, &r.inputs] {
-        if !extra.isEmpty() { return fail<i32>("E0740", format("unexpected argument `{}`", extra.get(0)), String("xl env [--json] [--std=<dir>] [file.xl]")) }
-    }
+    for i in r.inputs { r.flags.push(i.clone()) }
+    if !r.flags.isEmpty() { return fail<i32>("E0740", format("unexpected argument `{}`", r.flags.get(0)), String("xl env [--json] [--std=<dir>] [file.xl]")) }
     local file = rootFile(&r)?
     local absolute = files.absolute(&file)
     local s = setupOf(&absolute, &r.std)?
