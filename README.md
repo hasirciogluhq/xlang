@@ -47,6 +47,16 @@ irm https://github.com/hasirciogluhq/xlang/releases/download/v1.0.0-rc.2/install
 
 `bash -s -- --version latest-rc` (or `latest-stable`, or a tag) picks another release.
 
+To remove xlang, including what older versions installed, run the uninstall script from the `development` branch. It lists what it finds and asks what to remove:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/hasirciogluhq/xlang/development/scripts/uninstall.sh | bash
+```
+
+```powershell
+irm https://raw.githubusercontent.com/hasirciogluhq/xlang/development/scripts/uninstall.ps1 | iex   # Windows
+```
+
 The compiler links with LLVM's `lld`, which must be on `PATH`. Details: [installation](xlang-docs/src/content/docs/compiler/install.md).
 
 ## Usage
