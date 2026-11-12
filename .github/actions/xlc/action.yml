@@ -30,13 +30,15 @@ runs:
         WANT: ${{ inputs.version }}
       run: |
         set -euo pipefail
+        # A release tag: v1.2.3 with an optional -suffix. `gh api` prints the error body of a 404 on stdout, so anything else is no tag.
+        is_tag() { [[ "$1" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]]; }
         tag=$WANT
         if [ -z "$tag" ]; then
           # `releases/latest` never returns a pre-release and answers 404 while there is none; the list is newest first.
           tag=$(gh api repos/hasirciogluhq/xlc/releases/latest --jq .tag_name 2>/dev/null || true)
-          [ -n "$tag" ] || tag=$(gh api 'repos/hasirciogluhq/xlc/releases?per_page=100' --jq '[.[] | select(.draft | not)] | first | .tag_name // empty')
+          is_tag "$tag" || tag=$(gh api 'repos/hasirciogluhq/xlc/releases?per_page=100' --jq '[.[] | select(.draft | not)] | first | .tag_name // empty')
         fi
-        [ -n "$tag" ] || { echo "error: hasirciogluhq/xlc has no release" >&2; exit 1; }
+        is_tag "$tag" || { echo "error: no usable release of hasirciogluhq/xlc (got '$tag')" >&2; exit 1; }
         echo "tag=$tag" >>"$GITHUB_OUTPUT"
         echo "xlc $tag" >>"$GITHUB_STEP_SUMMARY"
 

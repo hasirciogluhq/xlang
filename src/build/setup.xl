@@ -1,0 +1,181 @@
+// The build environment of one source file: the compiler, the stdlib, the module roots and the extra compiler flags. `xl check`,
+// `xl build` and `xl run` hand it to xlc; `xl env` prints it, so editors resolve imports exactly as a build does
+// (xlang-docs/compiler/cli.md "xl env").
+//
+// Each layer replaces what it names, lowest first:
+//   1. the active toolchain (`xl lc`, $XLANG_HOME/toolchain.toml);
+//   2. `xlang.toml`: one `-M <repository>=<dir>` per package: each `xlang.lock` entry maps to its cache directory, each `path`
+//      dependency to its directory;
+//   3. `xlang.local.toml` next to it: one developer's overrides, never committed (xlang-docs/compiler/packages.md
+//      "xlang.local.toml"):
+//          [toolchain]
+//          xlc = "../xlc/build/macosx/arm64/release/xlc"     # a compiler binary
+//          std = "../xl-std"                                  # a stdlib directory
+//          [modules]
+//          "github.com/user/repo" = "../repo"                 # a checkout in place of a package, or one more root
+//          [build]
+//          flags = ["--safety=unchecked"]                     # appended to every xlc call
+//      Paths that start with `./` or `../` are relative to the file;
+//   4. `$XLC` and `$XLANG_STD`;
+//   5. `--std=<dir>` on the command line.
+from "std" import String, Vec, Option, Result, split, format, fsReadAllString, files
+from "../core/problem" import Problem, Done, done, fail
+from "../core/host" import join, parent
+from "../core/scan" import Scan
+from "../lc/toolchain" import Toolchain, active, applyEnvironment, usable
+from "../pkg/manifest" import findManifest, load
+from "../pkg/lock" import loadLock
+from "../pkg/resolve" import packageDir, relative
+
+export define LOCAL_FILE = "xlang.local.toml"
+
+/// One `-M <name>=<dir>` pair: `import "<name>"` and `import "<name>/sub"` resolve inside `dir`.
+export class Root {
+    name: String
+    dir: String
+
+    fn init(self, name: *String, dir: *String) {
+        self.name = name.clone()
+        self.dir = dir.clone()
+    }
+}
+
+export class Setup {
+    project: String         // the directory of xlang.toml; empty outside a project
+    tools: Toolchain
+    roots: Vec<Root>        // the packages, `std` not included
+    flags: Vec<String>      // `[build] flags` of xlang.local.toml
+    missing: Vec<String>    // dependencies the cache lacks
+
+    /// Adds `name=dir`, or points an existing `name` at `dir`.
+    fn map(self, name: *String, dir: *String) {
+        for r in self.roots {
+            if r.name.equals(name) {
+                r.dir = dir.clone()
+                return
+            }
+        }
+        self.roots.push(Root(name, dir))
+    }
+
+    /// E0790 without a usable compiler and stdlib, E0741 when a package is not installed.
+    fn ready(self) -> Done {
+        usable(&self.tools)?
+        if !self.missing.isEmpty() {
+            return fail<bool>("E0741", format("{} is not installed", self.missing.get(0)), String("run `xl pkg install`"))
+        }
+        return done()
+    }
+
+    /// Every xlc argument but the source file: the stdlib, the module roots, the stdlib's features and the local flags.
+    fn arguments(self) -> Vec<String> {
+        local out: Vec<String> = Vec<String>()
+        out.push(String("-M"))
+        out.push(format("std={}", &self.tools.std))
+        out.push(String("--import"))
+        out.push(String("std"))
+        out.push(String("-DfeatureDefaultAllocator=true"))
+        for r in self.roots {
+            out.push(String("-M"))
+            out.push(format("{}={}", &r.name, &r.dir))
+        }
+        for f in self.flags { out.push(f.clone()) }
+        return out
+    }
+}
+
+/// The environment of `file`; `std` (from `--std=<dir>`) replaces the stdlib when it is not empty. Packages the cache lacks are
+/// listed in `missing` rather than failing, so `xl env` can report a project that is not installed yet.
+export fn setupOf(file: *String, std: *String) -> Result<Setup, Problem> {
+    local s = Setup()
+    s.tools = active()
+    local absolute = files.absolute(file)
+    local dir = parent(&absolute)
+    switch findManifest(&dir) {
+        case Option.Some(m) {
+            s.project = parent(&m)
+            mapPackages(&s, &m)?
+            applyLocal(&s)?
+        }
+        case Option.None { }
+    }
+    applyEnvironment(&s.tools)
+    local none = String()
+    s.tools.replace(&none, std)
+    return Result.Ok(s)
+}
+
+/// The packages of the manifest `path`: `path` dependencies, then every locked package.
+fn mapPackages(s: *Setup, path: *String) -> Done {
+    local m = load(path, true)?
+    local lockFile = join(&s.project, "xlang.lock")
+    local lock = loadLock(&lockFile)?
+    for d in m.deps {
+        if d.onDisk() {
+            local at = relative(&s.project, &d.path)
+            s.map(&d.name, &at)
+        } else if lock.find(&d.name) < 0 {
+            s.missing.push(d.name.clone())
+        }
+    }
+    for e in lock.entries {
+        local at = packageDir(&s.project, &e.name, &e.version)
+        if files.isDir(&at) { s.map(&e.name, &at) } else { s.missing.push(e.name.clone()) }
+    }
+    return done()
+}
+
+/// `xlang.local.toml` of the project over `s`; nothing when there is no such file. E0740 for a line it cannot read.
+fn applyLocal(s: *Setup) -> Done {
+    local file = join(&s.project, LOCAL_FILE)
+    if !files.exists(&file) { return done() }
+    local text = fsReadAllString(file.cstr())
+    local table = String()
+    for line, i in split(text.asStr(), "\n") {
+        local scan = Scan(line)
+        if scan.end() { continue }
+        if scan.eat(91) {
+            switch scan.key() {
+                case Option.Some(k) { table = k.clone() }
+                case Option.None { return badLocal(&file, i, line) }
+            }
+            if !scan.eat(93) || !scan.end() { return badLocal(&file, i, line) }
+            continue
+        }
+        local key = String()
+        switch scan.key() {
+            case Option.Some(k) { key = k.clone() }
+            case Option.None { return badLocal(&file, i, line) }
+        }
+        if !scan.eat(61) { return badLocal(&file, i, line) }
+        if table.equals("build") && key.equals("flags") {
+            switch scan.strings() {
+                case Option.Some(list) { for f in list { s.flags.push(f.clone()) } }
+                case Option.None { return badLocal(&file, i, line) }
+            }
+        } else {
+            local value = String()
+            switch scan.string() {
+                case Option.Some(v) { value = relative(&s.project, &v) }
+                case Option.None { return badLocal(&file, i, line) }
+            }
+            local none = String()
+            if table.equals("modules") {
+                s.map(&key, &value)
+                s.missing.retain(|name: *String| !name.equals(&key))
+            } else if table.equals("toolchain") && key.equals("xlc") {
+                s.tools.replace(&value, &none)
+            } else if table.equals("toolchain") && key.equals("std") {
+                s.tools.replace(&none, &value)
+            } else {
+                return badLocal(&file, i, line)
+            }
+        }
+        if !scan.end() { return badLocal(&file, i, line) }
+    }
+    return done()
+}
+
+fn badLocal(file: *String, line: usize, text: *String) -> Done {
+    return fail<bool>("E0740", format("{}:{}: `{}` is not a setting of xlang.local.toml", file, line + 1, text), String("use [toolchain] xlc/std, [modules] \"<name>\" = \"<dir>\" or [build] flags = [...]; see xlang-docs compiler/packages"))
+}

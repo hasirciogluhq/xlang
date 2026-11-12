@@ -1,0 +1,240 @@
+// `xl check`, `xl build`, `xl run`: the compiler `xlc` with the project's stdlib and packages mapped in
+// (xlang-docs/compiler/cli.md).
+//
+//   xl check [flags] [file.xl]
+//   xl build [flags] [file.xl]
+//   xl run   [flags] [file.xl] [program arguments...]
+//   xl run   [flags] [-- program arguments...]
+//
+// Flags are xlc's own (`-O2`, `-o out`, `--emit=obj`, `-D NAME=V`, ...) and pass through unchanged, plus `--std=<dir>`, which
+// replaces the toolchain's stdlib; `check` and `build` also take them after the file. Without a file, `main.xl` of the project root (the directory of the nearest `xlang.toml`) or of
+// the current directory is built. For `run`, everything after the file, or after `--`, goes to the program as its arguments; the
+// program's exit status becomes xl's.
+//
+// Every build gets the environment of build/setup.xl: `-M std=<stdlib> --import std -DfeatureDefaultAllocator=true`, one
+// `-M <repository>=<dir>` per package, and the flags of `xlang.local.toml`. Builds never use the network; a package missing from
+// the cache is E0741.
+//
+//   xl env [--json] [--std=<dir>] [file.xl]
+//
+// prints that environment instead of building, for editors and scripts.
+from "std" import String, Vec, Option, Result, JsonWriter, println, format, files
+from "std/os/process" import id as processId
+from "../core/problem" import Problem, Done, done, fail, finish, report
+from "../core/host" import join, joinS, parent, variable, exe
+from "../core/proc" import Line, call
+from "../pkg/manifest" import findManifest
+from "setup" import Setup, setupOf
+
+/// xlc options that take their value as the next argument (`-o out`); `--name=value` and `-O2` are one argument.
+/// Space-separated and space-framed, so a lookup is one `contains` of ` <flag> `.
+define VALUE_FLAGS = " -o --output --emit -M --module-root --import -D --define -U --undef --target -O --cpu --mangle --safety --cache-dir --layout-scheme --layout-history --allow --deny --context --context-errors --context-warnings --diag-log --diag-format --diag-log-level --color --dump-layout "
+
+/// A command line split into its parts.
+class Request {
+    file: String            // the program root; empty for the default
+    flags: Vec<String>      // passed to xlc
+    std: String             // `--std=<dir>`; empty for the toolchain's
+    args: Vec<String>       // the program's arguments (`run`)
+}
+
+fn takesValue(flag: *String) -> bool {
+    local framed = format(" {} ", flag)
+    return String(VALUE_FLAGS).contains(framed.asStr())
+}
+
+/// Splits `args` into flags, the file and, for `run`, the program's arguments: everything after the file or `--`. `check` and
+/// `build` take flags on both sides of the file (`xl build app.xl -o app`).
+fn requestOf(args: *Vec<String>, run: bool) -> Result<Request, Problem> {
+    local r = Request()
+    local at: usize = 0
+    while at < args.length() {
+        local a = args.get(at).clone()
+        at++
+        if a.equals("--") && run { break }
+        if a.startsWith("--std=") {
+            r.std = a.slice(6, a.length() - 6)
+        } else if a.startsWith("-") && !a.equals("--") {
+            r.flags.push(a.clone())
+            if takesValue(&a) && at < args.length() {
+                r.flags.push(args.get(at).clone())
+                at++
+            }
+        } else if a.endsWith(".xl") && r.file.length() == 0 {
+            r.file = a
+            if run { break }
+        } else if run {
+            return fail<Request>("E0740", format("`{}` is neither a flag nor an .xl file", &a), String("name the program root, e.g. `xl run main.xl`; program arguments go after it or after `--`"))
+        } else {
+            return fail<Request>("E0740", format("unexpected argument `{}`", &a), String("check and build take flags and one .xl file; only `xl run` passes arguments to a program"))
+        }
+    }
+    for i in at..args.length() { r.args.push(args.get(i).clone()) }
+    return Result.Ok(r)
+}
+
+/// The program root: the named file, or `main.xl` of the project root or the current directory.
+fn rootFile(r: *Request) -> Result<String, Problem> {
+    if r.file.length() > 0 {
+        if !files.exists(&r.file) { return fail<String>("E0711", format("{} does not exist", &r.file), String("check the path")) }
+        return Result.Ok(r.file.clone())
+    }
+    local cwd = files.currentDir()
+    switch findManifest(&cwd) {
+        case Option.Some(m) {
+            local root = parent(&m)
+            local main = join(&root, "main.xl")
+            if files.exists(&main) { return Result.Ok(main) }
+        }
+        case Option.None { }
+    }
+    local main = join(&cwd, "main.xl")
+    if files.exists(&main) { return Result.Ok(main) }
+    return fail<String>("E0711", String("no main.xl in the project root or the current directory"), String("name the file to build: `xl build path/to/file.xl`"))
+}
+
+/// The xlc command line for `file`: the file, its build environment (build/setup.xl), then the caller's flags.
+fn compileLine(r: *Request, file: *String) -> Result<Line, Problem> {
+    local s = setupOf(file, &r.std)?
+    s.ready()?
+    local l = Line(&s.tools.xlc)
+    l.addS(file)
+    for a in s.arguments() { l.addS(a) }
+    for f in r.flags { l.addS(f) }
+    return Result.Ok(l)
+}
+
+/// Runs xlc; its own diagnostics are the output, so a failed compile is only its exit status.
+fn compile(l: *Line) -> Result<i32, Problem> {
+    if variable("XL_VERBOSE").length() > 0 {
+        local text = l.text()
+        println("xl: {}", &text)
+    }
+    return call(l, "E0790")
+}
+
+fn checkOrBuild(args: *Vec<String>, check: bool) -> Result<i32, Problem> {
+    local r = requestOf(args, false)?
+    local file = rootFile(&r)?
+    local l = compileLine(&r, &file)?
+    if check { l.add("--check") }
+    return compile(&l)
+}
+
+/// A private directory for the executable of `xl run`, removed after the program ends.
+fn runDir() -> String {
+    #if os == "windows"
+    local tmp = variable("TEMP")
+    #else
+    local tmp = variable("TMPDIR")
+    if tmp.length() == 0 { tmp = String("/tmp") }
+    #endif
+    local leaf = format("xl-run-{}", processId())
+    return joinS(&tmp, &leaf)
+}
+
+fn run(args: *Vec<String>) -> Result<i32, Problem> {
+    local r = requestOf(args, true)?
+    local file = rootFile(&r)?
+    local l = compileLine(&r, &file)?
+    local dir = runDir()
+    files.removeAll(&dir)
+    if !files.makeDirAll(&dir) { return fail<i32>("E0740", format("could not create {}", &dir), String("check TMPDIR")) }
+    defer files.removeAll(&dir)
+    local name = exe("program")
+    local program = joinS(&dir, &name)
+    l.add("-o").addS(&program)
+    local built = compile(&l)?
+    if built != 0 { return Result.Ok(built) }
+    local p = Line(&program)
+    for a in r.args { p.addS(a) }
+    local code = call(&p, "E0740")?
+    return Result.Ok(code < 0 ? 1 : code)
+}
+
+/// `xl env [--json] [--std=<dir>] [file.xl]`: the environment a build of the file would use. A project that is not ready (no
+/// toolchain, a package not installed) is reported, not a failure, because editors ask for any file they open.
+fn env(args: *Vec<String>) -> Result<i32, Problem> {
+    local json = false
+    local rest: Vec<String> = Vec<String>()
+    for a in args { if a.equals("--json") { json = true } else { rest.push(a.clone()) } }
+    local r = requestOf(&rest, false)?
+    if !r.flags.isEmpty() { return fail<i32>("E0740", format("unexpected argument `{}`", r.flags.get(0)), String("xl env [--json] [--std=<dir>] [file.xl]")) }
+    local file = rootFile(&r)?
+    local absolute = files.absolute(&file)
+    local s = setupOf(&absolute, &r.std)?
+    local problem = String()
+    switch s.ready() {
+        case Result.Err(p) { problem = format("error[{}]: {} (fix: {})", &p.code, &p.message, &p.fix) }
+        case Result.Ok(v) { }
+    }
+    if json {
+        local text = envJson(&s, &absolute, &problem)
+        println("{}", &text)
+        return Result.Ok(0)
+    }
+    println("file      {}", &absolute)
+    println("project   {}", &s.project)
+    println("xlc       {}", &s.tools.xlc)
+    println("std       {}", &s.tools.std)
+    for m in s.roots { println("module    {}={}", &m.name, &m.dir) }
+    for f in s.flags { println("flag      {}", f) }
+    for m in s.missing { println("missing   {}", m) }
+    if problem.length() > 0 { println("problem   {}", &problem) }
+    return Result.Ok(0)
+}
+
+/// The `--json` form of `xl env`: one object (xlang-docs/compiler/cli.md "xl env").
+fn envJson(s: *Setup, file: *String, problem: *String) -> String {
+    local w = JsonWriter()
+    w.beginObject()
+    local fields = [("file", file), ("project", &s.project), ("xlc", &s.tools.xlc), ("xlcTag", &s.tools.xlcTag), ("std", &s.tools.std), ("stdTag", &s.tools.stdTag)]
+    for f in fields {
+        local (name, value) = *f
+        w.key(name)
+        w.valueString(value.asStr())
+    }
+    w.key("modules")
+    w.beginArray()
+    for m in s.roots {
+        w.beginObject()
+        w.key("name")
+        w.valueString(m.name.asStr())
+        w.key("dir")
+        w.valueString(m.dir.asStr())
+        w.endObject()
+    }
+    w.endArray()
+    w.key("flags")
+    w.beginArray()
+    for f in s.flags { w.valueString(f.asStr()) }
+    w.endArray()
+    w.key("arguments")
+    w.beginArray()
+    for a in s.arguments() { w.valueString(a.asStr()) }
+    w.endArray()
+    w.key("missing")
+    w.beginArray()
+    for m in s.missing { w.valueString(m.asStr()) }
+    w.endArray()
+    w.key("problem")
+    if problem.length() > 0 { w.valueString(problem.asStr()) } else { w.valueNull() }
+    w.endObject()
+    return w.out.clone()
+}
+
+fn exitOf(r: Result<i32, Problem>) -> i32 {
+    switch r {
+        case Result.Ok(code) { return code }
+        case Result.Err(e) {
+            report(&e)
+            return 1
+        }
+    }
+    return 1
+}
+
+export fn checkMain(args: *Vec<String>) -> i32 { return exitOf(checkOrBuild(args, true)) }
+export fn buildMain(args: *Vec<String>) -> i32 { return exitOf(checkOrBuild(args, false)) }
+export fn runMain(args: *Vec<String>) -> i32 { return exitOf(run(args)) }
+export fn envMain(args: *Vec<String>) -> i32 { return exitOf(env(args)) }

@@ -1,10 +1,12 @@
-# Build
+# Build output at the root (src/build/ is source: the `xl build` command)
 /build/
 /outputs/
-/.direnv/
+/output/
+/out/
 /dist/
-.xmake/
-compile_commands.json
+/xl
+/xl.exe
+/.direnv/
 
 # Compiled objects & binaries
 *.o
@@ -12,13 +14,7 @@ compile_commands.json
 *.a
 *.so
 *.dylib
-build
-output
-out
-
-# Runtime build cache (user-program link of frontend)
-/src/runtime/frontend/runtime.o
-/src/runtime/frontend/*.ll
+*.dSYM/
 
 # macOS
 .DS_Store
@@ -29,12 +25,6 @@ out
 *.swp
 *~
 
-# Debug
-*.dSYM/
-.xlang-cache/
-# Package cache (xlang.toml / xlang.lock are committed, the downloaded sources are not)
+# Package cache (xlang.toml / xlang.lock are committed, the downloaded sources are not); xlang.local.toml is one developer's
 .xlang/
-# Jekyll build output and cache (the Pages workflow builds in CI; local builds write here)
-_site/
-xlang-docs/.jekyll-cache/
-xlang-docs/.sass-cache/
+xlang.local.toml
