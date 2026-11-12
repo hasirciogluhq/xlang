@@ -190,12 +190,12 @@ expect "pkg list" 0 "example.com/t/a"
 in_app env
 expect "env maps packages" 0 "example.com/t/b"
 
-# a direct requirement of a v1.1.0 wins over b's v1.0.0 (minimal version selection).
+# the project's own requirement of a v1.1.0 wins over b's v1.0.0: the project chooses.
 printf '"example.com/t/a" = { version = "v1.1.0", source = "%s" }\n' "$(native "$repos/a")" >>"$app/xlang.toml"
 in_app pkg install
 expect "pkg install after a raise" 0 ""
 in_app run
-expect "the higher requirement wins" 0 "twice=22 answer=11"
+expect "the project's requirement wins" 0 "twice=22 answer=11"
 
 # xlang.local.toml points a at a checkout and adds a flag.
 mkdir -p "$work/a-local"

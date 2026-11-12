@@ -1,7 +1,7 @@
 // The machine xl runs on: OS and CPU names as release archives spell them, the user's xlang home, and path joining.
 //
 // The toolchain is installed per user, never system-wide: `$XLANG_HOME` (default `~/.xlang`, `%USERPROFILE%\.xlang` on Windows)
-// holds `xlc/<tag>/`, `std/<tag>/` and the `current` file that names the active pair. No root rights, no package manager, and
+// holds `xlc/<tag>/`, `std/<tag>/` and `toolchain.toml`, which names the active pair. No root rights, no package manager, and
 // several versions side by side, as rustup and the Go toolchain directory do.
 from "std" import String, Option
 from "std/os/env" import get as lookupVariable
