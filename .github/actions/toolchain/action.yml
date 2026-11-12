@@ -1,0 +1,85 @@
+name: xlang toolchain
+description: >
+  Puts the xlang compiler `xlc` on PATH and unpacks the stdlib, both from GitHub releases, never from the submodules (those are for
+  local development only). Each is resolved on every run: the newest stable release, or the newest pre-release while there is none;
+  `xlc-version` and `std-version` pin one. The cache key is the pair of tags, so a new release is always picked up and an unchanged
+  pair is not downloaded again. Also installs the LLVM linker xlc calls on Linux and macOS.
+
+inputs:
+  xlc-version:
+    description: "Compiler release tag (empty: the newest stable, else the newest pre-release)"
+    required: false
+    default: ""
+  std-version:
+    description: "Stdlib release tag (empty: the newest stable, else the newest pre-release)"
+    required: false
+    default: ""
+  token:
+    description: "Token that may read hasirciogluhq/xlc and hasirciogluhq/xl-std"
+    required: false
+    default: ${{ github.token }}
+
+outputs:
+  xlc-tag:
+    description: "The compiler release in use"
+    value: ${{ steps.resolve.outputs.xlc }}
+  std-tag:
+    description: "The stdlib release in use"
+    value: ${{ steps.resolve.outputs.std }}
+  std:
+    description: "The stdlib directory (the one holding index.xl), with forward slashes on every OS"
+    value: ${{ steps.resolve.outputs.dir }}/std
+
+runs:
+  using: composite
+  steps:
+    - id: resolve
+      name: Resolve the releases
+      shell: bash
+      env:
+        GH_TOKEN: ${{ inputs.token }}
+        XLC_WANT: ${{ inputs.xlc-version }}
+        STD_WANT: ${{ inputs.std-version }}
+        SCRIPT: ${{ github.action_path }}/../../scripts/toolchain.sh
+      run: |
+        set -euo pipefail
+        xlc=$(bash "$SCRIPT" resolve hasirciogluhq/xlc "$XLC_WANT")
+        std=$(bash "$SCRIPT" resolve hasirciogluhq/xl-std "$STD_WANT")
+        dir="$RUNNER_TEMP/xlang"
+        # Git Bash on Windows: `D:\a\_temp` would reach bash globs and xlc with backslashes.
+        command -v cygpath >/dev/null 2>&1 && dir=$(cygpath -m "$dir")
+        { echo "xlc=$xlc"; echo "std=$std"; echo "dir=$dir"; } >>"$GITHUB_OUTPUT"
+        echo "xlc $xlc, xl-std $std" >>"$GITHUB_STEP_SUMMARY"
+
+    - id: cache
+      uses: actions/cache@v6
+      with:
+        path: ${{ runner.temp }}/xlang
+        key: xlang-${{ steps.resolve.outputs.xlc }}-std-${{ steps.resolve.outputs.std }}-${{ runner.os }}-${{ runner.arch }}
+
+    - name: Download the compiler and the stdlib
+      if: steps.cache.outputs.cache-hit != 'true'
+      shell: bash
+      env:
+        GH_TOKEN: ${{ inputs.token }}
+        SCRIPT: ${{ github.action_path }}/../../scripts/toolchain.sh
+      run: bash "$SCRIPT" install "${{ steps.resolve.outputs.xlc }}" "${{ steps.resolve.outputs.std }}" "${{ steps.resolve.outputs.dir }}"
+
+    - name: Put xlc on PATH
+      shell: bash
+      run: |
+        echo "${{ steps.resolve.outputs.dir }}/bin" >>"$GITHUB_PATH"
+        "${{ steps.resolve.outputs.dir }}/bin/xlc" --version
+
+    # xlc links Mach-O executables with LLVM's `ld64.lld` and ELF ones with `ld.lld`; the runners have neither.
+    - name: Linker (macOS)
+      if: runner.os == 'macOS'
+      shell: bash
+      env:
+        HOMEBREW_NO_AUTO_UPDATE: "1"
+        HOMEBREW_NO_INSTALL_CLEANUP: "1"
+      run: brew install lld
+    - name: Linker (Linux)
+      if: runner.os == 'Linux'
+      shell: bash
+      run: sudo apt-get install -y --no-install-recommends lld || { sudo apt-get update && sudo apt-get install -y --no-install-recommends lld; }
