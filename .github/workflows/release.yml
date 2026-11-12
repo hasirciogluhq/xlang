@@ -76,19 +76,19 @@ jobs:
       - uses: actions/checkout@v7
         with:
           ref: ${{ needs.meta.outputs.tag }}
-      - name: Stdlib submodule
-        run: git submodule update --init --depth 1 xl-std
-      - uses: ./.github/actions/xlc
+      - id: toolchain
+        uses: ./.github/actions/toolchain
       - name: Build and package
         env:
           VERSION: ${{ needs.meta.outputs.version }}
           OS: ${{ matrix.os }}
           ARCH: ${{ matrix.arch }}
+          STD: ${{ steps.toolchain.outputs.std }}
         run: |
           set -euo pipefail
           exe=; [ "$OS" = windows ] && exe=.exe
           mkdir -p stage dist
-          (cd src && xlc main.xl -M std=../xl-std --import std -DfeatureDefaultAllocator=true "-DxlVersion=\"$VERSION\"" -O2 -o "../stage/xl$exe")
+          (cd src && xlc main.xl -M "std=$STD" --import std -DfeatureDefaultAllocator=true "-DxlVersion=\"$VERSION\"" -O2 -o "../stage/xl$exe")
           # Strip the symbol table: the names of every internal function would otherwise ship (~900 entries, ~11% of the file).
           # Linux and macOS keep only what the dynamic loader needs (`strip` of binutils, `strip` of the Xcode tools, which keeps
           # the ad-hoc code signature valid on arm64); lld-link writes no symbol table into a Windows executable without /debug.
@@ -98,7 +98,7 @@ jobs:
           esac
           # The binary that is published must pass the whole suite and report the tag's version.
           ./stage/xl$exe version | grep -qx "$VERSION"
-          test/run.sh "./stage/xl$exe" "$(command -v xlc)" xl-std
+          test/run.sh "./stage/xl$exe" "$(command -v xlc)" "$STD"
           name="xl_${VERSION}_${OS}_${ARCH}"
           if [ "$OS" = windows ]; then
             (cd stage && 7z a -tzip -bd -bso0 "../dist/$name.zip" "xl$exe")

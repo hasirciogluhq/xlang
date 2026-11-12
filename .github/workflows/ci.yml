@@ -1,10 +1,11 @@
 name: ci
 
-# Builds `xl` from src/ with the xlang compiler and the stdlib of the `xl-std` submodule, then runs test/run.sh on every host a
-# release ships for: every command against a real compiler, local git repositories and a release mirror, without the network.
+# Builds `xl` from src/ and runs test/run.sh on every host a release ships for: every command against a real compiler, local git
+# repositories and a release mirror, without the network.
 #
-# The compiler is resolved on every run: the newest stable release of hasirciogluhq/xlc, or its newest pre-release while it has none
-# (.github/actions/xlc, cached by tag); `xlc_version` pins one. Also called by the release workflow before a release is published.
+# The compiler and the stdlib come from their GitHub releases, never from the submodules (those are for local development only):
+# each is the newest stable release, or the newest pre-release while there is none (.github/actions/toolchain, cached by the pair of
+# tags); `xlc_version` and `std_version` pin one. Also called by the release workflow before a release is published.
 
 on:
   push:
@@ -15,10 +16,17 @@ on:
       xlc_version:
         type: string
         default: ""
+      std_version:
+        type: string
+        default: ""
   workflow_dispatch:
     inputs:
       xlc_version:
         description: "Compiler release tag to use instead of the newest one (optional)"
+        type: string
+        default: ""
+      std_version:
+        description: "Stdlib release tag to use instead of the newest one (optional)"
         type: string
         default: ""
 
@@ -46,14 +54,16 @@ jobs:
           - aarch64-pc-windows-msvc
     steps:
       - uses: actions/checkout@v7
-      - name: Stdlib submodule
-        run: git submodule update --init --depth 1 xl-std
-      - uses: ./.github/actions/xlc
+      - id: toolchain
+        uses: ./.github/actions/toolchain
         with:
-          version: ${{ inputs.xlc_version }}
+          xlc-version: ${{ inputs.xlc_version }}
+          std-version: ${{ inputs.std_version }}
       - name: xlc --check main.xl
         working-directory: src
-        run: xlc main.xl -M std=../xl-std --import std -DfeatureDefaultAllocator=true --check --target ${{ matrix.target }}
+        env:
+          STD: ${{ steps.toolchain.outputs.std }}
+        run: xlc main.xl -M "std=$STD" --import std -DfeatureDefaultAllocator=true --check --target ${{ matrix.target }}
 
   test:
     name: test (${{ matrix.os }})
@@ -68,13 +78,17 @@ jobs:
         shell: bash
     steps:
       - uses: actions/checkout@v7
-      - name: Stdlib submodule
-        run: git submodule update --init --depth 1 xl-std
-      - uses: ./.github/actions/xlc
+      - id: toolchain
+        uses: ./.github/actions/toolchain
         with:
-          version: ${{ inputs.xlc_version }}
+          xlc-version: ${{ inputs.xlc_version }}
+          std-version: ${{ inputs.std_version }}
       - name: Build xl
         working-directory: src
-        run: xlc main.xl -M std=../xl-std --import std -DfeatureDefaultAllocator=true -o "../xl$([ "$RUNNER_OS" = Windows ] && echo .exe || true)"
+        env:
+          STD: ${{ steps.toolchain.outputs.std }}
+        run: xlc main.xl -M "std=$STD" --import std -DfeatureDefaultAllocator=true -o "../xl$([ "$RUNNER_OS" = Windows ] && echo .exe || true)"
       - name: test/run.sh
-        run: test/run.sh ./xl "$(command -v xlc)" xl-std
+        env:
+          STD: ${{ steps.toolchain.outputs.std }}
+        run: test/run.sh ./xl "$(command -v xlc)" "$STD"
