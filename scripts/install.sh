@@ -2,10 +2,17 @@
 # Installs `xl`, the xlang tool, and then the compiler and stdlib with `xl lc install` (Linux and macOS, amd64 and arm64; Windows:
 # scripts/install.ps1).
 #
-#   curl -fsSL https://raw.githubusercontent.com/hasirciogluhq/xlang/main/scripts/install.sh | bash
+#   curl -fsSL https://github.com/hasirciogluhq/xlang/releases/download/<tag>/install.sh | bash
+#
+# Every release, stable or pre-release, carries this script as an asset. Whichever release it comes from, it installs the newest xl
+# unless --version names another one.
 #
 # Options (or the matching environment variables):
-#   --version <tag>     XL_VERSION          release of xl to install (default: the newest stable, else the newest pre-release)
+#   --version <v>       XL_VERSION          release of xl to install:
+#                                             latest         the newest stable, else the newest pre-release (default)
+#                                             latest-stable  the newest stable
+#                                             latest-rc      the newest pre-release
+#                                             <tag>          that release (v1.0.0, 1.0.0-rc.1)
 #   --dir <path>        XL_INSTALL_DIR      where `xl` is placed (default: $HOME/.local/bin)
 #   --no-toolchain      XL_NO_TOOLCHAIN=1   do not run `xl lc install` afterwards
 #   -h, --help
@@ -15,7 +22,7 @@
 set -euo pipefail
 
 REPO="hasirciogluhq/xlang"
-version="${XL_VERSION:-}"
+version="${XL_VERSION:-latest}"
 dir="${XL_INSTALL_DIR:-$HOME/.local/bin}"
 toolchain=1
 [ -n "${XL_NO_TOOLCHAIN:-}" ] && toolchain=0
@@ -30,7 +37,7 @@ fail() { printf '%serror:%s %s\n' "$red" "$reset" "$*" >&2; exit 1; }
 
 usage() {
   awk 'NR > 1 && /^#/ { print substr($0, 3) } NR > 1 && !/^#/ { exit }' "$0" >&2 2>/dev/null ||
-    echo "usage: install.sh [--version <tag>] [--dir <path>] [--no-toolchain]" >&2
+    echo "usage: install.sh [--version latest|latest-stable|latest-rc|<tag>] [--dir <path>] [--no-toolchain]" >&2
 }
 
 while [ "$#" -gt 0 ]; do
@@ -63,19 +70,25 @@ if command -v sha256sum >/dev/null 2>&1; then sha256() { sha256sum "$1" | awk '{
 elif command -v shasum >/dev/null 2>&1; then sha256() { shasum -a 256 "$1" | awk '{ print $1 }'; }
 else fail "sha256sum or shasum is required to verify the download"; fi
 
-api() { curl -fsSL --max-time 20 -H 'Accept: application/vnd.github+json' "https://api.github.com/repos/$REPO/$1"; }
-# The first "tag_name" of a GitHub API answer (the list is newest first).
-first_tag() { awk -F'"' '/"tag_name"/ { print $4; exit }'; }
-
-if [ -z "$version" ]; then
-  step "Looking up the newest release"
-  # `releases/latest` never returns a pre-release and answers 404 while there is none.
-  tag=$(api releases/latest 2>/dev/null | first_tag || true)
-  [ -n "$tag" ] || tag=$(api 'releases?per_page=20' | first_tag || true)
-  [ -n "$tag" ] || fail "could not find a release of $REPO (none is published yet, or the network is unreachable)"
-else
-  tag="v${version#v}"
-fi
+case "$version" in
+  latest | latest-stable | latest-rc)
+    step "Looking up the $version release"
+    # Published releases, newest first, as "<tag> stable|rc" lines. In each release object of the answer "tag_name" comes before
+    # "prerelease"; drafts are not visible without a token
+    # (https://docs.github.com/en/rest/releases/releases#list-releases).
+    list=$(curl -fsSL --max-time 20 -H 'Accept: application/vnd.github+json' "https://api.github.com/repos/$REPO/releases?per_page=100" |
+      awk -F'"' '/"tag_name":/ { tag = $4 } /"prerelease":/ { print tag, (/true/ ? "rc" : "stable") }') ||
+      fail "could not list the releases of $REPO (is the network reachable?)"
+    pick() { awk -v k="$1" 'k == "any" || $2 == k { print $1; exit }' <<<"$list"; }
+    case "$version" in
+      latest) tag=$(pick stable); [ -n "$tag" ] || tag=$(pick any) ;;
+      latest-stable) tag=$(pick stable) ;;
+      latest-rc) tag=$(pick rc) ;;
+    esac
+    [ -n "$tag" ] || fail "$REPO has no $version release yet"
+    ;;
+  *) tag="v${version#v}" ;;
+esac
 version="${tag#v}"
 
 asset="xl_${version}_${os}_${arch}.tar.gz"

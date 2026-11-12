@@ -2,8 +2,8 @@ name: release
 
 # Publishes a release of `xl` when a version tag is pushed: the ci workflow runs first, then xl is built with the tag's version on
 # every host and attached to a GitHub release as `xl_<version>_<os>_<arch>.tar.gz` (`.zip` on Windows, the binary at the archive root)
-# with `checksums.txt` (sha256sum format). `xl self-update` and scripts/install.sh read exactly these names
-# (xlang-docs/compiler/install.md).
+# with the install scripts (`install.sh`, `install.ps1`, taken from the tag) and `checksums.txt` (sha256sum format, every asset).
+# `xl self-update` and the install scripts read exactly these names (xlang-docs/compiler/install.md).
 #
 # Tags: vMAJOR.MINOR.PATCH is a stable release; a tag with a `-suffix` (v1.0.0-rc.1) is marked a pre-release.
 # Can also be re-run for an existing tag from the Actions tab.
@@ -118,6 +118,9 @@ jobs:
     permissions:
       contents: write
     steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ needs.meta.outputs.tag }}
       - uses: actions/download-artifact@v8
         with:
           path: dist
@@ -130,13 +133,15 @@ jobs:
           PRERELEASE: ${{ needs.meta.outputs.prerelease }}
         run: |
           set -euo pipefail
+          cp scripts/install.sh scripts/install.ps1 dist/
           cd dist
-          sha256sum xl_* | sort -k2 >checksums.txt
+          assets=(xl_* install.sh install.ps1)
+          sha256sum "${assets[@]}" | sort -k2 >checksums.txt
           cat checksums.txt
           flags=(--generate-notes --title "xl $TAG" --verify-tag)
           [ "$PRERELEASE" = true ] && flags+=(--prerelease)
           if gh release view "$TAG" -R "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
-            gh release upload "$TAG" xl_* checksums.txt --clobber -R "$GITHUB_REPOSITORY"
+            gh release upload "$TAG" "${assets[@]}" checksums.txt --clobber -R "$GITHUB_REPOSITORY"
           else
-            gh release create "$TAG" xl_* checksums.txt "${flags[@]}" -R "$GITHUB_REPOSITORY"
+            gh release create "$TAG" "${assets[@]}" checksums.txt "${flags[@]}" -R "$GITHUB_REPOSITORY"
           fi

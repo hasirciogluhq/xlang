@@ -1,9 +1,13 @@
 # Installs `xl`, the xlang tool, on Windows (amd64), and then the compiler and stdlib with `xl lc install`.
 #
-#   irm https://raw.githubusercontent.com/hasirciogluhq/xlang/main/scripts/install.ps1 | iex
+#   irm https://github.com/hasirciogluhq/xlang/releases/download/<tag>/install.ps1 | iex
+#
+# Every release, stable or pre-release, carries this script as an asset. Whichever release it comes from, it installs the newest xl
+# unless XL_VERSION names another one.
 #
 # Environment:
-#   XL_VERSION        release of xl to install (default: the newest stable, else the newest pre-release)
+#   XL_VERSION        release of xl to install: latest (the newest stable, else the newest pre-release; default), latest-stable,
+#                     latest-rc (the newest pre-release) or a tag (v1.0.0, 1.0.0-rc.1)
 #   XL_INSTALL_DIR    where xl.exe is placed (default: %LOCALAPPDATA%\xlang\bin; added to the user PATH)
 #   XL_NO_TOOLCHAIN   set to 1 to skip `xl lc install`
 #
@@ -18,19 +22,22 @@ $dir = if ($env:XL_INSTALL_DIR) { $env:XL_INSTALL_DIR } else { Join-Path $env:LO
 # Windows on arm64 has no xl release yet (xlang-docs known-limitations); x64 programs run there under emulation.
 $arch = 'amd64'
 
-$tag = $env:XL_VERSION
-if (-not $tag) {
-    Write-Host '==> Looking up the newest release'
-    $headers = @{ Accept = 'application/vnd.github+json' }
-    try {
-        # `releases/latest` never returns a pre-release and answers 404 while there is none.
-        $tag = (Invoke-RestMethod -Headers $headers "https://api.github.com/repos/$repo/releases/latest").tag_name
-    } catch {
-        $tag = (Invoke-RestMethod -Headers $headers "https://api.github.com/repos/$repo/releases?per_page=20" | Where-Object { -not $_.draft } | Select-Object -First 1).tag_name
+$request = if ($env:XL_VERSION) { $env:XL_VERSION } else { 'latest' }
+if ($request -in 'latest', 'latest-stable', 'latest-rc') {
+    Write-Host "==> Looking up the $request release"
+    # Published releases, newest first; drafts are not visible without a token
+    # (https://docs.github.com/en/rest/releases/releases#list-releases).
+    $list = @(Invoke-RestMethod -Headers @{ Accept = 'application/vnd.github+json' } "https://api.github.com/repos/$repo/releases?per_page=100" |
+        Where-Object { -not $_.draft })
+    $stable = $list | Where-Object { -not $_.prerelease } | Select-Object -First 1
+    $tag = switch ($request) {
+        'latest' { if ($stable) { $stable.tag_name } else { ($list | Select-Object -First 1).tag_name } }
+        'latest-stable' { $stable.tag_name }
+        'latest-rc' { ($list | Where-Object { $_.prerelease } | Select-Object -First 1).tag_name }
     }
-    if (-not $tag) { throw "could not find a release of $repo" }
-} elseif (-not $tag.StartsWith('v')) {
-    $tag = "v$tag"
+    if (-not $tag) { throw "$repo has no $request release yet" }
+} else {
+    $tag = if ($request.StartsWith('v')) { $request } else { "v$request" }
 }
 $version = $tag.Substring(1)
 

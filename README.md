@@ -35,15 +35,17 @@ Clone with `git clone --recurse-submodules https://github.com/hasirciogluhq/xlan
 
 ## Install
 
-Releases exist for Linux and macOS (x86-64, arm64) and Windows (x86-64). The installer puts `xl` into `~/.local/bin`, verifies every archive against the release's `checksums.txt`, and then runs `xl lc install`, which installs the compiler and the stdlib under `~/.xlang`.
+Releases exist for Linux and macOS (x86-64, arm64) and Windows (x86-64). The installer puts the newest `xl` into `~/.local/bin`, verifies every archive against the release's `checksums.txt`, and then runs `xl lc install`, which installs the compiler and the stdlib under `~/.xlang`.
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/hasirciogluhq/xlang/main/scripts/install.sh | bash
+curl -fsSL https://github.com/hasirciogluhq/xlang/releases/download/v1.0.0-rc.1/install.sh | bash
 ```
 
 ```powershell
-irm https://raw.githubusercontent.com/hasirciogluhq/xlang/main/scripts/install.ps1 | iex   # Windows
+irm https://github.com/hasirciogluhq/xlang/releases/download/v1.0.0-rc.1/install.ps1 | iex   # Windows
 ```
+
+`bash -s -- --version latest-rc` (or `latest-stable`, or a tag) picks another release.
 
 The compiler links with LLVM's `lld`, which must be on `PATH`. Details: [installation](xlang-docs/src/content/docs/compiler/install.md).
 

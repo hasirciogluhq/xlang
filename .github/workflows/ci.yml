@@ -9,7 +9,7 @@ name: ci
 
 on:
   push:
-    branches: [main, development]
+    branches: [development]
   pull_request:
   workflow_call:
     inputs:
