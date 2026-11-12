@@ -1,0 +1,7 @@
+// The version of xl. A release build passes the tag without its `v`: `xlc src/main.xl -DxlVersion='"1.2.0"' ...`; a build from
+// source without it reports `0.0.0-dev`, which every release is newer than, so `xl self-update` always offers the release.
+#ifdef xlVersion
+export define VERSION = xlVersion
+#else
+export define VERSION = "0.0.0-dev"
+#endif

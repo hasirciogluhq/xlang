@@ -1,0 +1,202 @@
+// `xl pkg`: the package commands (xlang-docs/compiler/packages.md "Commands").
+//
+//   add <repo[@tag]>...       write the entries into xlang.toml (`latest` without a tag); nothing is downloaded
+//   install                   download everything xlang.toml lists, write xlang.lock
+//   install <repo[@tag]>...   add the entries (the newest stable tag when none is given) and install
+//   update [repo...]          move all (or the named) git dependencies to their newest stable tag and install
+//   remove <repo>...          delete the entries and refresh the lock
+//   list                      the locked packages; exit status 1 when one is missing from the cache
+//   clean                     delete .xlang/cache
+//
+// `install`, `update` and `remove` write xlang.toml and xlang.lock only after everything resolved.
+from "std" import String, Vec, Option, Result, println, format, files
+from "../core/problem" import Problem, Done, done, fail, finish
+from "../core/tag" import valid as validTag
+from "../core/host" import join, parent
+from "manifest" import Manifest, Dep, load, findManifest, checkName, checkVersion
+from "lock" import Lock, loadLock
+from "resolve" import resolve, newestTag, packageDir, cacheDir
+
+export fn pkgUsage() {
+    println("usage: xl pkg <command> [arguments]")
+    println("")
+    println("  add <repo[@tag]>...       add dependencies to xlang.toml (without downloading)")
+    println("  install                   download everything xlang.toml lists and write xlang.lock")
+    println("  install <repo[@tag]>...   add dependencies at their newest stable (or the given) tag and install")
+    println("  update [repo...]          move all (or the named) dependencies to their newest stable tag")
+    println("  remove <repo>...          remove dependencies and refresh xlang.lock")
+    println("  list                      show the locked packages")
+    println("  clean                     delete the download cache (.xlang/cache)")
+}
+
+/// The project's xlang.toml: the nearest one upward from the current directory. With `create`, a new one in the current
+/// directory when there is none (written only when the command succeeds).
+fn manifestPath(create: bool) -> Result<String, Problem> {
+    local cwd = files.currentDir()
+    switch findManifest(&cwd) {
+        case Option.Some(p) { return Result.Ok(p.clone()) }
+        case Option.None { }
+    }
+    if create { return Result.Ok(join(&cwd, "xlang.toml")) }
+    return fail<String>("E0740", String("no xlang.toml in this directory or above"), String("run `xl pkg add <repo>` or `xl pkg install <repo>` to create one"))
+}
+
+fn lockPath(m: *Manifest) -> String {
+    local root = m.root()
+    return join(&root, "xlang.lock")
+}
+
+/// `repo@tag` split into the entry it asks for; the version is empty when no tag was given.
+fn entryOf(spec: *String) -> Result<Dep, Problem> {
+    local at = spec.find("@")
+    local d = Dep()
+    if at < 0 {
+        d.name = spec.clone()
+    } else {
+        d.name = spec.slice(0, at as usize)
+        d.version = spec.slice(at as usize + 1, spec.length() - at as usize - 1)
+    }
+    checkName(&d.name)?
+    // On the command line any tag of the release format is accepted, pre-release and test tags included.
+    if d.version.length() > 0 && !d.version.equals("latest") { checkVersion(&d.name, &d.version, false)? }
+    return Result.Ok(d)
+}
+
+/// The URL `name` would be cloned from: the existing entry's source, or the default.
+fn urlOf(m: *Manifest, d: *Dep) -> String {
+    local at = m.find(&d.name)
+    return at >= 0 ? m.deps.get(at as usize).url() : d.url()
+}
+
+fn add(args: *Vec<String>) -> Done {
+    if args.isEmpty() { return fail<bool>("E0740", String("`xl pkg add` needs at least one repository"), String("xl pkg add github.com/user/repo[@v1.2.0]")) }
+    local path = manifestPath(true)?
+    local m = load(&path, true)?
+    for spec in args {
+        local d = entryOf(spec)?
+        if d.version.length() == 0 { d.version = String("latest") }
+        m.put(&d)
+        println("added {} {}", &d.name, &d.version)
+    }
+    return m.save()
+}
+
+fn install(args: *Vec<String>) -> Done {
+    local path = manifestPath(!args.isEmpty())?
+    local m = load(&path, true)?
+    for spec in args {
+        local d = entryOf(spec)?
+        if d.version.length() == 0 {
+            local url = urlOf(&m, &d)
+            d.version = newestTag(&url)?
+        }
+        m.put(&d)
+    }
+    local none: Vec<String> = Vec<String>()
+    return apply(&m, &none, false)
+}
+
+fn update(args: *Vec<String>) -> Done {
+    local path = manifestPath(false)?
+    local m = load(&path, true)?
+    local named: Vec<String> = Vec<String>()
+    for a in args {
+        if m.find(a) < 0 { return fail<bool>("E0740", format("{} is not a dependency", a), String("see `xl pkg list`")) }
+        named.push(a.clone())
+    }
+    local fresh: Vec<String> = Vec<String>()
+    // Collected first: `put` re-reads the manifest, which rebuilds `deps`.
+    local moves: Vec<Dep> = Vec<Dep>()
+    for d in m.deps {
+        if d.onDisk() { continue }
+        local wanted = named.isEmpty()
+        for n in named { if n.equals(&d.name) { wanted = true } }
+        if !wanted { continue }
+        fresh.push(d.name.clone())
+        if d.version.equals("latest") { continue }
+        local url = d.url()
+        local tag = newestTag(&url)?
+        if !tag.equals(&d.version) {
+            local moved = d.clone()
+            println("{} {} -> {}", &d.name, &d.version, &tag)
+            moved.version = tag
+            moves.push(moved)
+        }
+    }
+    for d in moves { m.put(d) }
+    return apply(&m, &fresh, false)
+}
+
+fn remove(args: *Vec<String>) -> Done {
+    if args.isEmpty() { return fail<bool>("E0740", String("`xl pkg remove` needs at least one repository"), String("xl pkg remove github.com/user/repo")) }
+    local path = manifestPath(false)?
+    local m = load(&path, true)?
+    for a in args {
+        if !m.remove(a) { return fail<bool>("E0740", format("{} is not a dependency", a), String("see `xl pkg list`")) }
+        println("removed {}", a)
+    }
+    local none: Vec<String> = Vec<String>()
+    return apply(&m, &none, false)
+}
+
+/// Resolves `m`, then writes xlang.toml and xlang.lock together.
+fn apply(m: *Manifest, fresh: *Vec<String>, all: bool) -> Done {
+    local file = lockPath(m)
+    local old = loadLock(&file)?
+    local lock = resolve(m, &old, fresh, all)?
+    m.save()?
+    lock.save()?
+    for e in lock.entries {
+        local short = e.commit.slice(0, e.commit.length() < 12 ? e.commit.length() : 12)
+        local how = String(e.indirect ? " [indirect]" : "")
+        println("  {} {} {}{}", &e.name, &e.version, &short, &how)
+    }
+    println("{} packages locked", lock.entries.length())
+    return done()
+}
+
+fn list() -> Done {
+    local path = manifestPath(false)?
+    local m = load(&path, true)?
+    local file = lockPath(&m)
+    local lock = loadLock(&file)?
+    local root = m.root()
+    local missing: usize = 0
+    for e in lock.entries {
+        local dir = packageDir(&root, &e.name, &e.version)
+        local state = String(files.isDir(&dir) ? "" : " [missing]")
+        if !files.isDir(&dir) { missing++ }
+        local how = String(e.indirect ? " [indirect]" : "")
+        println("{} {} {}{}{}", &e.name, &e.version, &e.commit, &how, &state)
+    }
+    for d in m.deps { if d.onDisk() { println("{} path {}", &d.name, &d.path) } }
+    if missing > 0 { return fail<bool>("E0741", format("{} packages are not in the cache", missing), String("run `xl pkg install`")) }
+    return done()
+}
+
+fn clean() -> Done {
+    local path = manifestPath(false)?
+    local root = parent(&path)
+    local cache = cacheDir(&root)
+    if !files.removeAll(&cache) { return fail<bool>("E0740", format("could not delete {}", &cache), String("check the permissions")) }
+    println("deleted {}", &cache)
+    return done()
+}
+
+/// `xl pkg <command> ...`; `args` starts after `pkg`.
+export fn pkgMain(args: *Vec<String>) -> i32 {
+    if args.isEmpty() || args.get(0).equals("help") || args.get(0).equals("--help") || args.get(0).equals("-h") {
+        pkgUsage()
+        return args.isEmpty() ? 2 : 0
+    }
+    local rest: Vec<String> = Vec<String>()
+    for a, i in args { if i > 0 { rest.push(a.clone()) } }
+    local cmd = args.get(0)
+    if cmd.equals("add") { return finish(add(&rest)) }
+    if cmd.equals("install") || cmd.equals("i") { return finish(install(&rest)) }
+    if cmd.equals("update") || cmd.equals("up") { return finish(update(&rest)) }
+    if cmd.equals("remove") || cmd.equals("rm") { return finish(remove(&rest)) }
+    if cmd.equals("list") || cmd.equals("ls") { return finish(list()) }
+    if cmd.equals("clean") { return finish(clean()) }
+    return finish(fail<bool>("E0740", format("unknown command `xl pkg {}`", cmd), String("see `xl pkg help`")))
+}

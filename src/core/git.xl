@@ -1,0 +1,60 @@
+// The git calls xl needs: the tags of a remote, a shallow clone of one tag, and the commit it checked out
+// (https://git-scm.com/docs/git-ls-remote, https://git-scm.com/docs/git-clone). Every failure is E0744.
+from "std" import String, Vec, Result, split, trim, splitAsciiWhitespace
+from "problem" import Problem, Done, done
+from "proc" import Line, capture
+
+/// One tag of a remote and the commit it points to.
+export class RemoteTag {
+    name: String
+    commit: String
+}
+
+/// Every tag of `url`. Annotated tags report the tag object and then `<name>^{}` with the commit; the commit wins.
+export fn remoteTags(url: *String) -> Result<Vec<RemoteTag>, Problem> {
+    local l = Line("git")
+    l.add("ls-remote").add("--tags").addS(url)
+    local out = capture(&l, "E0744")?
+    local tags: Vec<RemoteTag> = Vec<RemoteTag>()
+    for line in split(out.asStr(), "\n") {
+        local fields = splitAsciiWhitespace(line.asStr())
+        if fields.length() != 2 || !fields.get(1).startsWith("refs/tags/") { continue }
+        local ref = fields.get(1)
+        local name = ref.slice(10, ref.length() - 10)
+        local peeled = name.endsWith("^{}")
+        if peeled { name = name.slice(0, name.length() - 3) }
+        local seen = false
+        for t in tags {
+            if t.name.equals(&name) {
+                if peeled { t.commit = fields.get(0).clone() }
+                seen = true
+            }
+        }
+        if !seen {
+            local t = RemoteTag()
+            t.name = name
+            t.commit = fields.get(0).clone()
+            tags.push(t)
+        }
+    }
+    return Result.Ok(tags)
+}
+
+/// The names of `tags`.
+export fn names(tags: *Vec<RemoteTag>) -> Vec<String> {
+    local out: Vec<String> = Vec<String>()
+    for t in tags { out.push(t.name.clone()) }
+    return out
+}
+
+/// Clones the tag `tag` of `url` into `dir` (which must not exist), one commit deep, and returns the commit it checked out.
+export fn cloneTag(url: *String, tag: *String, dir: *String) -> Result<String, Problem> {
+    local clone = Line("git")
+    clone.add("-c").add("advice.detachedHead=false").add("clone").add("--quiet").add("--depth").add("1")
+    clone.add("--branch").addS(tag).addS(url).addS(dir)
+    capture(&clone, "E0744")?
+    local head = Line("git")
+    head.add("-C").addS(dir).add("rev-parse").add("HEAD")
+    local commit = capture(&head, "E0744")?
+    return Result.Ok(trim(commit.asStr()))
+}

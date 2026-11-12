@@ -1,0 +1,119 @@
+// A cursor over one line of `xlang.toml` or `xlang.lock`: the TOML subset these files use (https://toml.io/en/v1.0.0): section
+// headers, `key = value` with bare or basic-quoted keys, basic strings, booleans, one-line arrays of strings and one-line inline
+// tables, and `#` comments. Lines are read one at a time so that edits can replace a single line and keep every other byte,
+// comments included.
+from "std" import String, Vec, Option
+
+export class Scan {
+    text: String
+    at: usize
+
+    fn init(self, text: *String) {
+        self.text = text.clone()
+        self.at = 0
+    }
+
+    fn more(self) -> bool { return self.at < self.text.length() }
+    fn peek(self) -> u8 { return self.more() ? self.text.at(self.at) : 0 }
+
+    /// Skips spaces and tabs.
+    fn blank(self) {
+        while self.peek() == 32 || self.peek() == 9 { self.at++ }
+    }
+
+    /// Consumes `c` after blanks; false (and nothing consumed) when the next character is another one.
+    fn eat(self, c: u8) -> bool {
+        self.blank()
+        if self.peek() != c { return false }
+        self.at++
+        return true
+    }
+
+    /// True when only blanks and an optional comment are left.
+    fn end(self) -> bool {
+        self.blank()
+        return !self.more() || self.peek() == 35
+    }
+
+    /// The comment at the end of the line with the blanks before it (` # note`), or an empty String.
+    fn comment(self) -> String {
+        local start = self.at
+        self.blank()
+        if self.peek() != 35 { return String() }
+        return self.text.slice(start, self.text.length() - start)
+    }
+
+    /// A key: basic-quoted (`"github.com/a/b"`, escapes `\"` and `\\`) or bare (`A-Za-z0-9_-`). None when there is none.
+    fn key(self) -> Option<String> {
+        self.blank()
+        if self.peek() == 34 { return self.string() }
+        local out = String()
+        while self.more() && bareChar(self.peek()) {
+            out.push(self.peek())
+            self.at++
+        }
+        if out.length() == 0 { return Option.None }
+        return Option.Some(out)
+    }
+
+    /// A basic string `"..."`; None when it is missing or not closed on this line.
+    fn string(self) -> Option<String> {
+        self.blank()
+        if self.peek() != 34 { return Option.None }
+        self.at++
+        local out = String()
+        while self.more() {
+            local c = self.peek()
+            self.at++
+            if c == 34 { return Option.Some(out) }
+            if c == 92 {
+                if !self.more() { return Option.None }
+                c = self.peek()
+                self.at++
+                if c != 34 && c != 92 { return Option.None }
+            }
+            out.push(c)
+        }
+        return Option.None
+    }
+
+    /// A one-line array of basic strings, `["a", "b"]` (a trailing comma is allowed); None when it is anything else.
+    fn strings(self) -> Option<Vec<String>> {
+        if !self.eat(91) { return Option.None }
+        local out: Vec<String> = Vec<String>()
+        while !self.eat(93) {
+            switch self.string() {
+                case Option.Some(v) { out.push(v) }
+                case Option.None { return Option.None }
+            }
+            if !self.eat(44) && self.peek() != 93 { return Option.None }
+        }
+        return Option.Some(out)
+    }
+
+    /// A bare word value (`true`, `false`, digits).
+    fn word(self) -> String {
+        self.blank()
+        local out = String()
+        while self.more() && bareChar(self.peek()) {
+            out.push(self.peek())
+            self.at++
+        }
+        return out
+    }
+}
+
+fn bareChar(c: u8) -> bool {
+    return (c >= 48 && c <= 57) || (c >= 65 && c <= 90) || (c >= 97 && c <= 122) || c == 95 || c == 45
+}
+
+/// `s` as a TOML basic string, quotes included.
+export fn quote(s: *String) -> String {
+    local out = String("\"")
+    for c in s.asStr() {
+        if *c == 34 || *c == 92 { out.push(92) }
+        out.push(*c)
+    }
+    out.push(34)
+    return out
+}

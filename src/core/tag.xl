@@ -1,0 +1,98 @@
+// Release tags and version specs (xlang-docs/compiler/packages.md "Version tags", https://semver.org/spec/v2.0.0.html).
+//
+// A tag is `vX.Y.Z` or `X.Y.Z`. A `-suffix` makes it a pre-release, a suffix ending in `test` a test tag. A spec is empty or
+// `latest` (newest), `v3` (newest 3.x.x), `v3.4` (newest 3.4.x) or `v3.4.1` (that release). Parsing and precedence are the
+// stdlib's SemVer 2.0.0; this file adds the tag spelling and the choice among the tags of a repository.
+from "std" import String, Vec, Option, Result, Semver, semverParse, semverCompare, split, format
+from "problem" import Problem, fail
+
+/// One tag of a repository. `version` views into `body`, whose heap buffer stays put when the Tag moves.
+export class Tag {
+    name: String        // as the repository spells it
+    body: String        // without the leading `v`
+    version: Semver
+
+    fn init(self, name: *String) {
+        self.name = name.clone()
+        self.body = bare(name)
+        self.version = semverParse(self.body.asStr())
+        // Build metadata (`+...`) is not part of a release tag.
+        if self.body.contains("+") { self.version.valid = false }
+    }
+
+    fn release(self) -> bool { return self.version.valid }
+    fn stable(self) -> bool { return self.version.valid && self.version.pre.len == 0 }
+    fn test(self) -> bool { return self.version.valid && self.body.endsWith("test") }
+}
+
+/// `s` without one leading `v`.
+export fn bare(s: *String) -> String {
+    return s.startsWith("v") ? s.slice(1, s.length() - 1) : s.clone()
+}
+
+/// True when `tag` has the release tag format (any pre-release or test suffix included).
+export fn valid(tag: *String) -> bool {
+    return Tag(tag).release()
+}
+
+/// The numbers a spec fixes: [] for latest, [3] for v3, [3, 4] for v3.4, [3, 4, 1] for v3.4.1. E0742 for anything else.
+fn specNumbers(spec: *String) -> Result<Vec<u64>, Problem> {
+    local want: Vec<u64> = Vec<u64>()
+    if spec.length() == 0 || spec.equals("latest") { return Result.Ok(want) }
+    local body = bare(spec)
+    local pieces = split(body.asStr(), ".")
+    if pieces.length() > 3 { return bad(spec) }
+    for p in pieces {
+        if p.length() == 0 || (p.length() > 1 && p.startsWith("0")) { return bad(spec) }
+        local n: u64 = 0
+        for c in p.asStr() {
+            if *c < 48 || *c > 57 { return bad(spec) }
+            n = n * 10 + (*c - 48) as u64
+        }
+        want.push(n)
+    }
+    return Result.Ok(want)
+}
+
+fn bad(spec: *String) -> Result<Vec<u64>, Problem> {
+    return fail<Vec<u64>>("E0742", format("`{}` is not a version", spec), String("use latest, v3, v3.4, v3.4.1 or an exact tag such as v1.2.0-rc.1"))
+}
+
+fn fits(t: *Tag, want: *Vec<u64>) -> bool {
+    local have = [t.version.major, t.version.minor, t.version.patch]
+    for w, i in want { if have[i] != *w { return false } }
+    return true
+}
+
+/// The newest tag among `tags` that fits `spec`. Only stable releases count unless `pre` is set, which also admits pre-releases
+/// (never test tags). A full tag spec that names a pre-release or test tag is taken as written when the repository has it.
+/// E0742 for a malformed spec, E0744 when no tag fits.
+export fn pick(tags: *Vec<String>, spec: *String, pre: bool) -> Result<String, Problem> {
+    local exact = Tag(spec)
+    if exact.release() && !exact.stable() {
+        for t in tags { if t.equals(spec) { return Result.Ok(t.clone()) } }
+        return fail<String>("E0744", format("the repository has no tag `{}`", spec), String("check the tag name; tags never move"))
+    }
+    local want = specNumbers(spec)?
+    local found: i64 = -1
+    local best: Tag = Tag(spec)
+    for name, i in tags {
+        local t = Tag(name)
+        if !t.release() || t.test() || (!pre && !t.stable()) || !fits(&t, &want) { continue }
+        local order: i32 = found < 0 ? 1 : semverCompare(t.version, best.version)
+        // `v1.0.0` and `1.0.0` are one version; the `v` spelling wins.
+        if order > 0 || (order == 0 && t.name.startsWith("v")) {
+            found = i as i64
+            best = t
+        }
+    }
+    if found >= 0 { return Result.Ok(tags.get(found as usize).clone()) }
+    local what = String(pre ? "release tag" : "stable release tag")
+    if want.length() == 0 {
+        return fail<String>("E0744", format("the repository has no {}", &what), String("name an exact tag, such as v1.0.0-rc.1"))
+    }
+    // The hint names the newest tag that does exist; with none at all, the branch above reports that instead.
+    local any = String()
+    local newest = pick(tags, &any, pre)?
+    return fail<String>("E0744", format("no {} fits `{}`", &what, spec), format("the newest is {}", &newest))
+}

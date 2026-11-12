@@ -1,0 +1,75 @@
+name: xlc
+description: >
+  Puts the xlang compiler `xlc` on PATH, plus the LLVM linker it calls on Linux and macOS. The release is resolved on every run (the
+  newest stable release of hasirciogluhq/xlc, or its newest pre-release while it has none; `version` pins one), and the cache key is
+  that tag: a new compiler release is always picked up, an unchanged one is not downloaded again.
+
+inputs:
+  version:
+    description: "Compiler release tag (empty: the newest)"
+    required: false
+    default: ""
+  token:
+    description: "Token that may read hasirciogluhq/xlc"
+    required: false
+    default: ${{ github.token }}
+
+outputs:
+  tag:
+    description: "The compiler release in use"
+    value: ${{ steps.resolve.outputs.tag }}
+
+runs:
+  using: composite
+  steps:
+    - id: resolve
+      name: Resolve the compiler release
+      shell: bash
+      env:
+        GH_TOKEN: ${{ inputs.token }}
+        WANT: ${{ inputs.version }}
+      run: |
+        set -euo pipefail
+        tag=$WANT
+        if [ -z "$tag" ]; then
+          # `releases/latest` never returns a pre-release and answers 404 while there is none; the list is newest first.
+          tag=$(gh api repos/hasirciogluhq/xlc/releases/latest --jq .tag_name 2>/dev/null || true)
+          [ -n "$tag" ] || tag=$(gh api 'repos/hasirciogluhq/xlc/releases?per_page=100' --jq '[.[] | select(.draft | not)] | first | .tag_name // empty')
+        fi
+        [ -n "$tag" ] || { echo "error: hasirciogluhq/xlc has no release" >&2; exit 1; }
+        echo "tag=$tag" >>"$GITHUB_OUTPUT"
+        echo "xlc $tag" >>"$GITHUB_STEP_SUMMARY"
+
+    - id: cache
+      uses: actions/cache@v6
+      with:
+        path: ${{ runner.temp }}/xlc/bin
+        key: xlc-${{ steps.resolve.outputs.tag }}-${{ runner.os }}-${{ runner.arch }}
+
+    - name: Download the compiler
+      if: steps.cache.outputs.cache-hit != 'true'
+      shell: bash
+      env:
+        GH_TOKEN: ${{ inputs.token }}
+        XLC_VERSION: ${{ steps.resolve.outputs.tag }}
+      run: xl-std/.github/scripts/install-xlc.sh
+
+    - name: Compiler from the cache
+      if: steps.cache.outputs.cache-hit == 'true'
+      shell: bash
+      run: |
+        echo "$RUNNER_TEMP/xlc/bin" >>"$GITHUB_PATH"
+        "$RUNNER_TEMP/xlc/bin/xlc" --version
+
+    # xlc links Mach-O executables with LLVM's `ld64.lld` and ELF ones with `ld.lld`; the runners have neither.
+    - name: Linker (macOS)
+      if: runner.os == 'macOS'
+      shell: bash
+      env:
+        HOMEBREW_NO_AUTO_UPDATE: "1"
+        HOMEBREW_NO_INSTALL_CLEANUP: "1"
+      run: brew install lld
+    - name: Linker (Linux)
+      if: runner.os == 'Linux'
+      shell: bash
+      run: sudo apt-get install -y --no-install-recommends lld || { sudo apt-get update && sudo apt-get install -y --no-install-recommends lld; }

@@ -1,0 +1,119 @@
+// `xl self-update`: replaces the running xl with a release of `hasirciogluhq/xlang` (xlang-docs/compiler/install.md "Updating").
+//
+//   self-update [tag] [--check] [--force]
+//
+// Without a tag the newest stable release is taken; a pre-release xl (such as 1.0.0-rc.1) takes the newest release of any kind, and
+// while the repository has no stable release every xl takes the newest pre-release. `--check` only reports whether one is newer; `--force` installs even when it is
+// not (a downgrade, or reinstalling the same version). The asset `xl_<ver>_<os>_<arch>.tar.gz` (`.zip` on Windows) is checked against
+// the release's `checksums.txt`, unpacked next to the running binary, run once with `--version`, then renamed over it: a rename in one
+// directory is atomic, so an interrupted update leaves the old xl. Windows cannot replace a running executable but can rename it, so
+// there the old binary is first moved aside as `xl.old.exe` (removed by the next update). A binary installed by Homebrew is refused:
+// the package manager owns it.
+from "std" import String, Vec, Option, Result, println, format, trim, files
+from "std/os/process" import executable, id as processId
+from "../core/problem" import Problem, Done, done, fail, finish
+from "../core/tag" import Tag, pick, bare
+from "../core/host" import osName, archName, join, joinS, parent, exe
+from "../core/release" import releaseTags, fetchAsset, unpack, ARCHIVE
+from "../core/proc" import Line, capture
+from "../core/version" import VERSION
+from "std" import semverCompare
+
+define REPO = "hasirciogluhq/xlang"
+define MODE_EXECUTABLE = 493        // 0755: archive extraction does not carry file modes
+
+class Options {
+    spec: String
+    check: bool
+    force: bool
+
+    fn init(self) {
+        self.check = false
+        self.force = false
+    }
+}
+
+fn optionsOf(args: *Vec<String>) -> Result<Options, Problem> {
+    local o = Options()
+    for a in args {
+        if a.equals("--check") { o.check = true }
+        else if a.equals("--force") { o.force = true }
+        else if !a.startsWith("-") && o.spec.length() == 0 { o.spec = a.clone() }
+        else { return fail<Options>("E0740", format("unexpected argument `{}`", a), String("xl self-update [tag] [--check] [--force]")) }
+    }
+    return Result.Ok(o)
+}
+
+/// Unpacks the release into a directory next to `binary`, checks the new binary, and moves it over `binary`.
+fn replace(binary: *String, tag: *String) -> Done {
+    local version = bare(tag)
+    local os = osName()
+    local arch = archName()
+    local asset = format("xl_{}_{}_{}.{}", &version, &os, &arch, ARCHIVE)
+    println("downloading {} {}", &asset, tag)
+    local data = fetchAsset(REPO, tag, asset.asStr())?
+    local dir = parent(binary)
+    local leaf = format(".xl-update-{}", processId())
+    local work = joinS(&dir, &leaf)
+    files.removeAll(&work)
+    defer files.removeAll(&work)
+    unpack(&data, &work)?
+    local name = exe("xl")
+    local fresh = joinS(&work, &name)
+    if !files.exists(&fresh) || !files.chmod(&fresh, MODE_EXECUTABLE) {
+        return fail<bool>("E0793", format("{} has no xl binary at its root", &asset), String("the release is broken; pick another version"))
+    }
+    local check = Line(&fresh)
+    check.add("--version")
+    local said = capture(&check, "E0793")?
+    if !said.contains(version.asStr()) {
+        local reported = trim(said.asStr())
+        return fail<bool>("E0793", format("the downloaded xl reports `{}`, not {}", &reported, &version), String("the release is broken; pick another version"))
+    }
+    #if os == "windows"
+    local old = join(&dir, "xl.old.exe")
+    files.removeFile(&old)
+    if !files.rename(binary, &old) {
+        return fail<bool>("E0793", format("could not move {} aside", binary), String("check that its directory is writable"))
+    }
+    #endif
+    if !files.rename(&fresh, binary) {
+        return fail<bool>("E0793", format("could not replace {}", binary), String("check that its directory is writable, or reinstall with the install script"))
+    }
+    return done()
+}
+
+fn selfUpdate(args: *Vec<String>) -> Done {
+    local o = optionsOf(args)?
+    local binary = String()
+    switch executable() {
+        case Option.Some(p) { binary = p.clone() }
+        case Option.None { return fail<bool>("E0793", String("cannot find the path of the running xl"), String("reinstall with the install script")) }
+    }
+    if binary.contains("/Cellar/") { return fail<bool>("E0793", format("{} is managed by Homebrew", &binary), String("run `brew upgrade xl`")) }
+    local tags = releaseTags(REPO)?
+    local mine = String(VERSION)
+    local current = Tag(&mine)
+    // A pre-release xl follows pre-releases as well; a stable one takes stable releases, or pre-releases while there is none.
+    local tag = String()
+    switch pick(&tags, &o.spec, !current.stable()) {
+        case Result.Ok(t) { tag = t.clone() }
+        case Result.Err(e) { tag = pick(&tags, &o.spec, true)? }
+    }
+    local offered = Tag(&tag)
+    local newer = semverCompare(offered.version, current.version) > 0
+    if o.check {
+        if newer { println("xl {} is available (this is {})", &tag, &mine) } else { println("xl {} is up to date", &mine) }
+        return done()
+    }
+    if !newer && !o.force {
+        println("xl {} is up to date (the newest release is {}; --force reinstalls it)", &mine, &tag)
+        return done()
+    }
+    replace(&binary, &tag)?
+    println("xl {} -> {}", &mine, &tag)
+    return done()
+}
+
+/// `xl self-update ...`; `args` starts after `self-update`.
+export fn selfUpdateMain(args: *Vec<String>) -> i32 { return finish(selfUpdate(args)) }

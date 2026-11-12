@@ -1,0 +1,81 @@
+// The machine xl runs on: OS and CPU names as release archives spell them, the user's xlang home, and path joining.
+//
+// The toolchain is installed per user, never system-wide: `$XLANG_HOME` (default `~/.xlang`, `%USERPROFILE%\.xlang` on Windows)
+// holds `xlc/<tag>/`, `std/<tag>/` and the `current` file that names the active pair. No root rights, no package manager, and
+// several versions side by side, as rustup and the Go toolchain directory do.
+from "std" import String, Option
+from "std/os/env" import get as lookupVariable
+
+#if os == "windows"
+define OS_NAME = "windows"
+define EXE = ".exe"
+define HOME_VAR = "USERPROFILE"
+#elif os == "macos"
+define OS_NAME = "darwin"
+define EXE = ""
+define HOME_VAR = "HOME"
+#else
+define OS_NAME = "linux"
+define EXE = ""
+define HOME_VAR = "HOME"
+#endif
+
+#if arch == "aarch64"
+define ARCH_NAME = "arm64"
+#else
+define ARCH_NAME = "amd64"
+#endif
+
+/// `darwin`, `linux` or `windows`: the `<os>` of a release archive name.
+export fn osName() -> String { return String(OS_NAME) }
+
+/// `arm64` or `amd64`: the `<arch>` of a release archive name.
+export fn archName() -> String { return String(ARCH_NAME) }
+
+/// `name` with the executable suffix of this OS (`xlc.exe` on Windows).
+export fn exe(name: str) -> String {
+    local out = String(name)
+    out.append(EXE)
+    return out
+}
+
+/// The value of the environment variable `name`, or an empty String.
+export fn variable(name: str) -> String {
+    local key = String(name)
+    switch lookupVariable(&key) {
+        case Option.Some(v) { return v.clone() }
+        case Option.None { }
+    }
+    return String()
+}
+
+/// `a/b`.
+export fn join(a: *String, b: str) -> String {
+    local out = a.clone()
+    if out.length() > 0 && !out.endsWith("/") { out.push(47) }
+    out.append(b)
+    return out
+}
+
+/// `a/b` with a String `b`.
+export fn joinS(a: *String, b: *String) -> String {
+    return join(a, b.asStr())
+}
+
+/// The per-user xlang directory: `$XLANG_HOME`, or `.xlang` in the home directory.
+export fn xlangHome() -> String {
+    local set = variable("XLANG_HOME")
+    if set.length() > 0 { return set }
+    local home = variable(HOME_VAR)
+    return join(&home, ".xlang")
+}
+
+/// The directory part of `path` (`.` when it has none).
+export fn parent(path: *String) -> String {
+    local text = path.asStr()
+    for i in 0..text.len {
+        local at = text.len - 1 - i
+        if text[at] == 47 || text[at] == 92 { return path.slice(0, at == 0 ? 1 : at) }
+    }
+    return String(".")
+}

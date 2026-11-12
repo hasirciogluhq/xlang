@@ -1,0 +1,56 @@
+// xl: the xlang tool. It installs the compiler (`xl lc`), manages packages (`xl pkg`), builds and runs programs through `xlc`
+// (`xl check`, `xl build`, `xl run`) and updates itself (`xl self-update`). Layout: src/README.md.
+from "std" import String, Vec, println, eprintln, format
+from "std/os/args" import fromArgv
+from "core/problem" import fail, finish
+from "core/version" import VERSION
+from "pkg/command" import pkgMain
+from "lc/command" import lcMain
+from "build/command" import checkMain, buildMain, runMain, envMain
+from "self/command" import selfUpdateMain
+
+fn usage() {
+    println("xl {}: the xlang tool", VERSION)
+    println("")
+    println("usage: xl <command> [arguments]")
+    println("")
+    println("  run [flags] [file.xl] [args...]   build and run a program; arguments after the file go to it")
+    println("  build [flags] [file.xl]           build an executable (or what --emit asks for)")
+    println("  check [flags] [file.xl]           type-check without writing anything")
+    println("  env [--json] [file.xl]            the compiler, stdlib and module roots a build of the file uses")
+    println("  pkg <command>                     packages: add, install, update, remove, list, clean")
+    println("  lc <command>                      the compiler toolchain: install, update, list, use")
+    println("  self-update [--check] [--force]   replace this xl with the newest release")
+    println("  version                           print the version")
+    println("")
+    println("`xl <command> --help` describes a command. Flags of build, check and run go to the compiler (xlc --help).")
+}
+
+@entry fn main(argc: i32, argv: **u8) -> i32 {
+    local all = fromArgv(argc, argv)
+    if all.length() < 2 {
+        usage()
+        return 2
+    }
+    local cmd = all.get(1).clone()
+    local rest: Vec<String> = Vec<String>()
+    for a, i in all { if i > 1 { rest.push(a.clone()) } }
+    if cmd.equals("help") || cmd.equals("--help") || cmd.equals("-h") {
+        usage()
+        return 0
+    }
+    if cmd.equals("version") || cmd.equals("--version") || cmd.equals("-V") {
+        println(VERSION)
+        return 0
+    }
+    if cmd.equals("pkg") { return pkgMain(&rest) }
+    if cmd.equals("lc") { return lcMain(&rest) }
+    if cmd.equals("check") { return checkMain(&rest) }
+    if cmd.equals("build") { return buildMain(&rest) }
+    if cmd.equals("run") { return runMain(&rest) }
+    if cmd.equals("env") { return envMain(&rest) }
+    if cmd.equals("self-update") { return selfUpdateMain(&rest) }
+    eprintln("error: unknown command `{}`", &cmd)
+    eprintln("  fix: see `xl help`")
+    return 2
+}

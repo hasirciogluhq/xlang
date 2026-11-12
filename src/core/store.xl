@@ -1,0 +1,15 @@
+// Writing the small text files xl owns (xlang.toml, xlang.lock, toolchain.toml) so that a crash never leaves half a file: the text
+// goes to `<path>.tmp`, which is then renamed over `path` (rename(2) replaces the target atomically on one file system,
+// https://pubs.opengroup.org/onlinepubs/9799919799/functions/rename.html).
+from "std" import String, format, fsWrite, files
+from "problem" import Done, done, fail
+
+/// Writes `text` to `path` via `path.tmp` and a rename.
+export fn writeAtomic(path: *String, text: *String) -> Done {
+    local tmp = format("{}.tmp", path)
+    if !fsWrite(tmp.cstr(), text.asStr()) || !files.rename(&tmp, path) {
+        files.removeFile(&tmp)
+        return fail<bool>("E0740", format("could not write {}", path), String("check that the directory is writable"))
+    }
+    return done()
+}

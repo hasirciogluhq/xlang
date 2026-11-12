@@ -1,0 +1,80 @@
+// Child processes for xl: git and the compiler. Programs run without a shell (arguments are passed as they are), git never prompts
+// (`GIT_TERMINAL_PROMPT=0`, https://git-scm.com/docs/git#Documentation/git.txt-codeGITTERMINALPROMPTcode), and a failure becomes a
+// Problem with the program's own error text.
+from "std" import String, Vec, Option, Result, format, trim
+from "std/os/process" import Command, ProcessError, ProcessErrorKind
+from "problem" import Problem, fail
+
+/// A command line: the program and its arguments.
+export class Line {
+    program: String
+    args: Vec<String>
+    dir: String           // working directory; empty for the current one
+
+    fn init(self, program: str) {
+        self.program = String(program)
+    }
+
+    fn init(self, program: *String) {
+        self.program = program.clone()
+    }
+
+    /// Adds one argument; returns self so lines read as `l.add("a").add("b")`.
+    fn add(self, a: str) -> *Line {
+        self.args.push(String(a))
+        return self
+    }
+
+    fn addS(self, a: *String) -> *Line {
+        self.args.push(a.clone())
+        return self
+    }
+
+    fn command(self) -> Command {
+        local c = Command(self.program.clone())
+        for a in self.args { c.arg(a.clone()) }
+        if self.dir.length() > 0 { c.cwd(self.dir.clone()) }
+        if self.program.equals("git") { c.env(String("GIT_TERMINAL_PROMPT"), String("0")) }
+        return c
+    }
+
+    /// The command as a person would type it, for messages.
+    fn text(self) -> String {
+        local out = self.program.clone()
+        for a in self.args {
+            out.push(32)
+            out.append(a)
+        }
+        return out
+    }
+}
+
+fn notStarted(l: *Line, e: ProcessError, code: str) -> Problem {
+    local why = String(e.kind == ProcessErrorKind.NotFound ? "is not installed or not on PATH" : "could not be started")
+    return Problem(code, format("`{}` {}", &l.program, &why), format("install {} and make sure it is on PATH", &l.program))
+}
+
+/// Runs `l` and returns what it wrote to stdout. A start failure or a non-zero exit is the Problem `code`, carrying stderr.
+export fn capture(l: *Line, code: str) -> Result<String, Problem> {
+    local c = l.command()
+    switch c.output() {
+        case Option.Some(e) { return Result.Err(notStarted(l, e, code)) }
+        case Option.None { }
+    }
+    if !c.status.success {
+        local err = trim(c.errText.asStr())
+        local typed = l.text()
+        return fail<String>(code, format("`{}` failed: {}", &typed, &err), String())
+    }
+    return Result.Ok(c.outText.clone())
+}
+
+/// Runs `l` with the streams of this process and returns its exit status (-1 when it was ended by a signal).
+export fn call(l: *Line, code: str) -> Result<i32, Problem> {
+    local c = l.command()
+    switch c.run() {
+        case Option.Some(e) { return Result.Err(notStarted(l, e, code)) }
+        case Option.None { }
+    }
+    return Result.Ok(c.status.code)
+}

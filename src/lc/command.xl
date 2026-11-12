@@ -1,0 +1,201 @@
+// `xl lc`: the xlang compiler and stdlib, installed per user under `$XLANG_HOME` (default `~/.xlang`, see `toolchain.xl`); no root
+// rights, and several versions side by side (xlang-docs/compiler/install.md "Toolchain").
+//
+//   install [tag] [--std=<tag>]   install a compiler (and stdlib) release and make it active
+//   update                        install the newest compiler and stdlib and make them active
+//   list                          the installed releases; `*` marks the active ones
+//   use <tag> [--std=<tag>]       make installed releases active
+//
+// Without a tag the newest stable release is taken, or the newest pre-release when the repository has no stable one yet. A tag may
+// be partial (`v1.2` is the newest v1.2.x). Releases come from `hasirciogluhq/xlc` (`xlc_<ver>_<os>_<arch>.tar.gz`, `.zip` on
+// Windows, the binary at the archive root) and `hasirciogluhq/xl-std` (`xl-std_<ver>.tar.gz`, one `xl-std_<ver>/` directory); every asset is checked against
+// the release's `checksums.txt` before it is unpacked.
+from "std" import String, Vec, Option, Result, println, format, trim, files
+from "../core/problem" import Problem, Done, done, fail, finish
+from "../core/tag" import pick, bare
+from "../core/host" import osName, archName, join, joinS, exe
+from "../core/release" import releaseTags, fetchAsset, unpack, ARCHIVE
+from "../core/proc" import Line, capture
+from "toolchain" import Toolchain, activeTags, activate, releaseDir, xlcBinary, installed
+
+define XLC_REPO = "hasirciogluhq/xlc"
+define STD_REPO = "hasirciogluhq/xl-std"
+define MODE_EXECUTABLE = 493        // 0755: tar.extract does not carry file modes
+
+export fn lcUsage() {
+    println("usage: xl lc <command> [arguments]")
+    println("")
+    println("  install [tag] [--std=<tag>]   install a compiler (and stdlib) release and make it active")
+    println("  update                        install the newest compiler and stdlib and make them active")
+    println("  list                          show the installed releases (* = active)")
+    println("  use <tag> [--std=<tag>]       make installed releases active")
+}
+
+/// The tag of `repository` that `spec` names: the newest stable fitting it, else the newest pre-release.
+fn choose(repository: str, spec: *String) -> Result<String, Problem> {
+    local tags = releaseTags(repository)?
+    switch pick(&tags, spec, false) {
+        case Result.Ok(t) { return Result.Ok(t.clone()) }
+        case Result.Err(e) { }
+    }
+    return pick(&tags, spec, true)
+}
+
+/// Unpacks into `<dir>.partial`, lets `finish` arrange the tree, then renames the result to `dir`: a failed install leaves nothing
+/// that looks installed.
+fn installXlc(tag: *String) -> Done {
+    local dir = releaseDir("xlc", tag)
+    if files.isDir(&dir) {
+        println("xlc {} is already installed", tag)
+        return done()
+    }
+    local version = bare(tag)
+    local os = osName()
+    local arch = archName()
+    local asset = format("xlc_{}_{}_{}.{}", &version, &os, &arch, ARCHIVE)
+    println("downloading {} {}", &asset, tag)
+    local data = fetchAsset(XLC_REPO, tag, asset.asStr())?
+    local partial = format("{}.partial", &dir)
+    files.removeAll(&partial)
+    unpack(&data, &partial)?
+    local name = exe("xlc")
+    local binary = joinS(&partial, &name)
+    if !files.exists(&binary) || !files.chmod(&binary, MODE_EXECUTABLE) {
+        files.removeAll(&partial)
+        return fail<bool>("E0793", format("{} has no xlc binary at its root", &asset), String("the release is broken; pick another version"))
+    }
+    // A binary for another system or a corrupt one fails here, before it is installed.
+    local check = Line(&binary)
+    check.add("--version")
+    switch capture(&check, "E0793") {
+        case Result.Ok(out) {
+            local said = trim(out.asStr())
+            println("  {}", &said)
+        }
+        case Result.Err(e) {
+            files.removeAll(&partial)
+            return Result.Err(e)
+        }
+    }
+    if !files.rename(&partial, &dir) {
+        files.removeAll(&partial)
+        return fail<bool>("E0793", format("could not move the compiler into {}", &dir), String("check that XLANG_HOME is writable"))
+    }
+    return done()
+}
+
+fn installStd(tag: *String) -> Done {
+    local dir = releaseDir("std", tag)
+    if files.isDir(&dir) {
+        println("std {} is already installed", tag)
+        return done()
+    }
+    local version = bare(tag)
+    local asset = format("xl-std_{}.tar.gz", &version)
+    println("downloading {} {}", &asset, tag)
+    local data = fetchAsset(STD_REPO, tag, asset.asStr())?
+    local partial = format("{}.partial", &dir)
+    files.removeAll(&partial)
+    unpack(&data, &partial)?
+    local inner = format("xl-std_{}", &version)
+    local tree = joinS(&partial, &inner)
+    local index = join(&tree, "index.xl")
+    if !files.exists(&index) {
+        files.removeAll(&partial)
+        return fail<bool>("E0793", format("{} has no {}/index.xl", &asset, &inner), String("the release is broken; pick another version"))
+    }
+    // The archive's single directory becomes the release directory.
+    local moved = files.rename(&tree, &dir)
+    files.removeAll(&partial)
+    if !moved { return fail<bool>("E0793", format("could not move the stdlib into {}", &dir), String("check that XLANG_HOME is writable")) }
+    return done()
+}
+
+/// `[tag] [--std=<tag>]`: the compiler spec and the stdlib spec (empty = newest).
+class Specs {
+    xlc: String
+    std: String
+}
+
+fn specsOf(args: *Vec<String>, needTag: bool) -> Result<Specs, Problem> {
+    local s = Specs()
+    local seen = false
+    for a in args {
+        if a.startsWith("--std=") {
+            s.std = a.slice(6, a.length() - 6)
+        } else if a.startsWith("-") || seen {
+            return fail<Specs>("E0740", format("unexpected argument `{}`", a), String("see `xl lc help`"))
+        } else {
+            s.xlc = a.clone()
+            seen = true
+        }
+    }
+    if needTag && !seen { return fail<Specs>("E0740", String("`xl lc use` needs a compiler tag"), String("see `xl lc list`")) }
+    return Result.Ok(s)
+}
+
+fn install(args: *Vec<String>) -> Done {
+    local s = specsOf(args, false)?
+    local xlcTag = choose(XLC_REPO, &s.xlc)?
+    local stdTag = choose(STD_REPO, &s.std)?
+    installXlc(&xlcTag)?
+    installStd(&stdTag)?
+    activate(&xlcTag, &stdTag)?
+    println("active: xlc {}, std {}", &xlcTag, &stdTag)
+    return done()
+}
+
+fn update() -> Done {
+    local before = activeTags()
+    local none: Vec<String> = Vec<String>()
+    install(&none)?
+    local after = activeTags()
+    if before.xlcTag.equals(&after.xlcTag) && before.stdTag.equals(&after.stdTag) { println("already up to date") }
+    return done()
+}
+
+fn listKind(kind: str, active: *String) {
+    local tags = installed(kind)
+    println("{}:", kind)
+    if tags.isEmpty() { println("  (none)") }
+    for t in tags {
+        local mark = String(t.equals(active) ? "*" : " ")
+        println("  {} {}", &mark, t)
+    }
+}
+
+fn list() -> Done {
+    local active = activeTags()
+    listKind("xlc", &active.xlcTag)
+    listKind("std", &active.stdTag)
+    return done()
+}
+
+fn use(args: *Vec<String>) -> Done {
+    local s = specsOf(args, true)?
+    local active = activeTags()
+    local stdTag = s.std.length() > 0 ? s.std.clone() : active.stdTag.clone()
+    local binary = xlcBinary(&s.xlc)
+    if !files.exists(&binary) { return fail<bool>("E0790", format("xlc {} is not installed", &s.xlc), format("run `xl lc install {}`", &s.xlc)) }
+    local std = releaseDir("std", &stdTag)
+    if stdTag.length() == 0 || !files.isDir(&std) { return fail<bool>("E0790", format("std {} is not installed", &stdTag), String("run `xl lc install --std=<tag>`")) }
+    activate(&s.xlc, &stdTag)?
+    println("active: xlc {}, std {}", &s.xlc, &stdTag)
+    return done()
+}
+
+/// `xl lc <command> ...`; `args` starts after `lc`.
+export fn lcMain(args: *Vec<String>) -> i32 {
+    if args.isEmpty() || args.get(0).equals("help") || args.get(0).equals("--help") || args.get(0).equals("-h") {
+        lcUsage()
+        return args.isEmpty() ? 2 : 0
+    }
+    local rest: Vec<String> = Vec<String>()
+    for a, i in args { if i > 0 { rest.push(a.clone()) } }
+    local cmd = args.get(0)
+    if cmd.equals("install") || cmd.equals("i") { return finish(install(&rest)) }
+    if cmd.equals("update") || cmd.equals("up") { return finish(update()) }
+    if cmd.equals("list") || cmd.equals("ls") { return finish(list()) }
+    if cmd.equals("use") { return finish(use(&rest)) }
+    return finish(fail<bool>("E0740", format("unknown command `xl lc {}`", cmd), String("see `xl lc help`")))
+}

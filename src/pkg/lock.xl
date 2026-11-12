@@ -1,0 +1,128 @@
+// `xlang.lock`: the exact tag and commit of every downloaded package (xlang-docs/compiler/packages.md "xlang.lock"). Written only by
+// `xl pkg`, sorted by name so that it diffs cleanly; every entry is one `[[package]]` table:
+//
+//     [[package]]
+//     name = "github.com/user/repo"
+//     version = "v1.2.0"
+//     commit = "<40 hex digits>"
+//     source = "https://github.com/user/repo.git"
+//     indirect = true                     # only another package needs it
+from "std" import String, Vec, Option, Result, split, format, fsReadAllString, files
+from "../core/problem" import Problem, Done, done, fail
+from "../core/scan" import Scan, quote
+from "../core/store" import writeAtomic
+
+export class Locked {
+    name: String
+    version: String
+    commit: String
+    source: String
+    indirect: bool
+
+    fn init(self) {
+        self.indirect = false
+    }
+
+    fn clone(self) -> Locked {
+        local l = Locked()
+        l.name = self.name.clone()
+        l.version = self.version.clone()
+        l.commit = self.commit.clone()
+        l.source = self.source.clone()
+        l.indirect = self.indirect
+        return l
+    }
+}
+
+export class Lock {
+    file: String
+    entries: Vec<Locked>
+
+    fn init(self, file: *String) {
+        self.file = file.clone()
+    }
+
+    /// The entry `name`, or -1.
+    fn find(self, name: *String) -> i64 {
+        for e, i in self.entries { if e.name.equals(name) { return i as i64 } }
+        return -1
+    }
+
+    /// Adds `e` keeping the entries sorted by name.
+    fn add(self, e: Locked) {
+        local at = self.entries.length()
+        for o, i in self.entries {
+            if o.name.compare(e.name.asStr()) > 0 {
+                at = i
+                break
+            }
+        }
+        self.entries.insert(at, e)
+    }
+
+    fn text(self) -> String {
+        local out = String("# xlang.lock: written by `xl pkg`; do not edit.\n")
+        for e in self.entries {
+            local name = quote(&e.name)
+            local version = quote(&e.version)
+            local commit = quote(&e.commit)
+            local source = quote(&e.source)
+            out.append(format("\n[[package]]\nname = {}\nversion = {}\ncommit = {}\nsource = {}\n", &name, &version, &commit, &source).asStr())
+            if e.indirect { out.append("indirect = true\n") }
+        }
+        return out
+    }
+
+    fn save(self) -> Done {
+        local text = self.text()
+        return writeAtomic(&self.file, &text)
+    }
+}
+
+fn bad(file: *String, line: usize, what: str) -> Result<Lock, Problem> {
+    return fail<Lock>("E0740", format("{}:{}: {}", file, line + 1, what), String("delete xlang.lock and run `xl pkg install`"))
+}
+
+/// Reads the lock at `path`; an empty lock when the file does not exist.
+export fn loadLock(path: *String) -> Result<Lock, Problem> {
+    local lock = Lock(path)
+    if !files.exists(path) { return Result.Ok(lock) }
+    local text = fsReadAllString(path.cstr())
+    local open = false
+    local cur = Locked()
+    for line, i in split(text.asStr(), "\n") {
+        local s = Scan(line)
+        if s.end() { continue }
+        if s.eat(91) {
+            if !s.eat(91) { return bad(path, i, "only [[package]] tables belong in the lock") }
+            if open { lock.add(cur.clone()) }
+            cur = Locked()
+            open = true
+            continue
+        }
+        if !open { return bad(path, i, "a key outside [[package]]") }
+        local key = String()
+        switch s.key() {
+            case Option.Some(k) { key = k.clone() }
+            case Option.None { return bad(path, i, "a line that is not `key = value`") }
+        }
+        if !s.eat(61) { return bad(path, i, "a key without `=`") }
+        if key.equals("indirect") {
+            local w = s.word()
+            cur.indirect = w.equals("true")
+            continue
+        }
+        local value = String()
+        switch s.string() {
+            case Option.Some(v) { value = v.clone() }
+            case Option.None { return bad(path, i, "a value that is not a string") }
+        }
+        if key.equals("name") { cur.name = value }
+        else if key.equals("version") { cur.version = value }
+        else if key.equals("commit") { cur.commit = value }
+        else if key.equals("source") { cur.source = value }
+        else { return bad(path, i, "an unknown key") }
+    }
+    if open { lock.add(cur.clone()) }
+    return Result.Ok(lock)
+}

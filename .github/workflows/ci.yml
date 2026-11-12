@@ -1,0 +1,80 @@
+name: ci
+
+# Builds `xl` from src/ with the xlang compiler and the stdlib of the `xl-std` submodule, then runs test/run.sh on every host a
+# release ships for: every command against a real compiler, local git repositories and a release mirror, without the network.
+#
+# The compiler is resolved on every run: the newest stable release of hasirciogluhq/xlc, or its newest pre-release while it has none
+# (.github/actions/xlc, cached by tag); `xlc_version` pins one. Also called by the release workflow before a release is published.
+
+on:
+  push:
+    branches: [main, development]
+  pull_request:
+  workflow_call:
+    inputs:
+      xlc_version:
+        type: string
+        default: ""
+  workflow_dispatch:
+    inputs:
+      xlc_version:
+        description: "Compiler release tag to use instead of the newest one (optional)"
+        type: string
+        default: ""
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}-${{ github.event_name }}
+  cancel-in-progress: true
+
+jobs:
+  # xl must type-check for every target, whatever the host is.
+  check:
+    name: type-check (${{ matrix.target }})
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        target:
+          - x86_64-linux-gnu
+          - aarch64-linux-gnu
+          - x86_64-apple-darwin
+          - aarch64-apple-darwin
+          - x86_64-pc-windows-msvc
+          - aarch64-pc-windows-msvc
+    steps:
+      - uses: actions/checkout@v7
+      - name: Stdlib submodule
+        run: git submodule update --init --depth 1 xl-std
+      - uses: ./.github/actions/xlc
+        with:
+          version: ${{ inputs.xlc_version }}
+      - name: xlc --check main.xl
+        working-directory: src
+        run: xlc main.xl -M std=../xl-std --import std -DfeatureDefaultAllocator=true --check --target ${{ matrix.target }}
+
+  test:
+    name: test (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        # Windows arm64 has no compiler release yet (xlang-docs known-limitations).
+        os: [ubuntu-24.04, ubuntu-24.04-arm, macos-15, macos-15-intel, windows-2025]
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v7
+      - name: Stdlib submodule
+        run: git submodule update --init --depth 1 xl-std
+      - uses: ./.github/actions/xlc
+        with:
+          version: ${{ inputs.xlc_version }}
+      - name: Build xl
+        working-directory: src
+        run: xlc main.xl -M std=../xl-std --import std -DfeatureDefaultAllocator=true -o "../xl$([ "$RUNNER_OS" = Windows ] && echo .exe || true)"
+      - name: test/run.sh
+        run: test/run.sh ./xl "$(command -v xlc)" xl-std

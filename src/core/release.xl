@@ -1,0 +1,118 @@
+// GitHub releases of the xlang repositories (`hasirciogluhq/xlang`, `xlc`, `xl-std`): their tags, one asset checked against the
+// release's `checksums.txt` (`sha256sum` format: `<hex>  <name>`), and unpacking a `.tar.gz` or `.zip` asset.
+//
+// Assets come from `https://github.com/<repository>/releases/download/<tag>/<asset>`. `$XLANG_MIRROR` replaces GitHub with a
+// directory laid out as `<mirror>/<repository>/<tag>/<asset>`, whose tag directories are the tags: for machines without access
+// to GitHub and for the tests, which never use the network.
+from "std" import String, Vec, Result, Client, sha256, hexEncode, gunzip, split, splitAsciiWhitespace, format, fsReadAllString
+from "std" import tar, zip, files
+from "problem" import Problem, Done, done, fail
+from "host" import variable, join, joinS
+from "git" import remoteTags, names
+
+define MAX_ARCHIVE = 1073741824      // 1 GiB: the largest unpacked archive accepted
+
+// The archive format of per-OS release assets: `.zip` on Windows, `.tar.gz` elsewhere (the stdlib release is `.tar.gz` everywhere).
+#if os == "windows"
+export define ARCHIVE = "zip"
+#else
+export define ARCHIVE = "tar.gz"
+#endif
+
+/// The tags of the release repository `repository` (`owner/name`).
+export fn releaseTags(repository: str) -> Result<Vec<String>, Problem> {
+    local mirror = variable("XLANG_MIRROR")
+    if mirror.length() > 0 {
+        local dir = join(&mirror, repository)
+        local tags: Vec<String> = files.listDir(&dir)
+        if tags.isEmpty() {
+            return fail<Vec<String>>("E0791", format("the mirror has no releases in {}", &dir), String("check XLANG_MIRROR"))
+        }
+        return Result.Ok(tags)
+    }
+    local url = format("https://github.com/{}.git", repository)
+    local remote = remoteTags(&url)?
+    return Result.Ok(names(&remote))
+}
+
+/// The bytes of one asset of the release `tag`.
+fn download(repository: str, tag: *String, asset: *String) -> Result<String, Problem> {
+    local mirror = variable("XLANG_MIRROR")
+    if mirror.length() > 0 {
+        local repo = join(&mirror, repository)
+        local dir = joinS(&repo, tag)
+        local file = joinS(&dir, asset)
+        if !files.exists(&file) {
+            return fail<String>("E0791", format("{} is missing", &file), String("check XLANG_MIRROR"))
+        }
+        return Result.Ok(fsReadAllString(file.cstr()))
+    }
+    local url = format("https://github.com/{}/releases/download/{}/{}", repository, tag, asset)
+    local client = Client()
+    client.timeoutMs = 120000
+    local r = client.Get(url.asStr())
+    if !r.Ok() {
+        local why = r.error != 0 ? format("network error {}", r.error) : format("HTTP {}", r.status)
+        return fail<String>("E0791", format("could not download {}: {}", &url, &why), String("check the network and that the release exists"))
+    }
+    return Result.Ok(r.body.clone())
+}
+
+/// Lowercase hex SHA-256 of `data` (https://csrc.nist.gov/pubs/fips/180-4/upd1/final).
+export fn sha256Hex(data: *String) -> String {
+    local digest: [u8; 32]
+    sha256(data.ptr, data.length(), &digest[0])
+    local out = String(64, 48)
+    hexEncode(&digest[0], 32, out.ptr)
+    return out
+}
+
+/// Downloads `asset` of the release `tag` and checks it against the release's `checksums.txt`. E0792 when the list has no line
+/// for it or the hash differs: nothing unverified is ever installed.
+export fn fetchAsset(repository: str, tag: *String, asset: str) -> Result<String, Problem> {
+    local name = String(asset)
+    local sumsName = String("checksums.txt")
+    local sums = download(repository, tag, &sumsName)?
+    local want = String()
+    local binary = format("*{}", &name)      // `sha256sum -b` marks the name with `*`
+    for line in split(sums.asStr(), "\n") {
+        local fields = splitAsciiWhitespace(line.asStr())
+        if fields.length() == 2 && (fields.get(1).equals(&name) || fields.get(1).equals(&binary)) {
+            want = fields.get(0).toLowerAscii()
+        }
+    }
+    if want.length() == 0 {
+        return fail<String>("E0792", format("checksums.txt of {} {} has no entry for {}", repository, tag, &name), String("the release is incomplete; pick another version"))
+    }
+    local data = download(repository, tag, &name)?
+    local have = sha256Hex(&data)
+    if !have.equals(&want) {
+        return fail<String>("E0792", format("{} does not match checksums.txt (sha256 {}, expected {})", &name, &have, &want), String("download again; if it persists, report the release"))
+    }
+    return Result.Ok(data)
+}
+
+/// Unpacks a `.tar.gz` (gzip magic 1f 8b, https://www.rfc-editor.org/rfc/rfc1952) or `.zip` (local header `PK\3\4`) archive into
+/// `dest` (created when missing).
+export fn unpack(archive: *String, dest: *String) -> Done {
+    if archive.startsWith("PK\x03\x04") {
+        switch zip.extract(archive, dest) {
+            case Result.Err(e) { return unpackFailed(dest) }
+            case Result.Ok(n) { return done() }
+        }
+    }
+    switch gunzip(archive, MAX_ARCHIVE) {
+        case Result.Err(e) { return fail<bool>("E0792", String("the archive is neither gzip nor zip"), String("download again")) }
+        case Result.Ok(plain) {
+            switch tar.extract(&plain, dest) {
+                case Result.Err(e) { return unpackFailed(dest) }
+                case Result.Ok(n) { }
+            }
+        }
+    }
+    return done()
+}
+
+fn unpackFailed(dest: *String) -> Done {
+    return fail<bool>("E0793", format("could not unpack the archive into {}", dest), String("check that the directory is writable and the archive is intact"))
+}

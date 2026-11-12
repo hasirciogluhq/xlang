@@ -1,0 +1,163 @@
+// Resolution: from the project's `[dependencies]` to a new lock, downloading what the cache lacks
+// (xlang-docs/compiler/packages.md "Commands" and "Using a package").
+//
+// The project's entries are resolved first, then the dependencies of each package, breadth first. One copy of each repository is
+// used: when a package needs another version of a repository the project lists, the project's version wins; when the project does
+// not list it and two packages disagree, resolution stops with E0743. `latest` takes the locked tag, or the newest stable tag when
+// the lock has none or `fresh` is set. Nothing here writes the manifest or the lock; the caller saves both once everything resolved.
+from "std" import String, Vec, Result, format, trim, fsReadAllString, fsWrite, files
+from "../core/problem" import Problem, Done, done, fail
+from "../core/tag" import pick
+from "../core/git" import remoteTags, names, cloneTag
+from "../core/host" import join, joinS, parent
+from "manifest" import Manifest, Dep, load
+from "lock" import Lock, Locked
+
+/// A dependency waiting to be resolved: the entry, who needs it (empty for the project) and the directory its relative paths start at.
+class Want {
+    dep: Dep
+    by: String
+    base: String
+}
+
+/// `<root>/.xlang/cache`.
+export fn cacheDir(root: *String) -> String {
+    local x = join(root, ".xlang")
+    return join(&x, "cache")
+}
+
+/// The cache directory of `name` at `tag`: `<root>/.xlang/cache/<name>@<tag>`.
+export fn packageDir(root: *String, name: *String, tag: *String) -> String {
+    local cache = cacheDir(root)
+    local leaf = format("{}@{}", name, tag)
+    return joinS(&cache, &leaf)
+}
+
+/// A `source` or `path` relative to `base` when it starts with `./` or `../`; anything else (a URL, an absolute path) as written.
+export fn relative(base: *String, p: *String) -> String {
+    if p.startsWith("./") || p.startsWith("../") {
+        local joined = joinS(base, p)
+        return files.absolute(&joined)
+    }
+    return p.clone()
+}
+
+/// The newest stable tag of `url` (E0744 when it has none).
+export fn newestTag(url: *String) -> Result<String, Problem> {
+    local remote = remoteTags(url)?
+    local all = names(&remote)
+    local any = String()
+    return pick(&all, &any, false)
+}
+
+/// Makes sure `dir` holds `url` at `tag` and returns its commit. `expected` is the locked commit (empty when not locked): a cache
+/// that disagrees is E0741, a tag that now names another commit is E0744.
+fn fetch(url: *String, tag: *String, dir: *String, expected: *String) -> Result<String, Problem> {
+    local mark = join(dir, ".xlang-commit")
+    if files.isDir(dir) {
+        local have = trim(fsReadAllString(mark.cstr()).asStr())
+        if have.length() > 0 {
+            if expected.length() > 0 && !have.equals(expected) {
+                return fail<String>("E0741", format("{} holds commit {}, but xlang.lock says {}", dir, &have, expected), format("delete {} and run `xl pkg install`", dir))
+            }
+            return Result.Ok(have)
+        }
+        files.removeAll(dir)        // an interrupted download: no commit mark
+    }
+    local partial = format("{}.partial", dir)
+    files.removeAll(&partial)
+    local up = parent(dir)
+    files.makeDirAll(&up)
+    local commit = cloneTag(url, tag, &partial)?
+    if expected.length() > 0 && !commit.equals(expected) {
+        files.removeAll(&partial)
+        return fail<String>("E0744", format("tag {} of {} moved: it is commit {} now, xlang.lock says {}", tag, url, &commit, expected), String("release tags must never move; ask the author, or update to another tag"))
+    }
+    // The cache is a plain source tree: no `.git`, plus the commit mark.
+    local git = join(&partial, ".git")
+    local line = format("{}\n", &commit)
+    local partialMark = join(&partial, ".xlang-commit")
+    if !files.removeAll(&git) || !fsWrite(partialMark.cstr(), line.asStr()) || !files.rename(&partial, dir) {
+        files.removeAll(&partial)
+        return fail<String>("E0744", format("could not move the download into {}", dir), String("check that the project directory is writable"))
+    }
+    return Result.Ok(commit)
+}
+
+/// Resolves every dependency of `m` against `old` and returns the new lock. `fresh` lists the names whose `latest` ignores the lock;
+/// `all` makes every `latest` ignore it.
+export fn resolve(m: *Manifest, old: *Lock, fresh: *Vec<String>, all: bool) -> Result<Lock, Problem> {
+    local root = m.root()
+    local out = Lock(&old.file)
+    local queue: Vec<Want> = Vec<Want>()
+    local visitedPaths: Vec<String> = Vec<String>()
+    for d in m.deps {
+        local w = Want()
+        w.dep = d.clone()
+        w.base = root.clone()
+        queue.push(w)
+    }
+    // `enqueue` grows the queue, so each entry is copied out before anything is pushed.
+    local at: usize = 0
+    while at < queue.length() {
+        local d = queue.get(at).dep.clone()
+        local by = queue.get(at).by.clone()
+        local base = queue.get(at).base.clone()
+        at++
+        local direct = by.length() == 0
+        if d.onDisk() {
+            local dir = relative(&base, &d.path)
+            local seen = false
+            for v in visitedPaths { if v.equals(&dir) { seen = true } }
+            if seen { continue }
+            visitedPaths.push(dir.clone())
+            enqueue(&queue, &dir, &d.name)?
+            continue
+        }
+        local have = out.find(&d.name)
+        if have >= 0 {
+            local got = out.entries.get(have as usize)
+            if d.version.equals(&got.version) || d.version.equals("latest") || m.find(&d.name) >= 0 { continue }
+            return fail<Lock>("E0743", format("{} needs {} {}, but another package needs {}", &by, &d.name, &d.version, &got.version), format("choose one: `xl pkg add {}@<tag>`", &d.name))
+        }
+        if !direct && m.find(&d.name) >= 0 { continue }
+        local written = d.url()
+        local url = relative(&base, &written)
+        local lockedAt = old.find(&d.name)
+        local tag = d.version.clone()
+        local refresh = all
+        for f in fresh { if f.equals(&d.name) { refresh = true } }
+        if tag.equals("latest") {
+            if lockedAt >= 0 && !refresh { tag = old.entries.get(lockedAt as usize).version.clone() }
+            else { tag = newestTag(&url)? }
+        }
+        local expected = String()
+        if lockedAt >= 0 && old.entries.get(lockedAt as usize).version.equals(&tag) { expected = old.entries.get(lockedAt as usize).commit.clone() }
+        local dir = packageDir(&root, &d.name, &tag)
+        local commit = fetch(&url, &tag, &dir, &expected)?
+        local e = Locked()
+        e.name = d.name.clone()
+        e.version = tag
+        e.commit = commit
+        e.source = url
+        e.indirect = !direct
+        out.add(e)
+        enqueue(&queue, &dir, &d.name)?
+    }
+    return Result.Ok(out)
+}
+
+/// Adds the dependencies of the package in `dir` (its own `xlang.toml`, which must pin exact tags) to `queue`.
+fn enqueue(queue: *Vec<Want>, dir: *String, by: *String) -> Done {
+    local file = join(dir, "xlang.toml")
+    if !files.exists(&file) { return done() }
+    local sub = load(&file, false)?
+    for d in sub.deps {
+        local w = Want()
+        w.dep = d.clone()
+        w.by = by.clone()
+        w.base = dir.clone()
+        queue.push(w)
+    }
+    return done()
+}

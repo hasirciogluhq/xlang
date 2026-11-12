@@ -1,0 +1,274 @@
+// `xlang.toml`: the `[dependencies]` table, read and edited in place (xlang-docs/compiler/packages.md "xlang.toml").
+//
+// The file is kept as its lines. Reading records, for each dependency, the line it is on; an edit replaces that one line (keeping
+// its trailing comment) or inserts one, so comments, blank lines, order and every other table survive byte for byte. Only
+// `[dependencies]` is interpreted; other tables (`[package]`, `[std]`, `[[native]]`) are carried as text.
+from "std" import String, Vec, Option, Result, split, format, fsReadAllString, files
+from "../core/problem" import Problem, Done, done, fail
+from "../core/store" import writeAtomic
+from "../core/tag" import valid as validTag
+from "../core/host" import join, parent
+from "../core/scan" import Scan, quote
+
+/// One entry of `[dependencies]`.
+export class Dep {
+    name: String        // repository path: `github.com/user/repo`
+    version: String     // a release tag or `latest`; empty for a `path` dependency
+    source: String      // git URL or directory replacing `https://<name>.git`; empty for the default
+    path: String        // a directory used in place; empty for a git dependency
+    line: usize         // index of its line in the file
+    comment: String     // the trailing comment of that line
+
+    fn init(self) {
+        self.line = 0
+    }
+
+    fn init(self, name: *String, version: *String) {
+        self.name = name.clone()
+        self.version = version.clone()
+        self.line = 0
+    }
+
+    fn onDisk(self) -> bool { return self.path.length() > 0 }
+
+    /// The git URL to clone: `source`, or `https://<name>.git`.
+    fn url(self) -> String {
+        return self.source.length() > 0 ? self.source.clone() : format("https://{}.git", &self.name)
+    }
+
+    /// The value as written in the manifest: `"v1.2.0"` or an inline table when there is more than a version.
+    fn value(self) -> String {
+        if self.onDisk() {
+            local p = quote(&self.path)
+            return format("{ path = {} }", &p)
+        }
+        if self.source.length() == 0 { return quote(&self.version) }
+        local v = quote(&self.version)
+        local s = quote(&self.source)
+        return format("{ version = {}, source = {} }", &v, &s)
+    }
+
+    fn clone(self) -> Dep {
+        local d = Dep(&self.name, &self.version)
+        d.source = self.source.clone()
+        d.path = self.path.clone()
+        d.line = self.line
+        d.comment = self.comment.clone()
+        return d
+    }
+}
+
+/// A repository path: `host.tld/segment/...`, the first segment with a dot, no empty, `.` or `..` segment, not `std`. E0740 otherwise.
+export fn checkName(name: *String) -> Done {
+    local parts = split(name.asStr(), "/")
+    local ok = parts.length() >= 2 && parts.get(0).contains(".") && !name.equals("std")
+    for p in parts {
+        if p.length() == 0 || p.equals(".") || p.equals("..") || p.contains("\\") || p.contains(" ") { ok = false }
+    }
+    if !ok {
+        return fail<bool>("E0740", format("`{}` is not a repository path", name), String("write it as host.tld/user/repo, e.g. github.com/user/repo"))
+    }
+    return done()
+}
+
+/// A version written in a manifest: a release tag, or `latest` where `allowLatest` (project manifests only). E0742 otherwise.
+export fn checkVersion(name: *String, version: *String, allowLatest: bool) -> Done {
+    if version.equals("latest") && allowLatest { return done() }
+    if !validTag(version) {
+        local fix = String(allowLatest ? "use a release tag such as v1.2.0, or latest" : "a package must pin exact release tags for its own dependencies")
+        return fail<bool>("E0742", format("`{}` = `{}` is not a release tag", name, version), fix)
+    }
+    return done()
+}
+
+export class Manifest {
+    file: String           // path of xlang.toml
+    lines: Vec<String>
+    deps: Vec<Dep>
+    header: i64            // line of `[dependencies]`, -1 when there is none
+    last: i64              // last non-blank line of that table
+
+    fn init(self, file: *String) {
+        self.file = file.clone()
+        self.header = -1
+        self.last = -1
+    }
+
+    /// The project root: the directory of the manifest.
+    fn root(self) -> String { return parent(&self.file) }
+
+    /// The index of the dependency `name` in `deps`, or -1.
+    fn find(self, name: *String) -> i64 {
+        for d, i in self.deps { if d.name.equals(name) { return i as i64 } }
+        return -1
+    }
+
+    /// Reads `[dependencies]` from `lines`. `project` allows `latest` (a package's own manifest must pin tags).
+    fn parse(self, project: bool) -> Done {
+        self.deps.clear()
+        self.header = -1
+        self.last = -1
+        local inDeps = false
+        for line, i in self.lines {
+            local s = Scan(line)
+            if s.end() { continue }
+            if s.peek() == 91 {
+                inDeps = isHeader(line, "dependencies")
+                if inDeps {
+                    self.header = i as i64
+                    self.last = i as i64
+                }
+                continue
+            }
+            if !inDeps { continue }
+            self.last = i as i64
+            local d = self.entry(&s, i)?
+            checkName(&d.name)?
+            if !d.onDisk() { checkVersion(&d.name, &d.version, project)? }
+            if self.find(&d.name) >= 0 { return self.bad<bool>(i, String("is listed twice")) }
+            self.deps.push(d)
+        }
+        return done()
+    }
+
+    fn bad<T>(self, line: usize, what: String) -> Result<T, Problem> {
+        local text = self.lines.get(line)
+        return fail<T>("E0740", format("{}:{}: `{}` {}", &self.file, line + 1, text, &what), String("see xlang-docs compiler/packages, section xlang.toml"))
+    }
+
+    /// One `"name" = value` line.
+    fn entry(self, s: *Scan, line: usize) -> Result<Dep, Problem> {
+        local d = Dep()
+        d.line = line
+        switch s.key() {
+            case Option.Some(k) { d.name = k.clone() }
+            case Option.None { return self.bad<Dep>(line, String("has no key")) }
+        }
+        if !s.eat(61) { return self.bad<Dep>(line, String("has no `=`")) }
+        s.blank()
+        if s.peek() == 34 {
+            switch s.string() {
+                case Option.Some(v) { d.version = v.clone() }
+                case Option.None { return self.bad<Dep>(line, String("has an unterminated string")) }
+            }
+        } else if s.eat(123) {
+            local first = true
+            while !s.eat(125) {
+                if !first && !s.eat(44) { return self.bad<Dep>(line, String("needs `,` between fields")) }
+                first = false
+                local field = String()
+                local value = String()
+                switch s.key() {
+                    case Option.Some(k) { field = k.clone() }
+                    case Option.None { return self.bad<Dep>(line, String("has a malformed inline table")) }
+                }
+                if !s.eat(61) { return self.bad<Dep>(line, String("has no `=` in the inline table")) }
+                switch s.string() {
+                    case Option.Some(v) { value = v.clone() }
+                    case Option.None { return self.bad<Dep>(line, String("needs a string value")) }
+                }
+                if field.equals("version") { d.version = value }
+                else if field.equals("source") { d.source = value }
+                else if field.equals("path") { d.path = value }
+                else { return self.bad<Dep>(line, format("has the unknown key `{}`", &field)) }
+            }
+            if d.onDisk() && (d.version.length() > 0 || d.source.length() > 0) {
+                return self.bad<Dep>(line, String("combines `path` with `version` or `source`"))
+            }
+            if !d.onDisk() && d.version.length() == 0 { d.version = String("latest") }
+        } else {
+            return self.bad<Dep>(line, String("needs a string or an inline table"))
+        }
+        d.comment = s.comment()
+        if !s.end() { return self.bad<Dep>(line, String("has text after the value")) }
+        return Result.Ok(d)
+    }
+
+    /// Adds `d` or replaces the entry of the same name (an existing `source` is kept when `d` has none).
+    fn put(self, d: *Dep) {
+        local at = self.find(&d.name)
+        local entry = d.clone()
+        if at >= 0 {
+            local old = self.deps.get(at as usize)
+            if entry.source.length() == 0 && !entry.onDisk() { entry.source = old.source.clone() }
+            entry.comment = old.comment.clone()
+            entry.line = old.line
+        }
+        local key = quote(&entry.name)
+        local value = entry.value()
+        local text = format("{} = {}{}", &key, &value, &entry.comment)
+        if at >= 0 {
+            self.lines.set(entry.line, text)
+        } else {
+            if self.header < 0 {
+                if self.lines.length() > 0 && self.lines.last().length() > 0 { self.lines.push(String()) }
+                self.lines.push(String("[dependencies]"))
+                self.lines.push(text)
+            } else {
+                self.lines.insert((self.last + 1) as usize, text)
+            }
+        }
+        self.parse(true)
+    }
+
+    /// Removes the entry `name`; false when there is none.
+    fn remove(self, name: *String) -> bool {
+        local at = self.find(name)
+        if at < 0 { return false }
+        self.lines.remove(self.deps.get(at as usize).line)
+        self.parse(true)
+        return true
+    }
+
+    fn text(self) -> String {
+        local out = String()
+        for l in self.lines {
+            out.append(l)
+            out.push(10)
+        }
+        return out
+    }
+
+    /// Writes the file through a temporary next to it and a rename, so a crash never leaves half a manifest.
+    fn save(self) -> Done {
+        local text = self.text()
+        return writeAtomic(&self.file, &text)
+    }
+}
+
+/// `[name]` with optional blanks and comment.
+fn isHeader(line: *String, name: str) -> bool {
+    local s = Scan(line)
+    if !s.eat(91) { return false }
+    switch s.key() {
+        case Option.Some(k) { if !k.equals(name) { return false } }
+        case Option.None { return false }
+    }
+    return s.eat(93) && s.end()
+}
+
+/// Reads the manifest at `path` (an empty one when the file does not exist). `project` allows `latest`.
+export fn load(path: *String, project: bool) -> Result<Manifest, Problem> {
+    local m = Manifest(path)
+    if files.exists(path) {
+        local text = fsReadAllString(path.cstr())
+        m.lines = split(text.asStr(), "\n")
+        // A final newline makes an empty last piece; it is written back by `text`.
+        if m.lines.length() > 0 && m.lines.last().length() == 0 { m.lines.pop() }
+    }
+    m.parse(project)?
+    return Result.Ok(m)
+}
+
+/// The nearest `xlang.toml` from `dir` upward, or None.
+export fn findManifest(dir: *String) -> Option<String> {
+    local at = files.absolute(dir)
+    while true {
+        local file = join(&at, "xlang.toml")
+        if files.exists(&file) { return Option.Some(file) }
+        local up = parent(&at)
+        if up.equals(&at) || up.length() == 0 || up.equals(".") { return Option.None }
+        at = up
+    }
+    return Option.None
+}

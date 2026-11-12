@@ -1,14 +1,12 @@
 name: release
 
-# Builds the xlang compiler for macOS and Linux (arm64 + amd64), publishes a
-# GitHub release, and updates the Homebrew tap formula.
+# Publishes a release of `xl` when a version tag is pushed: the ci workflow runs first, then xl is built with the tag's version on
+# every host and attached to a GitHub release as `xl_<version>_<os>_<arch>.tar.gz` (`.zip` on Windows, the binary at the archive root)
+# with `checksums.txt` (sha256sum format). `xl self-update` and scripts/install.sh read exactly these names
+# (xlang-docs/compiler/install.md).
 #
-# Trigger: push a tag like v0.1.0 (tags containing "-" are pre-releases and do
-# not touch the Homebrew tap). Can also be re-run manually for an existing tag.
-#
-# Required secret (repository settings -> Secrets and variables -> Actions):
-#   HOMEBREW_TAP_GITHUB_TOKEN  token with contents:write on the tap repository.
-# If you pick a different secret name, change it in the `tap` job below only.
+# Tags: vMAJOR.MINOR.PATCH is a stable release; a tag with a `-suffix` (v1.0.0-rc.1) is marked a pre-release.
+# Can also be re-run for an existing tag from the Actions tab.
 
 on:
   push:
@@ -17,7 +15,7 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: "Existing tag to (re)release, e.g. v0.1.0"
+        description: "Existing tag to (re)release, e.g. v1.0.0-rc.1"
         required: true
         type: string
 
@@ -27,11 +25,6 @@ permissions:
 concurrency:
   group: release-${{ github.event.inputs.tag || github.ref_name }}
   cancel-in-progress: false
-
-env:
-  # LLVM major version used for the Linux builds (apt.llvm.org).
-  LLVM_VERSION: "23"
-  TAP_REPO: hasirciogluhq/homebrew-tap
 
 jobs:
   meta:
@@ -50,201 +43,92 @@ jobs:
         run: |
           set -euo pipefail
           tag="${INPUT_TAG:-$REF_NAME}"
-          case "$tag" in
-            v[0-9]*) ;;
-            *) echo "error: tag '$tag' must look like v<version>" >&2; exit 1 ;;
-          esac
+          [[ "$tag" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]] || { echo "error: tag '$tag' must look like v1.2.3 or v1.2.3-rc.1" >&2; exit 1; }
           version="${tag#v}"
           prerelease=false
-          case "$version" in
-            *-*) prerelease=true ;;
-          esac
-          {
-            echo "tag=$tag"
-            echo "version=$version"
-            echo "prerelease=$prerelease"
-          } >> "$GITHUB_OUTPUT"
+          case "$version" in *-*) prerelease=true ;; esac
+          echo "tag=$tag" >>"$GITHUB_OUTPUT"
+          echo "version=$version" >>"$GITHUB_OUTPUT"
+          echo "prerelease=$prerelease" >>"$GITHUB_OUTPUT"
+
+  test:
+    name: Test
+    needs: meta
+    uses: ./.github/workflows/ci.yml
 
   build:
-    name: Build ${{ matrix.os }}/${{ matrix.arch }}
-    needs: meta
+    name: build (${{ matrix.os }}-${{ matrix.arch }})
+    needs: [meta, test]
     runs-on: ${{ matrix.runner }}
     strategy:
-      # One failing platform must not cancel the others: a partial release is more useful than
-      # none, and the failed leg is visible on its own.
-      fail-fast: false
+      fail-fast: true
       matrix:
         include:
-          - { runner: macos-15,         os: darwin, arch: arm64 }
-          - { runner: macos-15-intel,   os: darwin, arch: amd64 }
-          - { runner: ubuntu-24.04,     os: linux,  arch: amd64 }
-          - { runner: ubuntu-24.04-arm, os: linux,  arch: arm64 }
+          - { runner: ubuntu-24.04, os: linux, arch: amd64 }
+          - { runner: ubuntu-24.04-arm, os: linux, arch: arm64 }
+          - { runner: macos-15-intel, os: darwin, arch: amd64 }
+          - { runner: macos-15, os: darwin, arch: arm64 }
+          - { runner: windows-2025, os: windows, arch: amd64 }
+    defaults:
+      run:
+        shell: bash
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           ref: ${{ needs.meta.outputs.tag }}
-
-      - name: Check xmake.lua version matches the tag
-        shell: bash
-        env:
-          VERSION: ${{ needs.meta.outputs.version }}
-        run: |
-          set -euo pipefail
-          # `xl --version` and `xl self-update` use this value; a mismatch would make a
-          # released compiler think it is out of date.
-          declared="$(sed -n 's/^local xlang_version = "\(.*\)"$/\1/p' xmake.lua)"
-          if [ "$declared" != "$VERSION" ]; then
-            echo "error: xmake.lua declares version '$declared' but the tag is v$VERSION" >&2
-            exit 1
-          fi
-
-      - name: Install dependencies (macOS)
-        if: matrix.os == 'darwin'
-        shell: bash
-        run: |
-          set -euo pipefail
-          brew install llvm zstd libffi
-          echo "$(brew --prefix llvm)/bin" >> "$GITHUB_PATH"
-
-      - name: Install dependencies (Linux)
-        if: matrix.os == 'linux'
-        shell: bash
-        run: |
-          set -euo pipefail
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends \
-            build-essential ca-certificates curl git unzip wget lsb-release \
-            software-properties-common gnupg \
-            libzstd-dev libffi-dev libncurses-dev zlib1g-dev libxml2-dev
-          # apt.llvm.org has no package for a very new major version yet; fall back to an older one
-          # it does publish so a release is not blocked by an unreleased LLVM.
-          if ! wget -qO /tmp/llvm.sh "https://apt.llvm.org/llvm.sh"; then
-            echo "error: cannot fetch llvm.sh" >&2
-            exit 1
-          fi
-          chmod +x /tmp/llvm.sh
-          chosen=""
-          for candidate in "${LLVM_VERSION}" 22 21 20 19 18; do
-            if sudo /tmp/llvm.sh "${candidate}"; then
-              chosen="${candidate}"
-              break
-            fi
-            echo "LLVM ${candidate} is not available; trying the next one"
-          done
-          if [ -z "$chosen" ]; then
-            echo "error: no usable LLVM release found" >&2
-            exit 1
-          fi
-          echo "using LLVM ${chosen}"
-          sudo apt-get install -y --no-install-recommends \
-            "llvm-${chosen}-dev" "clang-${chosen}"
-          echo "/usr/lib/llvm-${chosen}/bin" >> "$GITHUB_PATH"
-
-      - uses: xmake-io/github-action-setup-xmake@v1
-        with:
-          xmake-version: latest
-
-      - name: Build
-        shell: bash
-        run: |
-          set -euo pipefail
-          llvm-config --version
-          xmake f -y -m release
-          xmake -y
-
-      - name: Package
-        shell: bash
+      - name: Stdlib submodule
+        run: git submodule update --init --depth 1 xl-std
+      - uses: ./.github/actions/xlc
+      - name: Build and package
         env:
           VERSION: ${{ needs.meta.outputs.version }}
           OS: ${{ matrix.os }}
           ARCH: ${{ matrix.arch }}
         run: |
           set -euo pipefail
-          chmod +x scripts/release/*.sh
-          scripts/release/package.sh "$VERSION" "$OS" "$ARCH" outputs/xl
-
-      - uses: actions/upload-artifact@v4
+          exe=; [ "$OS" = windows ] && exe=.exe
+          mkdir -p stage dist
+          (cd src && xlc main.xl -M std=../xl-std --import std -DfeatureDefaultAllocator=true "-DxlVersion=\"$VERSION\"" -O2 -o "../stage/xl$exe")
+          # The binary must start and report the tag's version before it is published.
+          ./stage/xl$exe version | grep -qx "$VERSION"
+          name="xl_${VERSION}_${OS}_${ARCH}"
+          if [ "$OS" = windows ]; then
+            (cd stage && 7z a -tzip -bd -bso0 "../dist/$name.zip" "xl$exe")
+          else
+            tar -czf "dist/$name.tar.gz" -C stage xl
+          fi
+      - uses: actions/upload-artifact@v7
         with:
-          name: xlang-${{ matrix.os }}-${{ matrix.arch }}
+          name: xl-${{ matrix.os }}-${{ matrix.arch }}
           path: dist/*
           if-no-files-found: error
-          retention-days: 7
 
-  release:
-    name: GitHub release
+  publish:
+    name: Publish ${{ needs.meta.outputs.tag }}
     needs: [meta, build]
     runs-on: ubuntu-24.04
     permissions:
       contents: write
     steps:
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           path: dist
-          pattern: xlang-*
           merge-multiple: true
-
-      - name: Combine checksums
-        shell: bash
-        run: |
-          set -euo pipefail
-          cd dist
-          cat ./*.tar.gz.sha256 | sort -k2 > checksums.txt
-          ls -l
-
-      - name: Create or update release
+      - name: Create the release
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
-          GH_REPO: ${{ github.repository }}
           TAG: ${{ needs.meta.outputs.tag }}
           PRERELEASE: ${{ needs.meta.outputs.prerelease }}
         run: |
           set -euo pipefail
-          flags=()
-          if [ "$PRERELEASE" = "true" ]; then
-            flags+=(--prerelease)
-          fi
-          if gh release view "$TAG" >/dev/null 2>&1; then
-            gh release upload "$TAG" dist/*.tar.gz dist/checksums.txt --clobber
+          cd dist
+          sha256sum xl_* | sort -k2 >checksums.txt
+          cat checksums.txt
+          flags=(--generate-notes --title "xl $TAG" --verify-tag)
+          [ "$PRERELEASE" = true ] && flags+=(--prerelease)
+          if gh release view "$TAG" -R "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release upload "$TAG" xl_* checksums.txt --clobber -R "$GITHUB_REPOSITORY"
           else
-            gh release create "$TAG" dist/*.tar.gz dist/checksums.txt \
-              --title "$TAG" --generate-notes --verify-tag "${flags[@]}"
+            gh release create "$TAG" xl_* checksums.txt "${flags[@]}" -R "$GITHUB_REPOSITORY"
           fi
-
-  tap:
-    name: Update Homebrew tap
-    needs: [meta, release]
-    if: needs.meta.outputs.prerelease == 'false'
-    runs-on: ubuntu-24.04
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          ref: ${{ needs.meta.outputs.tag }}
-
-      - uses: actions/download-artifact@v4
-        with:
-          path: dist
-          pattern: xlang-*
-          merge-multiple: true
-
-      - name: Generate formula
-        shell: bash
-        env:
-          VERSION: ${{ needs.meta.outputs.version }}
-          GITHUB_REPOSITORY: ${{ github.repository }}
-        run: |
-          set -euo pipefail
-          chmod +x scripts/release/*.sh
-          scripts/release/formula.sh "$VERSION" dist > xlang.rb
-          cat xlang.rb
-
-      - name: Publish to tap
-        shell: bash
-        env:
-          # Rename the secret here if you named it differently.
-          TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_GITHUB_TOKEN }}
-          TAP_REPO: ${{ env.TAP_REPO }}
-          VERSION: ${{ needs.meta.outputs.version }}
-        run: |
-          set -euo pipefail
-          scripts/release/publish-tap.sh "$VERSION" xlang.rb

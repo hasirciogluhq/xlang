@@ -1,0 +1,44 @@
+// Failures of the xl tool. Every failure carries a diagnostic code (`E0740`..`E0746` for packages, xlang-docs/compiler/packages.md;
+// `E0790`..`E0793` for the toolchain, xlang-docs/compiler/install.md), what went wrong and how to fix it. Functions return
+// `Result<T, Problem>` and pass failures up with `?`; the command layer prints the Problem once and exits with status 1.
+from "std" import String, Result, eprintln
+
+export class Problem {
+    code: String
+    message: String
+    fix: String
+
+    fn init(self, code: str, message: String, fix: String) {
+        self.code = String(code)
+        self.message = message
+        self.fix = fix
+    }
+}
+
+/// The result of a step that yields nothing but can fail.
+export type Done = Result<bool, Problem>
+
+/// `Result.Err(Problem)` in one call: `return fail<T>("E0741", message, fix)`.
+export fn fail<T>(code: str, message: String, fix: String) -> Result<T, Problem> {
+    return Result.Err(Problem(code, message, fix))
+}
+
+/// A step that succeeded.
+export fn done() -> Done {
+    return Result.Ok(true)
+}
+
+/// Prints `error[CODE]: message` and, when there is one, the fix to stderr.
+export fn report(p: *Problem) {
+    eprintln("error[{}]: {}", &p.code, &p.message)
+    if p.fix.length() > 0 { eprintln("  fix: {}", &p.fix) }
+}
+
+/// Exit status of a command: 0 on success, the Problem reported and 1 otherwise.
+export fn finish(r: Done) -> i32 {
+    switch r {
+        case Result.Ok(v) { return 0 }
+        case Result.Err(p) { report(&p) }
+    }
+    return 1
+}

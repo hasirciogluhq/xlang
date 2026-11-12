@@ -1,0 +1,130 @@
+// The installed toolchain: compilers and stdlibs under the per-user xlang home, and which pair is active.
+//
+//     $XLANG_HOME/xlc/<tag>/xlc           one directory per compiler release (xlc.exe on Windows)
+//     $XLANG_HOME/std/<tag>/index.xl      one directory per stdlib release
+//     $XLANG_HOME/toolchain.toml          xlc = "<tag>"  std = "<tag>": the active pair
+//
+// A build starts from the active pair; a project's `xlang.local.toml`, then `$XLC` (a compiler binary) and `$XLANG_STD` (a stdlib
+// directory), then `--std=<dir>` replace either part on its own (build/setup.xl): for working on the compiler or the stdlib from a
+// checkout.
+from "std" import String, Vec, Option, Result, split, format, fsReadAllString, files
+from "../core/problem" import Problem, Done, done, fail
+from "../core/host" import xlangHome, join, joinS, exe, variable
+from "../core/scan" import Scan, quote
+from "../core/store" import writeAtomic
+
+export class Toolchain {
+    xlcTag: String      // empty when `$XLC` chose the compiler
+    stdTag: String      // empty when `$XLANG_STD` chose the stdlib
+    xlc: String         // the compiler binary
+    std: String         // the stdlib directory
+
+    /// Points at another compiler binary (`xlc`) and/or stdlib directory (`std`); an empty argument keeps that part.
+    fn replace(self, xlc: *String, std: *String) {
+        if xlc.length() > 0 {
+            self.xlc = xlc.clone()
+            self.xlcTag = String()
+        }
+        if std.length() > 0 {
+            self.std = std.clone()
+            self.stdTag = String()
+        }
+    }
+}
+
+/// `$XLANG_HOME/<kind>`: where the releases of `xlc` or `std` live.
+export fn kindDir(kind: str) -> String {
+    local home = xlangHome()
+    return join(&home, kind)
+}
+
+/// `$XLANG_HOME/<kind>/<tag>`.
+export fn releaseDir(kind: str, tag: *String) -> String {
+    local dir = kindDir(kind)
+    return joinS(&dir, tag)
+}
+
+/// The compiler binary of the release `tag`.
+export fn xlcBinary(tag: *String) -> String {
+    local dir = releaseDir("xlc", tag)
+    local name = exe("xlc")
+    return joinS(&dir, &name)
+}
+
+fn configFile() -> String {
+    local home = xlangHome()
+    return join(&home, "toolchain.toml")
+}
+
+/// The tags recorded in toolchain.toml (empty Strings when there is none).
+export fn activeTags() -> Toolchain {
+    local t = Toolchain()
+    local file = configFile()
+    if !files.exists(&file) { return t }
+    local text = fsReadAllString(file.cstr())
+    for line in split(text.asStr(), "\n") {
+        local s = Scan(line)
+        local key = String()
+        switch s.key() {
+            case Option.Some(k) { key = k.clone() }
+            case Option.None { continue }
+        }
+        if !s.eat(61) { continue }
+        switch s.string() {
+            case Option.Some(v) {
+                if key.equals("xlc") { t.xlcTag = v.clone() }
+                if key.equals("std") { t.stdTag = v.clone() }
+            }
+            case Option.None { }
+        }
+    }
+    return t
+}
+
+/// Records `xlcTag` and `stdTag` as the active pair.
+export fn activate(xlcTag: *String, stdTag: *String) -> Done {
+    local file = configFile()
+    local x = quote(xlcTag)
+    local s = quote(stdTag)
+    local text = format("# The active xlang toolchain; written by `xl lc`.\nxlc = {}\nstd = {}\n", &x, &s)
+    return writeAtomic(&file, &text)
+}
+
+/// The active pair of toolchain.toml as paths; a path is empty when no tag is recorded for it.
+export fn active() -> Toolchain {
+    local t = activeTags()
+    if t.xlcTag.length() > 0 { t.xlc = xlcBinary(&t.xlcTag) }
+    if t.stdTag.length() > 0 { t.std = releaseDir("std", &t.stdTag) }
+    return t
+}
+
+/// `$XLC` and `$XLANG_STD` over `t`, each on its own.
+export fn applyEnvironment(t: *Toolchain) {
+    local xlc = variable("XLC")
+    local std = variable("XLANG_STD")
+    t.replace(&xlc, &std)
+}
+
+/// E0790 unless `t` names an existing compiler binary and a stdlib directory with `index.xl`.
+export fn usable(t: *Toolchain) -> Done {
+    if t.xlc.length() == 0 || !files.exists(&t.xlc) {
+        local what = t.xlc.length() == 0 ? String("no xlang compiler is installed") : format("the compiler {} does not exist", &t.xlc)
+        return fail<bool>("E0790", what, String("run `xl lc install`, or name one with XLC or [toolchain] xlc in xlang.local.toml"))
+    }
+    local index = join(&t.std, "index.xl")
+    if t.std.length() == 0 || !files.exists(&index) {
+        local what = t.std.length() == 0 ? String("no xlang stdlib is installed") : format("{} is not a stdlib (it has no index.xl)", &t.std)
+        return fail<bool>("E0790", what, String("run `xl lc install`, or name one with XLANG_STD, --std=<dir> or [toolchain] std in xlang.local.toml"))
+    }
+    return done()
+}
+
+/// The installed tags of `kind` (`xlc` or `std`).
+export fn installed(kind: str) -> Vec<String> {
+    local dir = kindDir(kind)
+    local out: Vec<String> = Vec<String>()
+    for name in files.listDir(&dir) {
+        if !name.endsWith(".partial") { out.push(name.clone()) }
+    }
+    return out
+}

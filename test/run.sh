@@ -1,0 +1,309 @@
+#!/usr/bin/env bash
+# End-to-end tests of the `xl` binary: every command against a real compiler and stdlib, in a temporary directory, without the
+# network. Packages come from local git repositories (`source = "<dir>"`); `xl lc` and `xl self-update` read releases from a
+# directory through XLANG_MIRROR (src/core/release.xl), laid out and checksummed like the GitHub releases.
+#
+# Usage: test/run.sh <xl> <xlc> <stdlib dir>
+#   xl          the xl binary under test
+#   xlc         a compiler binary; it is also packed as the mirror's compiler release
+#   stdlib dir  an xl-std checkout; it is also packed as the mirror's stdlib release
+#
+# `xl self-update` is also tested with a release built from this checkout's src/ as version 99.0.0.
+#
+# Runs on Linux, macOS and Windows (Git Bash: paths handed to native programs go through `cygpath -m`, archives through 7-Zip).
+set -euo pipefail
+
+[ "$#" -eq 3 ] || { echo "usage: $0 <xl> <xlc> <stdlib dir>" >&2; exit 2; }
+
+case "$(uname -s)" in
+  MINGW* | MSYS* | CYGWIN*) windows=1; EXE=.exe; ARCHIVE=zip; os=windows ;;
+  Darwin) windows=0; EXE=; ARCHIVE=tar.gz; os=darwin ;;
+  *) windows=0; EXE=; ARCHIVE=tar.gz; os=linux ;;
+esac
+case "$(uname -m)" in
+  x86_64 | amd64) arch=amd64 ;;
+  arm64 | aarch64) arch=arm64 ;;
+  *) echo "unsupported CPU $(uname -m)" >&2; exit 2 ;;
+esac
+
+# A path as a native program wants it: `C:/x/y` on Windows, unchanged elsewhere.
+native() { if [ "$windows" = 1 ]; then cygpath -m "$1"; else printf '%s' "$1"; fi; }
+absolute() { (cd "$(dirname "$1")" && printf '%s/%s' "$(pwd)" "$(basename "$1")"); }
+sha() { if command -v sha256sum >/dev/null 2>&1; then sha256sum "$1" | awk '{ print $1 }'; else shasum -a 256 "$1" | awk '{ print $1 }'; fi; }
+
+xl=$(absolute "$1")
+xlc=$(absolute "$2")
+# Git Bash runs `xlc` for `xlc.exe`, but native programs (xl checks that $XLC exists) need the real name.
+if [ "$windows" = 1 ]; then
+  [[ "$xl" == *.exe ]] || xl="$xl.exe"
+  [[ "$xlc" == *.exe ]] || xlc="$xlc.exe"
+fi
+std=$(cd "$3" && pwd)
+root=$(cd "$(dirname "$0")/.." && pwd)
+work=$(mktemp -d)
+trap 'rm -rf "$work"' EXIT
+
+# The tests own the environment: no installed toolchain, no overrides from the caller.
+unset XLC XLANG_STD XLANG_MIRROR XL_VERBOSE
+export XLANG_HOME
+XLANG_HOME=$(native "$work/home")
+export GIT_AUTHOR_NAME=test GIT_AUTHOR_EMAIL=test@example.invalid GIT_COMMITTER_NAME=test GIT_COMMITTER_EMAIL=test@example.invalid
+
+passed=0
+failed=0
+out=""
+code=0
+
+# run <command...>: runs it, keeping its combined output in $out and its exit status in $code.
+run() {
+  set +e
+  out=$("$@" 2>&1)
+  code=$?
+  set -e
+}
+
+# in_app <xl arguments...>: `run` of xl inside the package test project.
+in_app() {
+  set +e
+  out=$(cd "$app" && "$xl" "$@" 2>&1)
+  code=$?
+  set -e
+}
+
+# inside <dir> <command...>: `run` inside <dir>.
+inside() {
+  local dir=$1
+  shift
+  set +e
+  out=$(cd "$dir" && "$@" 2>&1)
+  code=$?
+  set -e
+}
+
+# expect <name> <status> <text>: the last `run` exited with <status> and printed <text> (empty: anything).
+expect() {
+  if [ "$code" = "$2" ] && { [ -z "$3" ] || [[ "$out" == *"$3"* ]]; }; then
+    passed=$((passed + 1))
+    echo "ok   $1"
+  else
+    failed=$((failed + 1))
+    echo "FAIL $1: exit $code (want $2), want output containing '$3'; got:"
+    printf '%s\n' "$out" | head -n 20 | awk '{ print "     " $0 }'
+  fi
+}
+
+# commit <dir> <tag>: commits everything in the repository <dir> and tags it.
+commit() {
+  git -C "$1" add -A
+  git -C "$1" commit -q -m "$2"
+  git -C "$1" tag "$2"
+}
+
+# --- the CLI itself -----------------------------------------------------------------------------------------------------------------
+run "$xl" version
+expect "version" 0 ""
+version=$out
+run "$xl" help
+expect "help" 0 "usage: xl <command>"
+run "$xl" nonsense
+expect "unknown command" 2 "unknown command"
+
+mkdir -p "$work/hello"
+cat >"$work/hello/main.xl" <<'EOF'
+from "std" import println
+from "std/os/args" import fromArgv
+
+@entry
+fn main(argc: i32, argv: **u8) -> i32 {
+    local args = fromArgv(argc, argv)
+    for a, i in args { if i > 0 { println("arg {} = {}", i, a) } }
+    return (args.length() - 1) as i32
+}
+EOF
+hello=$(native "$work/hello/main.xl")
+
+run "$xl" check "$hello"
+expect "no toolchain is E0790" 1 "E0790"
+
+# --- check, build, run, env with XLC and XLANG_STD ------------------------------------------------------------------------------------
+export XLC XLANG_STD
+XLC=$(native "$xlc")
+XLANG_STD=$(native "$std")
+
+run "$xl" check "$hello"
+expect "check" 0 ""
+run "$xl" build "$hello" -o "$(native "$work/hello/hello$EXE")"
+expect "build" 0 ""
+run "$work/hello/hello$EXE" one two
+expect "built program" 2 "arg 2 = two"
+run "$xl" run "$hello" first "second arg" --flag
+expect "run passes arguments and status" 3 "arg 3 = --flag"
+inside "$work/hello" "$xl" run -- -x
+expect "run main.xl of the current directory" 1 "arg 1 = -x"
+run "$xl" env --json "$hello"
+expect "env --json" 0 "\"std\":\"$XLANG_STD\""
+run "$xl" env --bogus
+expect "env rejects unknown flags" 1 "E0740"
+
+# --- packages -----------------------------------------------------------------------------------------------------------------------
+# a: v1.0.0 answers 1, v1.1.0 answers 11. b v0.1.0 needs a v1.0.0 and doubles its answer.
+repos="$work/repos"
+mkdir -p "$repos/a" "$repos/b"
+git -C "$repos/a" init -q
+printf 'export fn answer() -> i32 { return 1 }\n' >"$repos/a/index.xl"
+commit "$repos/a" v1.0.0
+printf 'export fn answer() -> i32 { return 11 }\n' >"$repos/a/index.xl"
+commit "$repos/a" v1.1.0
+git -C "$repos/b" init -q
+printf 'from "example.com/t/a" import answer\nexport fn twice() -> i32 { return answer() * 2 }\n' >"$repos/b/index.xl"
+printf '[dependencies]\n"example.com/t/a" = { version = "v1.0.0", source = "%s" }\n' "$(native "$repos/a")" >"$repos/b/xlang.toml"
+commit "$repos/b" v0.1.0
+
+app="$work/app"
+mkdir -p "$app"
+printf '[dependencies]\n"example.com/t/b" = { version = "v0.1.0", source = "%s" }\n' "$(native "$repos/b")" >"$app/xlang.toml"
+cat >"$app/main.xl" <<'EOF'
+from "std" import println
+from "example.com/t/b" import twice
+from "example.com/t/a" import answer
+
+@entry
+fn main() -> i32 {
+    println("twice={} answer={}", twice(), answer())
+    return 0
+}
+EOF
+
+in_app run
+expect "run before install is E0741" 1 "E0741"
+in_app pkg install
+expect "pkg install" 0 ""
+[ -f "$app/xlang.lock" ] && grep -q 'name = "example.com/t/a"' "$app/xlang.lock" && out="lock lists a" || out="lock lacks a"
+code=0; expect "lock records the indirect package" 0 "lock lists a"
+in_app run
+expect "run with packages" 0 "twice=2 answer=1"
+in_app pkg list
+expect "pkg list" 0 "example.com/t/a"
+in_app env
+expect "env maps packages" 0 "example.com/t/b"
+
+# a direct requirement of a v1.1.0 wins over b's v1.0.0 (minimal version selection).
+printf '"example.com/t/a" = { version = "v1.1.0", source = "%s" }\n' "$(native "$repos/a")" >>"$app/xlang.toml"
+in_app pkg install
+expect "pkg install after a raise" 0 ""
+in_app run
+expect "the higher requirement wins" 0 "twice=22 answer=11"
+
+# xlang.local.toml points a at a checkout and adds a flag.
+mkdir -p "$work/a-local"
+printf 'export fn answer() -> i32 { return 5 }\n' >"$work/a-local/index.xl"
+printf '[modules]\n"example.com/t/a" = "../a-local"\n\n[build]\nflags = ["-DlocalFlag=true"]\n' >"$app/xlang.local.toml"
+in_app run
+expect "xlang.local.toml replaces a module" 0 "twice=10 answer=5"
+printf '[toolchain]\ncompiler = "x"\n' >"$app/xlang.local.toml"
+in_app run
+expect "a bad xlang.local.toml line is E0740" 1 "E0740"
+rm "$app/xlang.local.toml"
+
+in_app pkg add example.com/t/c@v2.0.0
+expect "pkg add" 0 ""
+grep -q '"example.com/t/c" = "v2.0.0"' "$app/xlang.toml" && out="added" || out="not added"
+code=0; expect "pkg add writes xlang.toml" 0 "added"
+in_app pkg remove example.com/t/c
+expect "pkg remove" 0 ""
+in_app pkg add 'not a repo'
+expect "pkg add rejects a bad name" 1 "E07"
+in_app pkg clean
+expect "pkg clean" 0 ""
+in_app pkg list
+expect "pkg list after clean reports the missing cache" 1 ""
+
+# --- xl lc: the compiler and stdlib from a mirror -----------------------------------------------------------------------------------
+mirror="$work/mirror"
+tag=v0.0.1
+xlcDir="$mirror/hasirciogluhq/xlc/$tag"
+stdDir="$mirror/hasirciogluhq/xl-std/$tag"
+mkdir -p "$xlcDir" "$stdDir" "$work/pack/xlc" "$work/pack/xl-std_0.0.1"
+cp "$xlc" "$work/pack/xlc/xlc$EXE"
+xlcAsset="xlc_0.0.1_${os}_${arch}.$ARCHIVE"
+if [ "$ARCHIVE" = zip ]; then
+  (cd "$work/pack/xlc" && 7z a -tzip -bd -bso0 "$xlcDir/$xlcAsset" "xlc$EXE")
+else
+  tar -czf "$xlcDir/$xlcAsset" -C "$work/pack/xlc" xlc
+fi
+# The stdlib release holds index.xl and the area directories (xl-std/.github/workflows/release.yml).
+cp "$std/index.xl" "$work/pack/xl-std_0.0.1/"
+for dir in "$std"/*/; do
+  case "$(basename "$dir")" in test | dist | scripts) continue ;; esac
+  cp -R "${dir%/}" "$work/pack/xl-std_0.0.1/"     # BSD cp copies the contents of `dir/`, not the directory
+done
+tar -czf "$stdDir/xl-std_0.0.1.tar.gz" -C "$work/pack" xl-std_0.0.1
+printf '%s  %s\n' "$(sha "$xlcDir/$xlcAsset")" "$xlcAsset" >"$xlcDir/checksums.txt"
+printf '%s  %s\n' "$(sha "$stdDir/xl-std_0.0.1.tar.gz")" "xl-std_0.0.1.tar.gz" >"$stdDir/checksums.txt"
+
+unset XLC XLANG_STD
+export XLANG_MIRROR
+XLANG_MIRROR=$(native "$mirror")
+run "$xl" lc install
+expect "lc install" 0 "active: xlc $tag, std $tag"
+run "$xl" lc list
+expect "lc list" 0 "* $tag"
+run "$xl" run "$hello" installed
+expect "run with the installed toolchain" 1 "arg 1 = installed"
+run "$xl" env --json "$hello"
+expect "env names the installed tags" 0 "\"xlcTag\":\"$tag\""
+run "$xl" lc install v9
+expect "lc install of a missing tag is E0744" 1 "E0744"
+run "$xl" lc use v7.0.0
+expect "lc use of a tag not installed is E0790" 1 "E0790"
+run "$xl" lc update
+expect "lc update" 0 "already up to date"
+
+# A damaged asset is refused before anything is unpacked.
+printf '%s  %s\n' "0000000000000000000000000000000000000000000000000000000000000000" "xl-std_0.0.1.tar.gz" >"$stdDir/checksums.txt"
+run env XLANG_HOME="$(native "$work/home2")" "$xl" lc install
+expect "a checksum mismatch is E0792" 1 "E0792"
+
+# --- xl self-update -----------------------------------------------------------------------------------------------------------------
+xlDir="$mirror/hasirciogluhq/xlang/v99.0.0"
+mkdir -p "$work/pack/xl" "$work/bin"
+cp "$xl" "$work/bin/xl$EXE"
+run "$work/bin/xl$EXE" self-update --check
+expect "self-update without a release is E0791" 1 "E0791"
+mkdir -p "$xlDir"
+# The new release reports 99.0.0 only if it is that version: a copy of xl that says otherwise is refused.
+cp "$xl" "$work/pack/xl/xl$EXE"
+xlAsset="xl_99.0.0_${os}_${arch}.$ARCHIVE"
+if [ "$ARCHIVE" = zip ]; then
+  (cd "$work/pack/xl" && 7z a -tzip -bd -bso0 "$xlDir/$xlAsset" "xl$EXE")
+else
+  tar -czf "$xlDir/$xlAsset" -C "$work/pack/xl" xl
+fi
+printf '%s  %s\n' "$(sha "$xlDir/$xlAsset")" "$xlAsset" >"$xlDir/checksums.txt"
+run "$work/bin/xl$EXE" self-update --check
+expect "self-update --check" 0 "v99.0.0 is available"
+run "$work/bin/xl$EXE" self-update
+expect "self-update refuses a binary of another version" 1 "E0793"
+run "$work/bin/xl$EXE" version
+expect "the refused update leaves xl in place" 0 "$version"
+
+# The real 99.0.0: xl built from this checkout with that version.
+inside "$root/src" "$xlc" main.xl -M "std=$(native "$std")" --import std -DfeatureDefaultAllocator=true '-DxlVersion="99.0.0"' -o "$(native "$work/pack/xl/xl$EXE")"
+expect "build xl 99.0.0" 0 ""
+rm -f "$xlDir/$xlAsset"
+if [ "$ARCHIVE" = zip ]; then
+  (cd "$work/pack/xl" && 7z a -tzip -bd -bso0 "$xlDir/$xlAsset" "xl$EXE")
+else
+  tar -czf "$xlDir/$xlAsset" -C "$work/pack/xl" xl
+fi
+printf '%s  %s\n' "$(sha "$xlDir/$xlAsset")" "$xlAsset" >"$xlDir/checksums.txt"
+run "$work/bin/xl$EXE" self-update
+expect "self-update" 0 "-> v99.0.0"
+run "$work/bin/xl$EXE" version
+expect "the updated xl runs" 0 "99.0.0"
+run "$work/bin/xl$EXE" self-update
+expect "self-update when up to date" 0 "up to date"
+
+echo
+echo "$passed passed, $failed failed"
+[ "$failed" = 0 ]
