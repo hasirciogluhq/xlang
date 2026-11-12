@@ -19,13 +19,13 @@ from "std" import print
 - Structs, classes with single inheritance, interfaces, payload enums, monomorphized generics, tuples, slices, `defer`, `try`/`catch`, hygienic macros.
 - Bounds-checked arrays by default; allocator, panic and unwind are replaceable stdlib functions.
 - Packages are plain git repositories of `.xl` source, pinned by `xlang.lock`; builds never use the network.
-- Coded diagnostics with fixes (`xl --explain E0709`).
+- Coded diagnostics with fixes (`xlc --explain E0709`).
 
 ## Repositories
 
 | Repository | Content |
 | --- | --- |
-| [xlang](https://github.com/hasirciogluhq/xlang) | `xlang` CLI, build, integration (this repository) |
+| [xlang](https://github.com/hasirciogluhq/xlang) | the `xl` tool, written in xlang (this repository) |
 | [xlc](https://github.com/hasirciogluhq/xlc) | the compiler (submodule `xlc/`) |
 | [xl-std](https://github.com/hasirciogluhq/xl-std) | the standard library and its tests (submodule `xl-std/`) |
 | [xlang-docs](https://github.com/hasirciogluhq/xlang-docs) | documentation site (submodule `xlang-docs/`) |
@@ -35,39 +35,46 @@ Clone with `git clone --recurse-submodules https://github.com/hasirciogluhq/xlan
 
 ## Install
 
-Prebuilt binaries exist for macOS and Linux (arm64, amd64). The installer verifies the SHA-256 of the archive and installs the latest release into `~/.local/bin` (`XLANG_INSTALL_DIR`, `XLANG_VERSION` override).
+Releases exist for Linux and macOS (x86-64, arm64) and Windows (x86-64). The installer puts `xl` into `~/.local/bin`, verifies every archive against the release's `checksums.txt`, and then runs `xl lc install`, which installs the compiler and the stdlib under `~/.xlang`.
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/hasirciogluhq/xlang/main/scripts/install.sh | bash
-brew install hasirciogluhq/tap/xlang      # alternative
-xl self-update                         # later updates
 ```
 
-On Windows, use [WSL](https://learn.microsoft.com/windows/wsl/install); the compiler still produces Windows executables (`--target x86_64-pc-windows-msvc`). Shell completion for bash, zsh and fish is set up by every install method. Details: [installation](xlang-docs/src/content/docs/compiler/install.md).
+```powershell
+irm https://raw.githubusercontent.com/hasirciogluhq/xlang/main/scripts/install.ps1 | iex   # Windows
+```
+
+The compiler links with LLVM's `lld`, which must be on `PATH`. Details: [installation](xlang-docs/src/content/docs/compiler/install.md).
 
 ## Usage
 
 ```bash
-xl run hello.xl                       # build to a temporary file and run
-xl build app.xl -o app                # executable; --emit=obj|ir|bc|header|static|shared
-xl build app.xl --target aarch64-apple-darwin -O2
+xl run hello.xl a b                   # build to a temporary file and run with arguments
+xl build app.xl -O2 -o app            # executable; --emit=obj|ir|bc|header|static|shared
+xl build app.xl --target aarch64-apple-darwin
 xl check app.xl                       # type-check only
-xl test xl-std/test/unit/             # run *.test.xl suites
-xl install github.com/user/repo
-xl --explain E0709                    # explain a diagnostic code
+xl env app.xl                         # the compiler, stdlib and package roots a build uses
+xl pkg install github.com/user/repo   # add a package; also add, update, remove, list, clean
+xl lc update                          # the newest compiler and stdlib
+xl self-update                        # the newest xl
 ```
 
-The full CLI, language reference and standard library are documented in [xlang-docs](https://hasirciogluhq.github.io/xlang-docs/).
+The commands are documented in [the xl tool](xlang-docs/src/content/docs/compiler/cli.md); the language and the standard library in [xlang-docs](https://hasirciogluhq.github.io/xlang-docs/).
 
 ## Build from source
 
-The compiler is [`xlc`](https://github.com/hasirciogluhq/xlc) (built there); `xl` is the all-in-one tool. This repository has no build system: the C++ under `src/` is being rewritten in xlang.
+`xl` is written in xlang (`src/`, layout in [src/README.md](src/README.md)); the compiler is [`xlc`](https://github.com/hasirciogluhq/xlc), built in its own repository. With a compiler on `PATH`:
 
-The repository layout is described in [src/README.md](src/README.md).
+```bash
+cd src
+xlc main.xl -M std=../xl-std --import std -DfeatureDefaultAllocator=true '-DxlVersion="1.0.0-dev"' -O2 -o ../xl
+cd .. && test/run.sh ./xl "$(command -v xlc)" xl-std
+```
 
 ## Status
 
-Pre-1.0. The `development` branch carries no backward compatibility: when behavior changes, the old form is removed from code, tests and docs. Open gaps are recorded in the [known limitations](xlang-docs/src/content/docs/known-limitations.md).
+`xl` is at `1.0.0-rc.1`, a release candidate; the language and the compiler are pre-1.0. The `development` branch carries no backward compatibility: when behavior changes, the old form is removed from code, tests and docs. Open gaps are recorded in the [known limitations](xlang-docs/src/content/docs/known-limitations.md).
 
 ## Contributing
 

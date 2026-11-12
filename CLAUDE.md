@@ -67,7 +67,7 @@ When the user adds a feature, give an honest assessment without praise: impact (
 - `syscall(nr, args...)` returns `i64` (`-errno` style); the target's argument maximum is checked at compile time.
 - Diagnostics: `E` error, `W` warning, with a code and how to fix; `--allow`/`--deny`/`@allow`/`--explain`.
 - Stdlib is optional (`--no-std`, `--std=<dir|host/user/repo[@tag]>`, `[std]` in `xlang.toml`); features become `featureXxx` constants. Packages are git repositories of `.xl` source (`xlang-docs/compiler/packages.md`): `xlang.toml`, `xlang.lock`, `.xlang/cache`, builds never use the network.
-- `--emit=obj|ir|bc|header|exe|static|shared`. CLI: `xl build|parse|check|layout|run|test|package|self-update|completions`.
+- `--emit=obj|ir|bc|header|exe|static|shared`. CLI: `xl run|build|check|env|pkg|lc|self-update|version` (`xlang-docs/compiler/cli.md`).
 
 ## Build and test
 - This repository has no build system (xmake removed): `xl` is the all-in-one tool, the compiler is `xlc` (built in the `xlc/` submodule), and the C++ in `src/` is being rewritten in xlang. Type-check the stdlib with `xlc xl-std/index.xl --check -DfeatureDefaultAllocator=true`.
