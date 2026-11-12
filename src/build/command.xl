@@ -34,6 +34,7 @@ define VALUE_FLAGS = " -o --output --emit -M --module-root --import -D --define 
 /// A command line split into its parts.
 class Request {
     file: String            // the program root; empty for the default
+    inputs: Vec<String>     // prebuilt objects and libraries, right after the root: xlc's repeatable options would take them as values
     flags: Vec<String>      // passed to xlc
     std: String             // `--std=<dir>`; empty for the toolchain's
     args: Vec<String>       // the program's arguments (`run`)
@@ -68,7 +69,7 @@ fn requestOf(args: *Vec<String>, run: bool) -> Result<Request, Problem> {
         } else if run {
             return fail<Request>("E0740", format("`{}` is neither a flag nor an .xl file", &a), String("name the program root, e.g. `xl run main.xl`; program arguments go after it or after `--`"))
         } else {
-            r.flags.push(a)    // a prebuilt object or library: xlc links it after the program root
+            r.inputs.push(a)
         }
     }
     for i in at..args.length() { r.args.push(args.get(i).clone()) }
@@ -101,6 +102,7 @@ fn compileLine(r: *Request, file: *String) -> Result<Line, Problem> {
     s.ready()?
     local l = Line(&s.tools.xlc)
     l.addS(file)
+    for i in r.inputs { l.addS(i) }
     for a in s.arguments() { l.addS(a) }
     for f in r.flags { l.addS(f) }
     return Result.Ok(l)
@@ -161,7 +163,9 @@ fn env(args: *Vec<String>) -> Result<i32, Problem> {
     local rest: Vec<String> = Vec<String>()
     for a in args { if a.equals("--json") { json = true } else { rest.push(a.clone()) } }
     local r = requestOf(&rest, false)?
-    if !r.flags.isEmpty() { return fail<i32>("E0740", format("unexpected argument `{}`", r.flags.get(0)), String("xl env [--json] [--std=<dir>] [file.xl]")) }
+    for extra in [&r.flags, &r.inputs] {
+        if !extra.isEmpty() { return fail<i32>("E0740", format("unexpected argument `{}`", extra.get(0)), String("xl env [--json] [--std=<dir>] [file.xl]")) }
+    }
     local file = rootFile(&r)?
     local absolute = files.absolute(&file)
     local s = setupOf(&absolute, &r.std)?
