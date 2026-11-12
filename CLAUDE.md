@@ -6,6 +6,7 @@
 ## Repositories
 - This repository is the `xl` tool, written in xlang (`src/`, layout in `src/README.md`), plus its tests (`test/run.sh`), CI and install scripts.
 - Submodules, each an independent repo: `xlc/` (the compiler), `xl-std/` (the stdlib), `xlang-docs/` (the documentation site), `xl-vscode/` (the VS Code extension). Changes are committed and pushed inside the submodule first, then the pointer is committed here.
+- **Submodules are for local development only (hard rule).** CI and release workflows take nothing from a submodule. The compiler and the stdlib come from their GitHub releases: a pinned tag, else the newest stable release, else the newest pre-release (rc). This goes through `.github/actions/toolchain` (`.github/scripts/toolchain.sh`), cached by the pair of tags.
 - Never add `Co-Authored-By` trailers or any "Generated with Claude Code" line to commits or PR descriptions, here or in any submodule.
 
 ## Platforms
@@ -66,4 +67,4 @@ When the user adds a feature, give an honest assessment without praise: impact (
 - Type-check the stdlib with `xlc xl-std/index.xl --check -DfeatureDefaultAllocator=true`. Its tests live in `xl-std/test/`: `xl-std/test/unit/run.sh [xlc]` and `xl-std/test/e2e/run.sh [xlc]` (native, Docker, CrossOver for Windows).
 - **Unit tests are platform independent, e2e tests are platform related (hard rule).** `test/unit/*.test.xl` checks code that gives the same result on every OS and CPU: `Vec`, `String`, `Option`, slices, parsing, math, encodings, collections, control flow. It never touches the OS (no files, sockets, processes, clocks, threads, environment). `test/e2e/` holds what depends on the OS or the CPU: sockets, processes, files, threads, entropy, TLS and HTTP, syscalls, the Windows leg. The bulk of the tests are unit tests; the e2e table stays the small, heavy part.
 - **Test order.** While working, run only the tests of what changed (`xlc xl-std/test/e2e/<name>.xl -M std=xl-std --import std -DfeatureDefaultAllocator=true -o /tmp/t && /tmp/t`). Run each full suite once at the very end and fix what it finds. Tests are small and fast: no sleeps, no needless Docker or network.
-- CI (`.github/workflows/ci.yml`) builds `xl` and runs `test/run.sh` on Linux and macOS (x86-64, arm64) and Windows x86-64 with the newest `xlc` release; a `v*` tag runs `release.yml`.
+- CI (`.github/workflows/ci.yml`) builds `xl` and runs `test/run.sh` on Linux and macOS (x86-64, arm64) and Windows x86-64 with the released `xlc` and `xl-std` (never the submodules); a `v*` tag runs `release.yml`.

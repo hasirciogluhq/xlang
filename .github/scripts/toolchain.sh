@@ -57,12 +57,14 @@ install() {
 
   local asset="xlc_${xlc_tag#v}_${os}_${arch}.${ext}"
   fetch hasirciogluhq/xlc "$xlc_tag" "$asset" "$dest/download/xlc"
-  if [ "$ext" = zip ]; then unzip -q -o "$dest/download/xlc/$asset" -d "$dest/bin"; else tar -xzf "$dest/download/xlc/$asset" -C "$dest/bin"; fi
+  # Archives are opened by a relative path from inside <dest>: GNU tar reads `-f D:/a/...` (Git Bash on Windows) as `host:path`
+  # of a remote tape and fails with "Cannot connect to D: resolve failed" (https://www.gnu.org/software/tar/manual/html_node/file.html).
+  if [ "$ext" = zip ]; then unzip -q -o "$dest/download/xlc/$asset" -d "$dest/bin"; else (cd "$dest/bin" && tar -xzf "../download/xlc/$asset"); fi
   chmod +x "$dest/bin/xlc$exe"
 
   local inner="xl-std_${std_tag#v}"
   fetch hasirciogluhq/xl-std "$std_tag" "$inner.tar.gz" "$dest/download/std"
-  tar -xzf "$dest/download/std/$inner.tar.gz" -C "$dest"
+  (cd "$dest" && tar -xzf "download/std/$inner.tar.gz")
   mv "$dest/$inner" "$dest/std"
   [ -f "$dest/std/index.xl" ] || { echo "error: $inner.tar.gz has no $inner/index.xl" >&2; exit 1; }
 
