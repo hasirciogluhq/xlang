@@ -147,6 +147,17 @@ expect "env --json" 0 "\"std\":\"$XLANG_STD\""
 run "$xl" env --bogus
 expect "env rejects unknown flags" 1 "E0740"
 
+# A prebuilt object (built without the stdlib, so it carries no second copy of it) is linked after the program root.
+mkdir -p "$work/linked"
+printf 'export(c) fn prebuiltAnswer() -> i32 { return 42 }\n' >"$work/linked/lib.xl"
+printf 'from "std" import println\ndeclare fn prebuiltAnswer() -> i32\n@entry fn main() -> i32 {\n    println("prebuilt {}", prebuiltAnswer())\n    return 0\n}\n' >"$work/linked/main.xl"
+run "$xlc" "$(native "$work/linked/lib.xl")" --emit=obj -o "$(native "$work/linked/lib.o")"
+expect "object without the stdlib" 0 ""
+run "$xl" build "$(native "$work/linked/main.xl")" "$(native "$work/linked/lib.o")" -o "$(native "$work/linked/app$EXE")"
+expect "build links a prebuilt object" 0 ""
+run "$work/linked/app$EXE"
+expect "the linked program" 0 "prebuilt 42"
+
 # --- packages -----------------------------------------------------------------------------------------------------------------------
 # a: v1.0.0 answers 1, v1.1.0 answers 11. b v0.1.0 needs a v1.0.0 and doubles its answer.
 repos="$work/repos"

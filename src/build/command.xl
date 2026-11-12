@@ -7,8 +7,9 @@
 //   xl run   [flags] [-- program arguments...]
 //
 // Flags are xlc's own (`-O2`, `-o out`, `--emit=obj`, `-D NAME=V`, ...) and pass through unchanged, plus `--std=<dir>`, which
-// replaces the toolchain's stdlib; `check` and `build` also take them after the file. Without a file, `main.xl` of the project root (the directory of the nearest `xlang.toml`) or of
-// the current directory is built. For `run`, everything after the file, or after `--`, goes to the program as its arguments; the
+// replaces the toolchain's stdlib; `check` and `build` also take them after the file, and pass prebuilt objects and libraries
+// (`vendor/libz.a`) to xlc as inputs to link. Without a file, `main.xl` of the project root (the directory of the nearest
+// `xlang.toml`) or of the current directory is built. For `run`, everything after the file, or after `--`, goes to the program as its arguments; the
 // program's exit status becomes xl's.
 //
 // Every build gets the environment of build/setup.xl: `-M std=<stdlib> --import std -DfeatureDefaultAllocator=true`, one
@@ -44,7 +45,8 @@ fn takesValue(flag: *String) -> bool {
 }
 
 /// Splits `args` into flags, the file and, for `run`, the program's arguments: everything after the file or `--`. `check` and
-/// `build` take flags on both sides of the file (`xl build app.xl -o app`).
+/// `build` take flags on both sides of the file (`xl build app.xl -o app`) and pass any other argument to xlc as an input to link
+/// (`xl build app.xl vendor/libz.a`).
 fn requestOf(args: *Vec<String>, run: bool) -> Result<Request, Problem> {
     local r = Request()
     local at: usize = 0
@@ -66,7 +68,7 @@ fn requestOf(args: *Vec<String>, run: bool) -> Result<Request, Problem> {
         } else if run {
             return fail<Request>("E0740", format("`{}` is neither a flag nor an .xl file", &a), String("name the program root, e.g. `xl run main.xl`; program arguments go after it or after `--`"))
         } else {
-            return fail<Request>("E0740", format("unexpected argument `{}`", &a), String("check and build take flags and one .xl file; only `xl run` passes arguments to a program"))
+            r.flags.push(a)    // a prebuilt object or library: xlc links it after the program root
         }
     }
     for i in at..args.length() { r.args.push(args.get(i).clone()) }
