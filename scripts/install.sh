@@ -73,11 +73,12 @@ else fail "sha256sum or shasum is required to verify the download"; fi
 case "$version" in
   latest | latest-stable | latest-rc)
     step "Looking up the $version release"
-    # Published releases, newest first, as "<tag> stable|rc" lines. In each release object of the answer "tag_name" comes before
-    # "prerelease"; drafts are not visible without a token
-    # (https://docs.github.com/en/rest/releases/releases#list-releases).
+    # Published releases as "<tag> stable|rc <published_at>" lines, sorted newest first: the API does not order them by date
+    # (rc.9 comes before rc.10). In each release object "tag_name" comes before "prerelease" and "published_at"; assets carry
+    # no "published_at", and drafts are not visible without a token (https://docs.github.com/en/rest/releases/releases#list-releases).
     list=$(curl -fsSL --max-time 20 -H 'Accept: application/vnd.github+json' "https://api.github.com/repos/$REPO/releases?per_page=100" |
-      awk -F'"' '/"tag_name":/ { tag = $4 } /"prerelease":/ { print tag, (/true/ ? "rc" : "stable") }') ||
+      awk -F'"' '/"tag_name":/ { tag = $4 } /"prerelease":/ { kind = (/true/ ? "rc" : "stable") } /"published_at":/ { print tag, kind, $4 }' |
+      sort -r -k3) ||
       fail "could not list the releases of $REPO (is the network reachable?)"
     pick() { awk -v k="$1" 'k == "any" || $2 == k { print $1; exit }' <<<"$list"; }
     case "$version" in

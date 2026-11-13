@@ -25,10 +25,10 @@ $arch = 'amd64'
 $request = if ($env:XL_VERSION) { $env:XL_VERSION } else { 'latest' }
 if ($request -in 'latest', 'latest-stable', 'latest-rc') {
     Write-Host "==> Looking up the $request release"
-    # Published releases, newest first; drafts are not visible without a token
-    # (https://docs.github.com/en/rest/releases/releases#list-releases).
+    # Published releases sorted newest first: the API does not order them by date (rc.9 comes before rc.10). Drafts are not
+    # visible without a token (https://docs.github.com/en/rest/releases/releases#list-releases).
     $list = @(Invoke-RestMethod -Headers @{ Accept = 'application/vnd.github+json' } "https://api.github.com/repos/$repo/releases?per_page=100" |
-        Where-Object { -not $_.draft })
+        Where-Object { -not $_.draft } | Sort-Object { [datetime]$_.published_at } -Descending)
     $stable = $list | Where-Object { -not $_.prerelease } | Select-Object -First 1
     $tag = switch ($request) {
         'latest' { if ($stable) { $stable.tag_name } else { ($list | Select-Object -First 1).tag_name } }

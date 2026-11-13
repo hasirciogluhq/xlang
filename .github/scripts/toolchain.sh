@@ -18,9 +18,9 @@ is_tag() { [[ "$1" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]]; }
 resolve() {
   local repo=$1 tag=${2:-}
   if [ -z "$tag" ]; then
-    # `releases/latest` never returns a pre-release or a draft and answers 404 while there is no stable release; the list is newest first.
+    # `releases/latest` never returns a pre-release or a draft and answers 404 while there is no stable release; the list is not ordered by date (rc.9 comes before rc.10), so the newest is the one published last.
     tag=$(gh api "repos/$repo/releases/latest" --jq .tag_name 2>/dev/null || true)
-    is_tag "$tag" || tag=$(gh api "repos/$repo/releases?per_page=100" --jq '[.[] | select(.draft | not)] | first | .tag_name // empty')
+    is_tag "$tag" || tag=$(gh api "repos/$repo/releases?per_page=100" --jq '[.[] | select(.draft | not)] | sort_by(.published_at) | last | .tag_name // empty')
   fi
   is_tag "$tag" || { echo "error: no usable release of $repo (got '$tag')" >&2; exit 1; }
   echo "$tag"
