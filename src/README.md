@@ -17,13 +17,13 @@ releases: `.github/workflows/ci.yml`, `release.yml`. The commands are documented
 | `core/problem.xl` | `Problem` (code, message, fix) and the `Done`/`fail`/`finish` helpers every command returns through |
 | `core/host.xl` | OS and CPU names, `$XLANG_HOME`, environment variables, path joining |
 | `core/proc.xl` | `Line`: a child process command line; `call` (inherit stdio) and `capture` (collect stdout) |
-| `core/git.xl` | `git ls-remote` and `git clone` for packages and release tags |
+| `core/git.xl` | `git ls-remote` (tags, branch heads), `git clone` of a tag and a shallow fetch of one commit |
 | `core/tag.xl` | release tags and version specs (`latest`, `v3`, `v3.4`, `v3.4.1`) and choosing among a repository's tags |
 | `core/scan.xl` | the TOML subset xl reads: keys, strings, inline tables, one-line string arrays |
 | `core/store.xl` | atomic file writes (temporary file, then rename) |
 | `core/release.xl` | GitHub release assets (or `$XLANG_MIRROR`), `checksums.txt` verification, `.tar.gz`/`.zip` unpacking |
 | `core/version.xl` | `VERSION` from `-DxlVersion` |
-| `pkg/manifest.xl` | `xlang.toml`: the `[dependencies]` table, edited line by line so comments and other tables survive |
+| `pkg/manifest.xl` | `xlang.toml`: the `[dependencies]` table (version, tag, branch, rev, source, path) and `[package] root`, edited line by line so comments and other tables survive |
 | `pkg/lock.xl` | `xlang.lock`: one `[[package]]` per resolved repository |
 | `pkg/resolve.xl` | minimal version selection over the dependency graph, the `.xlang/cache` layout |
 | `pkg/command.xl` | `xl pkg add|install|update|remove|list|clean` |

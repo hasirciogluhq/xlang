@@ -5,7 +5,7 @@
 // Each layer replaces what it names, lowest first:
 //   1. the active toolchain (`xl lc`, $XLANG_HOME/toolchain.toml);
 //   2. `xlang.toml`: one `-M <repository>=<dir>` per package: each `xlang.lock` entry maps to its cache directory, each `path`
-//      dependency to its directory;
+//      dependency to its directory (joined with the package's own `[package] root` when its xlang.toml sets one);
 //   3. `xlang.local.toml` next to it: one developer's overrides, never committed (xlang-docs/compiler/packages.md
 //      "xlang.local.toml"):
 //          [toolchain]
@@ -23,7 +23,7 @@ from "../core/problem" import Problem, Done, done, fail
 from "../core/host" import join, parent
 from "../core/scan" import Scan
 from "../lc/toolchain" import Toolchain, active, applyEnvironment, usable
-from "../pkg/manifest" import findManifest, load
+from "../pkg/manifest" import findManifest, load, importRootOf
 from "../pkg/lock" import loadLock
 from "../pkg/resolve" import packageDir, relative
 
@@ -113,14 +113,21 @@ fn mapPackages(s: *Setup, path: *String) -> Done {
     for d in m.deps {
         if d.onDisk() {
             local at = relative(&s.project, &d.path)
-            s.map(&d.name, &at)
+            local importRoot = importRootOf(&at)?
+            s.map(&d.name, &importRoot)
         } else if lock.find(&d.name) < 0 {
             s.missing.push(d.name.clone())
         }
     }
     for e in lock.entries {
-        local at = packageDir(&s.project, &e.name, &e.version)
-        if files.isDir(&at) { s.map(&e.name, &at) } else { s.missing.push(e.name.clone()) }
+        local leaf = e.leaf()
+        local at = packageDir(&s.project, &e.name, &leaf)
+        if !files.isDir(&at) {
+            s.missing.push(e.name.clone())
+            continue
+        }
+        local importRoot = importRootOf(&at)?
+        s.map(&e.name, &importRoot)
     }
     return done()
 }
@@ -161,7 +168,9 @@ fn applyLocal(s: *Setup) -> Done {
             }
             local none = String()
             if table.equals("modules") {
-                s.map(&key, &value)
+                // A checkout in place of a package resolves like the package: under its `[package] root`.
+                local importRoot = importRootOf(&value)?
+                s.map(&key, &importRoot)
                 s.missing.retain(|name: *String| !name.equals(&key))
             } else if table.equals("toolchain") && key.equals("xlc") {
                 s.tools.replace(&value, &none)

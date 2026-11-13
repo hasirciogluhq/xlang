@@ -283,6 +283,48 @@ expect "pkg clean" 0 ""
 in_app pkg list
 expect "pkg list after clean reports the missing cache" 1 ""
 
+# d keeps its source under src/ (`[package] root`); it is used at a tag, a commit and a branch.
+mkdir -p "$repos/d/src"
+git -C "$repos/d" init -q
+printf '[package]\nroot = "src/"\n' >"$repos/d/xlang.toml"
+printf 'export fn dee() -> i32 { return 3 }\n' >"$repos/d/src/index.xl"
+commit "$repos/d" nightly
+first=$(git -C "$repos/d" rev-parse HEAD)
+git -C "$repos/d" checkout -q -b dev
+printf 'export fn dee() -> i32 { return 4 }\n' >"$repos/d/src/index.xl"
+git -C "$repos/d" commit -q -am four
+app="$work/app-d"
+mkdir -p "$app"
+printf 'from "std" import println\nfrom "example.com/t/d" import dee\n@entry\nfn main() -> i32 {\n    println("dee={}", dee())\n    return 0\n}\n' >"$app/main.xl"
+dep() { printf '[dependencies]\n"example.com/t/d" = { %s, source = "%s" }\n' "$1" "$(native "$repos/d")" >"$app/xlang.toml"; }
+dep 'tag = "nightly"'
+in_app pkg install
+in_app run
+expect "a tag dependency resolves under [package] root" 0 "dee=3"
+dep "rev = \"$first\""
+in_app pkg install
+in_app run
+expect "a rev dependency" 0 "dee=3"
+dep 'branch = "dev"'
+in_app pkg install
+grep -q 'branch = "dev"' "$app/xlang.lock" && in_app run
+expect "a branch dependency is locked" 0 "dee=4"
+printf 'export fn dee() -> i32 { return 5 }\n' >"$repos/d/src/index.xl"
+git -C "$repos/d" commit -q -am five
+in_app pkg install
+in_app run
+expect "install keeps the locked branch commit" 0 "dee=4"
+in_app pkg update
+in_app run
+expect "update moves a branch to its head" 0 "dee=5"
+dep 'tag = "nightly", branch = "dev"'
+in_app pkg install
+expect "two references are E0740" 1 "E0740"
+dep 'rev = "abc123"'
+in_app pkg install
+expect "a short rev is E0742" 1 "E0742"
+app="$work/app"
+
 # --- xl lc: the compiler and stdlib from a mirror -----------------------------------------------------------------------------------
 mirror="$work/mirror"
 tag=v0.0.1

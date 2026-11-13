@@ -1,7 +1,8 @@
-// The git calls xl needs: the tags of a remote, a shallow clone of one tag, and the commit it checked out
-// (https://git-scm.com/docs/git-ls-remote, https://git-scm.com/docs/git-clone). Every failure is E0744.
-from "std" import String, Vec, Result, split, trim, splitAsciiWhitespace
-from "problem" import Problem, Done, done
+// The git calls xl needs: the tags and branch heads of a remote, a shallow clone of one tag or one commit, and the commit it
+// checked out (https://git-scm.com/docs/git-ls-remote, https://git-scm.com/docs/git-clone, https://git-scm.com/docs/git-fetch).
+// Every failure is E0744.
+from "std" import String, Vec, Result, split, trim, splitAsciiWhitespace, format
+from "problem" import Problem, Done, done, fail
 from "proc" import Line, capture
 
 /// One tag of a remote and the commit it points to.
@@ -53,8 +54,42 @@ export fn cloneTag(url: *String, tag: *String, dir: *String) -> Result<String, P
     clone.add("-c").add("advice.detachedHead=false").add("clone").add("--quiet").add("--depth").add("1")
     clone.add("--branch").addS(tag).addS(url).addS(dir)
     capture(&clone, "E0744")?
+    return headOf(dir)
+}
+
+/// The commit `HEAD` of the checkout `dir` names.
+fn headOf(dir: *String) -> Result<String, Problem> {
     local head = Line("git")
     head.add("-C").addS(dir).add("rev-parse").add("HEAD")
     local commit = capture(&head, "E0744")?
     return Result.Ok(trim(commit.asStr()))
+}
+
+/// The commit at the head of branch `branch` of `url` (E0744 when the remote has no such branch).
+export fn remoteBranch(url: *String, branch: *String) -> Result<String, Problem> {
+    local l = Line("git")
+    local ref = format("refs/heads/{}", branch)
+    l.add("ls-remote").add("--heads").addS(url).addS(&ref)
+    local out = capture(&l, "E0744")?
+    for line in split(out.asStr(), "\n") {
+        local fields = splitAsciiWhitespace(line.asStr())
+        if fields.length() == 2 && fields.get(1).equals(&ref) { return Result.Ok(fields.get(0).clone()) }
+    }
+    return fail<String>("E0744", format("{} has no branch `{}`", url, branch), String("check the branch name in xlang.toml"))
+}
+
+/// Fetches the single commit `commit` of `url` into the new directory `dir`, one commit deep, and checks it out. Fetching by hash
+/// needs protocol v2 or `uploadpack.allowReachableSHA1InWant` on the server; GitHub, GitLab and local repositories allow it
+/// (https://git-scm.com/docs/protocol-v2#_fetch).
+export fn cloneCommit(url: *String, commit: *String, dir: *String) -> Result<String, Problem> {
+    local init = Line("git")
+    init.add("init").add("--quiet").addS(dir)
+    capture(&init, "E0744")?
+    local fetch = Line("git")
+    fetch.add("-C").addS(dir).add("fetch").add("--quiet").add("--depth").add("1").addS(url).addS(commit)
+    capture(&fetch, "E0744")?
+    local checkout = Line("git")
+    checkout.add("-C").addS(dir).add("-c").add("advice.detachedHead=false").add("checkout").add("--quiet").add("FETCH_HEAD")
+    capture(&checkout, "E0744")?
+    return headOf(dir)
 }

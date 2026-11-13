@@ -3,7 +3,7 @@
 //
 //     [[package]]
 //     name = "github.com/user/repo"
-//     version = "v1.2.0"
+//     version = "v1.2.0"                  # or tag / branch / rev, as the dependency names it
 //     commit = "<40 hex digits>"
 //     source = "https://github.com/user/repo.git"
 //     indirect = true                     # only another package needs it
@@ -14,7 +14,8 @@ from "../core/store" import writeAtomic
 
 export class Locked {
     name: String
-    version: String
+    kind: String       // `version` (the resolved release tag), `tag`, `branch` or `rev`, as in manifest.xl `Dep`
+    ref: String
     commit: String
     source: String
     indirect: bool
@@ -23,10 +24,21 @@ export class Locked {
         self.indirect = false
     }
 
+    /// The cache directory label: the tag for `version` and `tag`, the commit for `branch` and `rev`.
+    fn leaf(self) -> String {
+        return self.kind.equals("version") || self.kind.equals("tag") ? self.ref.clone() : self.commit.clone()
+    }
+
+    /// The reference for messages: `v1.2.0`, `branch main`.
+    fn want(self) -> String {
+        return self.kind.equals("version") ? self.ref.clone() : format("{} {}", &self.kind, &self.ref)
+    }
+
     fn clone(self) -> Locked {
         local l = Locked()
         l.name = self.name.clone()
-        l.version = self.version.clone()
+        l.kind = self.kind.clone()
+        l.ref = self.ref.clone()
         l.commit = self.commit.clone()
         l.source = self.source.clone()
         l.indirect = self.indirect
@@ -64,10 +76,10 @@ export class Lock {
         local out = String("# xlang.lock: written by `xl pkg`; do not edit.\n")
         for e in self.entries {
             local name = quote(&e.name)
-            local version = quote(&e.version)
+            local ref = quote(&e.ref)
             local commit = quote(&e.commit)
             local source = quote(&e.source)
-            out.append(format("\n[[package]]\nname = {}\nversion = {}\ncommit = {}\nsource = {}\n", &name, &version, &commit, &source).asStr())
+            out.append(format("\n[[package]]\nname = {}\n{} = {}\ncommit = {}\nsource = {}\n", &name, &e.kind, &ref, &commit, &source).asStr())
             if e.indirect { out.append("indirect = true\n") }
         }
         return out
@@ -118,7 +130,10 @@ export fn loadLock(path: *String) -> Result<Lock, Problem> {
             case Option.None { return bad(path, i, "a value that is not a string") }
         }
         if key.equals("name") { cur.name = value }
-        else if key.equals("version") { cur.version = value }
+        else if key.equals("version") || key.equals("tag") || key.equals("branch") || key.equals("rev") {
+            cur.kind = key
+            cur.ref = value
+        }
         else if key.equals("commit") { cur.commit = value }
         else if key.equals("source") { cur.source = value }
         else { return bad(path, i, "an unknown key") }

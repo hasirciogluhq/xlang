@@ -2,18 +2,24 @@
 //
 // The file is kept as its lines. Reading records, for each dependency, the line it is on; an edit replaces that one line (keeping
 // its trailing comment) or inserts one, so comments, blank lines, order and every other table survive byte for byte. Only
-// `[dependencies]` is interpreted; other tables (`[package]`, `[std]`, `[[native]]`) are carried as text.
+// `[dependencies]` and the `root` key of `[package]` are interpreted; other tables and keys (`[package] name`, `[std]`,
+// `[[native]]`) are carried as text.
 from "std" import String, Vec, Option, Result, split, format, fsReadAllString, files
 from "../core/problem" import Problem, Done, done, fail
 from "../core/store" import writeAtomic
 from "../core/tag" import valid as validTag
-from "../core/host" import join, parent
+from "../core/host" import join, joinS, parent
 from "../core/scan" import Scan, quote
 
-/// One entry of `[dependencies]`.
+/// One entry of `[dependencies]`. A git dependency names exactly one reference `kind`:
+///   `version`  a release tag (`v1.2.0`) or `latest` (the newest stable release tag);
+///   `tag`      any tag, taken as written (`nightly-2026-11-01`);
+///   `branch`   the head of a branch, pinned to a commit by xlang.lock and moved by `xl pkg update`;
+///   `rev`      one commit, its full hash (40 hex digits for SHA-1, 64 for SHA-256 repositories).
 export class Dep {
     name: String        // repository path: `github.com/user/repo`
-    version: String     // a release tag or `latest`; empty for a `path` dependency
+    kind: String        // `version`, `tag`, `branch` or `rev`; empty for a `path` dependency
+    ref: String         // the value of that key
     source: String      // git URL or directory replacing `https://<name>.git`; empty for the default
     path: String        // a directory used in place; empty for a git dependency
     line: usize         // index of its line in the file
@@ -25,37 +31,78 @@ export class Dep {
 
     fn init(self, name: *String, version: *String) {
         self.name = name.clone()
-        self.version = version.clone()
+        self.kind = String("version")
+        self.ref = version.clone()
         self.line = 0
     }
 
     fn onDisk(self) -> bool { return self.path.length() > 0 }
+
+    fn latest(self) -> bool { return self.kind.equals("version") && self.ref.equals("latest") }
+
+    /// The reference for messages: `v1.2.0`, `branch main`, `rev 3f1c…`.
+    fn want(self) -> String {
+        return self.kind.equals("version") ? self.ref.clone() : format("{} {}", &self.kind, &self.ref)
+    }
 
     /// The git URL to clone: `source`, or `https://<name>.git`.
     fn url(self) -> String {
         return self.source.length() > 0 ? self.source.clone() : format("https://{}.git", &self.name)
     }
 
-    /// The value as written in the manifest: `"v1.2.0"` or an inline table when there is more than a version.
+    /// The value as written in the manifest: `"v1.2.0"`, or an inline table for any other reference or a `source`.
     fn value(self) -> String {
         if self.onDisk() {
             local p = quote(&self.path)
             return format("{ path = {} }", &p)
         }
-        if self.source.length() == 0 { return quote(&self.version) }
-        local v = quote(&self.version)
+        local v = quote(&self.ref)
+        if self.source.length() == 0 {
+            return self.kind.equals("version") ? v : format("{ {} = {} }", &self.kind, &v)
+        }
         local s = quote(&self.source)
-        return format("{ version = {}, source = {} }", &v, &s)
+        return format("{ {} = {}, source = {} }", &self.kind, &v, &s)
     }
 
     fn clone(self) -> Dep {
-        local d = Dep(&self.name, &self.version)
+        local d = Dep()
+        d.name = self.name.clone()
+        d.kind = self.kind.clone()
+        d.ref = self.ref.clone()
         d.source = self.source.clone()
         d.path = self.path.clone()
         d.line = self.line
         d.comment = self.comment.clone()
         return d
     }
+}
+
+/// A full commit hash: 40 (SHA-1) or 64 (SHA-256) lowercase hex digits (https://git-scm.com/docs/hash-function-transition).
+export fn isCommit(s: *String) -> bool {
+    if s.length() != 40 && s.length() != 64 { return false }
+    for c in s.asStr() { if !((c >= b'0' && c <= b'9') || (c >= b'a' && c <= b'f')) { return false } }
+    return true
+}
+
+/// The reference of a git dependency. `project` allows the moving ones (`latest`, `branch`); a package that others depend on
+/// must pin a release tag, a tag or a commit (E0742).
+fn checkRef(d: *Dep, project: bool) -> Done {
+    if d.kind.equals("version") { return checkVersion(&d.name, &d.ref, project) }
+    if d.ref.length() == 0 { return fail<bool>("E0742", format("`{}` has an empty {}", &d.name, &d.kind), String("write the tag, branch or commit")) }
+    if d.kind.equals("branch") && !project {
+        return fail<bool>("E0742", format("`{}` follows branch `{}`", &d.name, &d.ref), String("a package must pin a release tag, a tag or a rev for its own dependencies"))
+    }
+    if d.kind.equals("rev") && !isCommit(&d.ref) {
+        return fail<bool>("E0742", format("`{}` = rev `{}` is not a full commit hash", &d.name, &d.ref), String("write all 40 (SHA-1) or 64 (SHA-256) lowercase hex digits"))
+    }
+    return done()
+}
+
+/// `[package] root`: a relative directory inside the package with no `..` segment, no `\`, not absolute. E0740 otherwise.
+fn checkRoot(root: *String) -> bool {
+    if root.length() == 0 || root.startsWith("/") || root.contains("\\") || root.contains(":") { return false }
+    for p in split(root.asStr(), "/") { if p.equals("..") { return false } }
+    return true
 }
 
 /// A repository path: `host.tld/segment/...`, the first segment with a dot, no empty, `.` or `..` segment, not `std`. E0740 otherwise.
@@ -85,6 +132,7 @@ export class Manifest {
     file: String           // path of xlang.toml
     lines: Vec<String>
     deps: Vec<Dep>
+    sourceRoot: String     // `[package] root`: where the package's imports resolve, relative to the manifest; empty for its directory
     header: i64            // line of `[dependencies]`, -1 when there is none
     last: i64              // last non-blank line of that table
 
@@ -103,28 +151,55 @@ export class Manifest {
         return -1
     }
 
-    /// Reads `[dependencies]` from `lines`. `project` allows `latest` (a package's own manifest must pin tags).
+    /// The directory the package's imports resolve in: the manifest's directory joined with `[package] root`.
+    fn importRoot(self) -> String {
+        local dir = self.root()
+        return self.sourceRoot.length() > 0 ? joinS(&dir, &self.sourceRoot) : dir
+    }
+
+    /// Reads `[dependencies]` and `[package] root` from `lines`. `project` allows `latest` and `branch` (a package's own manifest
+    /// must pin).
     fn parse(self, project: bool) -> Done {
         self.deps.clear()
+        self.sourceRoot.clear()
         self.header = -1
         self.last = -1
         local inDeps = false
+        local inPackage = false
         for line, i in self.lines {
             local s = Scan(line)
             if s.end() { continue }
             if s.peek() == 91 {
                 inDeps = isHeader(line, "dependencies")
+                inPackage = isHeader(line, "package")
                 if inDeps {
                     self.header = i as i64
                     self.last = i as i64
                 }
                 continue
             }
+            if inPackage {
+                local isRoot = false
+                switch s.key() {
+                    case Option.Some(k) { isRoot = k.equals("root") }
+                    case Option.None { }
+                }
+                if !isRoot { continue }      // other `[package]` keys are informational
+                if !s.eat(61) { return self.bad<bool>(i, String("has no `=`")) }
+                switch s.string() {
+                    case Option.Some(v) { self.sourceRoot = v.clone() }
+                    case Option.None { return self.bad<bool>(i, String("needs a string value")) }
+                }
+                while self.sourceRoot.endsWith("/") { self.sourceRoot = self.sourceRoot.slice(0, self.sourceRoot.length() - 1) }
+                if self.sourceRoot.equals(".") { self.sourceRoot.clear() }
+                else if !checkRoot(&self.sourceRoot) { return self.bad<bool>(i, String("must name a relative directory inside the package")) }
+                continue
+            }
             if !inDeps { continue }
             self.last = i as i64
             local d = self.entry(&s, i)?
             checkName(&d.name)?
-            if !d.onDisk() { checkVersion(&d.name, &d.version, project)? }
+            if !d.onDisk() { checkRef(&d, project)? }
             if self.find(&d.name) >= 0 { return self.bad<bool>(i, String("is listed twice")) }
             self.deps.push(d)
         }
@@ -148,7 +223,10 @@ export class Manifest {
         s.blank()
         if s.peek() == 34 {
             switch s.string() {
-                case Option.Some(v) { d.version = v.clone() }
+                case Option.Some(v) {
+                    d.kind = String("version")
+                    d.ref = v.clone()
+                }
                 case Option.None { return self.bad<Dep>(line, String("has an unterminated string")) }
             }
         } else if s.eat(123) {
@@ -167,15 +245,22 @@ export class Manifest {
                     case Option.Some(v) { value = v.clone() }
                     case Option.None { return self.bad<Dep>(line, String("needs a string value")) }
                 }
-                if field.equals("version") { d.version = value }
+                if field.equals("version") || field.equals("tag") || field.equals("branch") || field.equals("rev") {
+                    if d.kind.length() > 0 { return self.bad<Dep>(line, String("names more than one of `version`, `tag`, `branch`, `rev`")) }
+                    d.kind = field
+                    d.ref = value
+                }
                 else if field.equals("source") { d.source = value }
                 else if field.equals("path") { d.path = value }
                 else { return self.bad<Dep>(line, format("has the unknown key `{}`", &field)) }
             }
-            if d.onDisk() && (d.version.length() > 0 || d.source.length() > 0) {
-                return self.bad<Dep>(line, String("combines `path` with `version` or `source`"))
+            if d.onDisk() && (d.kind.length() > 0 || d.source.length() > 0) {
+                return self.bad<Dep>(line, String("combines `path` with a git reference or `source`"))
             }
-            if !d.onDisk() && d.version.length() == 0 { d.version = String("latest") }
+            if !d.onDisk() && d.kind.length() == 0 {
+                d.kind = String("version")
+                d.ref = String("latest")
+            }
         } else {
             return self.bad<Dep>(line, String("needs a string or an inline table"))
         }
@@ -258,6 +343,14 @@ export fn load(path: *String, project: bool) -> Result<Manifest, Problem> {
     }
     m.parse(project)?
     return Result.Ok(m)
+}
+
+/// The directory the imports of the package at `dir` resolve in: `dir`, or `dir/<root>` when its `xlang.toml` sets `[package] root`.
+export fn importRootOf(dir: *String) -> Result<String, Problem> {
+    local file = join(dir, "xlang.toml")
+    if !files.exists(&file) { return Result.Ok(dir.clone()) }
+    local m = load(&file, false)?
+    return Result.Ok(m.importRoot())
 }
 
 /// The nearest `xlang.toml` from `dir` upward, or None.

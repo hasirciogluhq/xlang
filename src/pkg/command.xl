@@ -1,9 +1,11 @@
 // `xl pkg`: the package commands (xlang-docs/compiler/packages.md "Commands").
 //
-//   add <repo[@tag]>...       write the entries into xlang.toml (`latest` without a tag); nothing is downloaded
+//   add <repo[@ref]>...       write the entries into xlang.toml (`latest` without a ref); nothing is downloaded
 //   install                   download everything xlang.toml lists, write xlang.lock
-//   install <repo[@tag]>...   add the entries (the newest stable tag when none is given) and install
-//   update [repo...]          move all (or the named) git dependencies to their newest stable tag and install
+//   install <repo[@ref]>...   add the entries (the newest stable tag when none is given) and install
+//   update [repo...]          move all (or the named) release dependencies to their newest stable tag, branches to their head,
+//                             and install
+// `ref` is a release tag, `latest` or a full commit hash.
 //   remove <repo>...          delete the entries and refresh the lock
 //   list                      the locked packages; exit status 1 when one is missing from the cache
 //   clean                     delete .xlang/cache
@@ -13,17 +15,17 @@ from "std" import String, Vec, Option, Result, println, format, files
 from "../core/problem" import Problem, Done, done, fail, finish
 from "../core/tag" import valid as validTag
 from "../core/host" import join, parent
-from "manifest" import Manifest, Dep, load, findManifest, checkName, checkVersion
+from "manifest" import Manifest, Dep, load, findManifest, checkName, checkVersion, isCommit
 from "lock" import Lock, loadLock
 from "resolve" import resolve, newestTag, packageDir, cacheDir
 
 export fn pkgUsage() {
     println("usage: xl pkg <command> [arguments]")
     println("")
-    println("  add <repo[@tag]>...       add dependencies to xlang.toml (without downloading)")
+    println("  add <repo[@ref]>...       add dependencies to xlang.toml (without downloading)")
     println("  install                   download everything xlang.toml lists and write xlang.lock")
-    println("  install <repo[@tag]>...   add dependencies at their newest stable (or the given) tag and install")
-    println("  update [repo...]          move all (or the named) dependencies to their newest stable tag")
+    println("  install <repo[@ref]>...   add dependencies at their newest stable (or the given) tag or commit and install")
+    println("  update [repo...]          move all (or the named) dependencies to their newest stable tag or branch head")
     println("  remove <repo>...          remove dependencies and refresh xlang.lock")
     println("  list                      show the locked packages")
     println("  clean                     delete the download cache (.xlang/cache)")
@@ -46,19 +48,25 @@ fn lockPath(m: *Manifest) -> String {
     return join(&root, "xlang.lock")
 }
 
-/// `repo@tag` split into the entry it asks for; the version is empty when no tag was given.
+/// `repo@ref` split into the entry it asks for: a release tag or `latest` is a `version`, a full commit hash a `rev`. The reference
+/// is empty when none was given. `tag` and `branch` entries are written into xlang.toml by hand.
 fn entryOf(spec: *String) -> Result<Dep, Problem> {
     local at = spec.find("@")
     local d = Dep()
+    d.kind = String("version")
     if at < 0 {
         d.name = spec.clone()
     } else {
         d.name = spec.slice(0, at as usize)
-        d.version = spec.slice(at as usize + 1, spec.length() - at as usize - 1)
+        d.ref = spec.slice(at as usize + 1, spec.length() - at as usize - 1)
     }
     checkName(&d.name)?
+    if isCommit(&d.ref) {
+        d.kind = String("rev")
+        return Result.Ok(d)
+    }
     // On the command line any tag of the release format is accepted, pre-release and test tags included.
-    if d.version.length() > 0 && !d.version.equals("latest") { checkVersion(&d.name, &d.version, false)? }
+    if d.ref.length() > 0 && !d.ref.equals("latest") { checkVersion(&d.name, &d.ref, false)? }
     return Result.Ok(d)
 }
 
@@ -74,9 +82,10 @@ fn add(args: *Vec<String>) -> Done {
     local m = load(&path, true)?
     for spec in args {
         local d = entryOf(spec)?
-        if d.version.length() == 0 { d.version = String("latest") }
+        if d.ref.length() == 0 { d.ref = String("latest") }
         m.put(&d)
-        println("added {} {}", &d.name, &d.version)
+        local want = d.want()
+        println("added {} {}", &d.name, &want)
     }
     return m.save()
 }
@@ -86,9 +95,9 @@ fn install(args: *Vec<String>) -> Done {
     local m = load(&path, true)?
     for spec in args {
         local d = entryOf(spec)?
-        if d.version.length() == 0 {
+        if d.ref.length() == 0 {
             local url = urlOf(&m, &d)
-            d.version = newestTag(&url)?
+            d.ref = newestTag(&url)?
         }
         m.put(&d)
     }
@@ -112,14 +121,15 @@ fn update(args: *Vec<String>) -> Done {
         local wanted = named.isEmpty()
         for n in named { if n.equals(&d.name) { wanted = true } }
         if !wanted { continue }
+        // `latest` and `branch` move through the lock; `tag` and `rev` are pinned by what is written.
         fresh.push(d.name.clone())
-        if d.version.equals("latest") { continue }
+        if !d.kind.equals("version") || d.latest() { continue }
         local url = d.url()
         local tag = newestTag(&url)?
-        if !tag.equals(&d.version) {
+        if !tag.equals(&d.ref) {
             local moved = d.clone()
-            println("{} {} -> {}", &d.name, &d.version, &tag)
-            moved.version = tag
+            println("{} {} -> {}", &d.name, &d.ref, &tag)
+            moved.ref = tag
             moves.push(moved)
         }
     }
@@ -149,7 +159,8 @@ fn apply(m: *Manifest, fresh: *Vec<String>, all: bool) -> Done {
     for e in lock.entries {
         local short = e.commit.slice(0, e.commit.length() < 12 ? e.commit.length() : 12)
         local how = String(e.indirect ? " [indirect]" : "")
-        println("  {} {} {}{}", &e.name, &e.version, &short, &how)
+        local want = e.want()
+        println("  {} {} {}{}", &e.name, &want, &short, &how)
     }
     println("{} packages locked", lock.entries.length())
     return done()
@@ -163,11 +174,13 @@ fn list() -> Done {
     local root = m.root()
     local missing: usize = 0
     for e in lock.entries {
-        local dir = packageDir(&root, &e.name, &e.version)
+        local leaf = e.leaf()
+        local dir = packageDir(&root, &e.name, &leaf)
         local state = String(files.isDir(&dir) ? "" : " [missing]")
         if !files.isDir(&dir) { missing++ }
         local how = String(e.indirect ? " [indirect]" : "")
-        println("{} {} {}{}{}", &e.name, &e.version, &e.commit, &how, &state)
+        local want = e.want()
+        println("{} {} {}{}{}", &e.name, &want, &e.commit, &how, &state)
     }
     for d in m.deps { if d.onDisk() { println("{} path {}", &d.name, &d.path) } }
     if missing > 0 { return fail<bool>("E0741", format("{} packages are not in the cache", missing), String("run `xl pkg install`")) }

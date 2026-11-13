@@ -4,11 +4,11 @@
 // The project's entries are resolved first, then the dependencies of each package, breadth first. One copy of each repository is
 // used: when a package needs another version of a repository the project lists, the project's version wins; when the project does
 // not list it and two packages disagree, resolution stops with E0743. `latest` takes the locked tag, or the newest stable tag when
-// the lock has none or `fresh` is set. Nothing here writes the manifest or the lock; the caller saves both once everything resolved.
+// the lock has none or `fresh` is set; a `branch` takes the locked commit, or the branch head likewise; a `rev` is its commit. Nothing here writes the manifest or the lock; the caller saves both once everything resolved.
 from "std" import String, Vec, Result, format, trim, fsReadAllString, fsWrite, files
 from "../core/problem" import Problem, Done, done, fail
 from "../core/tag" import pick
-from "../core/git" import remoteTags, names, cloneTag
+from "../core/git" import remoteTags, names, cloneTag, cloneCommit, remoteBranch
 from "../core/host" import join, joinS, parent
 from "manifest" import Manifest, Dep, load
 from "lock" import Lock, Locked
@@ -26,10 +26,10 @@ export fn cacheDir(root: *String) -> String {
     return join(&x, "cache")
 }
 
-/// The cache directory of `name` at `tag`: `<root>/.xlang/cache/<name>@<tag>`.
-export fn packageDir(root: *String, name: *String, tag: *String) -> String {
+/// The cache directory of `name` at `at` (a tag, or a commit for `branch` and `rev`): `<root>/.xlang/cache/<name>@<at>`.
+export fn packageDir(root: *String, name: *String, at: *String) -> String {
     local cache = cacheDir(root)
-    local leaf = format("{}@{}", name, tag)
+    local leaf = format("{}@{}", name, at)
     return joinS(&cache, &leaf)
 }
 
@@ -50,9 +50,9 @@ export fn newestTag(url: *String) -> Result<String, Problem> {
     return pick(&all, &any, false)
 }
 
-/// Makes sure `dir` holds `url` at `tag` and returns its commit. `expected` is the locked commit (empty when not locked): a cache
-/// that disagrees is E0741, a tag that now names another commit is E0744.
-fn fetch(url: *String, tag: *String, dir: *String, expected: *String) -> Result<String, Problem> {
+/// Makes sure `dir` holds `url` at `ref` (a tag, or a commit when `isCommit`) and returns its commit. `expected` is the locked commit
+/// (empty when not locked): a cache that disagrees is E0741, a tag that now names another commit is E0744.
+fn fetch(url: *String, ref: *String, isCommit: bool, dir: *String, expected: *String) -> Result<String, Problem> {
     local mark = join(dir, ".xlang-commit")
     if files.isDir(dir) {
         local have = trim(fsReadAllString(mark.cstr()).asStr())
@@ -68,10 +68,10 @@ fn fetch(url: *String, tag: *String, dir: *String, expected: *String) -> Result<
     files.removeAll(&partial)
     local up = parent(dir)
     files.makeDirAll(&up)
-    local commit = cloneTag(url, tag, &partial)?
+    local commit = isCommit ? cloneCommit(url, ref, &partial)? : cloneTag(url, ref, &partial)?
     if expected.length() > 0 && !commit.equals(expected) {
         files.removeAll(&partial)
-        return fail<String>("E0744", format("tag {} of {} moved: it is commit {} now, xlang.lock says {}", tag, url, &commit, expected), String("release tags must never move; ask the author, or update to another tag"))
+        return fail<String>("E0744", format("tag {} of {} moved: it is commit {} now, xlang.lock says {}", ref, url, &commit, expected), String("release tags must never move; ask the author, or update to another tag"))
     }
     // The cache is a plain source tree: no `.git`, plus the commit mark.
     local git = join(&partial, ".git")
@@ -117,30 +117,47 @@ export fn resolve(m: *Manifest, old: *Lock, fresh: *Vec<String>, all: bool) -> R
         local have = out.find(&d.name)
         if have >= 0 {
             local got = out.entries.get(have as usize)
-            if d.version.equals(&got.version) || d.version.equals("latest") || m.find(&d.name) >= 0 { continue }
-            return fail<Lock>("E0743", format("{} needs {} {}, but another package needs {}", &by, &d.name, &d.version, &got.version), format("choose one: `xl pkg add {}@<tag>`", &d.name))
+            local same = d.kind.equals(&got.kind) && d.ref.equals(&got.ref)
+            if same || d.latest() || m.find(&d.name) >= 0 { continue }
+            local a = d.want()
+            local b = got.want()
+            return fail<Lock>("E0743", format("{} needs {} {}, but another package needs {}", &by, &d.name, &a, &b), format("choose one in the project's xlang.toml: `xl pkg add {}@<tag>`", &d.name))
         }
         if !direct && m.find(&d.name) >= 0 { continue }
         local written = d.url()
         local url = relative(&base, &written)
-        local lockedAt = old.find(&d.name)
-        local tag = d.version.clone()
         local refresh = all
         for f in fresh { if f.equals(&d.name) { refresh = true } }
-        if tag.equals("latest") {
-            if lockedAt >= 0 && !refresh { tag = old.entries.get(lockedAt as usize).version.clone() }
-            else { tag = newestTag(&url)? }
+        // The locked entry of the same kind, when the manifest still asks for what it records (any tag for `latest`).
+        local lockedAt = old.find(&d.name)
+        local locked = Locked()
+        local usable = false
+        if lockedAt >= 0 {
+            locked = old.entries.get(lockedAt as usize).clone()
+            usable = locked.kind.equals(&d.kind) && (locked.ref.equals(&d.ref) || d.latest())
         }
-        local expected = String()
-        if lockedAt >= 0 && old.entries.get(lockedAt as usize).version.equals(&tag) { expected = old.entries.get(lockedAt as usize).commit.clone() }
-        local dir = packageDir(&root, &d.name, &tag)
-        local commit = fetch(&url, &tag, &dir, &expected)?
         local e = Locked()
         e.name = d.name.clone()
-        e.version = tag
-        e.commit = commit
-        e.source = url
+        e.kind = d.kind.clone()
+        e.ref = d.ref.clone()
+        e.source = url.clone()
         e.indirect = !direct
+        local expected = String()
+        local byCommit = d.kind.equals("branch") || d.kind.equals("rev")
+        if d.latest() { e.ref = usable && !refresh ? locked.ref.clone() : newestTag(&url)? }
+        if d.kind.equals("branch") {
+            // A branch moves: the lock pins its commit until `xl pkg update` asks for the head again.
+            e.commit = usable && !refresh ? locked.commit.clone() : remoteBranch(&url, &d.ref)?
+        } else if d.kind.equals("rev") {
+            e.commit = d.ref.clone()
+        } else if usable && locked.ref.equals(&e.ref) {
+            expected = locked.commit.clone()
+        }
+        local leaf = e.leaf()
+        local dir = packageDir(&root, &d.name, &leaf)
+        local target = byCommit ? e.commit.clone() : e.ref.clone()
+        if byCommit { expected = e.commit.clone() }
+        e.commit = fetch(&url, &target, byCommit, &dir, &expected)?
         out.add(e)
         enqueue(&queue, &dir, &d.name)?
     }
