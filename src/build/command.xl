@@ -32,7 +32,7 @@ from "setup" import Setup, setupOf
 define VALUE_FLAGS = " -o --output --emit -M --module-root --import -D --define -U --undef --target -O --cpu --mangle --safety --cache-dir --layout-scheme --layout-history --allow --deny --context --context-errors --context-warnings --diag-log --diag-format --diag-log-level --color --dump-layout "
 
 /// A command line split into its parts.
-class Request {
+export class Request {
     file: String            // the program root; empty for the default
     inputs: Vec<String>     // prebuilt objects and libraries, right after the root: xlc's repeatable options would take them as values
     flags: Vec<String>      // passed to xlc
@@ -40,7 +40,7 @@ class Request {
     args: Vec<String>       // the program's arguments (`run`)
 }
 
-fn takesValue(flag: *String) -> bool {
+export fn takesValue(flag: *String) -> bool {
     local framed = format(" {} ", flag)
     return String(VALUE_FLAGS).contains(framed.asStr())
 }
@@ -97,7 +97,7 @@ fn rootFile(r: *Request) -> Result<String, Problem> {
 }
 
 /// The xlc command line for `file`: the file, its build environment (build/setup.xl), then the caller's flags.
-fn compileLine(r: *Request, file: *String) -> Result<Line, Problem> {
+export fn compileLine(r: *Request, file: *String) -> Result<Line, Problem> {
     local s = setupOf(file, &r.std)?
     s.ready()?
     local l = Line(&s.tools.xlc)
@@ -125,25 +125,27 @@ fn checkOrBuild(args: *Vec<String>, check: bool) -> Result<i32, Problem> {
     return compile(&l)
 }
 
-/// A private directory for the executable of `xl run`, removed after the program ends.
-fn runDir() -> String {
+/// A fresh private directory `xl-<kind>-<pid>` in `$TMPDIR` (`%TEMP%` on Windows) for the executables of `xl run` and `xl test`;
+/// the caller removes it when it is done.
+export fn scratchDir(kind: str) -> Result<String, Problem> {
     #if os == "windows"
     local tmp = variable("TEMP")
     #else
     local tmp = variable("TMPDIR")
     if tmp.length() == 0 { tmp = String("/tmp") }
     #endif
-    local leaf = format("xl-run-{}", processId())
-    return joinS(&tmp, &leaf)
+    local leaf = format("xl-{}-{}", kind, processId())
+    local dir = joinS(&tmp, &leaf)
+    files.removeAll(&dir)
+    if !files.makeDirAll(&dir) { return fail<String>("E0740", format("could not create {}", &dir), String("check TMPDIR")) }
+    return Result.Ok(dir)
 }
 
 fn run(args: *Vec<String>) -> Result<i32, Problem> {
     local r = requestOf(args, true)?
     local file = rootFile(&r)?
     local l = compileLine(&r, &file)?
-    local dir = runDir()
-    files.removeAll(&dir)
-    if !files.makeDirAll(&dir) { return fail<i32>("E0740", format("could not create {}", &dir), String("check TMPDIR")) }
+    local dir = scratchDir("run")?
     defer files.removeAll(&dir)
     local name = exe("program")
     local program = joinS(&dir, &name)
@@ -228,7 +230,7 @@ fn envJson(s: *Setup, file: *String, problem: *String) -> String {
     return w.out.clone()
 }
 
-fn exitOf(r: Result<i32, Problem>) -> i32 {
+export fn exitOf(r: Result<i32, Problem>) -> i32 {
     switch r {
         case Result.Ok(code) { return code }
         case Result.Err(e) {

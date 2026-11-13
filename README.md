@@ -66,6 +66,7 @@ xl run hello.xl a b                   # build to a temporary file and run with a
 xl build app.xl -O2 -o app            # executable; --emit=obj|ir|bc|header|static|shared
 xl build app.xl --target aarch64-apple-darwin
 xl check app.xl                       # type-check only
+xl test -q net/ -x slow               # build and run the *.test.xl files, several at a time
 xl env app.xl                         # the compiler, stdlib and package roots a build uses
 xl pkg install github.com/user/repo   # add a package; also add, update, remove, list, clean
 xl lc update                          # the newest compiler and stdlib

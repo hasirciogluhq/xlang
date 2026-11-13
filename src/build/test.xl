@@ -1,0 +1,465 @@
+// `xl test`: finds test files (`*.test.xl`), builds each one with the build environment of `xl build`, runs it and reports
+// (xlang-docs/compiler/cli.md "xl test").
+//
+//   xl test [flags] [patterns...] [-- program arguments...]
+//
+// A pattern is a file, a directory (every test file under it), a glob over the path from the current directory, or else a
+// substring of that path. In a glob `*` and `?` stay inside one path segment and `**` spans any number of segments; a glob
+// without `/` matches a name at any depth, and a glob that matches a directory selects the test files under it. Without a
+// pattern every test file under the current directory runs. Directories named `build` or `node_modules`, or starting with `.`,
+// are not searched. `-x` drops the files a pattern selects.
+//
+// Files build and run `--jobs` at a time (default: one per CPU), each in its own temporary directory, so their object caches
+// never race. A file's output (the compiler's diagnostics, then the program's output) goes to a log and is printed under its
+// result in file order, so parallel runs never interleave; `--quiet` prints it only for a failure. `--fail-fast` stops at the
+// first failure and ends the files still running. Any other flag goes to xlc for every file, as in `xl build`.
+from "std" import String, Vec, Option, Result, println, print, format, split, replaceAll, fsReadAllString, files, sysClockNanos, cpuCount
+from "std/os/process" import Command, Stdio, ExitStatus
+from "std/io/dir" import fsListDir, DirEntry
+from "../core/problem" import Problem, fail
+from "../core/host" import join, joinS, variable, exe
+from "../core/proc" import Line
+from "command" import Request, takesValue, compileLine, scratchDir, exitOf
+
+define SUFFIX = ".test.xl"
+define LIST_MAX = 4096           // entries read from one directory
+define WAITING = 0
+define BUILDING = 1
+define RUNNING = 2
+define DONE = 3
+// SGR parameters (ECMA-48 8.3.117): 1 bold, 2 faint, 7 inverse video, 31/32/36 red, green, cyan.
+define RED = "31"
+define GREEN = "32"
+define BOLD = "1"
+define DIM = "2"
+define FAIL_TAG = "7;31"
+define PASS_TAG = "7;32"
+
+class Options {
+    patterns: Vec<String>
+    excludes: Vec<String>
+    list: bool
+    quiet: bool
+    failFast: bool
+    color: bool
+    jobs: usize
+    request: Request        // flags for xlc and `--std`; `args` go to every test program
+
+    fn init(self) {
+        self.list = false
+        self.quiet = false
+        self.failFast = false
+        // https://no-color.org: a set NO_COLOR turns colors off; otherwise only a terminal gets them.
+        self.color = variable("NO_COLOR").length() == 0 && files.enableEscapes(1)
+        self.jobs = cpuCount() as usize
+        self.request = Request()
+    }
+
+    /// `text` in the SGR style `sgr` when colors are on.
+    fn paint(self, sgr: str, text: str) -> String {
+        if !self.color { return String(text) }
+        local out = String()
+        out.push(27)
+        out.append("[")
+        out.append(sgr)
+        out.append("m")
+        out.append(text)
+        out.push(27)
+        out.append("[0m")
+        return out
+    }
+}
+
+/// The value of the flag `a` when it is `short` or `long` (`-j 4`, `-j4`, `--jobs 4`, `--jobs=4`): the attached value, empty
+/// when the value is the next argument. None when `a` is another flag.
+fn flagValue(a: *String, short: str, long: str) -> Option<String> {
+    if a.equals(short) || a.equals(long) { return Option.Some(String()) }
+    local eq = format("{}=", long)
+    if a.startsWith(eq.asStr()) { return Option.Some(a.slice(eq.length(), a.length() - eq.length())) }
+    if a.startsWith(short) && a.length() > 2 { return Option.Some(a.slice(2, a.length() - 2)) }
+    return Option.None
+}
+
+/// `attached`, or else the argument after the flag at `*at`.
+fn valueOf(args: *Vec<String>, at: *usize, flag: *String, attached: String) -> Result<String, Problem> {
+    if attached.length() > 0 { return Result.Ok(attached) }
+    if *at == args.length() { return fail<String>("E0740", format("`{}` needs a value", flag), String("e.g. `xl test -x slow -j 4`")) }
+    *at = *at + 1
+    return Result.Ok(args.get(*at - 1).clone())
+}
+
+fn countOf(text: *String) -> Result<usize, Problem> {
+    local n: usize = 0
+    local digits = true
+    for c in text.asStr() {
+        digits = digits && c >= b'0' && c <= b'9'
+        if digits { n = n * 10 + (c - b'0') as usize }
+    }
+    if !digits || n == 0 { return fail<usize>("E0740", format("`{}` is not a number of jobs", text), String("use a whole number from 1 up, e.g. `-j 4`")) }
+    return Result.Ok(n)
+}
+
+fn optionsOf(args: *Vec<String>) -> Result<Options, Problem> {
+    local o = Options()
+    local at: usize = 0
+    while at < args.length() {
+        local a = args.get(at).clone()
+        at++
+        switch flagValue(&a, "-x", "--exclude") {
+            case Option.Some(v) {
+                o.excludes.push(valueOf(args, &at, &a, v)?)
+                continue
+            }
+            case Option.None { }
+        }
+        switch flagValue(&a, "-j", "--jobs") {
+            case Option.Some(v) {
+                local text = valueOf(args, &at, &a, v)?
+                o.jobs = countOf(&text)?
+                continue
+            }
+            case Option.None { }
+        }
+        if a.equals("--") {
+            for i in at..args.length() { o.request.args.push(args.get(i).clone()) }
+            break
+        } else if a.equals("--list") {
+            o.list = true
+        } else if a.equals("-q") || a.equals("--quiet") {
+            o.quiet = true
+        } else if a.equals("--fail-fast") {
+            o.failFast = true
+        } else if a.equals("--no-color") {
+            o.color = false
+        } else if a.startsWith("--std=") {
+            o.request.std = a.slice(6, a.length() - 6)
+        } else if a.equals("-o") || a.startsWith("--output") || a.startsWith("--emit") || a.equals("--check") {
+            return fail<Options>("E0740", format("`{}` cannot be used with xl test", &a), String("xl test builds every file into its own executable; use `xl build` for other outputs"))
+        } else if a.startsWith("-") {
+            o.request.flags.push(a.clone())
+            if takesValue(&a) && at < args.length() {
+                o.request.flags.push(args.get(at).clone())
+                at++
+            }
+        } else {
+            o.patterns.push(a)
+        }
+    }
+    return Result.Ok(o)
+}
+
+// ---- choosing the files ----
+
+fn isTest(path: *String) -> bool { return path.endsWith(SUFFIX) }
+
+fn skipped(name: *String) -> bool { return name.startsWith(".") || name.equals("build") || name.equals("node_modules") }
+
+/// Adds `f` to the sorted set `set`.
+fn addSorted(set: *Vec<String>, f: *String) {
+    local at = set.length()
+    for s, i in set {
+        local c = s.compare(f.asStr())
+        if c == 0 { return }
+        if c > 0 {
+            at = i
+            break
+        }
+    }
+    set.insert(at, f.clone())
+}
+
+fn has(set: *Vec<String>, f: *String) -> bool {
+    for s in set { if s.equals(f) { return true } }
+    return false
+}
+
+/// The subdirectories of `dir` worth searching; its `.xl` files go into `out`.
+fn listInto(dir: *String, out: *Vec<String>) -> Vec<String> {
+    local batch: Vec<DirEntry> = Vec<DirEntry>()
+    batch.reserve(LIST_MAX)
+    local dirs: Vec<String> = Vec<String>()
+    for i in 0..fsListDir(dir.cstr(), batch.data, LIST_MAX) {
+        local name = String()
+        for c in batch.data[i].name { if *c == 0 { break } name.push(*c) }
+        local path = dir.equals(".") ? name.clone() : joinS(dir, &name)
+        // d_type 4 is a directory; 0 (unknown, some file systems) asks stat.
+        local kind = batch.data[i].kind
+        if kind == 4 || (kind == 0 && files.isDir(&path)) {
+            if !skipped(&name) { dirs.push(path) }
+        } else if path.endsWith(".xl") {
+            addSorted(out, &path)
+        }
+    }
+    return dirs
+}
+
+/// Every `.xl` file under `dir`, sorted, as `dir/...` paths (bare paths for `.`).
+fn walk(dir: *String, out: *Vec<String>) {
+    local dirs = listInto(dir, out)
+    for d in dirs { walk(d, out) }
+}
+
+/// A pattern as the walk spells paths: `/` separators, no leading `./`, no trailing `/`.
+fn clean(pattern: *String) -> String {
+    local p = replaceAll(pattern.asStr(), "\\", "/")
+    while p.startsWith("./") && p.length() > 2 { p = p.slice(2, p.length() - 2) }
+    while p.endsWith("/") && p.length() > 1 { p = p.slice(0, p.length() - 1) }
+    return p
+}
+
+/// True when the glob segments `glob[g..]` match `path[s..]`, or a leading directory of it.
+fn globPath(glob: *Vec<String>, g: usize, path: *Vec<String>, s: usize) -> bool {
+    if g == glob.length() { return true }
+    local seg = glob.get(g)
+    if seg.equals("**") {
+        for k in s..path.length() + 1 { if globPath(glob, g + 1, path, k) { return true } }
+        return false
+    }
+    return s < path.length() && seg.globMatch(path.get(s).asStr()) && globPath(glob, g + 1, path, s + 1)
+}
+
+/// The files `pattern` selects; `all` is every `.xl` file under the current directory.
+fn select(pattern: *String, all: *Vec<String>) -> Vec<String> {
+    local p = clean(pattern)
+    local out: Vec<String> = Vec<String>()
+    if p.contains("*") || p.contains("?") {
+        local glob = split(p.asStr(), "/")
+        if !p.contains("/") { glob.insert(0, String("**")) }
+        local named = p.endsWith(".xl")         // `fixtures/*.xl` selects any .xl file, not only test files
+        for f in all {
+            local parts = split(f.asStr(), "/")
+            if (named || isTest(f)) && globPath(&glob, 0, &parts, 0) { out.push(f.clone()) }
+        }
+    } else if files.isDir(&p) {
+        local under: Vec<String> = Vec<String>()
+        walk(&p, &under)
+        for f in under { if isTest(f) { out.push(f.clone()) } }
+    } else if files.exists(&p) {
+        out.push(p)
+    } else {
+        for f in all { if isTest(f) && f.contains(p.asStr()) { out.push(f.clone()) } }
+    }
+    return out
+}
+
+/// The test files of the command line, sorted. E0711 when a pattern selects nothing.
+fn chosenFiles(o: *Options) -> Result<Vec<String>, Problem> {
+    local all: Vec<String> = Vec<String>()
+    local here = String(".")
+    walk(&here, &all)
+    local chosen: Vec<String> = Vec<String>()
+    if o.patterns.isEmpty() {
+        for f in all { if isTest(f) { chosen.push(f.clone()) } }
+    }
+    for p in o.patterns {
+        local found = select(p, &all)
+        if found.isEmpty() { return fail<Vec<String>>("E0711", format("no test files match `{}`", p), String("name a file, a directory, a glob such as `net/**` or a part of a path; `xl test --list` shows the files")) }
+        for f in found { addSorted(&chosen, f) }
+    }
+    local skip: Vec<String> = Vec<String>()
+    for p in o.excludes { for f in select(p, &all) { skip.push(f.clone()) } }
+    chosen.retain(|f: *String| !has(&skip, f))
+    if chosen.isEmpty() { return fail<Vec<String>>("E0711", String("no test files found"), String("test files end in .test.xl; see `xl test --help`")) }
+    return Result.Ok(chosen)
+}
+
+// ---- building and running ----
+
+/// One test file on its way through its build and its run.
+class Job {
+    file: String
+    build: Line
+    program: Line
+    buildLog: String
+    runLog: String
+    child: Command
+    stage: i32
+    built: bool
+    status: ExitStatus      // of the step that ended the job
+    problem: String         // a step that could not be started
+    began: i64
+    nanos: i64
+
+    fn init(self, file: *String, build: Line, program: Line, dir: *String) {
+        self.file = file.clone()
+        self.build = build
+        self.program = program
+        self.buildLog = join(dir, "build.log")
+        self.runLog = join(dir, "run.log")
+        self.child = Command(String())
+        self.stage = WAITING
+        self.built = false
+    }
+
+    fn passed(self) -> bool { return self.stage == DONE && self.problem.length() == 0 && self.status.code == 0 && self.status.signal == 0 }
+
+    fn end(self) {
+        self.stage = DONE
+        self.nanos = sysClockNanos() - self.began
+    }
+
+    /// Starts `l` with its output in `log` as the stage `stage`.
+    fn launch(self, l: *Line, log: *String, stage: i32) {
+        self.stage = stage
+        self.child = l.command()
+        self.child.stdin(Stdio.Null)
+        self.child.redirect(log.clone())
+        switch self.child.start() {
+            case Option.Some(e) {
+                self.problem = format("`{}` could not be started", &l.program)
+                self.end()
+            }
+            case Option.None { }
+        }
+    }
+
+    fn begin(self) {
+        self.began = sysClockNanos()
+        self.launch(&self.build, &self.buildLog, BUILDING)
+    }
+
+    /// Moves the job on once its child has ended (waiting for it when `block`); true when the job is done.
+    fn advance(self, block: bool) -> bool {
+        while self.stage == BUILDING || self.stage == RUNNING {
+            if !self.child.poll(block) { return false }
+            self.status = self.child.status
+            if self.stage == BUILDING && self.status.code == 0 && self.status.signal == 0 {
+                self.built = true
+                self.launch(&self.program, &self.runLog, RUNNING)
+            } else {
+                self.end()
+            }
+        }
+        return self.stage == DONE
+    }
+
+    /// Ends a job that is still building or running.
+    fn stop(self) {
+        if self.stage != BUILDING && self.stage != RUNNING { return }
+        self.child.kill()
+        self.child.wait()
+        self.stage = DONE
+    }
+
+    /// Why the job failed, for its result line.
+    fn reason(self) -> String {
+        if self.problem.length() > 0 { return self.problem.clone() }
+        if !self.built { return String("build failed") }
+        if self.status.signal != 0 { return format("killed by signal {}", self.status.signal) }
+        return format("exit {}", self.status.code)
+    }
+}
+
+/// The output in the log `path`, if any; true when there was some.
+fn printLog(path: *String) -> bool {
+    if !files.exists(path) { return false }
+    local text = fsReadAllString(path.cstr())
+    if text.length() == 0 { return false }
+    print(&text)
+    if !text.endsWith("\n") { println("") }
+    return true
+}
+
+/// The result line of a finished job, then its output unless `--quiet` hides it; true when output closed by a blank line was
+/// printed.
+fn show(o: *Options, j: *Job) -> bool {
+    local ok = j.passed()
+    local tag = o.paint(ok ? PASS_TAG : FAIL_TAG, ok ? " PASS " : " FAIL ")
+    local why = ok ? format("{} ms", j.nanos / 1000000) : j.reason()
+    local note = format("({})", &why)
+    local dim = o.paint(DIM, note.asStr())
+    println("{} {} {}", &tag, &j.file, &dim)
+    if ok && o.quiet { return false }
+    local wrote = printLog(&j.buildLog)
+    if j.built && printLog(&j.runLog) { wrote = true }
+    if wrote { println("") }        // a blank line closes the output before the next result
+    return wrote
+}
+
+/// The jobs of `chosen`, each with its own directory under `dir` for the executable and the compiler's object cache.
+fn jobsOf(o: *Options, chosen: *Vec<String>, dir: *String) -> Result<Vec<Job>, Problem> {
+    local jobs: Vec<Job> = Vec<Job>()
+    local userColor = false
+    for f in o.request.flags { if f.startsWith("--color") { userColor = true } }
+    for f, i in chosen {
+        local leaf = format("t{}", i)
+        local at = joinS(dir, &leaf)
+        if !files.makeDir(&at) { return fail<Vec<Job>>("E0740", format("could not create {}", &at), String("check TMPDIR")) }
+        local name = exe("test")
+        local program = joinS(&at, &name)
+        local build = compileLine(&o.request, f)?
+        build.add("-o").addS(&program)
+        // std/testing colors its report unless xlTestNoColor is defined; xlc colors only a terminal, and its output goes to a log.
+        if !o.color { build.add("-DxlTestNoColor") } else if !userColor { build.add("--color=always") }
+        local run = Line(&program)
+        for a in o.request.args { run.addS(a) }
+        jobs.push(Job(f, build, run, &at))
+    }
+    return Result.Ok(jobs)
+}
+
+fn test(args: *Vec<String>) -> Result<i32, Problem> {
+    local o = optionsOf(args)?
+    local chosen = chosenFiles(&o)?
+    if o.list {
+        for f in chosen { println("{}", f) }
+        return Result.Ok(0)
+    }
+    local dir = scratchDir("test")?
+    defer files.removeAll(&dir)
+    local jobs = jobsOf(&o, &chosen, &dir)?
+    local began = sysClockNanos()
+    local next: usize = 0
+    local passed: usize = 0
+    local failed: Vec<String> = Vec<String>()
+    local spaced = false
+    // Up to `jobs` files are in flight. The oldest is waited for and reported, so results come in file order; the others
+    // are moved on (a finished build starts its run) without waiting each time.
+    for head in 0..jobs.length() {
+        while next < jobs.length() && next - head < o.jobs {
+            jobs.get(next).begin()
+            next++
+        }
+        for i in head + 1..next { jobs.get(i).advance(false) }
+        local j = jobs.get(head)
+        j.advance(true)
+        spaced = show(&o, j)
+        if j.passed() { passed++ } else { failed.push(j.file.clone()) }
+        if !j.passed() && o.failFast {
+            for i in head + 1..next { jobs.get(i).stop() }
+            break
+        }
+    }
+    local skipped = jobs.length() - passed - failed.length()
+    if !spaced { println("") }
+    summary(&o, jobs.length(), passed, &failed, skipped, sysClockNanos() - began)
+    return Result.Ok(failed.isEmpty() && skipped == 0 ? 0 : 1)
+}
+
+/// The closing report: the counts, the wall time and the failed files.
+fn summary(o: *Options, total: usize, passed: usize, failed: *Vec<String>, skipped: usize, nanos: i64) {
+    local counts = String()
+    if !failed.isEmpty() {
+        local f = format("{} failed", failed.length())
+        local red = o.paint(RED, f.asStr())
+        counts.append(&red)
+        counts.append(", ")
+    }
+    local p = format("{} passed", passed)
+    local green = o.paint(GREEN, p.asStr())
+    counts.append(&green)
+    if skipped > 0 {
+        local s = format(", {} skipped", skipped)
+        counts.append(&s)
+    }
+    local of = format("({} files, {} at a time)", total, o.jobs)
+    local dimOf = o.paint(DIM, of.asStr())
+    local tests = o.paint(BOLD, "Tests")
+    local time = o.paint(BOLD, "Time ")
+    local mark = o.paint(RED, "  x")
+    println("{}  {} {}", &tests, &counts, &dimOf)
+    println("{}  {} ms", &time, nanos / 1000000)
+    for f in failed { println("{} {}", &mark, f) }
+}
+
+export fn testMain(args: *Vec<String>) -> i32 { return exitOf(test(args)) }

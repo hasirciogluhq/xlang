@@ -158,6 +158,57 @@ expect "build links a prebuilt object" 0 ""
 run "$work/linked/app$EXE"
 expect "the linked program" 0 "prebuilt 42"
 
+# --- xl test ------------------------------------------------------------------------------------------------------------------------
+# A passing suite at the top, a failing suite, a file that does not build, and copies in directories the search skips.
+suite="$work/suite"
+mkdir -p "$suite/net/http" "$suite/build" "$suite/.cache"
+cat >"$suite/a.test.xl" <<'EOF'
+from "std/testing" import Suite, T, suiteInit, test, suiteRun, expectEq
+
+fn adds(t: *T) { expectEq(t, 1 + 2, 3) }
+
+@entry
+fn main() -> i32 {
+    local s: Suite
+    suiteInit(&s)
+    test(&s, "adds", adds)
+    return suiteRun(&s)
+}
+EOF
+sed 's/1 + 2, 3/1 + 2, 4/' "$suite/a.test.xl" >"$suite/net/fail.test.xl"
+cp "$suite/a.test.xl" "$suite/net/http/ok.test.xl"
+cp "$suite/a.test.xl" "$suite/build/skipped.test.xl"
+cp "$suite/a.test.xl" "$suite/.cache/skipped.test.xl"
+printf '@entry fn main() -> i32 { return missingName }\n' >"$suite/net/broken.test.xl"
+printf 'from "std" import println\nfrom "std/os/args" import fromArgv\n@entry fn main(argc: i32, argv: **u8) -> i32 {\n    println("args {}", fromArgv(argc, argv).length() - 1)\n    return 0\n}\n' >"$suite/args.test.xl"
+
+inside "$suite" "$xl" test --list
+expect "test --list skips build/ and dot directories" 0 "net/http/ok.test.xl"
+[[ "$out" != *skipped* ]] || code=9
+expect "test --list leaves out skipped directories" 0 ""
+inside "$suite" "$xl" test --list 'net/**' -x broken
+expect "test glob and exclude" 0 "net/fail.test.xl"
+[[ "$out" != *a.test.xl* && "$out" != *broken* ]] || code=9
+expect "test glob and exclude select only those" 0 ""
+inside "$suite" "$xl" test --list 'ok*'
+expect "test glob without / matches at any depth" 0 "net/http/ok.test.xl"
+inside "$suite" "$xl" test nothing-matches
+expect "test pattern without files is E0711" 1 "E0711"
+inside "$suite" "$xl" test -j 0
+expect "test rejects -j 0" 1 "E0740"
+inside "$suite" "$xl" test -o out
+expect "test rejects -o" 1 "E0740"
+inside "$suite" "$xl" test --no-color -q -j 2 a.test.xl net/http
+expect "test passing files" 0 "2 passed"
+inside "$suite" "$xl" test --no-color -j 3
+expect "test reports a failed run" 1 "FAIL  net/fail.test.xl (exit 1)"
+expect "test reports a failed build" 1 "FAIL  net/broken.test.xl (build failed)"
+expect "test counts" 1 "2 failed, 3 passed"
+inside "$suite" "$xl" test --no-color --fail-fast -j 1 -q
+expect "test --fail-fast skips the rest" 1 "1 failed, 2 passed, 2 skipped"
+inside "$suite" "$xl" test --no-color args -- one two
+expect "test passes arguments after --" 0 "args 2"
+
 # --- packages -----------------------------------------------------------------------------------------------------------------------
 # a: v1.0.0 answers 1, v1.1.0 answers 11. b v0.1.0 needs a v1.0.0 and doubles its answer.
 repos="$work/repos"
