@@ -37,7 +37,7 @@ Clone with `git clone --recurse-submodules https://github.com/hasirciogluhq/xlan
 
 ## Install
 
-Releases exist for Linux and macOS (x86-64, arm64) and Windows (x86-64). The installer puts the newest `xl` into `~/.local/bin`, verifies every archive against the release's `checksums.txt`, and then runs `xl lc install`, which installs the compiler and the stdlib under `~/.xlang`.
+Releases exist for Linux and macOS (x86-64, arm64) and Windows (x86-64). The installer puts the newest `xl` into `~/.local/bin`, verifies every archive against the release's `checksums.txt`, and then runs `xl lc install` and `xl std install`, which install the compiler and the stdlib under `~/.xlang`.
 
 ```bash
 curl -fsSL https://github.com/hasirciogluhq/xlang/releases/download/v1.0.0-rc.7/install.sh | bash
@@ -71,7 +71,8 @@ xl check app.xl                       # type-check only
 xl test -q net/ -x slow               # build and run the *.test.xl files, several at a time
 xl env app.xl                         # the compiler, stdlib and package roots a build uses
 xl pkg install github.com/user/repo   # add a package; also add, update, remove, list, clean
-xl lc update                          # the newest compiler and stdlib
+xl lc update                          # the newest compiler
+xl std update                         # the newest stdlib
 xl self-update                        # the newest xl
 ```
 

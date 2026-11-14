@@ -17,7 +17,7 @@
 #   xl, xlang, xlc   in $XL_INSTALL_DIR, $XLANG_INSTALL_DIR, ~/.local/bin, ~/bin, /usr/local/bin and every $PATH directory;
 #                    a file counts only when its bytes carry the xlang marker (`hasirciogluhq` for xl/xlang, `_xl_initAll` for
 #                    xlc), so Xen's `xl` and other tools of the same name are never listed. Half-written `.xl.new.*` files too.
-#   $XLANG_HOME      the compilers and stdlibs of `xl lc` (default ~/.xlang)
+#   $XLANG_HOME      the compilers and stdlibs of `xl lc` and `xl std` (default ~/.xlang)
 #   Homebrew         the `xlang` formula and the `hasirciogluhq/tap` tap of the old releases
 #   completion       `xlang completions install` of the old releases: $XDG_DATA_HOME/xlang, the fish scripts xl.fish and
 #                    xlang.fish, and the `# >>> xlang completion >>>` block in ~/.zshrc, ~/.bashrc and ~/.bash_profile

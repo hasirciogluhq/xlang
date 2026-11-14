@@ -1,0 +1,124 @@
+// `xl std`: the xlang standard library, installed per user under `$XLANG_HOME/std` (see `lc/toolchain.xl`); no root rights, and
+// several versions side by side (xlang-docs/compiler/install.md "Toolchain"). The compiler has its own command, `xl lc`.
+//
+//   install [tag]   install a stdlib release and make it active
+//   update          install the newest stdlib and make it active
+//   list            the installed stdlibs; `*` marks the active one
+//   use <tag>       make an installed stdlib active
+//
+// Without a tag the newest stable release is taken, or the newest pre-release when the repository has no stable one yet. A tag may
+// be partial (`v1.2` is the newest v1.2.x). Releases come from `hasirciogluhq/xl-std` (`xl-std_<ver>.tar.gz`, one `xl-std_<ver>/`
+// directory holding `index.xl` and the area directories); the asset is checked against the release's `checksums.txt` first.
+from "std" import String, Vec, Result, println, format, files
+from "../core/problem" import Problem, Done, done, fail, finish
+from "../core/tag" import bare
+from "../core/host" import join, joinS
+from "../core/release" import fetchAsset, pickRelease, unpack
+from "../lc/toolchain" import activeTags, activateStd, releaseDir, installed
+
+define STD_REPO = "hasirciogluhq/xl-std"
+
+export fn stdUsage() {
+    println("usage: xl std <command> [arguments]")
+    println("")
+    println("  install [tag]   install a stdlib release and make it active")
+    println("  update          install the newest stdlib and make it active")
+    println("  list            show the installed stdlibs (* = active)")
+    println("  use <tag>       make an installed stdlib active")
+}
+
+/// Unpacks into `<dir>.partial`, then renames the archive's single directory to `dir`: a failed install leaves nothing that looks
+/// installed.
+fn installStd(tag: *String) -> Done {
+    local dir = releaseDir("std", tag)
+    if files.isDir(&dir) {
+        println("std {} is already installed", tag)
+        return done()
+    }
+    local version = bare(tag)
+    local asset = format("xl-std_{}.tar.gz", &version)
+    println("downloading {} {}", &asset, tag)
+    local data = fetchAsset(STD_REPO, tag, asset.asStr())?
+    local partial = format("{}.partial", &dir)
+    files.removeAll(&partial)
+    unpack(&data, &partial)?
+    local inner = format("xl-std_{}", &version)
+    local tree = joinS(&partial, &inner)
+    local index = join(&tree, "index.xl")
+    if !files.exists(&index) {
+        files.removeAll(&partial)
+        return fail<bool>("E0793", format("{} has no {}/index.xl", &asset, &inner), String("the release is broken; pick another version"))
+    }
+    // The archive's single directory becomes the release directory.
+    local moved = files.rename(&tree, &dir)
+    files.removeAll(&partial)
+    if !moved { return fail<bool>("E0793", format("could not move the stdlib into {}", &dir), String("check that XLANG_HOME is writable")) }
+    return done()
+}
+
+/// The one optional tag argument (empty = the newest release).
+fn specOf(args: *Vec<String>, needTag: bool) -> Result<String, Problem> {
+    if args.length() > 1 || (args.isEmpty() && needTag) {
+        local what = needTag ? String("`xl std use` needs a stdlib tag") : String("unexpected arguments")
+        return fail<String>("E0740", what, String("see `xl std help`"))
+    }
+    if !args.isEmpty() && args.get(0).startsWith("-") {
+        return fail<String>("E0740", format("unexpected argument `{}`", args.get(0)), String("see `xl std help`"))
+    }
+    return Result.Ok(args.isEmpty() ? String() : args.get(0).clone())
+}
+
+fn install(args: *Vec<String>) -> Done {
+    local spec = specOf(args, false)?
+    local stdTag = pickRelease(STD_REPO, &spec)?
+    installStd(&stdTag)?
+    activateStd(&stdTag)?
+    println("active: std {}", &stdTag)
+    return done()
+}
+
+fn update() -> Done {
+    local before = activeTags()
+    local none: Vec<String> = Vec<String>()
+    install(&none)?
+    local after = activeTags()
+    if before.stdTag.equals(&after.stdTag) { println("already up to date") }
+    return done()
+}
+
+fn list() -> Done {
+    local active = activeTags()
+    println("std:")
+    local tags = installed("std")
+    if tags.isEmpty() { println("  (none)") }
+    for t in tags {
+        local mark = String(t.equals(&active.stdTag) ? "*" : " ")
+        println("  {} {}", &mark, t)
+    }
+    return done()
+}
+
+fn use(args: *Vec<String>) -> Done {
+    local tag = specOf(args, true)?
+    local dir = releaseDir("std", &tag)
+    if !files.isDir(&dir) { return fail<bool>("E0790", format("std {} is not installed", &tag), format("run `xl std install {}`", &tag)) }
+    activateStd(&tag)?
+    println("active: std {}", &tag)
+    return done()
+}
+
+/// `xl std <command> ...`; `args` starts after `std`.
+export fn stdMain(args: *Vec<String>) -> i32 {
+    if args.isEmpty() || args.get(0).equals("help") || args.get(0).equals("--help") || args.get(0).equals("-h") {
+        stdUsage()
+        return args.isEmpty() ? 2 : 0
+    }
+    local rest: Vec<String> = Vec<String>()
+    for a, i in args { if i > 0 { rest.push(a.clone()) } }
+    local cmd = args.get(0)
+    if cmd.equals("install") || cmd.equals("i") { return finish(install(&rest)) }
+    if cmd.equals("update") || cmd.equals("up") { return finish(update()) }
+    if cmd.equals("list") || cmd.equals("ls") { return finish(list()) }
+    if cmd.equals("use") { return finish(use(&rest)) }
+    return finish(fail<bool>("E0740", format("unknown command `xl std {}`", cmd), String("see `xl std help`")))
+}

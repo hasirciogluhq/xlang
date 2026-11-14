@@ -1,13 +1,13 @@
 #!/usr/bin/env bash
 # End-to-end tests of the `xl` binary: every command against a real compiler and stdlib, in a temporary directory, without the
-# network. Packages come from local git repositories (`source = "<dir>"`); `xl lc` and `xl self-update` read releases from a
+# network. Packages come from local git repositories (`source = "<dir>"`); `xl lc`, `xl std` and `xl self-update` read releases from a
 # directory through XLANG_MIRROR (src/core/release.xl), laid out and checksummed like the GitHub releases.
 #
-# Usage: test/run.sh <xl> <xlc> <stdlib dir>
+# Usage: test/run.sh <xl> <xlc> <stdlib import root>
 #   xl          the xl binary under test
 #   xlc         a compiler binary; it is also packed as the mirror's compiler release
-#   stdlib dir  an xl-std checkout (the repository root); its sources are src/ (xlang.toml `root = "src"`), and it is also
-#               packed, flattened to the archive root, as the mirror's stdlib release
+#   stdlib      the stdlib import root: the directory holding index.xl (`xl-std/src` of a checkout, or an installed release);
+#               it is also packed, as it is, as the mirror's stdlib release
 #
 # `xl self-update` is also tested with a release built from this checkout's src/ as version 99.0.0.
 #
@@ -39,8 +39,8 @@ if [ "$windows" = 1 ]; then
   [[ "$xl" == *.exe ]] || xl="$xl.exe"
   [[ "$xlc" == *.exe ]] || xlc="$xlc.exe"
 fi
-# The import root of the stdlib checkout: the directory the compiler gets as `-M std=`, which holds index.xl.
-std=$(cd "$3/src" && pwd)
+# The stdlib import root: the directory the compiler gets as `-M std=`, which holds index.xl.
+std=$(cd "$3" && pwd)
 root=$(cd "$(dirname "$0")/.." && pwd)
 work=$(mktemp -d)
 trap 'rm -rf "$work"' EXIT
@@ -327,7 +327,7 @@ in_app pkg install
 expect "a short rev is E0742" 1 "E0742"
 app="$work/app"
 
-# --- xl lc: the compiler and stdlib from a mirror -----------------------------------------------------------------------------------
+# --- xl lc and xl std: the compiler and the stdlib from a mirror ------------------------------------------------------------------
 mirror="$work/mirror"
 tag=v0.0.1
 xlcDir="$mirror/hasirciogluhq/xlc/$tag"
@@ -340,8 +340,8 @@ if [ "$ARCHIVE" = zip ]; then
 else
   tar -czf "$xlcDir/$xlcAsset" -C "$work/pack/xlc" xlc
 fi
-# The stdlib release holds index.xl and the area directories, `src/` flattened to the archive root
-# (xl-std/.github/workflows/release.yml).
+# The stdlib release holds index.xl and the area directories at its root (xl-std/.github/workflows/release.yml), which is what
+# the import root of a checkout is too.
 cp -R "$std/." "$work/pack/xl-std_0.0.1/"
 tar -czf "$stdDir/xl-std_0.0.1.tar.gz" -C "$work/pack" xl-std_0.0.1
 printf '%s  %s\n' "$(sha "$xlcDir/$xlcAsset")" "$xlcAsset" >"$xlcDir/checksums.txt"
@@ -351,23 +351,33 @@ unset XLC XLANG_STD
 export XLANG_MIRROR
 XLANG_MIRROR=$(native "$mirror")
 run "$xl" lc install
-expect "lc install" 0 "active: xlc $tag, std $tag"
+expect "lc install" 0 "active: xlc $tag"
 run "$xl" lc list
 expect "lc list" 0 "* $tag"
+run "$xl" std install
+expect "std install" 0 "active: std $tag"
+run "$xl" std list
+expect "std list" 0 "* $tag"
 run "$xl" run "$hello" installed
 expect "run with the installed toolchain" 1 "arg 1 = installed"
 run "$xl" env --json "$hello"
 expect "env names the installed tags" 0 "\"xlcTag\":\"$tag\""
 run "$xl" lc install v9
 expect "lc install of a missing tag is E0744" 1 "E0744"
+run "$xl" std install v9
+expect "std install of a missing tag is E0744" 1 "E0744"
 run "$xl" lc use v7.0.0
 expect "lc use of a tag not installed is E0790" 1 "E0790"
+run "$xl" std use v7.0.0
+expect "std use of a tag not installed is E0790" 1 "E0790"
 run "$xl" lc update
 expect "lc update" 0 "already up to date"
+run "$xl" std update
+expect "std update" 0 "already up to date"
 
 # A damaged asset is refused before anything is unpacked.
 printf '%s  %s\n' "0000000000000000000000000000000000000000000000000000000000000000" "xl-std_0.0.1.tar.gz" >"$stdDir/checksums.txt"
-run env XLANG_HOME="$(native "$work/home2")" "$xl" lc install
+run env XLANG_HOME="$(native "$work/home2")" "$xl" std install
 expect "a checksum mismatch is E0792" 1 "E0792"
 
 # --- xl self-update -----------------------------------------------------------------------------------------------------------------

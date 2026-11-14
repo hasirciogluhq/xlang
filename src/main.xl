@@ -1,11 +1,12 @@
-// xl: the xlang tool. It installs the compiler (`xl lc`), manages packages (`xl pkg`), builds and runs programs through `xlc`
-// (`xl check`, `xl build`, `xl run`) and updates itself (`xl self-update`). Layout: src/README.md.
+// xl: the xlang tool. It installs the compiler (`xl lc`) and the standard library (`xl std`), manages packages (`xl pkg`), builds
+// and runs programs through `xlc` (`xl check`, `xl build`, `xl run`) and updates itself (`xl self-update`). Layout: src/README.md.
 from "std" import String, Vec, println, eprintln, format
 from "std/os/args" import fromArgv
 from "core/problem" import fail, finish
 from "core/version" import VERSION
 from "pkg/command" import pkgMain
 from "lc/command" import lcMain
+from "stdlib/command" import stdMain
 from "build/command" import checkMain, buildMain, runMain, envMain
 from "build/test" import testMain
 from "self/command" import selfUpdateMain
@@ -18,7 +19,7 @@ define TEST_HELP = "usage: xl test [flags] [patterns...] [-- program arguments..
 define ENV_HELP = "usage: xl env [--json] [--std=<dir>] [file.xl]\n\nPrints the compiler, stdlib, package roots and flags a build of the file uses, and why a build could not start.\n--json prints one object for editors and scripts (xlang-docs: compiler/cli)."
 define SELF_UPDATE_HELP = "usage: xl self-update [tag] [--check] [--force]\n\nReplaces this xl with the newest release (or the given tag) of hasirciogluhq/xlang after checking its checksum.\nA pre-release xl follows pre-releases. --check only reports; --force reinstalls or downgrades."
 
-/// `xl <command> --help` of the commands that have no subcommands (`pkg` and `lc` print their own); false for any other command.
+/// `xl <command> --help` of the commands that have no subcommands (`pkg`, `lc` and `std` print their own); false for any other command.
 fn commandHelp(cmd: *String) -> bool {
     local pages = [("check", CHECK_HELP), ("build", BUILD_HELP), ("run", RUN_HELP), ("test", TEST_HELP), ("env", ENV_HELP), ("self-update", SELF_UPDATE_HELP)]
     for p in pages {
@@ -42,7 +43,8 @@ fn usage() {
     println("  test [flags] [patterns...]        build and run the *.test.xl files, several at a time")
     println("  env [--json] [file.xl]            the compiler, stdlib and module roots a build of the file uses")
     println("  pkg <command>                     packages: add, install, update, remove, list, clean")
-    println("  lc <command>                      the compiler toolchain: install, update, list, use")
+    println("  lc <command>                      the compiler: install, update, list, use")
+    println("  std <command>                     the standard library: install, update, list, use")
     println("  self-update [--check] [--force]   replace this xl with the newest release")
     println("  version                           print the version")
     println("")
@@ -69,6 +71,7 @@ fn usage() {
     }
     if cmd.equals("pkg") { return pkgMain(&rest) }
     if cmd.equals("lc") { return lcMain(&rest) }
+    if cmd.equals("std") { return stdMain(&rest) }
     if cmd.equals("check") { return checkMain(&rest) }
     if cmd.equals("build") { return buildMain(&rest) }
     if cmd.equals("run") { return runMain(&rest) }

@@ -4,9 +4,9 @@
 //     $XLANG_HOME/std/<tag>/index.xl      one directory per stdlib release
 //     $XLANG_HOME/toolchain.toml          xlc = "<tag>"  std = "<tag>": the active pair
 //
-// A build starts from the active pair; a project's `xlang.local.toml`, then `$XLC` (a compiler binary) and `$XLANG_STD` (a stdlib
-// directory), then `--std=<dir>` replace either part on its own (build/setup.xl): for working on the compiler or the stdlib from a
-// checkout.
+// `xl lc` manages the compilers and `xl std` the stdlibs; a build starts from the active pair; a project's `xlang.local.toml`, then
+// `$XLC` (a compiler binary) and `$XLANG_STD` (a stdlib directory), then `--std=<dir>` replace either part on its own
+// (build/setup.xl): for working on the compiler or the stdlib from a checkout.
 from "std" import String, Vec, Option, Result, split, format, fsReadAllString, files
 from "../core/problem" import Problem, Done, done, fail
 from "../core/host" import xlangHome, join, joinS, exe, variable
@@ -82,12 +82,24 @@ export fn activeTags() -> Toolchain {
 }
 
 /// Records `xlcTag` and `stdTag` as the active pair.
-export fn activate(xlcTag: *String, stdTag: *String) -> Done {
+fn activate(xlcTag: *String, stdTag: *String) -> Done {
     local file = configFile()
     local x = quote(xlcTag)
     local s = quote(stdTag)
-    local text = format("# The active xlang toolchain; written by `xl lc`.\nxlc = {}\nstd = {}\n", &x, &s)
+    local text = format("# The active xlang toolchain; written by `xl lc` and `xl std`.\nxlc = {}\nstd = {}\n", &x, &s)
     return writeAtomic(&file, &text)
+}
+
+/// Records `tag` as the active compiler, keeping the active stdlib.
+export fn activateXlc(tag: *String) -> Done {
+    local t = activeTags()
+    return activate(tag, &t.stdTag)
+}
+
+/// Records `tag` as the active stdlib, keeping the active compiler.
+export fn activateStd(tag: *String) -> Done {
+    local t = activeTags()
+    return activate(&t.xlcTag, tag)
 }
 
 /// The active pair of toolchain.toml as paths; a path is empty when no tag is recorded for it.
@@ -114,7 +126,7 @@ export fn usable(t: *Toolchain) -> Done {
     local index = join(&t.std, "index.xl")
     if t.std.length() == 0 || !files.exists(&index) {
         local what = t.std.length() == 0 ? String("no xlang stdlib is installed") : format("{} is not a stdlib (it has no index.xl)", &t.std)
-        return fail<bool>("E0790", what, String("run `xl lc install`, or name one with XLANG_STD, --std=<dir> or [toolchain] std in xlang.local.toml"))
+        return fail<bool>("E0790", what, String("run `xl std install`, or name one with XLANG_STD, --std=<dir> or [toolchain] std in xlang.local.toml"))
     }
     return done()
 }

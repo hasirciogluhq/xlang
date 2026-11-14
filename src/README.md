@@ -7,13 +7,14 @@ cd src
 xlc main.xl -M std=../xl-std/src --import std -DfeatureDefaultAllocator=true '-DxlVersion="1.0.0-rc.1"' -o ../xl
 ```
 
-Without `-DxlVersion` the binary reports `0.0.0-dev`. Tests: `test/run.sh <xl> <xlc> xl-std` (every command, no network); CI and
+Without `-DxlVersion` the binary reports `0.0.0-dev`. Tests: `test/run.sh <xl> <xlc> xl-std/src` (every command, no network; the
+third argument is the stdlib import root, the directory holding `index.xl`); CI and
 releases: `.github/workflows/ci.yml`, `release.yml`. The commands are documented in `xlang-docs/compiler/cli.md`, `packages.md` and
 `install.md`.
 
 | Path | Content |
 | --- | --- |
-| `main.xl` | entry point: dispatches `run`, `build`, `check`, `test`, `env`, `pkg`, `lc`, `self-update`, `version`, `help` |
+| `main.xl` | entry point: dispatches `run`, `build`, `check`, `test`, `env`, `pkg`, `lc`, `std`, `self-update`, `version`, `help` |
 | `core/problem.xl` | `Problem` (code, message, fix) and the `Done`/`fail`/`finish` helpers every command returns through |
 | `core/host.xl` | OS and CPU names, `$XLANG_HOME`, environment variables, path joining |
 | `core/proc.xl` | `Line`: a child process command line; `call` (inherit stdio) and `capture` (collect stdout) |
@@ -28,7 +29,8 @@ releases: `.github/workflows/ci.yml`, `release.yml`. The commands are documented
 | `pkg/resolve.xl` | minimal version selection over the dependency graph, the `.xlang/cache` layout |
 | `pkg/command.xl` | `xl pkg add|install|update|remove|list|clean` |
 | `lc/toolchain.xl` | installed compilers and stdlibs under `$XLANG_HOME`, the active pair, `$XLC`/`$XLANG_STD` |
-| `lc/command.xl` | `xl lc install|update|list|use` |
+| `lc/command.xl` | `xl lc install|update|list|use` (the compiler) |
+| `stdlib/command.xl` | `xl std install|update|list|use` (the standard library) |
 | `build/setup.xl` | the build environment of one file: toolchain, package roots, `xlang.local.toml` |
 | `build/command.xl` | `xl check|build|run|env` |
 | `build/test.xl` | `xl test`: selecting `*.test.xl` files, building and running them several at a time, the report |

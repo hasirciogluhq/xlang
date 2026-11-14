@@ -1,4 +1,4 @@
-# Installs `xl`, the xlang tool, on Windows (amd64), and then the compiler and stdlib with `xl lc install`.
+# Installs `xl`, the xlang tool, on Windows (amd64), and then the compiler with `xl lc install` and the stdlib with `xl std install`.
 #
 #   irm https://github.com/hasirciogluhq/xlang/releases/download/<tag>/install.ps1 | iex
 #
@@ -9,7 +9,7 @@
 #   XL_VERSION        release of xl to install: latest (the newest stable, else the newest pre-release; default), latest-stable,
 #                     latest-rc (the newest pre-release) or a tag (v1.0.0, 1.0.0-rc.1)
 #   XL_INSTALL_DIR    where xl.exe is placed (default: %LOCALAPPDATA%\xlang\bin; added to the user PATH)
-#   XL_NO_TOOLCHAIN   set to 1 to skip `xl lc install`
+#   XL_NO_TOOLCHAIN   set to 1 to skip `xl lc install` and `xl std install`
 #
 # The archive `xl_<version>_windows_amd64.zip` is checked against the release's checksums.txt and the new binary is run once before
 # it replaces an existing one (xlang-docs/compiler/install.md).
@@ -82,8 +82,11 @@ if (-not ($userPath -split ';' | Where-Object { $_ -eq $dir })) {
 }
 
 if ($env:XL_NO_TOOLCHAIN -ne '1') {
-    Write-Host '==> Installing the compiler and stdlib (xl lc install)'
+    Write-Host '==> Installing the compiler (xl lc install)'
     & (Join-Path $dir 'xl.exe') lc install
     if ($LASTEXITCODE -ne 0) { throw 'xl is installed, but `xl lc install` failed; run it again later' }
+    Write-Host '==> Installing the stdlib (xl std install)'
+    & (Join-Path $dir 'xl.exe') std install
+    if ($LASTEXITCODE -ne 0) { throw 'xl is installed, but `xl std install` failed; run it again later' }
 }
-Write-Host 'update later with: xl self-update and xl lc update'
+Write-Host 'update later with: xl self-update, xl lc update and xl std update'

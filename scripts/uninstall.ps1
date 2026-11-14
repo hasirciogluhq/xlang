@@ -1,4 +1,4 @@
-# Removes xlang from this Windows machine: every file that `xl`, `xl lc`, the install script or the VS Code extension put in a
+# Removes xlang from this Windows machine: every file that `xl`, `xl lc`, `xl std`, the install script or the VS Code extension put in a
 # well-known place (Linux and macOS: scripts/uninstall.sh).
 #
 #   irm https://raw.githubusercontent.com/hasirciogluhq/xlang/development/scripts/uninstall.ps1 | iex
@@ -15,7 +15,7 @@
 #   %LOCALAPPDATA%\xlang and $XL_INSTALL_DIR   xl.exe, the xl.old.exe kept by `xl self-update`, and their user PATH entries
 #   xl.exe, xlc.exe on PATH                     only a file whose bytes carry the xlang marker (`hasirciogluhq` for xl,
 #                                               `_xl_initAll` for xlc)
-#   $XLANG_HOME                                 the compilers and stdlibs of `xl lc` (default %USERPROFILE%\.xlang)
+#   $XLANG_HOME                                 the compilers and stdlibs of `xl lc` and `xl std` (default %USERPROFILE%\.xlang)
 #   %TEMP%\xl-install-*                         left by an interrupted install.ps1
 #   editors                                     the `xlang.xlang` extension of VS Code, VS Code Insiders, VSCodium and Cursor
 # A project's own `.xlang\cache` belongs to the project and is left alone (`xl pkg clean` empties it).
@@ -64,7 +64,7 @@ foreach ($name in 'xl', 'xlc') {
     }
 }
 
-# The toolchain of `xl lc` (src/lc/toolchain.xl).
+# The toolchain of `xl lc` and `xl std` (src/lc/toolchain.xl).
 foreach ($h in @($env:XLANG_HOME, (Join-Path $env:USERPROFILE '.xlang')) | Where-Object { $_ } | Select-Object -Unique) {
     if (-not (Test-Path $h)) { continue }
     $installed = (@('xlc', 'std') | ForEach-Object { Get-ChildItem -Directory -ErrorAction SilentlyContinue (Join-Path $h $_) | ForEach-Object { "$($_.Parent.Name)/$($_.Name)" } }) -join ' '

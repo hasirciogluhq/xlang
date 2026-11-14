@@ -9,6 +9,7 @@ from "std" import tar, zip, files
 from "problem" import Problem, Done, done, fail
 from "host" import variable, join, joinS
 from "git" import remoteTags, names
+from "tag" import pick
 
 define MAX_ARCHIVE = 1073741824      // 1 GiB: the largest unpacked archive accepted
 
@@ -18,6 +19,17 @@ export define ARCHIVE = "zip"
 #else
 export define ARCHIVE = "tar.gz"
 #endif
+
+/// The tag of `repository` that `spec` names: the newest stable fitting it, else the newest pre-release; an empty `spec` takes
+/// the newest of either kind. E0744 when nothing fits.
+export fn pickRelease(repository: str, spec: *String) -> Result<String, Problem> {
+    local tags = releaseTags(repository)?
+    switch pick(&tags, spec, false) {
+        case Result.Ok(t) { return Result.Ok(t.clone()) }
+        case Result.Err(e) { }
+    }
+    return pick(&tags, spec, true)
+}
 
 /// The tags of the release repository `repository` (`owner/name`).
 export fn releaseTags(repository: str) -> Result<Vec<String>, Problem> {

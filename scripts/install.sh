@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Installs `xl`, the xlang tool, and then the compiler and stdlib with `xl lc install` (Linux and macOS, amd64 and arm64; Windows:
+# Installs `xl`, the xlang tool, and then the compiler with `xl lc install` and the stdlib with `xl std install` (Linux and macOS, amd64 and arm64; Windows:
 # scripts/install.ps1).
 #
 #   curl -fsSL https://github.com/hasirciogluhq/xlang/releases/download/<tag>/install.sh | bash
@@ -14,7 +14,7 @@
 #                                             latest-rc      the newest pre-release
 #                                             <tag>          that release (v1.0.0, 1.0.0-rc.1)
 #   --dir <path>        XL_INSTALL_DIR      where `xl` is placed (default: $HOME/.local/bin)
-#   --no-toolchain      XL_NO_TOOLCHAIN=1   do not run `xl lc install` afterwards
+#   --no-toolchain      XL_NO_TOOLCHAIN=1   do not run `xl lc install` and `xl std install` afterwards
 #   -h, --help
 #
 # The archive `xl_<version>_<os>_<arch>.tar.gz` is checked against the release's checksums.txt, the new binary is run once, and only
@@ -119,12 +119,14 @@ mv -f "$dir/.xl.new.$$" "$dir/xl"
 printf '%sinstalled xl %s%s -> %s/xl\n' "$green" "$version" "$reset" "$dir" >&2
 
 if [ "$toolchain" = 1 ]; then
-  step "Installing the compiler and stdlib (xl lc install)"
+  step "Installing the compiler (xl lc install)"
   "$dir/xl" lc install || fail "xl is installed, but \`xl lc install\` failed; run it again later"
+  step "Installing the stdlib (xl std install)"
+  "$dir/xl" std install || fail "xl is installed, but \`xl std install\` failed; run it again later"
 fi
 
 case ":$PATH:" in
   *":$dir:"*) ;;
   *) printf '\n%s is not on your PATH. Add it to your shell profile:\n\n  export PATH="%s:$PATH"\n\n' "$dir" "$dir" >&2 ;;
 esac
-echo "update later with: xl self-update and xl lc update" >&2
+echo "update later with: xl self-update, xl lc update and xl std update" >&2
