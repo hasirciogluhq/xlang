@@ -29,8 +29,8 @@ releases: `.github/workflows/ci.yml`, `release.yml`. The commands are documented
 | `pkg/resolve.xl` | minimal version selection over the dependency graph, the `.xlang/cache` layout |
 | `pkg/command.xl` | `xl pkg add|install|update|remove|list|clean` |
 | `lc/toolchain.xl` | installed compilers and stdlibs under `$XLANG_HOME`, the active pair, `$XLC`/`$XLANG_STD` |
-| `lc/command.xl` | `xl lc install|update|list|use` (the compiler) |
-| `stdlib/command.xl` | `xl std install|update|list|use` (the standard library) |
+| `lc/command.xl` | `xl lc install|update|list|use|remove|clean` (the compiler) |
+| `stdlib/command.xl` | `xl std install|update|list|use|remove|clean` (the standard library) |
 | `build/setup.xl` | the build environment of one file: toolchain, package roots, `xlang.local.toml` |
 | `build/command.xl` | `xl check|build|run|env` |
 | `build/test.xl` | `xl test`: selecting `*.test.xl` files, building and running them several at a time, the report |

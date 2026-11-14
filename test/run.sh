@@ -370,6 +370,32 @@ run "$xl" lc use v7.0.0
 expect "lc use of a tag not installed is E0790" 1 "E0790"
 run "$xl" std use v7.0.0
 expect "std use of a tag not installed is E0790" 1 "E0790"
+
+# Removing toolchain releases: the active one is refused, an inactive one goes, clean takes the rest.
+cp -R "$work/home/xlc/$tag" "$work/home/xlc/v9.9.9"
+run "$xl" lc remove v9
+expect "lc remove of a tag not installed is E0790" 1 "E0790"
+run "$xl" lc remove v9.9.9
+expect "lc remove of an inactive release" 0 "removed xlc v9.9.9"
+[ -d "$work/home/xlc/v9.9.9" ] && out="still there" || out="gone"
+expect "lc remove deletes the directory" 0 "gone"
+run "$xl" lc remove "$tag"
+expect "lc remove of the active compiler is refused" 1 "is active"
+cp -R "$work/home/xlc/$tag" "$work/home/xlc/v9.9.8"
+run "$xl" lc clean
+expect "lc clean removes the inactive release" 0 "removed xlc v9.9.8"
+run "$xl" lc clean
+expect "lc clean with only the active release" 0 "nothing to remove"
+cp -R "$work/home/std/$tag" "$work/home/std/v9.9.9"
+run "$xl" std remove v9.9.9
+expect "std remove of an inactive release" 0 "removed std v9.9.9"
+run "$xl" std remove "$tag"
+expect "std remove of the active stdlib is refused" 1 "is active"
+cp -R "$work/home/std/$tag" "$work/home/std/v9.9.8"
+run "$xl" std clean
+expect "std clean removes the inactive release" 0 "removed std v9.9.8"
+run "$xl" std clean
+expect "std clean with only the active release" 0 "nothing to remove"
 run "$xl" lc update
 expect "lc update" 0 "already up to date"
 run "$xl" std update

@@ -5,6 +5,8 @@
 //   update          install the newest stdlib and make it active
 //   list            the installed stdlibs; `*` marks the active one
 //   use <tag>       make an installed stdlib active
+//   remove <tag>... remove installed stdlibs, never the active one
+//   clean           remove every installed stdlib but the active one, and the failed-install leftovers
 //
 // Without a tag the newest stable release is taken, or the newest pre-release when the repository has no stable one yet. A tag may
 // be partial (`v1.2` is the newest v1.2.x). Releases come from `hasirciogluhq/xl-std` (`xl-std_<ver>.tar.gz`, one `xl-std_<ver>/`
@@ -14,7 +16,7 @@ from "../core/problem" import Problem, Done, done, fail, finish
 from "../core/tag" import bare
 from "../core/host" import join, joinS
 from "../core/release" import fetchAsset, pickRelease, unpack
-from "../lc/toolchain" import activeTags, activateStd, releaseDir, installed
+from "../lc/toolchain" import activeTags, activateStd, cleanReleases, releaseDir, removeRelease, installed
 
 define STD_REPO = "hasirciogluhq/xl-std"
 
@@ -25,6 +27,8 @@ export fn stdUsage() {
     println("  update          install the newest stdlib and make it active")
     println("  list            show the installed stdlibs (* = active)")
     println("  use <tag>       make an installed stdlib active")
+    println("  remove <tag>..  remove installed stdlibs, never the active one")
+    println("  clean           remove every installed stdlib but the active one")
 }
 
 /// Unpacks into `<dir>.partial`, then renames the archive's single directory to `dir`: a failed install leaves nothing that looks
@@ -107,6 +111,30 @@ fn use(args: *Vec<String>) -> Done {
     return done()
 }
 
+/// The tags named on the command line, each an installed release as `xl std list` shows it.
+fn remove(args: *Vec<String>) -> Done {
+    if args.isEmpty() {
+        return fail<bool>("E0740", String("`xl std remove` needs at least one stdlib tag"), String("see the tags with `xl std list`"))
+    }
+    local active = activeTags()
+    for a in args {
+        removeRelease("std", a, &active.stdTag)?
+        println("removed std {}", a)
+    }
+    return done()
+}
+
+fn clean() -> Done {
+    local active = activeTags()
+    local gone = cleanReleases("std", &active.stdTag)
+    if gone.isEmpty() {
+        println("nothing to remove")
+    } else {
+        for t in gone { println("removed std {}", t) }
+    }
+    return done()
+}
+
 /// `xl std <command> ...`; `args` starts after `std`.
 export fn stdMain(args: *Vec<String>) -> i32 {
     if args.isEmpty() || args.get(0).equals("help") || args.get(0).equals("--help") || args.get(0).equals("-h") {
@@ -120,5 +148,7 @@ export fn stdMain(args: *Vec<String>) -> i32 {
     if cmd.equals("update") || cmd.equals("up") { return finish(update()) }
     if cmd.equals("list") || cmd.equals("ls") { return finish(list()) }
     if cmd.equals("use") { return finish(use(&rest)) }
+    if cmd.equals("remove") || cmd.equals("rm") { return finish(remove(&rest)) }
+    if cmd.equals("clean") { return finish(clean()) }
     return finish(fail<bool>("E0740", format("unknown command `xl std {}`", cmd), String("see `xl std help`")))
 }

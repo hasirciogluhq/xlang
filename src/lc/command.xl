@@ -5,6 +5,8 @@
 //   update          install the newest compiler and make it active
 //   list            the installed compilers; `*` marks the active one
 //   use <tag>       make an installed compiler active
+//   remove <tag>... remove installed compilers, never the active one
+//   clean           remove every installed compiler but the active one, and the failed-install leftovers
 //
 // Without a tag the newest stable release is taken, or the newest pre-release when the repository has no stable one yet. A tag may
 // be partial (`v1.2` is the newest v1.2.x). Releases come from `hasirciogluhq/xlc` (`xlc_<ver>_<os>_<arch>.tar.gz`, `.zip` on
@@ -15,7 +17,7 @@ from "../core/tag" import bare
 from "../core/host" import osName, archName, join, joinS, exe
 from "../core/release" import fetchAsset, pickRelease, unpack, ARCHIVE
 from "../core/proc" import Line, capture
-from "toolchain" import activeTags, activateXlc, releaseDir, xlcBinary, installed
+from "toolchain" import activeTags, activateXlc, cleanReleases, releaseDir, removeRelease, xlcBinary, installed
 
 define XLC_REPO = "hasirciogluhq/xlc"
 define MODE_EXECUTABLE = 493        // 0755: tar.extract does not carry file modes
@@ -27,6 +29,8 @@ export fn lcUsage() {
     println("  update          install the newest compiler and make it active")
     println("  list            show the installed compilers (* = active)")
     println("  use <tag>       make an installed compiler active")
+    println("  remove <tag>..  remove installed compilers, never the active one")
+    println("  clean           remove every installed compiler but the active one")
 }
 
 /// Unpacks into `<dir>.partial`, lets `finish` arrange the tree, then renames the result to `dir`: a failed install leaves nothing
@@ -123,6 +127,30 @@ fn use(args: *Vec<String>) -> Done {
     return done()
 }
 
+/// The tags named on the command line, each an installed release as `xl lc list` shows it.
+fn remove(args: *Vec<String>) -> Done {
+    if args.isEmpty() {
+        return fail<bool>("E0740", String("`xl lc remove` needs at least one compiler tag"), String("see the tags with `xl lc list`"))
+    }
+    local active = activeTags()
+    for a in args {
+        removeRelease("xlc", a, &active.xlcTag)?
+        println("removed xlc {}", a)
+    }
+    return done()
+}
+
+fn clean() -> Done {
+    local active = activeTags()
+    local gone = cleanReleases("xlc", &active.xlcTag)
+    if gone.isEmpty() {
+        println("nothing to remove")
+    } else {
+        for t in gone { println("removed xlc {}", t) }
+    }
+    return done()
+}
+
 /// `xl lc <command> ...`; `args` starts after `lc`.
 export fn lcMain(args: *Vec<String>) -> i32 {
     if args.isEmpty() || args.get(0).equals("help") || args.get(0).equals("--help") || args.get(0).equals("-h") {
@@ -136,5 +164,7 @@ export fn lcMain(args: *Vec<String>) -> i32 {
     if cmd.equals("update") || cmd.equals("up") { return finish(update()) }
     if cmd.equals("list") || cmd.equals("ls") { return finish(list()) }
     if cmd.equals("use") { return finish(use(&rest)) }
+    if cmd.equals("remove") || cmd.equals("rm") { return finish(remove(&rest)) }
+    if cmd.equals("clean") { return finish(clean()) }
     return finish(fail<bool>("E0740", format("unknown command `xl lc {}`", cmd), String("see `xl lc help`")))
 }
