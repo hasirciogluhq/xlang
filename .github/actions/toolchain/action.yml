@@ -1,8 +1,9 @@
 name: xlang toolchain
 description: >
   Puts the xlang toolchain on PATH, all from GitHub releases, never from the submodules (those are for local development only):
-  the `xl` tool (installed by the release's own install script, binary only -- no `xl lc install`; the stdlib comes from its own
-  release below), the compiler `xlc` of hasirciogluhq/xlc and the stdlib of hasirciogluhq/xl-std. Each is resolved on every run:
+  the `xl` tool (installed by the release's own install script, binary only -- the script no longer installs a toolchain; the
+  compiler and the stdlib come from their own releases below), the compiler `xlc` of hasirciogluhq/xlc and the stdlib of
+  hasirciogluhq/xl-std. Each is resolved on every run:
   the newest stable release, or the newest pre-release while there is none; `xl-version`, `xlc-version` and `std-version` pin one.
   The cache key is the triple of tags, so a new release is always picked up and an unchanged triple is not downloaded again. Also
   installs the LLVM linker xlc calls on Linux and macOS.
@@ -38,6 +39,9 @@ outputs:
   std:
     description: "The stdlib directory (the one holding index.xl), with forward slashes on every OS"
     value: ${{ steps.resolve.outputs.dir }}/std
+  xlc-bin:
+    description: "The compiler binary, with forward slashes on every OS"
+    value: ${{ steps.resolve.outputs.xlcbin }}
 
 runs:
   using: composite
@@ -59,7 +63,9 @@ runs:
         dir="$RUNNER_TEMP/xlang"
         # Git Bash on Windows: `D:\a\_temp` would reach bash globs and xlc with backslashes.
         command -v cygpath >/dev/null 2>&1 && dir=$(cygpath -m "$dir")
-        { echo "xl=$xl"; echo "xlc=$xlc"; echo "std=$std"; echo "dir=$dir"; } >>"$GITHUB_OUTPUT"
+        xlcbin="$dir/bin/xlc"
+        case "$(uname -s)" in MINGW* | MSYS* | CYGWIN*) xlcbin="$xlcbin.exe" ;; esac
+        { echo "xl=$xl"; echo "xlc=$xlc"; echo "std=$std"; echo "dir=$dir"; echo "xlcbin=$xlcbin"; } >>"$GITHUB_OUTPUT"
         echo "xl $xl, xlc $xlc, xl-std $std" >>"$GITHUB_STEP_SUMMARY"
 
     - id: cache
@@ -76,8 +82,7 @@ runs:
         SCRIPT: ${{ github.action_path }}/../../scripts/toolchain.sh
       run: bash "$SCRIPT" install "${{ steps.resolve.outputs.xlc }}" "${{ steps.resolve.outputs.std }}" "${{ steps.resolve.outputs.dir }}"
 
-    # The `xl` tool, binary only: the release's own install script pins the resolved tag and skips
-    # `xl lc install` -- the stdlib comes from its own release above, not from the tool's cache.
+    # The `xl` tool, binary only: the release's install script installs nothing but the binary; the pin keeps it on the resolved tag.
     - name: Install the xl tool (Linux, macOS)
       if: steps.cache.outputs.cache-hit != 'true' && runner.os != 'Windows'
       shell: bash
@@ -85,7 +90,7 @@ runs:
         set -euo pipefail
         tag="${{ steps.resolve.outputs.xl }}"
         curl -fsSL "https://github.com/hasirciogluhq/xlang/releases/download/$tag/install.sh" \
-          | bash -s -- --version "$tag" --dir "${{ steps.resolve.outputs.dir }}/bin" --no-toolchain
+          | bash -s -- --version "$tag" --dir "${{ steps.resolve.outputs.dir }}/bin"
 
     - name: Install the xl tool (Windows)
       if: steps.cache.outputs.cache-hit != 'true' && runner.os == 'Windows'
@@ -93,7 +98,6 @@ runs:
       env:
         XL_VERSION: ${{ steps.resolve.outputs.xl }}
         XL_INSTALL_DIR: ${{ steps.resolve.outputs.dir }}/bin
-        XL_NO_TOOLCHAIN: "1"
       run: |
         $tag = $env:XL_VERSION
         $script = Join-Path $env:RUNNER_TEMP 'install.ps1'

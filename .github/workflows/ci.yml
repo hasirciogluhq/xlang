@@ -1,7 +1,8 @@
 name: ci
 
 # Builds `xl` from src/ and runs test/run.sh on every host a release ships for: every command against a real compiler, local git
-# repositories and a release mirror, without the network.
+# repositories and a release mirror, without the network. The build itself is driven by the newest released `xl` (`xl build`, which
+# runs the released `xlc`): every xl is compiled by means of the previous one.
 #
 # The toolchain comes from GitHub releases, never from the submodules (those are for local development only): the `xl` tool (by its
 # release's install script, binary only), the compiler `xlc` and the stdlib, each the newest stable release, or the newest pre-release
@@ -93,11 +94,14 @@ jobs:
           xl-version: ${{ inputs.xl_version }}
           xlc-version: ${{ inputs.xlc_version }}
           std-version: ${{ inputs.std_version }}
+      # The newest released xl drives the build; XLC/XLANG_STD name the released compiler and stdlib (the install script no longer
+      # installs a toolchain, so the active pair of toolchain.toml does not exist here).
       - name: Build xl
         working-directory: src
         env:
-          STD: ${{ steps.toolchain.outputs.std }}
-        run: xlc main.xl -M "std=$STD" --import std -DfeatureDefaultAllocator=true -o "../xl$([ "$RUNNER_OS" = Windows ] && echo .exe || true)"
+          XLC: ${{ steps.toolchain.outputs.xlc-bin }}
+          XLANG_STD: ${{ steps.toolchain.outputs.std }}
+        run: xl build main.xl -o "../xl$([ "$RUNNER_OS" = Windows ] && echo .exe || true)"
       - name: test/run.sh
         env:
           STD: ${{ steps.toolchain.outputs.std }}

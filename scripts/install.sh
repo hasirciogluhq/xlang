@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# Installs `xl`, the xlang tool, and then the compiler with `xl lc install` and the stdlib with `xl std install` (Linux and macOS, amd64 and arm64; Windows:
-# scripts/install.ps1).
+# Installs `xl`, the xlang tool, only -- no toolchain (Linux and macOS, amd64 and arm64; Windows: scripts/install.ps1).
+# The compiler and the stdlib are installed afterwards by hand: `xl lc install` and `xl std install`.
 #
 #   curl -fsSL https://github.com/hasirciogluhq/xlang/releases/download/<tag>/install.sh | bash
 #
@@ -14,7 +14,6 @@
 #                                             latest-rc      the newest pre-release
 #                                             <tag>          that release (v1.0.0, 1.0.0-rc.1)
 #   --dir <path>        XL_INSTALL_DIR      where `xl` is placed (default: $HOME/.local/bin)
-#   --no-toolchain      XL_NO_TOOLCHAIN=1   do not run `xl lc install` and `xl std install` afterwards
 #   -h, --help
 #
 # The archive `xl_<version>_<os>_<arch>.tar.gz` is checked against the release's checksums.txt, the new binary is run once, and only
@@ -24,8 +23,6 @@ set -euo pipefail
 REPO="hasirciogluhq/xlang"
 version="${XL_VERSION:-latest}"
 dir="${XL_INSTALL_DIR:-$HOME/.local/bin}"
-toolchain=1
-[ -n "${XL_NO_TOOLCHAIN:-}" ] && toolchain=0
 
 if [ -t 2 ] && [ -z "${NO_COLOR:-}" ]; then
   bold=$'\033[1m'; red=$'\033[1;31m'; green=$'\033[1;32m'; cyan=$'\033[1;36m'; reset=$'\033[0m'
@@ -37,14 +34,13 @@ fail() { printf '%serror:%s %s\n' "$red" "$reset" "$*" >&2; exit 1; }
 
 usage() {
   awk 'NR > 1 && /^#/ { print substr($0, 3) } NR > 1 && !/^#/ { exit }' "$0" >&2 2>/dev/null ||
-    echo "usage: install.sh [--version latest|latest-stable|latest-rc|<tag>] [--dir <path>] [--no-toolchain]" >&2
+    echo "usage: install.sh [--version latest|latest-stable|latest-rc|<tag>] [--dir <path>]" >&2
 }
 
 while [ "$#" -gt 0 ]; do
   case "$1" in
     --version) [ "$#" -ge 2 ] || fail "--version needs a value"; version="$2"; shift 2 ;;
     --dir) [ "$#" -ge 2 ] || fail "--dir needs a value"; dir="$2"; shift 2 ;;
-    --no-toolchain) toolchain=0; shift ;;
     -h | --help) usage; exit 0 ;;
     *) fail "unknown option '$1' (try --help)" ;;
   esac
@@ -116,14 +112,8 @@ mkdir -p "$dir" 2>/dev/null || fail "cannot create $dir (pick another place with
 # Copy next to the target and rename: a running xl is replaced atomically.
 cp "$tmp/xl" "$dir/.xl.new.$$" 2>/dev/null || fail "cannot write to $dir (pick another place with --dir or XL_INSTALL_DIR)"
 mv -f "$dir/.xl.new.$$" "$dir/xl"
-printf '%sinstalled xl %s%s -> %s/xl\n' "$green" "$version" "$reset" "$dir" >&2
-
-if [ "$toolchain" = 1 ]; then
-  step "Installing the compiler (xl lc install)"
-  "$dir/xl" lc install || fail "xl is installed, but \`xl lc install\` failed; run it again later"
-  step "Installing the stdlib (xl std install)"
-  "$dir/xl" std install || fail "xl is installed, but \`xl std install\` failed; run it again later"
-fi
+printf '%sinstalled xl %s%s -> %s/xl%s\n' "$green" "$version" "$reset" "$dir" "$reset" >&2
+printf 'install the toolchain next: xl lc install && xl std install\n' >&2
 
 case ":$PATH:" in
   *":$dir:"*) ;;
