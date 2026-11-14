@@ -10,7 +10,7 @@
 //      "xlang.local.toml"):
 //          [toolchain]
 //          xlc = "../xlc/build/macosx/arm64/release/xlc"     # a compiler binary
-//          std = "../xl-std"                                  # a stdlib directory
+//          std = "../xl-std/src"                            # a stdlib directory (its xlang.toml names root = "src")
 //          [modules]
 //          "github.com/user/repo" = "../repo"                 # a checkout in place of a package, or one more root
 //          [build]

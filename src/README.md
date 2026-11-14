@@ -4,7 +4,7 @@
 
 ```bash
 cd src
-xlc main.xl -M std=../xl-std --import std -DfeatureDefaultAllocator=true '-DxlVersion="1.0.0-rc.1"' -o ../xl
+xlc main.xl -M std=../xl-std/src --import std -DfeatureDefaultAllocator=true '-DxlVersion="1.0.0-rc.1"' -o ../xl
 ```
 
 Without `-DxlVersion` the binary reports `0.0.0-dev`. Tests: `test/run.sh <xl> <xlc> xl-std` (every command, no network); CI and

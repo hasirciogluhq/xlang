@@ -6,7 +6,8 @@
 # Usage: test/run.sh <xl> <xlc> <stdlib dir>
 #   xl          the xl binary under test
 #   xlc         a compiler binary; it is also packed as the mirror's compiler release
-#   stdlib dir  an xl-std checkout; it is also packed as the mirror's stdlib release
+#   stdlib dir  an xl-std checkout (the repository root); its sources are src/ (xlang.toml `root = "src"`), and it is also
+#               packed, flattened to the archive root, as the mirror's stdlib release
 #
 # `xl self-update` is also tested with a release built from this checkout's src/ as version 99.0.0.
 #
@@ -38,7 +39,8 @@ if [ "$windows" = 1 ]; then
   [[ "$xl" == *.exe ]] || xl="$xl.exe"
   [[ "$xlc" == *.exe ]] || xlc="$xlc.exe"
 fi
-std=$(cd "$3" && pwd)
+# The import root of the stdlib checkout: the directory the compiler gets as `-M std=`, which holds index.xl.
+std=$(cd "$3/src" && pwd)
 root=$(cd "$(dirname "$0")/.." && pwd)
 work=$(mktemp -d)
 trap 'rm -rf "$work"' EXIT
@@ -338,12 +340,9 @@ if [ "$ARCHIVE" = zip ]; then
 else
   tar -czf "$xlcDir/$xlcAsset" -C "$work/pack/xlc" xlc
 fi
-# The stdlib release holds index.xl and the area directories (xl-std/.github/workflows/release.yml).
-cp "$std/index.xl" "$work/pack/xl-std_0.0.1/"
-for dir in "$std"/*/; do
-  case "$(basename "$dir")" in test | dist | scripts) continue ;; esac
-  cp -R "${dir%/}" "$work/pack/xl-std_0.0.1/"     # BSD cp copies the contents of `dir/`, not the directory
-done
+# The stdlib release holds index.xl and the area directories, `src/` flattened to the archive root
+# (xl-std/.github/workflows/release.yml).
+cp -R "$std/." "$work/pack/xl-std_0.0.1/"
 tar -czf "$stdDir/xl-std_0.0.1.tar.gz" -C "$work/pack" xl-std_0.0.1
 printf '%s  %s\n' "$(sha "$xlcDir/$xlcAsset")" "$xlcAsset" >"$xlcDir/checksums.txt"
 printf '%s  %s\n' "$(sha "$stdDir/xl-std_0.0.1.tar.gz")" "xl-std_0.0.1.tar.gz" >"$stdDir/checksums.txt"
