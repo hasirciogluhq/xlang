@@ -1,6 +1,6 @@
-// xl: the xlang tool. It scaffolds projects (`xl new`, `xl init`), installs the compiler (`xl lc`) and the standard library
-// (`xl std`), manages packages (`xl pkg`), builds and runs programs through `xlc` (`xl check`, `xl build`, `xl run`) and updates
-// itself (`xl self-update`). Layout: src/README.md.
+// xl: the xlang tool. It scaffolds projects (`xl new`, `xl init`), formats sources (`xl fmt`), installs the compiler (`xl lc`)
+// and the standard library (`xl std`), manages packages (`xl pkg`), builds and runs programs through `xlc` (`xl check`,
+// `xl build`, `xl run`) and updates itself (`xl self-update`). Layout: src/README.md.
 from "std" import String, Vec, println, eprintln, format
 from "std/os/args" import fromArgv
 from "core/problem" import fail, finish
@@ -10,6 +10,7 @@ from "lc/command" import lcMain
 from "stdlib/command" import stdMain
 from "build/command" import checkMain, buildMain, runMain, envMain
 from "build/test" import testMain
+from "fmt/command" import fmtMain
 from "new/command" import newMain
 from "self/command" import selfUpdateMain
 
@@ -45,6 +46,7 @@ fn usage() {
     println("  check [flags] [file.xl]           type-check without writing anything")
     println("  test [flags] [patterns...]        build and run the *.test.xl files, several at a time")
     println("  env [--json] [file.xl]            the compiler, stdlib and module roots a build of the file uses")
+    println("  fmt [flags] [paths...]            format the .xl files under the paths in place")
     println("  new <name> [main|lib]             a new project in <name>/ (lib: a library package)")
     println("  init [main|lib]                   a new project in the current directory")
     println("  pkg <command>                     packages: add, install, update, remove, list, clean")
@@ -82,6 +84,7 @@ fn usage() {
     if cmd.equals("run") { return runMain(&rest) }
     if cmd.equals("test") { return testMain(&rest) }
     if cmd.equals("env") { return envMain(&rest) }
+    if cmd.equals("fmt") { return fmtMain(&rest) }
     if cmd.equals("new") || cmd.equals("init") { return newMain(&cmd, &rest) }
     if cmd.equals("self-update") { return selfUpdateMain(&rest) }
     eprintln("error: unknown command `{}`", &cmd)

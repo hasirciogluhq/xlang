@@ -1,0 +1,188 @@
+// The formatter's engine: a token-level relayout of one source file. Every line is written at its
+// brace depth, runs of inner whitespace collapse to one space, blank lines collapse to one, and
+// `//` comments stay on their lines with their text verbatim. Nothing else moves: operator spacing
+// is the author's, long lines are not reflowed, and no token is added, dropped or reordered — the
+// output of one pass is stable, so `xl fmt` twice is `xl fmt` once.
+//
+// The scan is line-based because the language makes that safe: the only comment is the `//` line
+// comment, and string and character literals never span a line break (xlc lexer: strings.xl
+// "may not span a line break"). One line is one scan; only the brace depth crosses lines.
+from "std" import String, split
+
+/// true when `c` opens a scope: a block, a call or an index.
+fn opens(c: u8) -> bool {
+    return c == b'{' || c == b'(' || c == b'['
+}
+
+/// true when `c` closes one.
+fn closes(c: u8) -> bool {
+    return c == b'}' || c == b')' || c == b']'
+}
+
+/// One raw line split the way the formatter sees it.
+class Line {
+    code: String          // the code with inner whitespace collapsed; empty on a blank or comment-only line
+    comment: String       // the text after `//`, verbatim; empty when there is none
+    hasComment: bool
+    startsCloser: bool    // the first code byte is `}`, `)` or `]`: the line sits at the depth it closes
+    net: i32              // opens minus closes in the code
+}
+
+/// Walks one raw line into `out`. Spaces and tabs outside a literal collapse to one space, which is
+/// dropped before `,` `;` `)` `]` and right after `(` `[`, and forced after `,` `;` and around a
+/// brace. Literals and comment text are copied verbatim.
+fn scanLine(raw: *String, out: *Line) {
+    // A CR from a CRLF file is not part of the line; a literal never spans lines, so a trailing CR
+    // is never inside one.
+    local l = raw.clone()
+    if l.length() > 0 && l.asStr()[l.length() - 1] == 13 { l = raw.slice(0, raw.length() - 1) }
+    local s = l.asStr()
+    local k: usize = 0
+    while k < s.len && (s[k] == b' ' || s[k] == 9) { k++ }
+    if k < s.len { out.startsCloser = closes(s[k]) }
+    local pending = false        // one collapsed space waits before the next code byte
+    local inStr = false
+    local inChr = false
+    local i: usize = k
+    while i < s.len {
+        local c = s[i]
+        if inStr {
+            out.code.push(c)
+            if c == b'\\' && i + 1 < s.len {
+                i++
+                out.code.push(s[i])
+            } else if c == b'"' {
+                inStr = false
+            }
+            i++
+            continue
+        }
+        if inChr {
+            out.code.push(c)
+            if c == b'\\' && i + 1 < s.len {
+                i++
+                out.code.push(s[i])
+            } else if c == b'\'' {
+                inChr = false
+            }
+            i++
+            continue
+        }
+        if c == b'/' && i + 1 < s.len && s[i + 1] == b'/' {
+            out.hasComment = true
+            out.comment = l.slice(i + 2, s.len - i - 2)
+            break
+        }
+        if c == b'"' {
+            if pending {
+                out.code.push(b' ')
+                pending = false
+            }
+            inStr = true
+            out.code.push(c)
+            i++
+            continue
+        }
+        if c == b'\'' {
+            if pending {
+                out.code.push(b' ')
+                pending = false
+            }
+            inChr = true
+            out.code.push(c)
+            i++
+            continue
+        }
+        if c == b' ' || c == 9 {
+            pending = out.code.length() > 0
+            i++
+            continue
+        }
+        if c == b'}' {
+            // one space before a brace that follows code: `a+i}` becomes `a+i }`; `{}` stays tight
+            local n = out.code.length()
+            if n > 0 {
+                local prev = out.code.asStr()[n - 1]
+                if prev != b'(' && prev != b'[' && prev != b'{' { out.code.push(b' ') }
+            }
+            pending = false
+            out.net -= 1
+            out.code.push(c)
+            i++
+            continue
+        }
+        if closes(c) {
+            pending = false
+            out.net -= 1
+            out.code.push(c)
+            i++
+            continue
+        }
+        if c == b'{' || c == b'(' || c == b'[' {
+            // one space before an opening brace that follows code: `){` becomes `) {`; none after
+            // `(`, `[` or another `{` (`{}` stays tight)
+            local n = out.code.length()
+            if c == b'{' && n > 0 {
+                local prev = out.code.asStr()[n - 1]
+                if prev != b'(' && prev != b'[' && prev != b'{' { out.code.push(b' ') }
+            }
+            out.net += 1
+            out.code.push(c)
+            i++
+            continue
+        }
+        if c == b',' || c == b';' {
+            pending = false
+            out.code.push(c)
+            pending = true       // one space after, unless a closer takes it back
+            i++
+            continue
+        }
+        if pending {
+            local n = out.code.length()
+            if n > 0 {
+                local prev = out.code.asStr()[n - 1]
+                if prev != b'(' && prev != b'[' { out.code.push(b' ') }
+            }
+            pending = false
+        }
+        out.code.push(c)
+        i++
+    }
+}
+
+/// The formatted text of `text` at an indent width of `width` spaces.
+export fn formatText(text: *String, width: i32) -> String {
+    local out = String()
+    local depth: i32 = 0
+    local blankPending = false
+    local started = false
+    for raw in split(text.asStr(), "\n") {
+        local ln = Line()
+        scanLine(raw, &ln)
+        if ln.code.length() == 0 && !ln.hasComment {
+            // A blank line is remembered, not written: at most one between two code lines, none at
+            // the start or the end of the file.
+            if started { blankPending = true }
+            continue
+        }
+        local at = depth
+        if ln.startsCloser { at -= 1 }
+        if at < 0 { at = 0 }
+        if blankPending && started { out.push(10) }
+        blankPending = false
+        started = true
+        local pad = at * width
+        for i in 0..pad { out.push(b' ') }
+        out.append(&ln.code)
+        if ln.hasComment {
+            if ln.code.length() > 0 { out.append(" ") }
+            out.append("//")
+            out.append(&ln.comment)
+        }
+        out.push(10)
+        depth += ln.net
+        if depth < 0 { depth = 0 }
+    }
+    return out
+}

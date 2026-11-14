@@ -427,6 +427,54 @@ expect "init lib writes the files" 0 "files"
 inside "$work" "$xl" init
 expect "init over a project is E0740" 1 "already has an xlang.toml"
 
+# --- xl fmt: the formatter -------------------------------------------------------------------------------------------------------------------------
+mkdir -p "$work/fmtp"
+cat >"$work/fmtp/a.xl" <<'EOF'
+from "std" import println
+fn   f( a,i ){   return   a+i  }   // add
+@entry
+fn main() -> i32 {
+	if(true){   println("hi // there")  }
+     return 0
+}
+EOF
+inside "$work/fmtp" "$xl" fmt a.xl
+expect "fmt formats in place" 0 ""
+grep -q 'fn f(a, i) {' "$work/fmtp/a.xl" && out="ok" || out="bad"
+expect "fmt normalizes spacing" 0 "ok"
+grep -q '    return 0' "$work/fmtp/a.xl" && out="ok" || out="bad"
+expect "fmt indents by depth" 0 "ok"
+grep -q '// add' "$work/fmtp/a.xl" && out="ok" || out="bad"
+expect "fmt keeps comments" 0 "ok"
+run "$xl" fmt --check "$work/fmtp/a.xl"
+expect "fmt check is clean after formatting" 0 ""
+cat >"$work/fmtp/b.xl" <<'EOF'
+fn g( ) {
+  return 1
+}
+EOF
+run "$xl" fmt --check "$work/fmtp/b.xl"
+expect "fmt check flags a dirty file" 1 "would format"
+run "$xl" fmt --diff "$work/fmtp/b.xl"
+expect "fmt diff prints the change" 0 "+    return 1"
+set +e
+out=$(printf 'fn  h( ) {\nreturn 0\n}\n' | "$xl" fmt --stdin)
+code=$?
+set -e
+expect "fmt stdin" 0 "fn h() {"
+mkdir -p "$work/fmtc"
+printf '[fmt]\nindent = 2\n' >"$work/fmtc/xlang.toml"
+cat >"$work/fmtc/c.xl" <<'EOF'
+fn k( ) {
+    return 2
+}
+EOF
+inside "$work/fmtc" "$xl" fmt c.xl
+grep -q '  return 2' "$work/fmtc/c.xl" && out="ok" || out="bad"
+expect "fmt reads [fmt] indent" 0 "ok"
+run "$xl" fmt --nonsense
+expect "an unknown fmt flag is E0740" 1 "unknown flag"
+
 # A damaged asset is refused before anything is unpacked.
 printf '%s  %s\n' "0000000000000000000000000000000000000000000000000000000000000000" "xl-std_0.0.1.tar.gz" >"$stdDir/checksums.txt"
 run env XLANG_HOME="$(native "$work/home2")" "$xl" std install

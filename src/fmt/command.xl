@@ -1,0 +1,204 @@
+// `xl fmt`: format the .xl files of a project in place (xlang-docs/compiler/cli.md "Formatting").
+//
+//   fmt [paths...]        format the .xl files under the paths (files or directories), or of the
+//                         current directory, in place
+//   fmt --check           exit 1 and name the files a format would change; writes nothing
+//   fmt --diff            print the changes a format would make; writes nothing
+//   fmt --stdin           format standard input to standard output
+//   fmt --indent <n>      the indent width, 1..16 (default: `[fmt] indent` of xlang.toml, else 4)
+//
+// The settings live in the `[fmt]` table of the project's xlang.toml and are forward compatible:
+// unknown keys and tables are ignored, and a missing file or table means the defaults.
+//
+// What a format does (fmt/format.xl): every line is written at its brace depth, runs of inner
+// whitespace collapse to one space, blank lines collapse to one, and comments stay on their lines.
+// Operator spacing is the author's and long lines are not reflowed; a format never adds, drops or
+// reorders a token, so it is safe on code that does not compile yet.
+from "std" import String, Vec, Option, Result, print, println, format, files, fsReadAllString, stdin, split, trim
+from "../core/problem" import fail, finish, report
+from "../core/host" import joinS
+from "../core/store" import writeAtomic
+from "../pkg/manifest" import findManifest
+from "format" import formatText
+
+export fn fmtUsage() {
+    println("usage: xl fmt [flags] [paths...]")
+    println("")
+    println("  --check        exit 1 and name the files a format would change; writes nothing")
+    println("  --diff         print the changes a format would make; writes nothing")
+    println("  --stdin        format standard input to standard output")
+    println("  --indent <n>   the indent width, 1..16 (default: [fmt] indent of xlang.toml, else 4)")
+    println("")
+    println("Without paths, the .xl files under the current directory are formatted (skipping .xlang,")
+    println("build and node_modules). Settings: the [fmt] table of xlang.toml; unknown keys are ignored.")
+}
+
+/// Digits only, 0 when `s` is anything else; the caller treats 0 as unset or invalid.
+fn parseCount(s: *String) -> i32 {
+    local n: i32 = 0
+    if s.length() == 0 { return 0 }
+    for c in s.asStr() {
+        if c < b'0' || c > b'9' { return 0 }
+        n = n * 10 + (c - b'0') as i32
+        if n > 99 { return 0 }
+    }
+    return n
+}
+
+/// `[fmt] indent` of the nearest xlang.toml; 0 when there is none, so the default applies. Unknown
+/// keys and tables are ignored, which is what keeps the table forward compatible.
+fn configIndent() -> i32 {
+    local cwd = files.currentDir()
+    switch findManifest(&cwd) {
+        case Option.None { return 0 }
+        case Option.Some(m) {
+            local text = fsReadAllString(m.cstr())
+            local table = String()
+            for line in split(text.asStr(), "\n") {
+                local l = trim(line.asStr())
+                if l.length() == 0 || l.startsWith("#") || l.startsWith("//") { continue }
+                if l.startsWith("[") && l.endsWith("]") {
+                    table = l.slice(1, l.length() - 2)
+                    continue
+                }
+                if !table.equals("fmt") { continue }
+                local eq = l.find("=")
+                if eq < 0 { continue }
+                local key = trim(l.slice(0, eq as usize).asStr())
+                if !key.equals("indent") { continue }
+                local value = trim(l.slice(eq as usize + 1, l.length() - eq as usize - 1).asStr())
+                return parseCount(&value)
+            }
+        }
+    }
+    return 0
+}
+
+/// The .xl files under `path`: a file named `*.xl`, or every one under a directory. Directories
+/// named `build` or `node_modules` and hidden ones (`.git`, `.xlang`) are not entered.
+fn collect(path: *String, out: *Vec<String>) {
+    if files.isDir(path) {
+        for name in files.listDir(path) {
+            if name.startsWith(".") || name.equals("build") || name.equals("node_modules") { continue }
+            local child = joinS(path, name)
+            collect(&child, out)
+        }
+        return
+    }
+    if path.endsWith(".xl") { out.push(path.clone()) }
+}
+
+/// The changed middle of two texts as a small unified diff: the common prefix and suffix are left
+/// out, everything between is printed `-` for the old line and `+` for the new.
+fn printDiff(path: *String, old: *String, fresh: *String) {
+    local a = split(old.asStr(), "\n")
+    local b = split(fresh.asStr(), "\n")
+    // A final newline makes an empty last piece; it is not a line of its own.
+    if a.length() > 0 && a.last().length() == 0 { a.pop() }
+    if b.length() > 0 && b.last().length() == 0 { b.pop() }
+    local p: usize = 0
+    while p < a.length() && p < b.length() && a.get(p).equals(b.get(p)) { p++ }
+    local s: usize = 0
+    while s < a.length() - p && s < b.length() - p && a.get(a.length() - 1 - s).equals(b.get(b.length() - 1 - s)) { s++ }
+    println("--- {}", path)
+    println("+++ {}", path)
+    println("@@ -{} {} +{} {} @@", p + 1, a.length() - p - s, p + 1, b.length() - p - s)
+    for i in p..a.length() - s { println("-{}", a.get(i)) }
+    for i in p..b.length() - s { println("+{}", b.get(i)) }
+}
+
+/// `xl fmt ...`; `args` starts after `fmt`.
+export fn fmtMain(args: *Vec<String>) -> i32 {
+    if !args.isEmpty() && (args.get(0).equals("--help") || args.get(0).equals("-h")) {
+        fmtUsage()
+        return 0
+    }
+    local check = false
+    local diff = false
+    local useStdin = false
+    local indent: i32 = 0        // 0 = not given on the command line
+    local paths: Vec<String> = Vec<String>()
+    local i: usize = 0
+    while i < args.length() {
+        local a = args.get(i).clone()
+        i++
+        if a.equals("--check") {
+            check = true
+        } else if a.equals("--diff") {
+            diff = true
+        } else if a.equals("--stdin") {
+            useStdin = true
+        } else if a.startsWith("--indent=") {
+            local v = a.slice(9, a.length() - 9)
+            indent = parseCount(&v)
+            if indent == 0 {
+                return finish(fail<bool>("E0740", format("{} is not an indent width", &a), String("write `--indent <1..16>`")))
+            }
+        } else if a.equals("--indent") {
+            if i >= args.length() {
+                return finish(fail<bool>("E0740", String("`--indent` needs a number"), String("write `--indent <1..16>`")))
+            }
+            local v = args.get(i)
+            indent = parseCount(v)
+            i++
+            if indent == 0 {
+                return finish(fail<bool>("E0740", format("{} is not an indent width", v), String("write `--indent <1..16>`")))
+            }
+        } else if a.startsWith("-") && !a.equals("-") {
+            return finish(fail<bool>("E0740", format("unknown flag `{}`", &a), String("see `xl fmt --help`")))
+        } else {
+            paths.push(a.clone())
+        }
+    }
+    if indent == 0 { indent = configIndent() }
+    if indent == 0 { indent = 4 }
+    if indent < 1 || indent > 16 {
+        return finish(fail<bool>("E0740", format("{} is not an indent width", indent), String("write `--indent <1..16>` or [fmt] indent = <1..16>")))
+    }
+    if useStdin {
+        local text = stdin().readAll()
+        local fresh = formatText(&text, indent)
+        print(fresh.asStr())
+        return 0
+    }
+    local list: Vec<String> = Vec<String>()
+    if paths.isEmpty() {
+        local cwd = files.currentDir()
+        collect(&cwd, &list)
+    } else {
+        for p in paths {
+            if files.isDir(p) {
+                collect(p, &list)
+            } else if files.exists(p) {
+                if !p.endsWith(".xl") {
+                    return finish(fail<bool>("E0740", format("{} is not an .xl file", p), String("name .xl files or directories of them")))
+                }
+                list.push(p.clone())
+            } else {
+                return finish(fail<bool>("E0740", format("{} does not exist", p), String("check the path")))
+            }
+        }
+    }
+    local changed: i32 = 0
+    for f in list {
+        local old = fsReadAllString(f.cstr())
+        local fresh = formatText(&old, indent)
+        if fresh.equals(&old) { continue }
+        changed += 1
+        if diff {
+            printDiff(f, &old, &fresh)
+        } else if check {
+            println("would format {}", f)
+        } else {
+            switch writeAtomic(f, &fresh) {
+                case Result.Ok(v) { }
+                case Result.Err(p) {
+                    report(&p)
+                    return 1
+                }
+            }
+        }
+    }
+    if check && changed > 0 { return 1 }
+    return 0
+}
