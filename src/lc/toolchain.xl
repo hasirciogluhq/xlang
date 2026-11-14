@@ -148,10 +148,10 @@ export fn removeRelease(kind: str, tag: *String, activeTag: *String) -> Done {
     if String(kind).equals("xlc") { cmd = String("lc") }   // the kind names the release, the command names the tool
     local dir = releaseDir(kind, tag)
     if !files.isDir(&dir) {
-        return fail<bool>("E0790", format("{} {} is not installed", String(kind), tag), format("see `xl {} list`", &cmd))
+        return fail<bool>("E0790", format("{} {} is not installed", kind, tag), format("see `xl {} list`", &cmd))
     }
     if tag.equals(activeTag) {
-        return fail<bool>("E0740", format("{} {} is active", String(kind), tag), format("make another one active first: `xl {} use <tag>`", &cmd))
+        return fail<bool>("E0740", format("{} {} is active", kind, tag), format("make another one active first: `xl {} use <tag>`", &cmd))
     }
     if !files.removeAll(&dir) {
         return fail<bool>("E0793", format("{} could not be removed", &dir), String("check that XLANG_HOME is writable"))
