@@ -18,3 +18,7 @@
 	path = xl-llvm
 	url = https://github.com/hasirciogluhq/xl-llvm.git
 	branch = main
+[submodule "xl-zed"]
+	path = xl-zed
+	url = https://github.com/hasirciogluhq/xl-zed.git
+	branch = main

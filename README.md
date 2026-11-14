@@ -30,6 +30,7 @@ from "std" import print
 | [xl-std](https://github.com/hasirciogluhq/xl-std) | the standard library and its tests (submodule `xl-std/`) |
 | [xlang-docs](https://github.com/hasirciogluhq/xlang-docs) | documentation site (submodule `xlang-docs/`) |
 | [xl-vscode](https://github.com/hasirciogluhq/xl-vscode) | VS Code extension (submodule `xl-vscode/`) |
+| [xl-zed](https://github.com/hasirciogluhq/xl-zed) | Zed extension (submodule `xl-zed/`) |
 
 Clone with `git clone --recurse-submodules https://github.com/hasirciogluhq/xlang.git`.
 
@@ -81,7 +82,7 @@ The commands are documented in [the xl tool](xlang-docs/src/content/docs/compile
 
 ```bash
 cd src
-xlc main.xl -M std=../xl-std --import std -DfeatureDefaultAllocator=true '-DxlVersion="1.0.0-dev"' -O2 -o ../xl
+xlc main.xl -M std=../xl-std/src --import std -DfeatureDefaultAllocator=true '-DxlVersion="1.0.0-dev"' -O2 -o ../xl
 cd .. && test/run.sh ./xl "$(command -v xlc)" xl-std
 ```
 
