@@ -1,5 +1,6 @@
-// xl: the xlang tool. It installs the compiler (`xl lc`) and the standard library (`xl std`), manages packages (`xl pkg`), builds
-// and runs programs through `xlc` (`xl check`, `xl build`, `xl run`) and updates itself (`xl self-update`). Layout: src/README.md.
+// xl: the xlang tool. It scaffolds projects (`xl new`, `xl init`), installs the compiler (`xl lc`) and the standard library
+// (`xl std`), manages packages (`xl pkg`), builds and runs programs through `xlc` (`xl check`, `xl build`, `xl run`) and updates
+// itself (`xl self-update`). Layout: src/README.md.
 from "std" import String, Vec, println, eprintln, format
 from "std/os/args" import fromArgv
 from "core/problem" import fail, finish
@@ -9,6 +10,7 @@ from "lc/command" import lcMain
 from "stdlib/command" import stdMain
 from "build/command" import checkMain, buildMain, runMain, envMain
 from "build/test" import testMain
+from "new/command" import newMain
 from "self/command" import selfUpdateMain
 
 define BUILD_NOTES = "Flags are xlc's own (`xlc --help`: -O2, -o out, --emit=obj, -D NAME=VALUE, --target, ...) and pass through\nunchanged; --std=<dir> replaces the stdlib. Without a file, main.xl of the project root (the directory of the nearest\nxlang.toml) or of the current directory is used. Builds never touch the network. XL_VERBOSE=1 prints the xlc command line."
@@ -17,11 +19,12 @@ define BUILD_HELP = "usage: xl build [flags] [file.xl] [flags]\n\nBuilds an exec
 define RUN_HELP = "usage: xl run [flags] [file.xl] [program arguments...]\n       xl run [flags] -- [program arguments...]\n\nBuilds the program into a temporary directory and runs it; everything after the file or `--` goes to the\nprogram, and its exit status becomes xl's.\n"
 define TEST_HELP = "usage: xl test [flags] [patterns...] [-- program arguments...]\n\nBuilds and runs test files (*.test.xl) with the project's stdlib and packages, several at a time, and reports each in file\norder. A pattern is a file, a directory, a glob (`*` and `?` within a path segment, `**` across segments; without `/` it\nmatches a name at any depth) or a part of a path. Without one, every test file under the current directory runs.\n\n  -x, --exclude <pattern>   skip the files the pattern selects (repeatable)\n  -j, --jobs <n>            build and run n files at once (default: one per CPU)\n  -q, --quiet               print a file's output only when it fails\n      --fail-fast           stop at the first failure and end the files still running\n      --list                print the selected files and run nothing\n      --no-color            plain output (also when NO_COLOR is set or stdout is not a terminal)\n      --std=<dir>           replace the stdlib\n\nOther flags go to xlc for every file (-O2, -D NAME=VALUE, --safety=checked, ...); arguments after `--` go to every test\nprogram. The exit status is 0 when every file built and passed."
 define ENV_HELP = "usage: xl env [--json] [--std=<dir>] [file.xl]\n\nPrints the compiler, stdlib, package roots and flags a build of the file uses, and why a build could not start.\n--json prints one object for editors and scripts (xlang-docs: compiler/cli)."
+define NEW_HELP = "usage: xl new <name> [main|lib]\n       xl init [main|lib]\n\n`new` creates the project in a new directory <name>/ (`xl new lib`: a library in lib/), `init` in the current\ndirectory. A main project gets xlang.toml ([package] root = \"src\"), src/main.xl and .gitignore; a library gets\nxlang.toml, src/lib.xl, src/index.xl and .gitignore. Without a kind and with a terminal, xl asks main or lib;\nwithout a terminal the kind is main."
 define SELF_UPDATE_HELP = "usage: xl self-update [tag] [--check] [--force]\n\nReplaces this xl with the newest release (or the given tag) of hasirciogluhq/xlang after checking its checksum.\nA pre-release xl follows pre-releases. --check only reports; --force reinstalls or downgrades."
 
 /// `xl <command> --help` of the commands that have no subcommands (`pkg`, `lc` and `std` print their own); false for any other command.
 fn commandHelp(cmd: *String) -> bool {
-    local pages = [("check", CHECK_HELP), ("build", BUILD_HELP), ("run", RUN_HELP), ("test", TEST_HELP), ("env", ENV_HELP), ("self-update", SELF_UPDATE_HELP)]
+    local pages = [("check", CHECK_HELP), ("build", BUILD_HELP), ("run", RUN_HELP), ("test", TEST_HELP), ("env", ENV_HELP), ("new", NEW_HELP), ("init", NEW_HELP), ("self-update", SELF_UPDATE_HELP)]
     for p in pages {
         local (name, text) = *p
         if !cmd.equals(name) { continue }
@@ -42,6 +45,8 @@ fn usage() {
     println("  check [flags] [file.xl]           type-check without writing anything")
     println("  test [flags] [patterns...]        build and run the *.test.xl files, several at a time")
     println("  env [--json] [file.xl]            the compiler, stdlib and module roots a build of the file uses")
+    println("  new <name> [main|lib]             a new project in <name>/ (lib: a library package)")
+    println("  init [main|lib]                   a new project in the current directory")
     println("  pkg <command>                     packages: add, install, update, remove, list, clean")
     println("  lc <command>                      the compiler: install, update, list, use")
     println("  std <command>                     the standard library: install, update, list, use")
@@ -77,6 +82,7 @@ fn usage() {
     if cmd.equals("run") { return runMain(&rest) }
     if cmd.equals("test") { return testMain(&rest) }
     if cmd.equals("env") { return envMain(&rest) }
+    if cmd.equals("new") || cmd.equals("init") { return newMain(&cmd, &rest) }
     if cmd.equals("self-update") { return selfUpdateMain(&rest) }
     eprintln("error: unknown command `{}`", &cmd)
     eprintln("  fix: see `xl help`")

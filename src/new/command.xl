@@ -1,0 +1,169 @@
+// `xl new` and `xl init`: a new project scaffolded in one step (xlang-docs/compiler/cli.md "Scaffolding").
+//
+//   xl new <name> [main|lib]   the project in a new directory <name>/ next to the current one
+//   xl new lib                 a library project in lib/
+//   xl init [main|lib]         the project in the current directory
+//
+// A main project gets xlang.toml (`[package] root = "src"`), src/main.xl and .gitignore; a library gets xlang.toml,
+// src/lib.xl, src/index.xl (the import root re-exporting the modules, xlang-docs/compiler/packages.md) and .gitignore.
+// When the kind is not given and stdin is a terminal, xl asks; without a terminal (a script, CI) the kind is main.
+from "std" import String, Vec, Option, print, println, format, files, stdin
+from "../core/problem" import Done, done, fail, finish
+from "../core/host" import join, joinS
+from "../core/store" import writeAtomic
+
+export fn newMain(cmd: *String, args: *Vec<String>) -> i32 {
+    return finish(scaffold(cmd, args))
+}
+
+/// 1 for `main`, 2 for `lib`, 0 when `a` is neither.
+fn kindArg(a: *String) -> i32 {
+    if a.equals("main") { return 1 }
+    if a.equals("lib") { return 2 }
+    return 0
+}
+
+/// The last path segment: the project name of `xl init` is the directory it runs in.
+fn leaf(path: *String) -> String {
+    local at = path.findLast("/")
+    if at < 0 { return path.clone() }
+    return path.slice(at as usize + 1, path.length() - at as usize - 1)
+}
+
+/// A directory name `xl new` may create: one segment, no separator, no dot pair.
+fn validName(name: *String) -> bool {
+    if name.length() == 0 || name.equals(".") || name.equals("..") { return false }
+    if name.contains("/") || name.contains("\\") || name.contains(":") { return false }
+    return true
+}
+
+/// The usage error of a badly formed command line.
+fn badForm(inPlace: bool) -> Done {
+    if inPlace {
+        return fail<bool>("E0740", String("`xl init` takes at most one kind"), String("use `xl init` or `xl init main|lib`"))
+    }
+    return fail<bool>("E0740", String("`xl new` takes a name and an optional kind"), String("use `xl new <name> [main|lib]`, or `xl init` in the current directory"))
+}
+
+/// Asks for the kind on the terminal and reads one line. true for a library; an empty line or end-of-file is main.
+fn askKind() -> bool {
+    while true {
+        print("main or lib? [main]: ")
+        switch stdin().readLine() {
+            case Option.None {
+                print("\n")
+                return false
+            }
+            case Option.Some(a) {
+                if a.equals("lib") || a.equals("l") || a.equals("2") { return true }
+                if a.length() == 0 || a.equals("main") || a.equals("m") || a.equals("1") { return false }
+                println("answer main or lib")
+            }
+        }
+    }
+}
+
+fn scaffold(cmd: *String, args: *Vec<String>) -> Done {
+    local inPlace = cmd.equals("init")
+    local lib = false
+    local pick = false           // the kind is not on the command line
+    local name = String()
+    if inPlace {
+        if args.isEmpty() {
+            pick = true
+        } else if args.length() == 1 {
+            switch kindArg(args.get(0)) {
+                case 1 { }
+                case 2 { lib = true }
+                default { return badForm(inPlace) }
+            }
+        } else {
+            return badForm(inPlace)
+        }
+    } else {
+        if args.isEmpty() {
+            return fail<bool>("E0740", String("`xl new` needs a project name"), String("name it: `xl new hello` (a library: `xl new hello lib`), or `xl init` in the current directory"))
+        }
+        if args.length() > 2 { return badForm(inPlace) }
+        name = args.get(0).clone()
+        // `xl new lib` and `xl new main`: the kind as the only word, the directory named after it.
+        if args.length() == 1 && (name.equals("main") || name.equals("lib")) {
+            lib = name.equals("lib")
+        } else {
+            if !validName(&name) {
+                return fail<bool>("E0740", format("`{}` is not a project name", &name), String("use one name without / \\ : . and .. (e.g. hello)"))
+            }
+            if args.length() == 2 {
+                switch kindArg(args.get(1)) {
+                    case 1 { }
+                    case 2 { lib = true }
+                    default { return badForm(inPlace) }
+                }
+            } else {
+                pick = true
+            }
+        }
+    }
+    local cwd = files.currentDir()
+    local dir = cwd.clone()
+    if !inPlace {
+        dir = joinS(&cwd, &name)
+        // `new` starts from nothing: an existing directory must be empty, or a stray main.xl in it would win over the
+        // scaffolded one. `init` works in place by definition.
+        if files.isDir(&dir) && files.listDir(&dir).length() > 0 {
+            return fail<bool>("E0740", format("{} already exists and is not empty", &dir), String("choose another name, or remove the directory"))
+        }
+    }
+    if inPlace { name = leaf(&cwd) }
+    local manifest = join(&dir, "xlang.toml")
+    if files.exists(&manifest) {
+        return fail<bool>("E0740", format("{} already has an xlang.toml", &dir), String("`xl new` starts a project; remove xlang.toml to start over in this directory"))
+    }
+    if pick {
+        if files.isTerminal(0) { lib = askKind() } else { lib = false }
+    }
+    // Nothing is written before every target is known to be free, so a refused run leaves nothing behind.
+    local main = join(&dir, "src/main.xl")
+    local libFile = join(&dir, "src/lib.xl")
+    local index = join(&dir, "src/index.xl")
+    if files.exists(&main) || files.exists(&libFile) || files.exists(&index) {
+        return fail<bool>("E0740", String("src already has a main.xl, lib.xl or index.xl"), String("remove them, or start in another directory"))
+    }
+    local src = join(&dir, "src")
+    if !files.makeDirAll(&src) {
+        return fail<bool>("E0740", format("{} could not be created", &src), String("check the permissions of the directory"))
+    }
+    local toml = format("# The manifest of {} (https://hasirciogluhq.github.io/xlang/compiler/packages/).\n[package]\nname = \"{}\"\nroot = \"src\"\n\n[dependencies]\n", &name, &name)
+    writeAtomic(&manifest, &toml)?
+    local ignore = String("# the package cache of xl\n.xlang/\n")
+    local ignorePath = join(&dir, ".gitignore")
+    writeAtomic(&ignorePath, &ignore)?
+    // The generated files are built by appends where they hold a `{}` of their own: a generated `format("hello {}", name)`
+    // would otherwise feed the outer format call.
+    if lib {
+        local code = String("// The library of ")
+        code.append(&name)
+        code.append(" (xlang-docs/compiler/packages.md); its modules live next to this file.\nfrom \"std\" import String, format\n\n/// Greets `name`.\nexport fn greet(name: *String) -> String {\n    return format(\"hello {}\", name)\n}\n")
+        writeAtomic(&libFile, &code)?
+        local root = format("// The import root of {} (xlang-docs/compiler/packages.md): what users import.\nexport * from \"lib\"\n", &name)
+        writeAtomic(&index, &root)?
+    } else {
+        local code = String("// The program root of ")
+        code.append(&name)
+        code.append(" (xlang-docs/compiler/cli.md).\nfrom \"std\" import println\n\n@entry\nfn main() -> i32 {\n    println(\"hello from ")
+        code.append(&name)
+        code.append("\")\n    return 0\n}\n")
+        writeAtomic(&main, &code)?
+    }
+    local kind = String("executable")
+    if lib { kind = String("library") }
+    println("created {} project in {}", &kind, &dir)
+    if lib {
+        println("next: push the repository, then add it to a project with `xl pkg add <host/user/repo>`")
+    } else if inPlace {
+        println("next: xl run")
+    } else {
+        println("next: cd {} && xl run", &name)
+    }
+    return done()
+}

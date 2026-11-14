@@ -14,7 +14,7 @@ releases: `.github/workflows/ci.yml`, `release.yml`. The commands are documented
 
 | Path | Content |
 | --- | --- |
-| `main.xl` | entry point: dispatches `run`, `build`, `check`, `test`, `env`, `pkg`, `lc`, `std`, `self-update`, `version`, `help` |
+| `main.xl` | entry point: dispatches `run`, `build`, `check`, `test`, `env`, `new`, `init`, `pkg`, `lc`, `std`, `self-update`, `version`, `help` |
 | `core/problem.xl` | `Problem` (code, message, fix) and the `Done`/`fail`/`finish` helpers every command returns through |
 | `core/host.xl` | OS and CPU names, `$XLANG_HOME`, environment variables, path joining |
 | `core/proc.xl` | `Line`: a child process command line; `call` (inherit stdio) and `capture` (collect stdout) |
@@ -34,4 +34,5 @@ releases: `.github/workflows/ci.yml`, `release.yml`. The commands are documented
 | `build/setup.xl` | the build environment of one file: toolchain, package roots, `xlang.local.toml` |
 | `build/command.xl` | `xl check|build|run|env` |
 | `build/test.xl` | `xl test`: selecting `*.test.xl` files, building and running them several at a time, the report |
+| `new/command.xl` | `xl new` and `xl init`: a scaffolded project (xlang.toml with `[package] root = "src"`, `src/main.xl` or `src/lib.xl` + `src/index.xl`, `.gitignore`); the kind is asked on a terminal, `main` without one |
 | `self/command.xl` | `xl self-update` |

@@ -24,7 +24,7 @@ from "std/os/process" import id as processId
 from "../core/problem" import Problem, Done, done, fail, finish, report
 from "../core/host" import join, joinS, parent, variable, exe
 from "../core/proc" import Line, call
-from "../pkg/manifest" import findManifest
+from "../pkg/manifest" import findManifest, importRootOf
 from "setup" import Setup, setupOf
 
 /// xlc options that take their value as the next argument (`-o out`); `--name=value` and `-O2` are one argument.
@@ -76,7 +76,7 @@ fn requestOf(args: *Vec<String>, run: bool) -> Result<Request, Problem> {
     return Result.Ok(r)
 }
 
-/// The program root: the named file, or `main.xl` of the project root or the current directory.
+/// The program root: the named file, or `main.xl` of the project root, of its `[package] root` or of the current directory.
 fn rootFile(r: *Request) -> Result<String, Problem> {
     if r.file.length() > 0 {
         if !files.exists(&r.file) { return fail<String>("E0711", format("{} does not exist", &r.file), String("check the path")) }
@@ -87,6 +87,10 @@ fn rootFile(r: *Request) -> Result<String, Problem> {
         case Option.Some(m) {
             local root = parent(&m)
             local main = join(&root, "main.xl")
+            if files.exists(&main) { return Result.Ok(main) }
+            // A project scaffolded by `xl new` keeps its sources under its `[package] root` (src/main.xl with root = "src").
+            local src = importRootOf(&root)?
+            main = join(&src, "main.xl")
             if files.exists(&main) { return Result.Ok(main) }
         }
         case Option.None { }

@@ -375,6 +375,32 @@ expect "lc update" 0 "already up to date"
 run "$xl" std update
 expect "std update" 0 "already up to date"
 
+# --- xl new and xl init: a scaffolded project --------------------------------------------------------------------------------------------------------
+inside "$work" "$xl" new
+expect "new without a name is E0740" 1 "E0740"
+mkdir -p "$work/full"
+touch "$work/full/keep"
+inside "$work" "$xl" new full
+expect "new refuses a non-empty directory" 1 "not empty"
+inside "$work" "$xl" new fresh
+expect "new writes a main project" 0 "created executable project"
+[ -f "$work/fresh/xlang.toml" ] && [ -f "$work/fresh/src/main.xl" ] && [ -f "$work/fresh/.gitignore" ] && out="files" || out="missing files"
+expect "new writes xlang.toml, src/main.xl and .gitignore" 0 "files"
+inside "$work/fresh" "$xl" run
+expect "run in a new project finds src/main.xl" 0 "hello from fresh"
+inside "$work" "$xl" new mylib lib
+expect "new lib writes a library" 0 "created library project"
+[ -f "$work/mylib/src/lib.xl" ] && [ -f "$work/mylib/src/index.xl" ] && out="files" || out="missing files"
+expect "new lib writes src/lib.xl and src/index.xl" 0 "files"
+inside "$work/mylib" "$xl" check src/lib.xl
+expect "check a new library" 0 ""
+inside "$work" "$xl" init lib
+expect "init lib in the current directory" 0 "created library project"
+[ -f "$work/src/lib.xl" ] && [ -f "$work/src/index.xl" ] && out="files" || out="missing files"
+expect "init lib writes the files" 0 "files"
+inside "$work" "$xl" init
+expect "init over a project is E0740" 1 "already has an xlang.toml"
+
 # A damaged asset is refused before anything is unpacked.
 printf '%s  %s\n' "0000000000000000000000000000000000000000000000000000000000000000" "xl-std_0.0.1.tar.gz" >"$stdDir/checksums.txt"
 run env XLANG_HOME="$(native "$work/home2")" "$xl" std install
