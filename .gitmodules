@@ -22,3 +22,7 @@
 	path = xl-zed
 	url = https://github.com/hasirciogluhq/xl-zed.git
 	branch = main
+[submodule "xl-lsp"]
+	path = xl-lsp
+	url = https://github.com/hasirciogluhq/xl-lsp.git
+	branch = main

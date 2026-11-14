@@ -31,6 +31,7 @@ from "std" import print
 | [xlang-docs](https://github.com/hasirciogluhq/xlang-docs) | documentation site (submodule `xlang-docs/`) |
 | [xl-vscode](https://github.com/hasirciogluhq/xl-vscode) | VS Code extension (submodule `xl-vscode/`) |
 | [xl-zed](https://github.com/hasirciogluhq/xl-zed) | Zed extension (submodule `xl-zed/`) |
+| [xl-lsp](https://github.com/hasirciogluhq/xl-lsp) | language server, written in xlang (submodule `xl-lsp/`) |
 
 Clone with `git clone --recurse-submodules https://github.com/hasirciogluhq/xlang.git`.
 
