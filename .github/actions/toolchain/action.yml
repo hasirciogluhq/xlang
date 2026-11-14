@@ -1,11 +1,17 @@
 name: xlang toolchain
 description: >
-  Puts the xlang compiler `xlc` on PATH and unpacks the stdlib, both from GitHub releases, never from the submodules (those are for
-  local development only). Each is resolved on every run: the newest stable release, or the newest pre-release while there is none;
-  `xlc-version` and `std-version` pin one. The cache key is the pair of tags, so a new release is always picked up and an unchanged
-  pair is not downloaded again. Also installs the LLVM linker xlc calls on Linux and macOS.
+  Puts the xlang toolchain on PATH, all from GitHub releases, never from the submodules (those are for local development only):
+  the `xl` tool (installed by the release's own install script, binary only -- no `xl lc install`; the stdlib comes from its own
+  release below), the compiler `xlc` of hasirciogluhq/xlc and the stdlib of hasirciogluhq/xl-std. Each is resolved on every run:
+  the newest stable release, or the newest pre-release while there is none; `xl-version`, `xlc-version` and `std-version` pin one.
+  The cache key is the triple of tags, so a new release is always picked up and an unchanged triple is not downloaded again. Also
+  installs the LLVM linker xlc calls on Linux and macOS.
 
 inputs:
+  xl-version:
+    description: "xl tool release tag (empty: the newest stable, else the newest pre-release)"
+    required: false
+    default: ""
   xlc-version:
     description: "Compiler release tag (empty: the newest stable, else the newest pre-release)"
     required: false
@@ -20,6 +26,9 @@ inputs:
     default: ${{ github.token }}
 
 outputs:
+  xl-tag:
+    description: "The xl tool release in use"
+    value: ${{ steps.resolve.outputs.xl }}
   xlc-tag:
     description: "The compiler release in use"
     value: ${{ steps.resolve.outputs.xlc }}
@@ -38,24 +47,26 @@ runs:
       shell: bash
       env:
         GH_TOKEN: ${{ inputs.token }}
+        XL_WANT: ${{ inputs.xl-version }}
         XLC_WANT: ${{ inputs.xlc-version }}
         STD_WANT: ${{ inputs.std-version }}
         SCRIPT: ${{ github.action_path }}/../../scripts/toolchain.sh
       run: |
         set -euo pipefail
+        xl=$(bash "$SCRIPT" resolve hasirciogluhq/xlang "$XL_WANT")
         xlc=$(bash "$SCRIPT" resolve hasirciogluhq/xlc "$XLC_WANT")
         std=$(bash "$SCRIPT" resolve hasirciogluhq/xl-std "$STD_WANT")
         dir="$RUNNER_TEMP/xlang"
         # Git Bash on Windows: `D:\a\_temp` would reach bash globs and xlc with backslashes.
         command -v cygpath >/dev/null 2>&1 && dir=$(cygpath -m "$dir")
-        { echo "xlc=$xlc"; echo "std=$std"; echo "dir=$dir"; } >>"$GITHUB_OUTPUT"
-        echo "xlc $xlc, xl-std $std" >>"$GITHUB_STEP_SUMMARY"
+        { echo "xl=$xl"; echo "xlc=$xlc"; echo "std=$std"; echo "dir=$dir"; } >>"$GITHUB_OUTPUT"
+        echo "xl $xl, xlc $xlc, xl-std $std" >>"$GITHUB_STEP_SUMMARY"
 
     - id: cache
       uses: actions/cache@v6
       with:
         path: ${{ runner.temp }}/xlang
-        key: xlang-${{ steps.resolve.outputs.xlc }}-std-${{ steps.resolve.outputs.std }}-${{ runner.os }}-${{ runner.arch }}
+        key: xlang-${{ steps.resolve.outputs.xl }}-xlc-${{ steps.resolve.outputs.xlc }}-std-${{ steps.resolve.outputs.std }}-${{ runner.os }}-${{ runner.arch }}
 
     - name: Download the compiler and the stdlib
       if: steps.cache.outputs.cache-hit != 'true'
@@ -65,10 +76,35 @@ runs:
         SCRIPT: ${{ github.action_path }}/../../scripts/toolchain.sh
       run: bash "$SCRIPT" install "${{ steps.resolve.outputs.xlc }}" "${{ steps.resolve.outputs.std }}" "${{ steps.resolve.outputs.dir }}"
 
-    - name: Put xlc on PATH
+    # The `xl` tool, binary only: the release's own install script pins the resolved tag and skips
+    # `xl lc install` -- the stdlib comes from its own release above, not from the tool's cache.
+    - name: Install the xl tool (Linux, macOS)
+      if: steps.cache.outputs.cache-hit != 'true' && runner.os != 'Windows'
+      shell: bash
+      run: |
+        set -euo pipefail
+        tag="${{ steps.resolve.outputs.xl }}"
+        curl -fsSL "https://github.com/hasirciogluhq/xlang/releases/download/$tag/install.sh" \
+          | bash -s -- --version "$tag" --dir "${{ steps.resolve.outputs.dir }}/bin" --no-toolchain
+
+    - name: Install the xl tool (Windows)
+      if: steps.cache.outputs.cache-hit != 'true' && runner.os == 'Windows'
+      shell: pwsh
+      env:
+        XL_VERSION: ${{ steps.resolve.outputs.xl }}
+        XL_INSTALL_DIR: ${{ steps.resolve.outputs.dir }}/bin
+        XL_NO_TOOLCHAIN: "1"
+      run: |
+        $tag = $env:XL_VERSION
+        $script = Join-Path $env:RUNNER_TEMP 'install.ps1'
+        Invoke-WebRequest "https://github.com/hasirciogluhq/xlang/releases/download/$tag/install.ps1" -OutFile $script
+        & $script
+
+    - name: Put the toolchain on PATH
       shell: bash
       run: |
         echo "${{ steps.resolve.outputs.dir }}/bin" >>"$GITHUB_PATH"
+        "${{ steps.resolve.outputs.dir }}/bin/xl" version
         "${{ steps.resolve.outputs.dir }}/bin/xlc" --version
 
     # xlc links Mach-O executables with LLVM's `ld64.lld` and ELF ones with `ld.lld`; the runners have neither.

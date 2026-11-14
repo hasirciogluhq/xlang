@@ -3,9 +3,10 @@ name: ci
 # Builds `xl` from src/ and runs test/run.sh on every host a release ships for: every command against a real compiler, local git
 # repositories and a release mirror, without the network.
 #
-# The compiler and the stdlib come from their GitHub releases, never from the submodules (those are for local development only):
-# each is the newest stable release, or the newest pre-release while there is none (.github/actions/toolchain, cached by the pair of
-# tags); `xlc_version` and `std_version` pin one. Also called by the release workflow before a release is published.
+# The toolchain comes from GitHub releases, never from the submodules (those are for local development only): the `xl` tool (by its
+# release's install script, binary only), the compiler `xlc` and the stdlib, each the newest stable release, or the newest pre-release
+# while there is none (.github/actions/toolchain, cached by the triple of tags); `xl_version`, `xlc_version` and `std_version` pin one.
+# Also called by the release workflow before a release is published.
 
 on:
   push:
@@ -13,6 +14,9 @@ on:
   pull_request:
   workflow_call:
     inputs:
+      xl_version:
+        type: string
+        default: ""
       xlc_version:
         type: string
         default: ""
@@ -21,6 +25,10 @@ on:
         default: ""
   workflow_dispatch:
     inputs:
+      xl_version:
+        description: "xl tool release tag to use instead of the newest one (optional)"
+        type: string
+        default: ""
       xlc_version:
         description: "Compiler release tag to use instead of the newest one (optional)"
         type: string
@@ -57,6 +65,7 @@ jobs:
       - id: toolchain
         uses: ./.github/actions/toolchain
         with:
+          xl-version: ${{ inputs.xl_version }}
           xlc-version: ${{ inputs.xlc_version }}
           std-version: ${{ inputs.std_version }}
       - name: xlc --check main.xl
@@ -81,6 +90,7 @@ jobs:
       - id: toolchain
         uses: ./.github/actions/toolchain
         with:
+          xl-version: ${{ inputs.xl_version }}
           xlc-version: ${{ inputs.xlc_version }}
           std-version: ${{ inputs.std_version }}
       - name: Build xl
